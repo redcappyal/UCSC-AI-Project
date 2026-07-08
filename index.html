@@ -28,11 +28,16 @@
   .steps div.on{color:var(--text); border-top-color:var(--red); font-weight:600}
   .steps div.done{border-top-color:#4a545f; color:#6e7883}
 
-  #stage{position:relative; background:#000; line-height:0}
-  #view{width:100%; height:auto; display:block; touch-action:none}
+  #stage{position:relative; background:#000; line-height:0; overflow:hidden}
+  #view{width:100%; height:auto; display:block; touch-action:none;
+    transform-origin:0 0; will-change:transform}
   #stageHint{position:absolute; inset:0; display:flex; align-items:center;
     justify-content:center; color:var(--dim); font-size:14px; line-height:1.5;
     text-align:center; padding:24px; pointer-events:none}
+
+  #zoomCtrl{position:absolute; top:8px; right:8px; display:flex; gap:6px; z-index:5}
+  #zoomCtrl button{width:auto; padding:6px 10px; font-size:13px; font-weight:600;
+    background:rgba(29,33,39,.82); backdrop-filter:blur(2px)}
 
   main{padding:14px 16px 28px; display:flex; flex-direction:column; gap:12px}
   .card{background:var(--panel); border-radius:12px; padding:14px}
@@ -89,6 +94,11 @@
 <div id="stage">
   <canvas id="view"></canvas>
   <div id="stageHint">Load a clip from this phone.<br>The camera view must match the footage you'll judge.</div>
+  <div id="zoomCtrl" class="hidden">
+    <button class="small" id="zoomOutBtn" type="button">−</button>
+    <button class="small" id="zoomResetBtn" type="button">1×</button>
+    <button class="small" id="zoomInBtn" type="button">+</button>
+  </div>
 </div>
 
 <main>
@@ -148,6 +158,7 @@
 'use strict';
 const $ = id => document.getElementById(id);
 const vid = $('vid'), canvas = $('view'), ctx = canvas.getContext('2d', {willReadFrequently:true});
+const stage = $('stage');
 
 const CFG = {
   out: { key:'out', label:'OUT line', edge:'max', css:'var(--out)', hex:'#35e0ff',
@@ -166,11 +177,13 @@ const S = {
   base:null,                  // ImageData of the locked frame
   work:null,                  // {key, seed:[x,y], mask, maskCanvas, fit, msg, msgKind}
   lines:{out:null, tin:null}, // committed: {seed, maskCanvas, fit}
+  view:{scale:1, tx:0, ty:0}, // zoom/pan applied to the canvas while tapping
 };
 
 /* ---------- phase / UI ---------- */
 function setPhase(p){
   S.phase = p;
+  resetZoom();
   for(const id of ['p-load','p-frame','p-tap','p-review']) $(id).classList.add('hidden');
   const stepEls = {frame:$('st-frame'), out:$('st-out'), tin:$('st-tin'), export:$('st-export')};
   for(const el of Object.values(stepEls)) el.classList.remove('on','done');
@@ -183,9 +196,12 @@ function setPhase(p){
     if(p === 'tap_tin') stepEls.out.classList.add('done');
     stepEls[p === 'tap_out' ? 'out' : 'tin'].classList.add('on');
     const c = CFG[curKey()];
-    $('tapInstr').innerHTML = `Tap anywhere on the red paint of the <b class="${c.key}">${c.label}</b>. The tool will flood-fill the band and fit its ${c.edge === 'max' ? 'lower' : 'top'} edge.`;
+    $('tapInstr').innerHTML = `Tap anywhere on the red paint of the <b class="${c.key}">${c.label}</b>. The tool will flood-fill the band and fit its ${c.edge === 'max' ? 'lower' : 'top'} edge.<br><span style="color:var(--dim); font-size:13px">Pinch to zoom in for a precise tap; drag with one finger to pan while zoomed.</span>`;
     $('confirmBtn').disabled = !(S.work && S.work.fit);
+    $('zoomCtrl').classList.remove('hidden');
     updateTapStatus();
+  } else {
+    $('zoomCtrl').classList.add('hidden');
   }
   if(p === 'review'){
     $('p-review').classList.remove('hidden');
@@ -229,15 +245,103 @@ $('useFrame').onclick = () => {
   setPhase('tap_out');
 };
 
-/* ---------- tapping ---------- */
+/* ---------- zoom / pan (active during tap phases only) ---------- */
+const MAX_ZOOM = 6;
+const TAP_MOVE_PX = 10;         // pointer movement above this = drag/pinch, not a tap
+const clamp01 = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
+
+function clampPan(tx, ty, s){
+  const natW = canvas.clientWidth, natH = canvas.clientHeight;
+  return [clamp01(tx, natW * (1 - s), 0), clamp01(ty, natH * (1 - s), 0)];
+}
+function applyViewTransform(){
+  const { scale, tx, ty } = S.view;
+  canvas.style.transform = scale === 1 ? '' : `translate(${tx}px, ${ty}px) scale(${scale})`;
+  $('zoomResetBtn').textContent = scale.toFixed(1) + '×';
+}
+function resetZoom(){
+  S.view = { scale:1, tx:0, ty:0 };
+  applyViewTransform();
+}
+function zoomBy(factor){
+  const natW = canvas.clientWidth, natH = canvas.clientHeight;
+  const midX = natW / 2, midY = natH / 2;
+  const sOld = S.view.scale;
+  const sNew = clamp01(sOld * factor, 1, MAX_ZOOM);
+  const cx = (midX - S.view.tx) / sOld, cy = (midY - S.view.ty) / sOld;
+  let [tx, ty] = clampPan(midX - cx * sNew, midY - cy * sNew, sNew);
+  S.view = { scale:sNew, tx, ty };
+  applyViewTransform();
+}
+$('zoomInBtn').onclick = () => zoomBy(1.6);
+$('zoomOutBtn').onclick = () => zoomBy(1 / 1.6);
+$('zoomResetBtn').onclick = () => resetZoom();
+
+/* ---------- tapping (single finger = tap-to-select; two fingers = pinch zoom/pan) ---------- */
+const pointers = new Map();
+let pinch = null;
+
 canvas.addEventListener('pointerdown', e => {
   if(S.phase !== 'tap_out' && S.phase !== 'tap_tin') return;
   e.preventDefault();
-  const r = canvas.getBoundingClientRect();
-  const x = Math.min(S.W - 1, Math.max(0, Math.round((e.clientX - r.left) * S.W / r.width)));
-  const y = Math.min(S.H - 1, Math.max(0, Math.round((e.clientY - r.top) * S.H / r.height)));
-  buildWork(curKey(), x, y);
+  canvas.setPointerCapture(e.pointerId);
+  pointers.set(e.pointerId, { x:e.clientX, y:e.clientY, startX:e.clientX, startY:e.clientY, moved:false, multi:false });
+
+  if(pointers.size >= 2){
+    for(const pp of pointers.values()) pp.multi = true;
+    const pts = [...pointers.values()].slice(0, 2);
+    const r = stage.getBoundingClientRect();
+    pinch = {
+      prevDist: Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y),
+      prevMidX: (pts[0].x + pts[1].x) / 2 - r.left,
+      prevMidY: (pts[0].y + pts[1].y) / 2 - r.top,
+    };
+  }
 });
+
+canvas.addEventListener('pointermove', e => {
+  const p = pointers.get(e.pointerId);
+  if(!p) return;
+  e.preventDefault();
+  if(Math.hypot(e.clientX - p.startX, e.clientY - p.startY) > TAP_MOVE_PX) p.moved = true;
+  const dx = e.clientX - p.x, dy = e.clientY - p.y;
+  p.x = e.clientX; p.y = e.clientY;
+
+  if(pointers.size === 2 && pinch){
+    const pts = [...pointers.values()];
+    const r = stage.getBoundingClientRect();
+    const dist = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
+    const midX = (pts[0].x + pts[1].x) / 2 - r.left;
+    const midY = (pts[0].y + pts[1].y) / 2 - r.top;
+    const sOld = S.view.scale;
+    const sNew = clamp01(sOld * (dist / pinch.prevDist), 1, MAX_ZOOM);
+    const cx = (pinch.prevMidX - S.view.tx) / sOld;
+    const cy = (pinch.prevMidY - S.view.ty) / sOld;
+    const [tx, ty] = clampPan(midX - cx * sNew, midY - cy * sNew, sNew);
+    S.view = { scale:sNew, tx, ty };
+    applyViewTransform();
+    pinch.prevDist = dist; pinch.prevMidX = midX; pinch.prevMidY = midY;
+  } else if(pointers.size === 1 && S.view.scale > 1){
+    const [tx, ty] = clampPan(S.view.tx + dx, S.view.ty + dy, S.view.scale);
+    S.view.tx = tx; S.view.ty = ty;
+    applyViewTransform();
+  }
+});
+
+function endPointer(e){
+  const p = pointers.get(e.pointerId);
+  pointers.delete(e.pointerId);
+  if(pointers.size < 2) pinch = null;
+  if(!p) return;
+  if((S.phase === 'tap_out' || S.phase === 'tap_tin') && !p.moved && !p.multi && pointers.size === 0){
+    const r = canvas.getBoundingClientRect();
+    const x = Math.min(S.W - 1, Math.max(0, Math.round((p.x - r.left) * S.W / r.width)));
+    const y = Math.min(S.H - 1, Math.max(0, Math.round((p.y - r.top) * S.H / r.height)));
+    buildWork(curKey(), x, y);
+  }
+}
+canvas.addEventListener('pointerup', endPointer);
+canvas.addEventListener('pointercancel', endPointer);
 
 $('tol').addEventListener('input', e => { $('tolOut').textContent = e.target.value; });
 $('tol').addEventListener('change', () => {           // recompute on release, not per-pixel drag
