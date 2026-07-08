@@ -1,0 +1,508 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>Court Calibration</title>
+<style>
+  :root{
+    --bg:#14161a; --panel:#1d2127; --panel-2:#232830;
+    --text:#e9ecef; --dim:#9aa3ad;
+    --red:#e03a2f;           /* court-line red: primary action */
+    --out:#35e0ff;           /* fitted out-line edge */
+    --tin:#b4ff3a;           /* fitted tin edge */
+    --warn:#ffb02e;
+  }
+  *{box-sizing:border-box; margin:0; padding:0}
+  html,body{background:var(--bg); color:var(--text);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+    -webkit-tap-highlight-color:transparent}
+  body{display:flex; flex-direction:column; min-height:100dvh}
+
+  header{padding:14px 16px 10px}
+  header h1{font-size:17px; font-weight:700; letter-spacing:.02em}
+  header h1 span{color:var(--red)}
+  .steps{display:flex; gap:6px; margin-top:10px}
+  .steps div{flex:1; text-align:center; font-size:11px; color:var(--dim);
+    padding:6px 2px; border-top:3px solid #333a44; white-space:nowrap; overflow:hidden}
+  .steps div.on{color:var(--text); border-top-color:var(--red); font-weight:600}
+  .steps div.done{border-top-color:#4a545f; color:#6e7883}
+
+  #stage{position:relative; background:#000; line-height:0}
+  #view{width:100%; height:auto; display:block; touch-action:none}
+  #stageHint{position:absolute; inset:0; display:flex; align-items:center;
+    justify-content:center; color:var(--dim); font-size:14px; line-height:1.5;
+    text-align:center; padding:24px; pointer-events:none}
+
+  main{padding:14px 16px 28px; display:flex; flex-direction:column; gap:12px}
+  .card{background:var(--panel); border-radius:12px; padding:14px}
+  .hidden{display:none !important}
+
+  .instruction{font-size:15px; line-height:1.45}
+  .instruction b.out{color:var(--out)} .instruction b.tin{color:var(--tin)}
+  .status{font-size:13px; color:var(--dim); line-height:1.45; min-height:1.2em}
+  .status.warn{color:var(--warn)}
+  .status.ok{color:#7ee08a}
+
+  button{font:inherit; border:none; border-radius:10px; padding:13px 16px;
+    font-size:15px; font-weight:600; color:var(--text); background:var(--panel-2);
+    width:100%; cursor:pointer}
+  button:disabled{opacity:.35}
+  button.primary{background:var(--red)}
+  button.small{width:auto; padding:9px 12px; font-size:13px; font-weight:500}
+  .row{display:flex; gap:8px}
+  .row>*{flex:1}
+
+  input[type=file]{display:none}
+  label.filebtn{display:block; text-align:center; background:var(--red);
+    border-radius:10px; padding:13px 16px; font-size:15px; font-weight:600; cursor:pointer}
+
+  input[type=range]{width:100%; accent-color:var(--red)}
+  .sliderlabel{display:flex; justify-content:space-between; font-size:12px;
+    color:var(--dim); margin-bottom:4px}
+  .sliderlabel output{color:var(--text)}
+
+  .stat{display:flex; justify-content:space-between; font-size:13px; padding:3px 0}
+  .stat span:first-child{color:var(--dim)}
+  .swatch{display:inline-block; width:10px; height:10px; border-radius:2px; margin-right:6px; vertical-align:baseline}
+
+  textarea{width:100%; height:110px; background:#111318; color:#b8c0c9;
+    border:1px solid #2c333c; border-radius:8px; font-family:ui-monospace,Menlo,monospace;
+    font-size:11px; padding:8px; margin-top:8px}
+
+  /* video kept renderable but invisible (display:none breaks canvas capture on some iOS versions) */
+  #vid{position:absolute; width:2px; height:2px; opacity:0; pointer-events:none; left:-10px; top:-10px}
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Court Calibration <span>· front wall</span></h1>
+  <div class="steps">
+    <div id="st-frame">1 · Frame</div>
+    <div id="st-out">2 · Out line</div>
+    <div id="st-tin">3 · Tin</div>
+    <div id="st-export">4 · Export</div>
+  </div>
+</header>
+
+<div id="stage">
+  <canvas id="view"></canvas>
+  <div id="stageHint">Load a clip from this phone.<br>The camera view must match the footage you'll judge.</div>
+</div>
+
+<main>
+  <!-- PHASE: load -->
+  <section class="card" id="p-load">
+    <label class="filebtn">Load clip
+      <input type="file" id="fileIn" accept="video/*">
+    </label>
+  </section>
+
+  <!-- PHASE: frame -->
+  <section class="card hidden" id="p-frame">
+    <p class="instruction">Scrub to a frame where both red lines are clearly visible and no one is standing in front of them.</p>
+    <div style="margin-top:10px">
+      <input type="range" id="scrub" min="0" max="1" step="0.01" value="0">
+    </div>
+    <div class="row" style="margin-top:8px">
+      <button class="small" id="bwd1s">−1s</button>
+      <button class="small" id="bwd1f">−1f</button>
+      <button class="small" id="fwd1f">+1f</button>
+      <button class="small" id="fwd1s">+1s</button>
+    </div>
+    <button class="primary" id="useFrame" style="margin-top:12px">Use this frame</button>
+  </section>
+
+  <!-- PHASE: tap out / tap tin -->
+  <section class="card hidden" id="p-tap">
+    <p class="instruction" id="tapInstr"></p>
+    <p class="status" id="tapStatus" style="margin-top:6px"></p>
+    <div style="margin-top:12px">
+      <div class="sliderlabel"><span>Fill tolerance</span><output id="tolOut">35</output></div>
+      <input type="range" id="tol" min="0" max="100" step="1" value="35">
+    </div>
+    <div class="row" style="margin-top:12px">
+      <button class="small" id="backBtn">Back</button>
+      <button class="primary" id="confirmBtn" disabled>Looks right</button>
+    </div>
+  </section>
+
+  <!-- PHASE: review -->
+  <section class="card hidden" id="p-review">
+    <p class="instruction">Check the overlay: each fitted edge should hug the real paint edge across the whole line.</p>
+    <div style="margin-top:10px" id="reviewStats"></div>
+    <p class="status" id="reviewWarn" style="margin-top:6px"></p>
+    <button class="primary" id="exportBtn" style="margin-top:12px">Save calibration.json</button>
+    <div class="row" style="margin-top:8px">
+      <button class="small" id="copyBtn">Copy JSON</button>
+      <button class="small" id="restartBtn">Start over</button>
+    </div>
+    <textarea id="jsonBox" readonly spellcheck="false"></textarea>
+  </section>
+</main>
+
+<video id="vid" playsinline muted preload="metadata"></video>
+
+<script>
+'use strict';
+const $ = id => document.getElementById(id);
+const vid = $('vid'), canvas = $('view'), ctx = canvas.getContext('2d', {willReadFrequently:true});
+
+const CFG = {
+  out: { key:'out', label:'OUT line', edge:'max', css:'var(--out)', hex:'#35e0ff',
+         rgb:[53,224,255], edgeName:'out_line_lower_edge',
+         edgeDesc:'lower edge of the out line (ball at or above this is OUT)' },
+  tin: { key:'tin', label:'TIN', edge:'min', css:'var(--tin)', hex:'#b4ff3a',
+         rgb:[180,255,58], edgeName:'tin_top_edge',
+         edgeDesc:'top edge of the tin (ball at or below this is DOWN)' },
+};
+const ORDER = ['out','tin'];
+const MIN_COLS = 40;          // minimum horizontal span (in columns) for a trustworthy fit
+const FILL_CAP_FRAC = 0.25;   // abort fill if it exceeds this fraction of the frame
+
+const S = {
+  phase:'load', W:0, H:0, videoName:'', frameTime:0,
+  base:null,                  // ImageData of the locked frame
+  work:null,                  // {key, seed:[x,y], mask, maskCanvas, fit, msg, msgKind}
+  lines:{out:null, tin:null}, // committed: {seed, maskCanvas, fit}
+};
+
+/* ---------- phase / UI ---------- */
+function setPhase(p){
+  S.phase = p;
+  for(const id of ['p-load','p-frame','p-tap','p-review']) $(id).classList.add('hidden');
+  const stepEls = {frame:$('st-frame'), out:$('st-out'), tin:$('st-tin'), export:$('st-export')};
+  for(const el of Object.values(stepEls)) el.classList.remove('on','done');
+
+  if(p === 'load'){ $('p-load').classList.remove('hidden'); }
+  if(p === 'frame'){ $('p-frame').classList.remove('hidden'); stepEls.frame.classList.add('on'); $('stageHint').style.display='none'; }
+  if(p === 'tap_out' || p === 'tap_tin'){
+    $('p-tap').classList.remove('hidden');
+    stepEls.frame.classList.add('done');
+    if(p === 'tap_tin') stepEls.out.classList.add('done');
+    stepEls[p === 'tap_out' ? 'out' : 'tin'].classList.add('on');
+    const c = CFG[curKey()];
+    $('tapInstr').innerHTML = `Tap anywhere on the red paint of the <b class="${c.key}">${c.label}</b>. The tool will flood-fill the band and fit its ${c.edge === 'max' ? 'lower' : 'top'} edge.`;
+    $('confirmBtn').disabled = !(S.work && S.work.fit);
+    updateTapStatus();
+  }
+  if(p === 'review'){
+    $('p-review').classList.remove('hidden');
+    stepEls.frame.classList.add('done'); stepEls.out.classList.add('done');
+    stepEls.tin.classList.add('done'); stepEls.export.classList.add('on');
+    buildReview();
+  }
+  render();
+}
+const curKey = () => S.phase === 'tap_out' ? 'out' : 'tin';
+
+/* ---------- video loading & scrubbing ---------- */
+$('fileIn').addEventListener('change', e => {
+  const f = e.target.files[0];
+  if(!f) return;
+  S.videoName = f.name;
+  vid.src = URL.createObjectURL(f);
+});
+vid.addEventListener('loadedmetadata', () => {
+  S.W = vid.videoWidth; S.H = vid.videoHeight;
+  canvas.width = S.W; canvas.height = S.H;
+  $('scrub').max = vid.duration.toFixed(2);
+  vid.currentTime = 0.01;
+  setPhase('frame');
+});
+vid.addEventListener('seeked', () => {
+  if(S.phase === 'frame') requestAnimationFrame(() => ctx.drawImage(vid, 0, 0, S.W, S.H));
+});
+$('scrub').addEventListener('input', e => { vid.currentTime = +e.target.value; });
+const nudge = dt => { vid.currentTime = Math.min(Math.max(vid.currentTime + dt, 0), vid.duration || 0); $('scrub').value = vid.currentTime; };
+$('bwd1s').onclick = () => nudge(-1);
+$('fwd1s').onclick = () => nudge(1);
+$('bwd1f').onclick = () => nudge(-1/60);
+$('fwd1f').onclick = () => nudge(1/60);
+
+$('useFrame').onclick = () => {
+  vid.pause();
+  ctx.drawImage(vid, 0, 0, S.W, S.H);
+  S.base = ctx.getImageData(0, 0, S.W, S.H);
+  S.frameTime = vid.currentTime;
+  setPhase('tap_out');
+};
+
+/* ---------- tapping ---------- */
+canvas.addEventListener('pointerdown', e => {
+  if(S.phase !== 'tap_out' && S.phase !== 'tap_tin') return;
+  e.preventDefault();
+  const r = canvas.getBoundingClientRect();
+  const x = Math.min(S.W - 1, Math.max(0, Math.round((e.clientX - r.left) * S.W / r.width)));
+  const y = Math.min(S.H - 1, Math.max(0, Math.round((e.clientY - r.top) * S.H / r.height)));
+  buildWork(curKey(), x, y);
+});
+
+$('tol').addEventListener('input', e => { $('tolOut').textContent = e.target.value; });
+$('tol').addEventListener('change', () => {           // recompute on release, not per-pixel drag
+  if(S.work) buildWork(S.work.key, S.work.seed[0], S.work.seed[1]);
+});
+
+$('confirmBtn').onclick = () => {
+  if(!S.work || !S.work.fit) return;
+  const k = S.work.key;
+  S.lines[k] = { seed:S.work.seed, maskCanvas:S.work.maskCanvas, fit:S.work.fit };
+  S.work = null;
+  setPhase(k === 'out' ? 'tap_tin' : 'review');
+};
+$('backBtn').onclick = () => {
+  S.work = null;
+  if(S.phase === 'tap_out'){ S.base = null; setPhase('frame'); ctx.drawImage(vid,0,0,S.W,S.H); }
+  else { S.lines.out = null; setPhase('tap_out'); }
+};
+$('restartBtn').onclick = () => {
+  S.work = null; S.lines = {out:null, tin:null}; S.base = null;
+  setPhase('frame'); ctx.drawImage(vid, 0, 0, S.W, S.H);
+};
+
+/* ---------- flood fill (HSV similarity) ---------- */
+function rgb2hsv(r, g, b){
+  r/=255; g/=255; b/=255;
+  const mx = Math.max(r,g,b), mn = Math.min(r,g,b), d = mx - mn;
+  let h = 0;
+  if(d !== 0){
+    if(mx === r) h = ((g - b) / d) % 6;
+    else if(mx === g) h = (b - r) / d + 2;
+    else h = (r - g) / d + 4;
+    h *= 60; if(h < 0) h += 360;
+  }
+  return [h, mx === 0 ? 0 : d / mx, mx];
+}
+
+function floodFill(imgData, W, H, sx, sy, tol){
+  const px = imgData.data;
+  const si = sy * W + sx;
+  const seed = rgb2hsv(px[si*4], px[si*4+1], px[si*4+2]);
+  const hueTol = 6 + tol * 0.34;              // 6°–40°
+  const satTol = 0.18 + tol * 0.004;          // 0.18–0.58
+  const valTol = 0.25 + tol * 0.0045;         // 0.25–0.70
+  const mask = new Uint8Array(W * H);
+  const cap = Math.floor(W * H * FILL_CAP_FRAC);
+  const stack = [si];
+  mask[si] = 1;
+  let count = 1, overflow = false;
+
+  const ok = i => {
+    const j = i * 4;
+    const hsv = rgb2hsv(px[j], px[j+1], px[j+2]);
+    let dh = Math.abs(hsv[0] - seed[0]); if(dh > 180) dh = 360 - dh;
+    return dh <= hueTol && Math.abs(hsv[1]-seed[1]) <= satTol && Math.abs(hsv[2]-seed[2]) <= valTol;
+  };
+
+  while(stack.length){
+    const i = stack.pop();
+    const x = i % W, y = (i / W) | 0;
+    // 4-neighbours
+    if(x > 0     && !mask[i-1] && ok(i-1)){ mask[i-1] = 1; stack.push(i-1); count++; }
+    if(x < W-1   && !mask[i+1] && ok(i+1)){ mask[i+1] = 1; stack.push(i+1); count++; }
+    if(y > 0     && !mask[i-W] && ok(i-W)){ mask[i-W] = 1; stack.push(i-W); count++; }
+    if(y < H-1   && !mask[i+W] && ok(i+W)){ mask[i+W] = 1; stack.push(i+W); count++; }
+    if(count > cap){ overflow = true; break; }
+  }
+  return { mask, count, overflow, seedHsv: seed };
+}
+
+/* ---------- edge extraction + fitting ---------- */
+function extractEdge(mask, W, H, mode){          // mode: 'min' (top edge) | 'max' (lower edge)
+  const ext = new Int32Array(W).fill(-1);
+  for(let y = 0; y < H; y++){
+    const row = y * W;
+    for(let x = 0; x < W; x++){
+      if(mask[row + x]){
+        if(mode === 'max') ext[x] = y;           // scanning downward: last hit = max
+        else if(ext[x] === -1) ext[x] = y;       // first hit = min
+      }
+    }
+  }
+  const xs = [], ys = [];
+  for(let x = 0; x < W; x++) if(ext[x] >= 0){ xs.push(x); ys.push(ext[x]); }
+  return { xs, ys };
+}
+
+function lsq(xs, ys){
+  const n = xs.length;
+  let sx=0, sy=0, sxx=0, sxy=0;
+  for(let i=0;i<n;i++){ sx+=xs[i]; sy+=ys[i]; sxx+=xs[i]*xs[i]; sxy+=xs[i]*ys[i]; }
+  const den = n*sxx - sx*sx;
+  if(den === 0) return null;
+  const m = (n*sxy - sx*sy) / den;
+  const b = (sy - m*sx) / n;
+  let se = 0;
+  for(let i=0;i<n;i++){ const r = ys[i] - (m*xs[i] + b); se += r*r; }
+  return { m, b, rms: Math.sqrt(se/n), n };
+}
+
+function robustFit(xs, ys){
+  let f = lsq(xs, ys);
+  if(!f) return null;
+  const thr = Math.max(2, 2.5 * f.rms);          // one outlier-rejection pass (glare, chips, overlap)
+  const kx = [], ky = [];
+  for(let i=0;i<xs.length;i++){
+    if(Math.abs(ys[i] - (f.m*xs[i] + f.b)) <= thr){ kx.push(xs[i]); ky.push(ys[i]); }
+  }
+  if(kx.length >= MIN_COLS && kx.length < xs.length){
+    const f2 = lsq(kx, ky);
+    if(f2) f = f2;
+  }
+  f.total = xs.length;
+  return f;
+}
+
+/* ---------- build working selection ---------- */
+function buildWork(key, sx, sy){
+  const tol = +$('tol').value;
+  const cfg = CFG[key];
+  const { mask, count, overflow } = floodFill(S.base, S.W, S.H, sx, sy, tol);
+
+  const work = { key, seed:[sx, sy], mask, fit:null, msg:'', msgKind:'' };
+
+  if(overflow){
+    work.msg = 'Fill leaked off the line — lower the tolerance or tap a cleaner spot.';
+    work.msgKind = 'warn';
+  } else {
+    const edge = extractEdge(mask, S.W, S.H, cfg.edge);
+    if(edge.xs.length < MIN_COLS){
+      work.msg = `Selection too small (${edge.xs.length} columns) — tap on the painted band, or raise the tolerance.`;
+      work.msgKind = 'warn';
+    } else {
+      const fit = robustFit(edge.xs, edge.ys);
+      if(fit){
+        work.fit = fit;
+        work.msg = `Fitted through ${fit.n.toLocaleString()} edge pixels · RMS ${fit.rms.toFixed(2)} px · span ${edge.xs.length} columns`;
+        work.msgKind = fit.rms <= 2 ? 'ok' : 'warn';
+        if(fit.rms > 2) work.msg += ' — edge is wobbly; try lower tolerance or a cleaner frame.';
+      } else {
+        work.msg = 'Could not fit a line to that selection.'; work.msgKind = 'warn';
+      }
+    }
+  }
+
+  work.maskCanvas = maskToCanvas(mask, S.W, S.H, cfg.rgb, 110);
+  S.work = work;
+  $('confirmBtn').disabled = !work.fit;
+  updateTapStatus();
+  render();
+}
+
+function updateTapStatus(){
+  const el = $('tapStatus');
+  if(!S.work){ el.textContent = 'Waiting for a tap…'; el.className = 'status'; return; }
+  el.textContent = S.work.msg;
+  el.className = 'status ' + S.work.msgKind;
+}
+
+/* ---------- rendering ---------- */
+function maskToCanvas(mask, W, H, rgb, alpha){
+  const c = document.createElement('canvas');
+  c.width = W; c.height = H;
+  const cc = c.getContext('2d');
+  const img = cc.createImageData(W, H);
+  const d = img.data;
+  for(let i = 0; i < mask.length; i++){
+    if(mask[i]){ const j = i*4; d[j]=rgb[0]; d[j+1]=rgb[1]; d[j+2]=rgb[2]; d[j+3]=alpha; }
+  }
+  cc.putImageData(img, 0, 0);
+  return c;
+}
+
+function drawFitLine(fit, color){
+  ctx.save();
+  ctx.strokeStyle = color;
+  ctx.lineWidth = Math.max(2, S.W / 700);
+  ctx.beginPath();
+  ctx.moveTo(0, fit.b);
+  ctx.lineTo(S.W - 1, fit.m * (S.W - 1) + fit.b);
+  ctx.stroke();
+  ctx.restore();
+}
+
+function render(){
+  if(!S.base) return;
+  ctx.putImageData(S.base, 0, 0);
+  for(const k of ORDER){
+    const L = S.lines[k];
+    if(L){
+      ctx.save(); ctx.globalAlpha = 0.5; ctx.drawImage(L.maskCanvas, 0, 0); ctx.restore();
+      drawFitLine(L.fit, CFG[k].hex);
+    }
+  }
+  if(S.work){
+    ctx.drawImage(S.work.maskCanvas, 0, 0);
+    if(S.work.fit) drawFitLine(S.work.fit, CFG[S.work.key].hex);
+    const [x, y] = S.work.seed;
+    ctx.save();
+    ctx.strokeStyle = '#fff'; ctx.lineWidth = Math.max(2, S.W / 900);
+    ctx.beginPath(); ctx.arc(x, y, Math.max(8, S.W / 120), 0, Math.PI * 2); ctx.stroke();
+    ctx.restore();
+  }
+}
+
+/* ---------- review & export ---------- */
+function midY(fit){ return fit.m * (S.W / 2) + fit.b; }
+
+function buildReview(){
+  const rows = ORDER.map(k => {
+    const c = CFG[k], f = S.lines[k].fit;
+    return `<div class="stat"><span><i class="swatch" style="background:${c.hex}"></i>${c.edgeName}</span>` +
+           `<span>RMS ${f.rms.toFixed(2)} px · ${f.n.toLocaleString()} px</span></div>`;
+  }).join('');
+  $('reviewStats').innerHTML = rows;
+
+  const w = $('reviewWarn');
+  if(midY(S.lines.out.fit) >= midY(S.lines.tin.fit)){
+    w.textContent = 'Warning: the out line was fitted below the tin. The taps were probably swapped — start over.';
+    w.className = 'status warn';
+  } else { w.textContent = ''; }
+
+  $('jsonBox').value = JSON.stringify(buildJson(), null, 2);
+}
+
+function buildJson(){
+  const line = k => {
+    const c = CFG[k], f = S.lines[k].fit;
+    const y0 = +f.b.toFixed(2);
+    const y1 = +(f.m * (S.W - 1) + f.b).toFixed(2);
+    return {
+      name: c.edgeName,
+      description: c.edgeDesc,
+      endpoints: [[0, y0], [S.W - 1, y1]],
+      slope: f.m, intercept: f.b,
+      fit_rms_px: +f.rms.toFixed(2),
+      edge_pixels_used: f.n
+    };
+  };
+  return {
+    schema: 'squash-calibration-v1',
+    coordinate_system: 'image pixels, origin top-left, y increases DOWNWARD',
+    video_file: S.videoName,
+    frame_width: S.W,
+    frame_height: S.H,
+    frame_time_s: +S.frameTime.toFixed(3),
+    created_utc: new Date().toISOString(),
+    lines: [line('out'), line('tin')]
+  };
+}
+
+$('exportBtn').onclick = () => {
+  const blob = new Blob([JSON.stringify(buildJson(), null, 2)], { type:'application/json' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'calibration.json';
+  document.body.appendChild(a); a.click(); a.remove();
+};
+$('copyBtn').onclick = async () => {
+  try{ await navigator.clipboard.writeText($('jsonBox').value); $('copyBtn').textContent = 'Copied ✓';
+       setTimeout(() => $('copyBtn').textContent = 'Copy JSON', 1500); }
+  catch(_){ $('jsonBox').select(); }
+};
+
+setPhase('load');
+</script>
+</body>
+</html>
