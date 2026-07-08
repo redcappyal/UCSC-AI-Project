@@ -9,7 +9,7 @@ from inference_sdk import InferenceHTTPClient
 
 
 API_URL = "http://localhost:9001"
-API_KEY = "fSbrLMfk0LmeJbQfbGRp"
+API_KEY = ""
 
 WORKSPACE = "squash-line-calling-model"
 WORKFLOW_ID = "squash-line-calling-vsquash-line-calling-1-rfdetr-medium-t1-logic"
