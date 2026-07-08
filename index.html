@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <title>Court Calibration</title>
 <style>
   :root{
@@ -31,16 +31,15 @@
   #stage{position:relative; background:#000; line-height:0; overflow:hidden}
   #view{width:100%; height:auto; display:block; touch-action:none;
     transform-origin:0 0; will-change:transform}
-  #stageHint{position:absolute; inset:0; display:flex; align-items:center;
-    justify-content:center; color:var(--dim); font-size:14px; line-height:1.5;
-    text-align:center; padding:24px; pointer-events:none}
-
   #zoomCtrl{position:absolute; top:8px; right:8px; display:flex; gap:6px; z-index:5}
-  #zoomCtrl button{width:auto; padding:6px 10px; font-size:13px; font-weight:600;
-    background:rgba(29,33,39,.82); backdrop-filter:blur(2px)}
+  #zoomCtrl button{min-width:44px; min-height:44px; padding:8px 12px; font-size:15px;
+    font-weight:600; background:rgba(29,33,39,.82); backdrop-filter:blur(2px)}
 
-  main{padding:14px 16px 28px; display:flex; flex-direction:column; gap:12px}
+  main{padding:14px 16px max(28px, env(safe-area-inset-bottom)); display:flex; flex-direction:column; gap:12px}
+  body.phase-load main{flex:1; justify-content:center}
   .card{background:var(--panel); border-radius:12px; padding:14px}
+  .card.hero{text-align:center; padding:32px 20px}
+  .card.hero h2{font-size:20px; margin-bottom:8px}
   .hidden{display:none !important}
 
   .instruction{font-size:15px; line-height:1.45}
@@ -49,18 +48,19 @@
   .status.warn{color:var(--warn)}
   .status.ok{color:#7ee08a}
 
-  button{font:inherit; border:none; border-radius:10px; padding:13px 16px;
-    font-size:15px; font-weight:600; color:var(--text); background:var(--panel-2);
-    width:100%; cursor:pointer}
+  button{font:inherit; border:none; border-radius:10px; padding:15px 18px;
+    font-size:16px; font-weight:600; color:var(--text); background:var(--panel-2);
+    width:100%; min-height:50px; display:flex; align-items:center; justify-content:center;
+    cursor:pointer}
   button:disabled{opacity:.35}
   button.primary{background:var(--red)}
-  button.small{width:auto; padding:9px 12px; font-size:13px; font-weight:500}
+  button.small{width:auto; padding:11px 14px; font-size:14px; font-weight:500; min-height:44px}
   .row{display:flex; gap:8px}
   .row>*{flex:1}
 
   input[type=file]{display:none}
-  label.filebtn{display:block; text-align:center; background:var(--red);
-    border-radius:10px; padding:13px 16px; font-size:15px; font-weight:600; cursor:pointer}
+  label.filebtn{display:flex; align-items:center; justify-content:center; background:var(--red);
+    border-radius:10px; padding:15px 18px; font-size:16px; font-weight:600; min-height:50px; cursor:pointer}
 
   input[type=range]{width:100%; accent-color:var(--red)}
   .sliderlabel{display:flex; justify-content:space-between; font-size:12px;
@@ -93,7 +93,6 @@
 
 <div id="stage">
   <canvas id="view"></canvas>
-  <div id="stageHint">Load a clip from this phone.<br>The camera view must match the footage you'll judge.</div>
   <div id="zoomCtrl" class="hidden">
     <button class="small" id="zoomOutBtn" type="button">−</button>
     <button class="small" id="zoomResetBtn" type="button">1×</button>
@@ -103,8 +102,10 @@
 
 <main>
   <!-- PHASE: load -->
-  <section class="card" id="p-load">
-    <label class="filebtn">Load clip
+  <section class="card hero" id="p-load">
+    <h2>Get started</h2>
+    <p class="instruction">Load a clip from this phone to begin calibrating the court lines.</p>
+    <label class="filebtn" style="margin-top:20px">Load clip
       <input type="file" id="fileIn" accept="video/*">
     </label>
   </section>
@@ -121,7 +122,10 @@
       <button class="small" id="fwd1f">+1f</button>
       <button class="small" id="fwd1s">+1s</button>
     </div>
-    <button class="primary" id="useFrame" style="margin-top:12px">Use this frame</button>
+    <div class="row" style="margin-top:12px">
+      <button id="frameBackBtn">Back</button>
+      <button class="primary" id="useFrame">Use this frame</button>
+    </div>
   </section>
 
   <!-- PHASE: tap out / tap tin -->
@@ -133,7 +137,7 @@
       <input type="range" id="tol" min="0" max="100" step="1" value="35">
     </div>
     <div class="row" style="margin-top:12px">
-      <button class="small" id="backBtn">Back</button>
+      <button id="backBtn">Back</button>
       <button class="primary" id="confirmBtn" disabled>Looks right</button>
     </div>
   </section>
@@ -143,10 +147,13 @@
     <p class="instruction">Check the overlay: each fitted edge should hug the real paint edge across the whole line.</p>
     <div style="margin-top:10px" id="reviewStats"></div>
     <p class="status" id="reviewWarn" style="margin-top:6px"></p>
-    <button class="primary" id="exportBtn" style="margin-top:12px">Save calibration.json</button>
+    <div class="row" style="margin-top:12px">
+      <button id="reviewBackBtn">Back</button>
+      <button class="primary" id="exportBtn">Save calibration.json</button>
+    </div>
     <div class="row" style="margin-top:8px">
-      <button class="small" id="copyBtn">Copy JSON</button>
-      <button class="small" id="restartBtn">Start over</button>
+      <button id="copyBtn">Copy JSON</button>
+      <button id="restartBtn">Start over</button>
     </div>
     <textarea id="jsonBox" readonly spellcheck="false"></textarea>
   </section>
@@ -184,12 +191,14 @@ const S = {
 function setPhase(p){
   S.phase = p;
   resetZoom();
+  stage.classList.toggle('hidden', p === 'load');
+  document.body.classList.toggle('phase-load', p === 'load');
   for(const id of ['p-load','p-frame','p-tap','p-review']) $(id).classList.add('hidden');
   const stepEls = {frame:$('st-frame'), out:$('st-out'), tin:$('st-tin'), export:$('st-export')};
   for(const el of Object.values(stepEls)) el.classList.remove('on','done');
 
   if(p === 'load'){ $('p-load').classList.remove('hidden'); }
-  if(p === 'frame'){ $('p-frame').classList.remove('hidden'); stepEls.frame.classList.add('on'); $('stageHint').style.display='none'; }
+  if(p === 'frame'){ $('p-frame').classList.remove('hidden'); stepEls.frame.classList.add('on'); }
   if(p === 'tap_out' || p === 'tap_tin'){
     $('p-tap').classList.remove('hidden');
     stepEls.frame.classList.add('done');
@@ -243,6 +252,12 @@ $('useFrame').onclick = () => {
   S.base = ctx.getImageData(0, 0, S.W, S.H);
   S.frameTime = vid.currentTime;
   setPhase('tap_out');
+};
+$('frameBackBtn').onclick = () => {
+  vid.pause();
+  S.base = null;
+  $('fileIn').value = '';
+  setPhase('load');
 };
 
 /* ---------- zoom / pan (active during tap phases only) ---------- */
@@ -363,6 +378,11 @@ $('backBtn').onclick = () => {
 $('restartBtn').onclick = () => {
   S.work = null; S.lines = {out:null, tin:null}; S.base = null;
   setPhase('frame'); ctx.drawImage(vid, 0, 0, S.W, S.H);
+};
+$('reviewBackBtn').onclick = () => {
+  S.work = null;
+  S.lines.tin = null;
+  setPhase('tap_tin');
 };
 
 /* ---------- flood fill (HSV similarity) ---------- */
