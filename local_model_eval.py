@@ -195,6 +195,9 @@ def main():
     if end_frame < start_frame:
         raise RuntimeError(f"END_FRAME={end_frame} is before START_FRAME={start_frame}.")
 
+    if args.frame_stride < 1:
+        raise RuntimeError("--frame-stride must be 1 or greater.")
+
     if not args.api_key.strip():
         raise RuntimeError(
             "No Roboflow API key found. Set ROBOFLOW_API_KEY in your shell, "
@@ -229,7 +232,7 @@ def main():
             if not ok:
                 break
 
-            if read_count % args.frame_stride != 0:
+            if (read_count - start_frame) % args.frame_stride != 0:
                 read_count += 1
                 continue
 

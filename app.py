@@ -109,6 +109,7 @@ def public_job(job):
         "start_frame": job.get("start_frame"),
         "end_frame": job.get("end_frame"),
         "fps": job.get("fps"),
+        "frame_stride": job.get("frame_stride", 1),
         "processed_frames": processed_frames,
         "total_frames": total_frames,
         "progress": progress,
@@ -245,11 +246,15 @@ def track_clip():
     try:
         start_time = float(request.form.get("start_time", "0"))
         end_time = float(request.form.get("end_time", "0"))
+        frame_stride = int(request.form.get("frame_stride", "1"))
     except ValueError:
-        return error_response("Clip start/end times must be numbers.")
+        return error_response("Clip start/end times and frame stride must be numbers.")
 
     if end_time <= start_time:
         return error_response("Clip end must be after clip start.")
+
+    if frame_stride < 1 or frame_stride > 10:
+        return error_response("Frame stride must be between 1 and 10.")
 
     run_id = str(int(time.time() * 1000))
     run_dir = RUNS_DIR / run_id
@@ -273,7 +278,6 @@ def track_clip():
 
     calibration_path = run_dir / "calibration.json"
     csv_path = run_dir / "ball_coordinates.csv"
-    annotated_path = run_dir / "annotated_clip.mp4"
     calibration_path.write_text(json.dumps(calibration, indent=2), encoding="utf-8")
 
     command = [
@@ -285,16 +289,18 @@ def track_clip():
         str(start_frame),
         "--end-frame",
         str(end_frame),
+        "--frame-stride",
+        str(frame_stride),
         "--csv",
         str(csv_path),
-        "--output-video",
-        str(annotated_path),
+        "--no-video",
     ]
 
     env = os.environ.copy()
     env.setdefault("PYTHONUNBUFFERED", "1")
 
-    total_frames = end_frame - start_frame + 1
+    selected_frames = end_frame - start_frame + 1
+    total_frames = (selected_frames + frame_stride - 1) // frame_stride
     update_job(
         run_id,
         run_id=run_id,
@@ -303,9 +309,9 @@ def track_clip():
         start_frame=start_frame,
         end_frame=end_frame,
         fps=info["fps"],
+        frame_stride=frame_stride,
         processed_frames=0,
         total_frames=total_frames,
-        annotated_video_url=f"/api/runs/{run_id}/annotated_clip.mp4",
         csv_url=f"/api/runs/{run_id}/ball_coordinates.csv",
     )
 

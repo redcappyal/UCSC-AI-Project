@@ -214,6 +214,10 @@
       <div class="sliderlabel"><span>Clip end</span><output id="clipEndOut">0.00s</output></div>
       <input type="range" id="clipEnd" min="0" max="1" step="0.01" value="1">
     </div>
+    <div style="margin-top:12px">
+      <div class="sliderlabel"><span>Analyze every</span><output id="frameStrideOut">1 frame</output></div>
+      <input type="range" id="frameStride" min="1" max="5" step="1" value="1">
+    </div>
     <div style="margin-top:10px" id="clipStats"></div>
     <p class="status" id="trackStatus" style="margin-top:6px"></p>
     <div class="progressbox hidden" id="trackProgressBox">
@@ -272,7 +276,7 @@ const S = {
   lines:{out:null, tin:null}, // committed: {seed, maskCanvas, fit}
   run:null,                   // backend tracking result
   trackSeekId:0,
-  clip:{start:0, end:1, cursor:0, dragging:null, thumbnails:false, playing:false, raf:null},
+  clip:{start:0, end:1, cursor:0, dragging:null, thumbnails:false, playing:false, raf:null, frameStride:1},
   view:{scale:1, tx:0, ty:0}, // zoom/pan applied to the canvas while tapping
 };
 
@@ -926,15 +930,20 @@ function setupClipControls(){
 function updateClipLabels(){
   let start = S.clip.start;
   let end = S.clip.end;
+  const stride = S.clip.frameStride;
   if(end <= start){
     end = Math.min(vid.duration || start + 0.01, start + 0.01);
     S.clip.end = end;
   }
+  const selectedFrames = Math.max(1, approxFrame(end) - approxFrame(start) + 1);
+  const analyzedFrames = Math.ceil(selectedFrames / stride);
 
   $('clipStartOut').textContent = fmtTime(start);
   $('clipEndOut').textContent = fmtTime(end);
+  $('frameStrideOut').textContent = stride === 1 ? '1 frame' : `${stride} frames`;
   $('clipStats').innerHTML =
     `<div class="stat"><span>Approx frames</span><span>${approxFrame(start)}–${approxFrame(end)}</span></div>` +
+    `<div class="stat"><span>Frames analyzed</span><span>${analyzedFrames} of ${selectedFrames}</span></div>` +
     `<div class="stat"><span>Duration</span><span>${(end - start).toFixed(2)}s</span></div>`;
 }
 
@@ -949,6 +958,10 @@ $('clipEnd').addEventListener('input', e => {
   S.clip.end = Math.max(+e.target.value, S.clip.start + 0.01);
   if(S.clip.cursor > S.clip.end) S.clip.cursor = S.clip.end;
   updateClipTimeline();
+});
+$('frameStride').addEventListener('input', e => {
+  S.clip.frameStride = parseInt(e.target.value, 10) || 1;
+  updateClipLabels();
 });
 
 $('clipEditor').addEventListener('pointerdown', e => {
@@ -1046,7 +1059,7 @@ async function waitForTracking(runId){
     if(!data.ok) throw new Error(data.error || 'Could not read tracking status.');
 
     const label = data.status === 'queued' ? 'Queued'
-      : data.status === 'running' ? `Processing frame ${data.processed_frames}/${data.total_frames}`
+      : data.status === 'running' ? `Analyzing frame ${data.processed_frames}/${data.total_frames}`
       : data.status === 'complete' ? 'Processing complete'
       : 'Tracking failed';
     setTrackProgress(label, data.progress || 0);
@@ -1082,10 +1095,11 @@ $('runTrackBtn').onclick = async () => {
   form.append('calibration_json', JSON.stringify(buildJson()));
   form.append('start_time', start.toString());
   form.append('end_time', end.toString());
+  form.append('frame_stride', S.clip.frameStride.toString());
 
   try{
     const started = await postTrackRequest(form);
-    setTrackProgress('Processing frame 0/' + started.total_frames, 0);
+    setTrackProgress('Analyzing frame 0/' + started.total_frames, 0);
     $('trackStatus').textContent = 'Running local model on the selected clip…';
     const data = await waitForTracking(started.run_id);
     S.run = data;
@@ -1107,6 +1121,7 @@ function buildTrackView(){
   const initialFrame = hit ? hit.frame : S.run.start_frame;
   $('trackStats').innerHTML =
     `<div class="stat"><span>Tracked source frames</span><span>${S.run.start_frame}–${S.run.end_frame}</span></div>` +
+    `<div class="stat"><span>Analyzed every</span><span>${S.run.frame_stride || 1} frame(s)</span></div>` +
     `<div class="stat"><span>Rows</span><span>${S.run.rows}</span></div>`;
   $('judgeFrame').min = S.run.start_frame;
   $('judgeFrame').max = S.run.end_frame;
