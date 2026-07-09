@@ -358,6 +358,8 @@ def judge_frame():
         top_line, bottom_line = load_calibration_lines(calibration)
         ball = load_ball_position(csv_path, frame)
         call, reason, top_y, bottom_y = judge_ball(ball, top_line, bottom_line)
+        wall_x = ball.x / max(1.0, float(calibration.get("frame_width", 1)))
+        wall_y = (ball.y - top_y) / (bottom_y - top_y)
     except Exception as error:
         return error_response(str(error))
 
@@ -370,6 +372,11 @@ def judge_frame():
             "ball": {"x": ball.x, "y": ball.y},
             "top_y": top_y,
             "bottom_y": bottom_y,
+            "wall_diagram": {
+                "x": wall_x,
+                "y": wall_y,
+                "y_reference": "0 is the out-line lower edge; 1 is the tin top edge",
+            },
             "outside_line_span": (
                 not top_line.contains_x(ball.x) or not bottom_line.contains_x(ball.x)
             ),

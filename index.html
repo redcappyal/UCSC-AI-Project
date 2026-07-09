@@ -101,6 +101,8 @@
   .callout strong{font-size:28px; letter-spacing:.03em}
   .callout strong.in{color:#7ee08a}
   .callout strong.out{color:var(--warn)}
+  #wallDiagram{width:auto; max-width:100%; display:block; margin-top:12px; background:#0b1014;
+    border:1px solid #2c333c; border-radius:8px}
   textarea{width:100%; height:110px; background:#111318; color:#b8c0c9;
     border:1px solid #2c333c; border-radius:8px; font-family:ui-monospace,Menlo,monospace;
     font-size:11px; padding:8px; margin-top:8px}
@@ -244,6 +246,7 @@
       <button class="primary" id="judgeBtn">Judge frame</button>
     </div>
     <div class="callout hidden" id="judgeResult"></div>
+    <canvas class="hidden" id="wallDiagram"></canvas>
   </section>
 </main>
 
@@ -1129,6 +1132,7 @@ function buildTrackView(){
   $('judgeFrameOut').textContent = `${S.run.start_frame}–${S.run.end_frame}`;
   $('judgeResult').classList.add('hidden');
   $('judgeResult').innerHTML = '';
+  $('wallDiagram').classList.add('hidden');
   seekSourceFrameToCanvas(initialFrame);
 
   if(hit){
@@ -1198,6 +1202,79 @@ function renderJudgeResult(data){
     `<div>Top line y ${data.top_y.toFixed(1)} · bottom line y ${data.bottom_y.toFixed(1)}</div>` +
     `<div>${data.reason}${data.outside_line_span ? ' · outside calibrated line span' : ''}</div>`;
   $('judgeResult').classList.remove('hidden');
+  renderWallDiagram(data);
+}
+
+function renderWallDiagram(data){
+  const c = $('wallDiagram');
+  const cssWidth = Math.min(720, c.parentElement.clientWidth || 720);
+  const cssHeight = Math.round(cssWidth * 0.56);
+  const dpr = window.devicePixelRatio || 1;
+  c.width = Math.round(cssWidth * dpr);
+  c.height = Math.round(cssHeight * dpr);
+  c.style.width = `${cssWidth}px`;
+  c.style.height = `${cssHeight}px`;
+  const dc = c.getContext('2d');
+  dc.setTransform(dpr, 0, 0, dpr, 0, 0);
+  dc.clearRect(0, 0, cssWidth, cssHeight);
+
+  const pad = 24;
+  const wallX = pad;
+  const wallY = pad;
+  const wallW = cssWidth - pad * 2;
+  const wallH = cssHeight - pad * 2;
+  const outY = wallY + wallH * 0.18;
+  const tinY = wallY + wallH * 0.82;
+  const ballMap = data.wall_diagram || {x:0.5, y:0.5};
+  const ballX = wallX + Math.min(1, Math.max(0, ballMap.x)) * wallW;
+  const rawBallY = outY + ballMap.y * (tinY - outY);
+  const ballY = Math.min(wallY + wallH, Math.max(wallY, rawBallY));
+  const clipped = Math.abs(ballY - rawBallY) > 0.5;
+
+  dc.fillStyle = '#121820';
+  dc.fillRect(wallX, wallY, wallW, wallH);
+  dc.strokeStyle = '#53606c';
+  dc.lineWidth = 2;
+  dc.strokeRect(wallX, wallY, wallW, wallH);
+
+  dc.strokeStyle = CFG.out.hex;
+  dc.lineWidth = 3;
+  dc.beginPath();
+  dc.moveTo(wallX, outY);
+  dc.lineTo(wallX + wallW, outY);
+  dc.stroke();
+
+  dc.strokeStyle = CFG.tin.hex;
+  dc.beginPath();
+  dc.moveTo(wallX, tinY);
+  dc.lineTo(wallX + wallW, tinY);
+  dc.stroke();
+
+  dc.strokeStyle = 'rgba(255,255,255,.18)';
+  dc.lineWidth = 1;
+  dc.beginPath();
+  dc.moveTo(wallX + wallW / 2, wallY);
+  dc.lineTo(wallX + wallW / 2, wallY + wallH);
+  dc.stroke();
+
+  dc.fillStyle = '#d9e0e7';
+  dc.font = '12px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif';
+  dc.fillText('OUT line', wallX + 8, outY - 8);
+  dc.fillText('TIN', wallX + 8, tinY + 18);
+
+  dc.fillStyle = data.call === 'IN' ? '#7ee08a' : '#ffb02e';
+  dc.strokeStyle = '#ffffff';
+  dc.lineWidth = 2;
+  dc.beginPath();
+  dc.arc(ballX, ballY, 8, 0, Math.PI * 2);
+  dc.fill();
+  dc.stroke();
+
+  dc.fillStyle = clipped ? '#ffb02e' : '#c8d0d8';
+  const pctX = Math.round(ballMap.x * 100);
+  const pctY = Math.round(ballMap.y * 100);
+  dc.fillText(`Frame ${data.frame} · wall map ${pctX}%, ${pctY}%`, wallX, cssHeight - 6);
+  c.classList.remove('hidden');
 }
 
 $('judgeBtn').onclick = async () => {
@@ -1206,6 +1283,7 @@ $('judgeBtn').onclick = async () => {
   if(Number.isNaN(frame)) return;
   $('judgeBtn').disabled = true;
   $('judgeResult').classList.add('hidden');
+  $('wallDiagram').classList.add('hidden');
   seekSourceFrameToCanvas(frame);
 
   try{
@@ -1220,6 +1298,7 @@ $('judgeBtn').onclick = async () => {
   } catch(error){
     $('judgeResult').innerHTML = error.message;
     $('judgeResult').classList.remove('hidden');
+    $('wallDiagram').classList.add('hidden');
   } finally {
     $('judgeBtn').disabled = false;
   }
