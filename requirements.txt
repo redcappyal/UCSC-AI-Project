@@ -1,0 +1,5 @@
+inference-sdk
+inference
+opencv-python
+scikit-learn
+flask
