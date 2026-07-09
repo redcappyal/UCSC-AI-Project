@@ -8,8 +8,8 @@ import numpy as np
 from inference_sdk import InferenceHTTPClient
 
 
-API_URL = "http://localhost:9001"
-API_KEY = ""
+API_URL = "https://serverless.roboflow.com"
+API_KEY = "fSbrLMfk0LmeJbQfbGRp"
 
 WORKSPACE = "squash-line-calling-model"
 WORKFLOW_ID = "squash-line-calling-vsquash-line-calling-1-rfdetr-medium-t1-logic"
@@ -24,8 +24,8 @@ CSV_OUTPUT_PATH = Path(__file__).with_name("ball_coordinates.csv")
 ROBOFLOW_ANNOTATED_OUTPUT = "output_image"
 
 FRAME_STRIDE = 1
-START_FRAME = 1200
-END_FRAME = 6020
+START_FRAME = None
+END_FRAME = None
 MAX_FRAMES = None  # Use an integer like 300 for a quick test.
 START_SECONDS = None  # Used only when START_FRAME is None.
 CONFIDENCE_THRESHOLD = 0.25

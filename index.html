@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
-<title>Court Calibration</title>
+<title>Squash Line Calling</title>
 <style>
   :root{
     --bg:#14161a; --panel:#1d2127; --panel-2:#232830;
@@ -22,8 +22,8 @@
   header{padding:14px 16px 10px}
   header h1{font-size:17px; font-weight:700; letter-spacing:.02em}
   header h1 span{color:var(--red)}
-  .steps{display:flex; gap:6px; margin-top:10px}
-  .steps div{flex:1; text-align:center; font-size:11px; color:var(--dim);
+  .steps{display:grid; grid-template-columns:repeat(6,1fr); gap:6px; margin-top:10px}
+  .steps div{text-align:center; font-size:11px; color:var(--dim);
     padding:6px 2px; border-top:3px solid #333a44; white-space:nowrap; overflow:hidden}
   .steps div.on{color:var(--text); border-top-color:var(--red); font-weight:600}
   .steps div.done{border-top-color:#4a545f; color:#6e7883}
@@ -63,6 +63,8 @@
     border-radius:10px; padding:15px 18px; font-size:16px; font-weight:600; min-height:50px; cursor:pointer}
 
   input[type=range]{width:100%; accent-color:var(--red)}
+  input[type=number]{width:100%; background:#111318; color:var(--text);
+    border:1px solid #2c333c; border-radius:8px; font:inherit; padding:12px}
   .sliderlabel{display:flex; justify-content:space-between; font-size:12px;
     color:var(--dim); margin-bottom:4px}
   .sliderlabel output{color:var(--text)}
@@ -70,6 +72,36 @@
   .stat{display:flex; justify-content:space-between; font-size:13px; padding:3px 0}
   .stat span:first-child{color:var(--dim)}
   .swatch{display:inline-block; width:10px; height:10px; border-radius:2px; margin-right:6px; vertical-align:baseline}
+  .progressbox{margin-top:12px; padding:12px; border-radius:8px; background:#111318; border:1px solid #2c333c}
+  .progressbar{height:9px; border-radius:999px; background:#2c333c; overflow:hidden; margin-top:8px}
+  .progressbar span{display:block; height:100%; width:0%; background:var(--red); transition:width .18s ease}
+  .progressbar.indeterminate span{width:35%; animation:slidebar 1.1s ease-in-out infinite}
+  @keyframes slidebar{0%{transform:translateX(-120%)} 100%{transform:translateX(320%)}}
+  #clipPreview{width:100%; display:block; margin-top:12px; background:#000; border-radius:8px}
+  .clipEditor{position:relative; height:92px; margin-top:12px; border-radius:8px; overflow:hidden;
+    background:#090a0c; border:1px solid #2c333c; touch-action:none}
+  #filmstrip{position:absolute; inset:0; width:100%; height:100%; display:block}
+  .clipShade{position:absolute; top:0; bottom:0; background:rgba(0,0,0,.58); pointer-events:none}
+  #shadeLeft{left:0} #shadeRight{right:0}
+  #clipSelection{position:absolute; top:0; bottom:0; border:3px solid #ffd21f;
+    border-radius:6px; pointer-events:none; box-shadow:0 0 0 9999px rgba(0,0,0,.08) inset}
+  .clipHandle{position:absolute; top:0; bottom:0; width:22px; background:#ffd21f;
+    cursor:ew-resize; display:flex; align-items:center; justify-content:center}
+  .clipHandle::after{content:''; width:3px; height:48px; border-left:2px solid rgba(0,0,0,.55);
+    border-right:2px solid rgba(0,0,0,.55)}
+  #clipStartHandle{border-radius:6px 0 0 6px} #clipEndHandle{border-radius:0 6px 6px 0}
+  #clipCursor{position:absolute; top:0; bottom:0; width:2px; background:#f5f5f5;
+    box-shadow:0 0 0 1px rgba(0,0,0,.45); pointer-events:none}
+  #clipCursor::before{content:''; position:absolute; left:-6px; top:0; border-left:7px solid transparent;
+    border-right:7px solid transparent; border-top:9px solid #f5f5f5}
+  .hitbox{border-color:#425063}
+  .hitbox button{margin-top:10px}
+  .callout{border:1px solid #2c333c; border-radius:8px; padding:12px; margin-top:12px;
+    background:#111318; font-size:14px; line-height:1.5}
+  .callout strong{font-size:28px; letter-spacing:.03em}
+  .callout strong.in{color:#7ee08a}
+  .callout strong.out{color:var(--warn)}
+  #resultVid{width:100%; display:block; margin-top:12px; background:#000; border-radius:8px}
 
   textarea{width:100%; height:110px; background:#111318; color:#b8c0c9;
     border:1px solid #2c333c; border-radius:8px; font-family:ui-monospace,Menlo,monospace;
@@ -82,12 +114,14 @@
 <body>
 
 <header>
-  <h1>Court Calibration <span>· front wall</span></h1>
+  <h1>Squash Line Calling <span>· front wall</span></h1>
   <div class="steps">
     <div id="st-frame">1 · Frame</div>
     <div id="st-out">2 · Out line</div>
     <div id="st-tin">3 · Tin</div>
-    <div id="st-export">4 · Export</div>
+    <div id="st-export">4 · Review</div>
+    <div id="st-clip">5 · Clip</div>
+    <div id="st-judge">6 · Call</div>
   </div>
 </header>
 
@@ -108,6 +142,7 @@
     <label class="filebtn" style="margin-top:20px">Load clip
       <input type="file" id="fileIn" accept="video/*">
     </label>
+    <p class="status" id="loadStatus" style="margin-top:12px"></p>
   </section>
 
   <!-- PHASE: frame -->
@@ -149,13 +184,64 @@
     <p class="status" id="reviewWarn" style="margin-top:6px"></p>
     <div class="row" style="margin-top:12px">
       <button id="reviewBackBtn">Back</button>
-      <button class="primary" id="exportBtn">Save calibration.json</button>
+      <button class="primary" id="chooseClipBtn">Choose clip</button>
     </div>
     <div class="row" style="margin-top:8px">
+      <button id="exportBtn">Save calibration.json</button>
       <button id="copyBtn">Copy JSON</button>
       <button id="restartBtn">Start over</button>
     </div>
     <textarea id="jsonBox" readonly spellcheck="false"></textarea>
+  </section>
+
+  <!-- PHASE: clip -->
+  <section class="card hidden" id="p-clip">
+    <p class="instruction">Select the short part of the video to track. Keep this tight around the rally or call to make processing faster.</p>
+    <canvas id="clipPreview"></canvas>
+    <div class="clipEditor" id="clipEditor">
+      <canvas id="filmstrip"></canvas>
+      <div class="clipShade" id="shadeLeft"></div>
+      <div class="clipShade" id="shadeRight"></div>
+      <div id="clipSelection"></div>
+      <div class="clipHandle" id="clipStartHandle"></div>
+      <div class="clipHandle" id="clipEndHandle"></div>
+      <div id="clipCursor"></div>
+    </div>
+    <div style="margin-top:12px">
+      <div class="sliderlabel"><span>Clip start</span><output id="clipStartOut">0.00s</output></div>
+      <input type="range" id="clipStart" min="0" max="1" step="0.01" value="0">
+    </div>
+    <div style="margin-top:12px">
+      <div class="sliderlabel"><span>Clip end</span><output id="clipEndOut">0.00s</output></div>
+      <input type="range" id="clipEnd" min="0" max="1" step="0.01" value="1">
+    </div>
+    <div style="margin-top:10px" id="clipStats"></div>
+    <p class="status" id="trackStatus" style="margin-top:6px"></p>
+    <div class="progressbox hidden" id="trackProgressBox">
+      <div class="stat"><span id="progressLabel">Uploading</span><span id="progressPct">0%</span></div>
+      <div class="progressbar" id="trackProgress"><span></span></div>
+    </div>
+    <div class="row" style="margin-top:12px">
+      <button id="clipBackBtn">Back</button>
+      <button class="primary" id="runTrackBtn">Track ball</button>
+    </div>
+  </section>
+
+  <!-- PHASE: track + judge -->
+  <section class="card hidden" id="p-track">
+    <p class="instruction">Enter the source frame to judge. Use a frame inside the tracked clip range.</p>
+    <div style="margin-top:10px" id="trackStats"></div>
+    <video id="resultVid" controls playsinline></video>
+    <div class="callout hitbox hidden" id="hitFrameBox"></div>
+    <div style="margin-top:12px">
+      <div class="sliderlabel"><span>Frame to judge</span><output id="judgeFrameOut"></output></div>
+      <input type="number" id="judgeFrame" step="1">
+    </div>
+    <div class="row" style="margin-top:12px">
+      <button id="trackBackBtn">Back</button>
+      <button class="primary" id="judgeBtn">Judge frame</button>
+    </div>
+    <div class="callout hidden" id="judgeResult"></div>
   </section>
 </main>
 
@@ -181,9 +267,13 @@ const FILL_CAP_FRAC = 0.25;   // abort fill if it exceeds this fraction of the f
 
 const S = {
   phase:'load', W:0, H:0, videoName:'', frameTime:0,
+  videoFile:null,
+  loadTimer:null,
   base:null,                  // ImageData of the locked frame
   work:null,                  // {key, seed:[x,y], mask, maskCanvas, fit, msg, msgKind}
   lines:{out:null, tin:null}, // committed: {seed, maskCanvas, fit}
+  run:null,                   // backend tracking result
+  clip:{start:0, end:1, cursor:0, dragging:null, thumbnails:false},
   view:{scale:1, tx:0, ty:0}, // zoom/pan applied to the canvas while tapping
 };
 
@@ -193,8 +283,11 @@ function setPhase(p){
   resetZoom();
   stage.classList.toggle('hidden', p === 'load');
   document.body.classList.toggle('phase-load', p === 'load');
-  for(const id of ['p-load','p-frame','p-tap','p-review']) $(id).classList.add('hidden');
-  const stepEls = {frame:$('st-frame'), out:$('st-out'), tin:$('st-tin'), export:$('st-export')};
+  for(const id of ['p-load','p-frame','p-tap','p-review','p-clip','p-track']) $(id).classList.add('hidden');
+  const stepEls = {
+    frame:$('st-frame'), out:$('st-out'), tin:$('st-tin'), export:$('st-export'),
+    clip:$('st-clip'), judge:$('st-judge')
+  };
   for(const el of Object.values(stepEls)) el.classList.remove('on','done');
 
   if(p === 'load'){ $('p-load').classList.remove('hidden'); }
@@ -218,23 +311,76 @@ function setPhase(p){
     stepEls.tin.classList.add('done'); stepEls.export.classList.add('on');
     buildReview();
   }
+  if(p === 'clip'){
+    $('p-clip').classList.remove('hidden');
+    stepEls.frame.classList.add('done'); stepEls.out.classList.add('done');
+    stepEls.tin.classList.add('done'); stepEls.export.classList.add('done');
+    stepEls.clip.classList.add('on');
+    setupClipControls();
+  }
+  if(p === 'track'){
+    $('p-track').classList.remove('hidden');
+    stepEls.frame.classList.add('done'); stepEls.out.classList.add('done');
+    stepEls.tin.classList.add('done'); stepEls.export.classList.add('done');
+    stepEls.clip.classList.add('done'); stepEls.judge.classList.add('on');
+    buildTrackView();
+  }
   render();
 }
 const curKey = () => S.phase === 'tap_out' ? 'out' : 'tin';
 
 /* ---------- video loading & scrubbing ---------- */
+async function checkBackend(){
+  try{
+    const response = await fetch('/api/health', {cache:'no-store'});
+    if(!response.ok) throw new Error();
+    $('loadStatus').textContent = 'Backend connected.';
+    $('loadStatus').className = 'status ok';
+  } catch(_){
+    $('loadStatus').textContent = 'Open this page from the Flask server, not as a file. Use http://127.0.0.1:5001';
+    $('loadStatus').className = 'status warn';
+  }
+}
+
 $('fileIn').addEventListener('change', e => {
   const f = e.target.files[0];
   if(!f) return;
+  S.videoFile = f;
   S.videoName = f.name;
+  S.clip.thumbnails = false;
+  $('loadStatus').textContent = `Loading ${f.name}…`;
+  $('loadStatus').className = 'status';
+  if(S.loadTimer) clearTimeout(S.loadTimer);
+  S.loadTimer = setTimeout(() => {
+    if(S.phase === 'load'){
+      $('loadStatus').textContent = 'Still waiting for video metadata. If this does not change, try an H.264 .mp4 export.';
+      $('loadStatus').className = 'status warn';
+    }
+  }, 4000);
   vid.src = URL.createObjectURL(f);
+  vid.load();
 });
 vid.addEventListener('loadedmetadata', () => {
+  if(S.loadTimer) clearTimeout(S.loadTimer);
   S.W = vid.videoWidth; S.H = vid.videoHeight;
+  if(!S.W || !S.H || !Number.isFinite(vid.duration)){
+    $('loadStatus').textContent = 'The browser could not read this video. Try exporting it as H.264 .mp4.';
+    $('loadStatus').className = 'status warn';
+    return;
+  }
+  $('loadStatus').textContent = `Loaded ${S.videoName}.`;
+  $('loadStatus').className = 'status ok';
   canvas.width = S.W; canvas.height = S.H;
   $('scrub').max = vid.duration.toFixed(2);
   vid.currentTime = 0.01;
   setPhase('frame');
+});
+vid.addEventListener('error', () => {
+  if(S.loadTimer) clearTimeout(S.loadTimer);
+  const error = vid.error;
+  const detail = error ? ` Error code ${error.code}.` : '';
+  $('loadStatus').textContent = `The browser could not load that video.${detail} Try an H.264 .mp4 export.`;
+  $('loadStatus').className = 'status warn';
 });
 vid.addEventListener('seeked', () => {
   if(S.phase === 'frame') requestAnimationFrame(() => ctx.drawImage(vid, 0, 0, S.W, S.H));
@@ -613,6 +759,396 @@ function buildJson(){
   };
 }
 
+$('chooseClipBtn').onclick = () => setPhase('clip');
+$('clipBackBtn').onclick = () => setPhase('review');
+$('trackBackBtn').onclick = () => setPhase('clip');
+
+function fmtTime(value){
+  return `${(+value).toFixed(2)}s`;
+}
+
+function approxFrame(seconds){
+  return Math.round(seconds * (S.run?.fps || 60));
+}
+
+function clipDuration(){
+  return vid.duration || 1;
+}
+
+function timeToPct(time){
+  return Math.min(1, Math.max(0, time / clipDuration())) * 100;
+}
+
+function pctToTime(pct){
+  return Math.min(clipDuration(), Math.max(0, pct * clipDuration()));
+}
+
+function drawClipPreview(time){
+  if(!S.W || !S.H) return;
+  const c = $('clipPreview');
+  const maxW = 960;
+  c.width = Math.min(S.W, maxW);
+  c.height = Math.round(c.width * S.H / S.W);
+  const cc = c.getContext('2d');
+  cc.drawImage(vid, 0, 0, c.width, c.height);
+}
+
+async function seekVideo(time){
+  return new Promise(resolve => {
+    const done = () => {
+      vid.removeEventListener('seeked', done);
+      resolve();
+    };
+    vid.addEventListener('seeked', done, {once:true});
+    vid.currentTime = Math.min(Math.max(time, 0), clipDuration());
+  });
+}
+
+async function renderFilmstrip(){
+  const strip = $('filmstrip');
+  const box = $('clipEditor').getBoundingClientRect();
+  const dpr = window.devicePixelRatio || 1;
+  strip.width = Math.max(1, Math.round(box.width * dpr));
+  strip.height = Math.max(1, Math.round(box.height * dpr));
+  const cc = strip.getContext('2d');
+  cc.setTransform(dpr, 0, 0, dpr, 0, 0);
+  cc.fillStyle = '#090a0c';
+  cc.fillRect(0, 0, box.width, box.height);
+
+  const count = Math.max(5, Math.min(12, Math.floor(box.width / 86)));
+  const thumbW = box.width / count;
+  const wasPaused = vid.paused;
+  vid.pause();
+
+  for(let i = 0; i < count; i++){
+    const t = (i + 0.5) / count * clipDuration();
+    await seekVideo(t);
+    cc.drawImage(vid, i * thumbW, 0, thumbW, box.height);
+    cc.strokeStyle = 'rgba(255,255,255,.12)';
+    cc.strokeRect(i * thumbW, 0, thumbW, box.height);
+  }
+
+  await seekVideo(S.clip.cursor);
+  drawClipPreview(S.clip.cursor);
+  if(!wasPaused) vid.play();
+  S.clip.thumbnails = true;
+}
+
+function updateClipTimeline(){
+  const startPct = timeToPct(S.clip.start);
+  const endPct = timeToPct(S.clip.end);
+  const cursorPct = timeToPct(S.clip.cursor);
+  $('shadeLeft').style.width = `${startPct}%`;
+  $('shadeRight').style.left = `${endPct}%`;
+  $('shadeRight').style.width = `${100 - endPct}%`;
+  $('clipSelection').style.left = `${startPct}%`;
+  $('clipSelection').style.width = `${Math.max(0, endPct - startPct)}%`;
+  $('clipStartHandle').style.left = `calc(${startPct}% - 1px)`;
+  $('clipEndHandle').style.left = `calc(${endPct}% - 21px)`;
+  $('clipCursor').style.left = `${cursorPct}%`;
+  $('clipStart').value = S.clip.start.toFixed(2);
+  $('clipEnd').value = S.clip.end.toFixed(2);
+  updateClipLabels();
+}
+
+async function setClipCursor(time){
+  S.clip.cursor = Math.min(Math.max(time, 0), clipDuration());
+  updateClipTimeline();
+  await seekVideo(S.clip.cursor);
+  drawClipPreview(S.clip.cursor);
+}
+
+function setupClipControls(){
+  const duration = vid.duration || 1;
+  const start = $('clipStart');
+  const end = $('clipEnd');
+
+  start.max = duration.toFixed(2);
+  end.max = duration.toFixed(2);
+  start.step = end.step = '0.01';
+
+  if(S.clip.end <= S.clip.start || S.clip.end > duration){
+    const center = S.frameTime || Math.min(duration / 2, 10);
+    S.clip.start = Math.max(0, center - 2);
+    S.clip.end = Math.min(duration, center + 2);
+    S.clip.cursor = center;
+  }
+
+  updateClipTimeline();
+  if(!S.clip.thumbnails) renderFilmstrip();
+  setClipCursor(S.clip.cursor);
+}
+
+function updateClipLabels(){
+  let start = S.clip.start;
+  let end = S.clip.end;
+  if(end <= start){
+    end = Math.min(vid.duration || start + 0.01, start + 0.01);
+    S.clip.end = end;
+  }
+
+  $('clipStartOut').textContent = fmtTime(start);
+  $('clipEndOut').textContent = fmtTime(end);
+  $('clipStats').innerHTML =
+    `<div class="stat"><span>Approx frames</span><span>${approxFrame(start)}–${approxFrame(end)}</span></div>` +
+    `<div class="stat"><span>Duration</span><span>${(end - start).toFixed(2)}s</span></div>`;
+}
+
+$('clipStart').addEventListener('input', e => {
+  S.clip.start = Math.min(+e.target.value, S.clip.end - 0.01);
+  if(S.clip.cursor < S.clip.start) S.clip.cursor = S.clip.start;
+  updateClipTimeline();
+});
+$('clipEnd').addEventListener('input', e => {
+  S.clip.end = Math.max(+e.target.value, S.clip.start + 0.01);
+  if(S.clip.cursor > S.clip.end) S.clip.cursor = S.clip.end;
+  updateClipTimeline();
+});
+
+$('clipEditor').addEventListener('pointerdown', e => {
+  const r = $('clipEditor').getBoundingClientRect();
+  const pct = Math.min(1, Math.max(0, (e.clientX - r.left) / r.width));
+  const time = pctToTime(pct);
+  const startDist = Math.abs(time - S.clip.start);
+  const endDist = Math.abs(time - S.clip.end);
+  const handleWindow = Math.max(0.25, clipDuration() * 0.025);
+  S.clip.dragging = startDist < handleWindow && startDist <= endDist ? 'start'
+    : endDist < handleWindow ? 'end'
+    : 'cursor';
+  $('clipEditor').setPointerCapture(e.pointerId);
+  moveClipPointer(e);
+});
+
+$('clipEditor').addEventListener('pointermove', e => {
+  if(S.clip.dragging) moveClipPointer(e);
+});
+
+async function moveClipPointer(e){
+  const r = $('clipEditor').getBoundingClientRect();
+  const time = pctToTime((e.clientX - r.left) / r.width);
+  if(S.clip.dragging === 'start'){
+    S.clip.start = Math.min(time, S.clip.end - 0.01);
+    S.clip.cursor = S.clip.start;
+    updateClipTimeline();
+  } else if(S.clip.dragging === 'end'){
+    S.clip.end = Math.max(time, S.clip.start + 0.01);
+    S.clip.cursor = S.clip.end;
+    updateClipTimeline();
+  } else {
+    await setClipCursor(time);
+  }
+}
+
+$('clipEditor').addEventListener('pointerup', e => {
+  if(S.clip.dragging === 'start' || S.clip.dragging === 'end') setClipCursor(S.clip.cursor);
+  S.clip.dragging = null;
+  $('clipEditor').releasePointerCapture(e.pointerId);
+});
+
+function setTrackProgress(label, pct, indeterminate=false){
+  $('trackProgressBox').classList.remove('hidden');
+  $('progressLabel').textContent = label;
+  $('progressPct').textContent = indeterminate ? '' : `${Math.round(pct)}%`;
+  $('trackProgress').classList.toggle('indeterminate', indeterminate);
+  $('trackProgress').querySelector('span').style.width = indeterminate ? '' : `${Math.max(0, Math.min(100, pct))}%`;
+}
+
+function hideTrackProgress(){
+  $('trackProgressBox').classList.add('hidden');
+  $('trackProgress').classList.remove('indeterminate');
+  $('trackProgress').querySelector('span').style.width = '0%';
+  $('progressPct').textContent = '0%';
+}
+
+function postTrackRequest(form){
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', '/api/track');
+    xhr.responseType = 'json';
+
+    xhr.upload.onprogress = e => {
+      if(e.lengthComputable) setTrackProgress('Uploading video', e.loaded / e.total * 100);
+      else setTrackProgress('Uploading video', 0, true);
+    };
+
+    xhr.onload = () => {
+      const data = xhr.response || {};
+      if(xhr.status >= 200 && xhr.status < 300 && data.ok) resolve(data);
+      else reject(new Error(data.error || `Tracking failed with HTTP ${xhr.status}.`));
+    };
+    xhr.onerror = () => reject(new Error('Could not reach the local tracking server.'));
+
+    setTrackProgress('Uploading video', 0);
+    xhr.send(form);
+  });
+}
+
+async function waitForTracking(runId){
+  while(true){
+    const response = await fetch(`/api/track/status/${encodeURIComponent(runId)}`, {cache:'no-store'});
+    const data = await response.json();
+    if(!data.ok) throw new Error(data.error || 'Could not read tracking status.');
+
+    const label = data.status === 'queued' ? 'Queued'
+      : data.status === 'running' ? `Processing frame ${data.processed_frames}/${data.total_frames}`
+      : data.status === 'complete' ? 'Processing complete'
+      : 'Tracking failed';
+    setTrackProgress(label, data.progress || 0);
+    $('trackStatus').textContent = data.message || label;
+
+    if(data.status === 'complete') return data;
+    if(data.status === 'failed') throw new Error(data.error || 'Tracking failed.');
+    await new Promise(resolve => setTimeout(resolve, 500));
+  }
+}
+
+$('runTrackBtn').onclick = async () => {
+  if(!S.videoFile){
+    $('trackStatus').textContent = 'Load the source video again before tracking.';
+    $('trackStatus').className = 'status warn';
+    return;
+  }
+
+  const start = S.clip.start;
+  const end = S.clip.end;
+  if(end <= start){
+    $('trackStatus').textContent = 'Clip end must be after clip start.';
+    $('trackStatus').className = 'status warn';
+    return;
+  }
+
+  $('runTrackBtn').disabled = true;
+  $('trackStatus').textContent = 'Preparing clip request…';
+  $('trackStatus').className = 'status';
+
+  const form = new FormData();
+  form.append('video_file', S.videoFile);
+  form.append('calibration_json', JSON.stringify(buildJson()));
+  form.append('start_time', start.toString());
+  form.append('end_time', end.toString());
+
+  try{
+    const started = await postTrackRequest(form);
+    setTrackProgress('Processing frame 0/' + started.total_frames, 0);
+    $('trackStatus').textContent = 'Running local model on the selected clip…';
+    const data = await waitForTracking(started.run_id);
+    S.run = data;
+    $('trackStatus').textContent = `Tracked ${data.rows} frame rows.`;
+    $('trackStatus').className = 'status ok';
+    setPhase('track');
+  } catch(error){
+    $('trackStatus').textContent = error.message;
+    $('trackStatus').className = 'status warn';
+  } finally {
+    $('runTrackBtn').disabled = false;
+    setTimeout(hideTrackProgress, 700);
+  }
+};
+
+function buildTrackView(){
+  if(!S.run) return;
+  const hit = S.run.hit_prediction && S.run.hit_prediction.frame ? S.run.hit_prediction : null;
+  const initialFrame = hit ? hit.frame : S.run.start_frame;
+  $('trackStats').innerHTML =
+    `<div class="stat"><span>Tracked source frames</span><span>${S.run.start_frame}–${S.run.end_frame}</span></div>` +
+    `<div class="stat"><span>Rows</span><span>${S.run.rows}</span></div>`;
+  $('resultVid').src = S.run.annotated_video_url;
+  $('judgeFrame').min = S.run.start_frame;
+  $('judgeFrame').max = S.run.end_frame;
+  $('judgeFrame').value = initialFrame;
+  $('judgeFrameOut').textContent = `${S.run.start_frame}–${S.run.end_frame}`;
+  $('judgeResult').classList.add('hidden');
+  $('judgeResult').innerHTML = '';
+
+  if(hit){
+    const pct = Math.round(hit.score * 100);
+    $('hitFrameBox').innerHTML =
+      `<div class="stat"><span>Estimated wall-hit frame</span><span>${hit.frame}</span></div>` +
+      `<div class="stat"><span>Model confidence</span><span>${pct}%</span></div>` +
+      `<button class="small" type="button" id="useHitFrameBtn">Use this frame</button>`;
+    $('hitFrameBox').classList.remove('hidden');
+    setTimeout(() => seekResultToFrame(hit.frame), 250);
+    setTimeout(() => {
+      const btn = $('useHitFrameBtn');
+      if(btn) btn.onclick = () => {
+        $('judgeFrame').value = hit.frame;
+        seekResultToFrame(hit.frame);
+      };
+    }, 0);
+  } else {
+    const error = S.run.hit_prediction && S.run.hit_prediction.error;
+    $('hitFrameBox').innerHTML = error
+      ? `<div>Wall-hit frame estimate unavailable: ${error}</div>`
+      : '<div>Wall-hit frame estimate unavailable. Train or update wall_hit_model.pkl to enable this.</div>';
+    $('hitFrameBox').classList.remove('hidden');
+  }
+}
+
+function seekResultToFrame(frame){
+  if(!S.run) return;
+  const t = Math.max(0, (frame - S.run.start_frame) / S.run.fps);
+  const video = $('resultVid');
+  const applySeek = () => {
+    video.currentTime = Math.min(t, video.duration || t);
+    video.pause();
+  };
+  if(Number.isFinite(video.duration) && video.duration > 0) applySeek();
+  else video.addEventListener('loadedmetadata', applySeek, {once:true});
+}
+
+$('resultVid').addEventListener('timeupdate', () => {
+  if(!S.run || document.activeElement === $('judgeFrame')) return;
+  const frame = Math.min(
+    S.run.end_frame,
+    Math.max(S.run.start_frame, Math.round(S.run.start_frame + $('resultVid').currentTime * S.run.fps))
+  );
+  $('judgeFrame').value = frame;
+});
+
+$('judgeFrame').addEventListener('change', () => {
+  const frame = parseInt($('judgeFrame').value, 10);
+  if(!Number.isNaN(frame)) seekResultToFrame(frame);
+});
+$('judgeFrame').addEventListener('input', () => {
+  const frame = parseInt($('judgeFrame').value, 10);
+  if(!Number.isNaN(frame)) seekResultToFrame(frame);
+});
+
+function renderJudgeResult(data){
+  const callClass = data.call === 'IN' ? 'in' : 'out';
+  $('judgeResult').innerHTML =
+    `<strong class="${callClass}">${data.call}</strong>` +
+    `<div>Frame ${data.frame} · ball center (${data.ball.x.toFixed(1)}, ${data.ball.y.toFixed(1)})</div>` +
+    `<div>Top line y ${data.top_y.toFixed(1)} · bottom line y ${data.bottom_y.toFixed(1)}</div>` +
+    `<div>${data.reason}${data.outside_line_span ? ' · outside calibrated line span' : ''}</div>`;
+  $('judgeResult').classList.remove('hidden');
+}
+
+$('judgeBtn').onclick = async () => {
+  if(!S.run) return;
+  const frame = parseInt($('judgeFrame').value, 10);
+  if(Number.isNaN(frame)) return;
+  $('judgeBtn').disabled = true;
+  $('judgeResult').classList.add('hidden');
+  seekResultToFrame(frame);
+
+  try{
+    const response = await fetch('/api/judge', {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({ run_id:S.run.run_id, frame })
+    });
+    const data = await response.json();
+    if(!data.ok) throw new Error(data.error || 'Judgement failed.');
+    renderJudgeResult(data);
+  } catch(error){
+    $('judgeResult').innerHTML = error.message;
+    $('judgeResult').classList.remove('hidden');
+  } finally {
+    $('judgeBtn').disabled = false;
+  }
+};
+
 $('exportBtn').onclick = () => {
   const blob = new Blob([JSON.stringify(buildJson(), null, 2)], { type:'application/json' });
   const a = document.createElement('a');
@@ -627,6 +1163,7 @@ $('copyBtn').onclick = async () => {
 };
 
 setPhase('load');
+checkBackend();
 </script>
 </body>
 </html>
