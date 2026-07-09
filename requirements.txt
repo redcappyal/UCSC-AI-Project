@@ -1,5 +1,8 @@
+flask
 inference-sdk
 inference
+numpy
 opencv-python
+Pillow
+python-dotenv
 scikit-learn
-flask
