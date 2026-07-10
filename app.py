@@ -2,8 +2,6 @@ import csv
 import json
 import os
 import pickle
-import subprocess
-import sys
 import threading
 import time
 from pathlib import Path
@@ -26,14 +24,33 @@ ROOT = Path(__file__).resolve().parent
 RUNS_DIR = ROOT / "ui_runs"
 UPLOADS_DIR = RUNS_DIR / "uploads"
 WALL_HIT_MODEL_PATH = ROOT / "wall_hit_model.pkl"
+ROBOFLOW_CACHE_DIR = ROOT / ".roboflow-cache"
+
+os.environ.setdefault("MODEL_CACHE_DIR", str(ROBOFLOW_CACHE_DIR))
+os.environ.setdefault("METRICS_ENABLED", "False")
+os.environ.setdefault("OTEL_METRICS_ENABLED", "False")
 
 if load_dotenv is not None:
     load_dotenv(ROOT / ".env")
+
+from local_model_eval import (
+    CONFIDENCE_THRESHOLD,
+    CSV_FIELDNAMES,
+    DEFAULT_MODEL_ID,
+    ball_csv_row,
+    infer_frame,
+    normalize_predictions,
+    select_ball_prediction,
+)
 
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = 2 * 1024 * 1024 * 1024
 JOBS = {}
 JOBS_LOCK = threading.Lock()
+TRACKING_MODEL = None
+TRACKING_MODEL_ID = None
+TRACKING_MODEL_LOCK = threading.Lock()
+TRACKING_MODEL_LOAD_LOCK = threading.Lock()
 
 
 def error_response(message, status=400):
@@ -56,6 +73,25 @@ def load_calibration_lines(calibration):
         )
 
     return line_from_calibration(top), line_from_calibration(bottom)
+
+
+def line_x_bounds(line):
+    return (
+        min(line.left.x, line.right.x),
+        max(line.left.x, line.right.x),
+    )
+
+
+def calibration_wall_x_bounds(top_line, bottom_line, frame_width):
+    top_min, top_max = line_x_bounds(top_line)
+    bottom_min, bottom_max = line_x_bounds(bottom_line)
+    left = max(top_min, bottom_min)
+    right = min(top_max, bottom_max)
+
+    if right <= left:
+        return 0.0, max(1.0, float(frame_width or 1))
+
+    return left, right
 
 
 def video_info(path):
@@ -161,46 +197,85 @@ def predict_wall_hit_frame(csv_path):
     }
 
 
-def run_tracking_job(run_id, command, env, csv_path):
-    output_lines = []
+def get_tracking_model():
+    global TRACKING_MODEL, TRACKING_MODEL_ID
+
+    model_id = os.getenv("ROBOFLOW_MODEL_ID", DEFAULT_MODEL_ID)
+    api_key = os.getenv("ROBOFLOW_API_KEY", "")
+
+    if not api_key.strip():
+        raise RuntimeError("No Roboflow API key found. Set ROBOFLOW_API_KEY in .env.")
+
+    with TRACKING_MODEL_LOAD_LOCK:
+        if TRACKING_MODEL is not None and TRACKING_MODEL_ID == model_id:
+            return TRACKING_MODEL
+
+        from inference import get_model
+
+        TRACKING_MODEL = get_model(
+            model_id=model_id,
+            api_key=api_key,
+            countinference=False,
+        )
+        TRACKING_MODEL_ID = model_id
+        return TRACKING_MODEL
+
+
+def run_tracking_job(run_id, video_path, start_frame, end_frame, frame_stride, csv_path):
     processed_frames = 0
 
-    update_job(run_id, status="running", message="Loading local model...")
-    process = subprocess.Popen(
-        command,
-        cwd=ROOT,
-        env=env,
-        text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        bufsize=1,
-    )
+    try:
+        update_job(run_id, status="running", message="Loading local model...")
+        model = get_tracking_model()
 
-    assert process.stdout is not None
-    for line in process.stdout:
-        line = line.rstrip()
-        output_lines.append(line)
-        output_lines = output_lines[-120:]
+        cap = cv2.VideoCapture(str(video_path))
+        if not cap.isOpened():
+            raise RuntimeError(f"Could not open video: {video_path}")
 
-        if line.startswith("Processed source frame "):
-            processed_frames += 1
-            update_job(
-                run_id,
-                processed_frames=processed_frames,
-                message=line,
-            )
-        elif line:
-            update_job(run_id, message=line)
+        source_fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
+        cap.set(cv2.CAP_PROP_POS_FRAMES, start_frame)
+        read_count = start_frame
 
-    return_code = process.wait()
-    if return_code != 0:
+        csv_path.parent.mkdir(parents=True, exist_ok=True)
+        with csv_path.open("w", newline="") as csv_file:
+            csv_writer = csv.DictWriter(csv_file, fieldnames=CSV_FIELDNAMES)
+            csv_writer.writeheader()
+
+            while read_count <= end_frame:
+                ok, frame = cap.read()
+                if not ok:
+                    break
+
+                if (read_count - start_frame) % frame_stride != 0:
+                    read_count += 1
+                    continue
+
+                with TRACKING_MODEL_LOCK:
+                    result = infer_frame(model, frame, CONFIDENCE_THRESHOLD)
+                predictions = normalize_predictions(result)
+                ball_prediction = select_ball_prediction(predictions)
+                csv_writer.writerow(ball_csv_row(read_count, source_fps, ball_prediction))
+
+                processed_frames += 1
+                detected_text = "detected" if ball_prediction is not None else "not detected"
+                message = f"Processed source frame {read_count} -> {detected_text}"
+                update_job(
+                    run_id,
+                    processed_frames=processed_frames,
+                    message=message,
+                )
+                read_count += 1
+    except Exception as error:
         update_job(
             run_id,
             status="failed",
-            error="Tracking failed.\n\n" + "\n".join(output_lines)[-4000:],
+            error=f"Tracking failed.\n\n{error}",
             message="Tracking failed.",
         )
         return
+    finally:
+        if "cap" in locals():
+            cap.release()
 
     hit_prediction = None
     try:
@@ -280,25 +355,6 @@ def track_clip():
     csv_path = run_dir / "ball_coordinates.csv"
     calibration_path.write_text(json.dumps(calibration, indent=2), encoding="utf-8")
 
-    command = [
-        sys.executable,
-        str(ROOT / "local_model_eval.py"),
-        "--video",
-        str(video_path),
-        "--start-frame",
-        str(start_frame),
-        "--end-frame",
-        str(end_frame),
-        "--frame-stride",
-        str(frame_stride),
-        "--csv",
-        str(csv_path),
-        "--no-video",
-    ]
-
-    env = os.environ.copy()
-    env.setdefault("PYTHONUNBUFFERED", "1")
-
     selected_frames = end_frame - start_frame + 1
     total_frames = (selected_frames + frame_stride - 1) // frame_stride
     update_job(
@@ -317,7 +373,7 @@ def track_clip():
 
     thread = threading.Thread(
         target=run_tracking_job,
-        args=(run_id, command, env, csv_path),
+        args=(run_id, video_path, start_frame, end_frame, frame_stride, csv_path),
         daemon=True,
     )
     thread.start()
@@ -358,7 +414,12 @@ def judge_frame():
         top_line, bottom_line = load_calibration_lines(calibration)
         ball = load_ball_position(csv_path, frame)
         call, reason, top_y, bottom_y = judge_ball(ball, top_line, bottom_line)
-        wall_x = ball.x / max(1.0, float(calibration.get("frame_width", 1)))
+        wall_left, wall_right = calibration_wall_x_bounds(
+            top_line,
+            bottom_line,
+            calibration.get("frame_width", 1),
+        )
+        wall_x = (ball.x - wall_left) / (wall_right - wall_left)
         wall_y = (ball.y - top_y) / (bottom_y - top_y)
     except Exception as error:
         return error_response(str(error))
@@ -375,6 +436,7 @@ def judge_frame():
             "wall_diagram": {
                 "x": wall_x,
                 "y": wall_y,
+                "x_span": [wall_left, wall_right],
                 "y_reference": "0 is the out-line lower edge; 1 is the tin top edge",
             },
             "outside_line_span": (

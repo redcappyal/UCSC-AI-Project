@@ -599,7 +599,12 @@ function extractEdge(mask, W, H, mode){          // mode: 'min' (top edge) | 'ma
   }
   const xs = [], ys = [];
   for(let x = 0; x < W; x++) if(ext[x] >= 0){ xs.push(x); ys.push(ext[x]); }
-  return { xs, ys };
+  return {
+    xs,
+    ys,
+    xMin: xs.length ? xs[0] : 0,
+    xMax: xs.length ? xs[xs.length - 1] : 0,
+  };
 }
 
 function lsq(xs, ys){
@@ -625,7 +630,15 @@ function robustFit(xs, ys){
   }
   if(kx.length >= MIN_COLS && kx.length < xs.length){
     const f2 = lsq(kx, ky);
-    if(f2) f = f2;
+    if(f2){
+      f = f2;
+      f.xMin = Math.min(...kx);
+      f.xMax = Math.max(...kx);
+    }
+  }
+  if(!Number.isFinite(f.xMin) || !Number.isFinite(f.xMax)){
+    f.xMin = Math.min(...xs);
+    f.xMax = Math.max(...xs);
   }
   f.total = xs.length;
   return f;
@@ -689,12 +702,14 @@ function maskToCanvas(mask, W, H, rgb, alpha){
 }
 
 function drawFitLine(fit, color){
+  const x0 = Number.isFinite(fit.xMin) ? fit.xMin : 0;
+  const x1 = Number.isFinite(fit.xMax) ? fit.xMax : S.W - 1;
   ctx.save();
   ctx.strokeStyle = color;
   ctx.lineWidth = Math.max(2, S.W / 700);
   ctx.beginPath();
-  ctx.moveTo(0, fit.b);
-  ctx.lineTo(S.W - 1, fit.m * (S.W - 1) + fit.b);
+  ctx.moveTo(x0, fit.m * x0 + fit.b);
+  ctx.lineTo(x1, fit.m * x1 + fit.b);
   ctx.stroke();
   ctx.restore();
 }
@@ -744,14 +759,17 @@ function buildReview(){
 function buildJson(){
   const line = k => {
     const c = CFG[k], f = S.lines[k].fit;
-    const y0 = +f.b.toFixed(2);
-    const y1 = +(f.m * (S.W - 1) + f.b).toFixed(2);
+    const x0 = Number.isFinite(f.xMin) ? f.xMin : 0;
+    const x1 = Number.isFinite(f.xMax) ? f.xMax : S.W - 1;
+    const y0 = +(f.m * x0 + f.b).toFixed(2);
+    const y1 = +(f.m * x1 + f.b).toFixed(2);
     return {
       name: c.edgeName,
       description: c.edgeDesc,
-      endpoints: [[0, y0], [S.W - 1, y1]],
+      endpoints: [[+x0.toFixed(2), y0], [+x1.toFixed(2), y1]],
       slope: f.m, intercept: f.b,
       fit_rms_px: +f.rms.toFixed(2),
+      x_span_px: [+x0.toFixed(2), +x1.toFixed(2)],
       edge_pixels_used: f.n
     };
   };

@@ -1,5 +1,6 @@
 import base64
 import csv
+import os
 import time
 from pathlib import Path
 
@@ -9,7 +10,7 @@ from inference_sdk import InferenceHTTPClient
 
 
 API_URL = "https://serverless.roboflow.com"
-API_KEY = "fSbrLMfk0LmeJbQfbGRp"
+API_KEY = os.getenv("ROBOFLOW_API_KEY", "")
 
 WORKSPACE = "squash-line-calling-model"
 WORKFLOW_ID = "squash-line-calling-vsquash-line-calling-1-rfdetr-medium-t1-logic"

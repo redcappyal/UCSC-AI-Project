@@ -7,6 +7,9 @@ os.environ.setdefault("CORE_MODEL_SAM_ENABLED", "False")
 os.environ.setdefault("CORE_MODEL_SAM3_ENABLED", "False")
 os.environ.setdefault("CORE_MODEL_GAZE_ENABLED", "False")
 os.environ.setdefault("CORE_MODEL_YOLO_WORLD_ENABLED", "False")
+os.environ.setdefault("MODEL_CACHE_DIR", str(Path(__file__).with_name(".roboflow-cache")))
+os.environ.setdefault("METRICS_ENABLED", "False")
+os.environ.setdefault("OTEL_METRICS_ENABLED", "False")
 os.environ.setdefault("MPLCONFIGDIR", str(Path(__file__).with_name(".matplotlib-cache")))
 
 import cv2
@@ -207,7 +210,7 @@ def main():
     from inference import get_model
 
     print(f"Loading local Roboflow model: {args.model_id}")
-    model = get_model(model_id=args.model_id, api_key=args.api_key)
+    model = get_model(model_id=args.model_id, api_key=args.api_key, countinference=False)
     print("Model loaded.")
 
     cap.set(cv2.CAP_PROP_POS_FRAMES, start_frame)
