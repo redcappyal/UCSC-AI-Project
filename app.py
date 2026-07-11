@@ -38,8 +38,7 @@ from local_model_eval import (
     CSV_FIELDNAMES,
     DEFAULT_MODEL_ID,
     ball_csv_row,
-    infer_frame,
-    normalize_predictions,
+    infer_frame_predictions,
     select_ball_prediction,
 )
 
@@ -146,6 +145,7 @@ def public_job(job):
         "end_frame": job.get("end_frame"),
         "fps": job.get("fps"),
         "frame_stride": job.get("frame_stride", 1),
+        "inference_width": job.get("inference_width", 0),
         "processed_frames": processed_frames,
         "total_frames": total_frames,
         "progress": progress,
@@ -221,7 +221,15 @@ def get_tracking_model():
         return TRACKING_MODEL
 
 
-def run_tracking_job(run_id, video_path, start_frame, end_frame, frame_stride, csv_path):
+def run_tracking_job(
+    run_id,
+    video_path,
+    start_frame,
+    end_frame,
+    frame_stride,
+    inference_width,
+    csv_path,
+):
     processed_frames = 0
 
     try:
@@ -251,8 +259,12 @@ def run_tracking_job(run_id, video_path, start_frame, end_frame, frame_stride, c
                     continue
 
                 with TRACKING_MODEL_LOCK:
-                    result = infer_frame(model, frame, CONFIDENCE_THRESHOLD)
-                predictions = normalize_predictions(result)
+                    predictions = infer_frame_predictions(
+                        model,
+                        frame,
+                        CONFIDENCE_THRESHOLD,
+                        inference_width,
+                    )
                 ball_prediction = select_ball_prediction(predictions)
                 csv_writer.writerow(ball_csv_row(read_count, source_fps, ball_prediction))
 
@@ -322,14 +334,20 @@ def track_clip():
         start_time = float(request.form.get("start_time", "0"))
         end_time = float(request.form.get("end_time", "0"))
         frame_stride = int(request.form.get("frame_stride", "1"))
+        inference_width = int(request.form.get("inference_width", "960"))
     except ValueError:
-        return error_response("Clip start/end times and frame stride must be numbers.")
+        return error_response(
+            "Clip start/end times, frame stride, and inference width must be numbers."
+        )
 
     if end_time <= start_time:
         return error_response("Clip end must be after clip start.")
 
     if frame_stride < 1 or frame_stride > 10:
         return error_response("Frame stride must be between 1 and 10.")
+
+    if inference_width not in {0, 640, 960, 1280}:
+        return error_response("Inference width must be 0, 640, 960, or 1280.")
 
     run_id = str(int(time.time() * 1000))
     run_dir = RUNS_DIR / run_id
@@ -366,6 +384,7 @@ def track_clip():
         end_frame=end_frame,
         fps=info["fps"],
         frame_stride=frame_stride,
+        inference_width=inference_width,
         processed_frames=0,
         total_frames=total_frames,
         csv_url=f"/api/runs/{run_id}/ball_coordinates.csv",
@@ -373,7 +392,15 @@ def track_clip():
 
     thread = threading.Thread(
         target=run_tracking_job,
-        args=(run_id, video_path, start_frame, end_frame, frame_stride, csv_path),
+        args=(
+            run_id,
+            video_path,
+            start_frame,
+            end_frame,
+            frame_stride,
+            inference_width,
+            csv_path,
+        ),
         daemon=True,
     )
     thread.start()
