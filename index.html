@@ -94,8 +94,19 @@
     box-shadow:0 0 0 1px rgba(0,0,0,.45); pointer-events:none}
   #clipCursor::before{content:''; position:absolute; left:-6px; top:0; border-left:7px solid transparent;
     border-right:7px solid transparent; border-top:9px solid #f5f5f5}
-  .hitbox{border-color:#425063}
-  .hitbox button{margin-top:10px}
+  .hitTimeline{position:relative; height:72px; margin-top:10px; border-radius:8px; overflow:hidden;
+    background:#090a0c; border:1px solid #2c333c; touch-action:none; cursor:pointer}
+  #trackStrip{position:absolute; inset:0; width:100%; height:100%; display:block}
+  #hitBars{position:absolute; inset:0}
+  .hitBar{position:absolute; top:0; bottom:0; width:24px; margin-left:-12px; cursor:pointer;
+    display:flex; justify-content:center}
+  .hitBar::before{content:''; width:5px; height:100%; border-radius:2px;
+    box-shadow:0 0 0 1px rgba(0,0,0,.5)}
+  .hitBar.in::before{background:#7ee08a}
+  .hitBar.out::before{background:var(--red)}
+  .hitBar.unknown::before{background:var(--warn)}
+  #trackCursor{position:absolute; top:0; bottom:0; width:2px; margin-left:-1px; background:#f5f5f5;
+    box-shadow:0 0 0 1px rgba(0,0,0,.45); pointer-events:none}
   .callout{border:1px solid #2c333c; border-radius:8px; padding:12px; margin-top:12px;
     background:#111318; font-size:14px; line-height:1.5}
   .callout strong{font-size:28px; letter-spacing:.03em}
@@ -234,9 +245,14 @@
 
   <!-- PHASE: track + judge -->
   <section class="card hidden" id="p-track">
-    <p class="instruction">Enter the source frame to judge. Use a frame inside the tracked clip range.</p>
+    <p class="instruction">Scrub the timeline to view any frame. Vertical bars are detected wall hits — <b style="color:#7ee08a">green IN</b>, <b style="color:var(--red)">red OUT</b>. Tap a bar to see the bounce frame and its call.</p>
     <div style="margin-top:10px" id="trackStats"></div>
-    <div class="callout hitbox hidden" id="hitFrameBox"></div>
+    <div class="hitTimeline hidden" id="hitTimeline">
+      <canvas id="trackStrip"></canvas>
+      <div id="hitBars"></div>
+      <div id="trackCursor"></div>
+    </div>
+    <p class="status" id="hitsStatus" style="margin-top:6px"></p>
     <div style="margin-top:12px">
       <div class="sliderlabel"><span>Frame to judge</span><output id="judgeFrameOut"></output></div>
       <input type="number" id="judgeFrame" step="1">
@@ -279,6 +295,7 @@ const S = {
   lines:{out:null, tin:null}, // committed: {seed, maskCanvas, fit}
   run:null,                   // backend tracking result
   trackSeekId:0,
+  trackStripGen:0,            // invalidates in-flight timeline thumbnail renders
   clip:{start:0, end:1, cursor:0, dragging:null, thumbnails:false, playing:false, raf:null, frameStride:1},
   view:{scale:1, tx:0, ty:0}, // zoom/pan applied to the canvas while tapping
 };
@@ -1120,12 +1137,13 @@ $('runTrackBtn').onclick = async () => {
 
 function buildTrackView(){
   if(!S.run) return;
-  const hit = S.run.hit_prediction && S.run.hit_prediction.frame ? S.run.hit_prediction : null;
-  const initialFrame = hit ? hit.frame : S.run.start_frame;
+  const hits = S.run.hits || [];
+  const initialFrame = hits.length ? hits[0].frame : S.run.start_frame;
   $('trackStats').innerHTML =
     `<div class="stat"><span>Tracked source frames</span><span>${S.run.start_frame}–${S.run.end_frame}</span></div>` +
     `<div class="stat"><span>Analyzed every</span><span>${S.run.frame_stride || 1} frame(s)</span></div>` +
-    `<div class="stat"><span>Rows</span><span>${S.run.rows}</span></div>`;
+    `<div class="stat"><span>Rows</span><span>${S.run.rows}</span></div>` +
+    `<div class="stat"><span>Wall hits detected</span><span>${hits.length}</span></div>`;
   $('judgeFrame').min = S.run.start_frame;
   $('judgeFrame').max = S.run.end_frame;
   $('judgeFrame').value = initialFrame;
@@ -1133,30 +1151,106 @@ function buildTrackView(){
   $('judgeResult').classList.add('hidden');
   $('judgeResult').innerHTML = '';
   $('wallDiagram').classList.add('hidden');
-  seekSourceFrameToCanvas(initialFrame);
-
-  if(hit){
-    const pct = Math.round(hit.score * 100);
-    $('hitFrameBox').innerHTML =
-      `<div class="stat"><span>Estimated wall-hit frame</span><span>${hit.frame}</span></div>` +
-      `<div class="stat"><span>Model confidence</span><span>${pct}%</span></div>` +
-      `<button class="small" type="button" id="useHitFrameBtn">Use this frame</button>`;
-    $('hitFrameBox').classList.remove('hidden');
-    setTimeout(() => {
-      const btn = $('useHitFrameBtn');
-      if(btn) btn.onclick = () => {
-        $('judgeFrame').value = hit.frame;
-        seekSourceFrameToCanvas(hit.frame);
-      };
-    }, 0);
-  } else {
-    const error = S.run.hit_prediction && S.run.hit_prediction.error;
-    $('hitFrameBox').innerHTML = error
-      ? `<div>Wall-hit frame estimate unavailable: ${error}</div>`
-      : '<div>Wall-hit frame estimate unavailable. Train or update wall_hit_model.pkl to enable this.</div>';
-    $('hitFrameBox').classList.remove('hidden');
-  }
+  buildHitTimeline(hits, initialFrame);
 }
+
+function frameToRunPct(frame){
+  const span = Math.max(1, S.run.end_frame - S.run.start_frame);
+  return Math.min(100, Math.max(0, (frame - S.run.start_frame) / span * 100));
+}
+
+function updateTrackCursor(frame){
+  if(!S.run) return;
+  $('trackCursor').style.left = `${frameToRunPct(frame)}%`;
+}
+
+function buildHitTimeline(hits, initialFrame){
+  $('hitTimeline').classList.remove('hidden');
+  const bars = $('hitBars');
+  bars.innerHTML = '';
+
+  for(const hit of hits){
+    const cls = hit.call === 'IN' ? 'in' : hit.call === 'OUT' ? 'out' : 'unknown';
+    const bar = document.createElement('div');
+    bar.className = `hitBar ${cls}`;
+    bar.style.left = `${frameToRunPct(hit.frame)}%`;
+    bar.title = `Frame ${hit.frame} · ${hit.call}`;
+    bar.addEventListener('pointerdown', e => e.stopPropagation());
+    bar.addEventListener('click', () => {
+      seekSourceFrameToCanvas(hit.frame);
+      judgeFrameRequest(hit.frame);
+    });
+    bars.appendChild(bar);
+  }
+
+  if(S.run.hits_error){
+    $('hitsStatus').textContent = `Wall-hit detection failed: ${S.run.hits_error}`;
+    $('hitsStatus').className = 'status warn';
+  } else if(hits.length){
+    $('hitsStatus').textContent = 'Tap a bar to jump to the bounce frame, or drag anywhere on the strip to scrub.';
+    $('hitsStatus').className = 'status';
+  } else {
+    $('hitsStatus').textContent = 'No wall hits detected in this clip. Drag on the strip to scrub frames manually.';
+    $('hitsStatus').className = 'status warn';
+  }
+
+  updateTrackCursor(initialFrame);
+  renderTrackStrip(initialFrame);
+}
+
+async function renderTrackStrip(initialFrame){
+  const gen = ++S.trackStripGen;
+  const strip = $('trackStrip');
+  const box = $('hitTimeline').getBoundingClientRect();
+  const dpr = window.devicePixelRatio || 1;
+  strip.width = Math.max(1, Math.round(box.width * dpr));
+  strip.height = Math.max(1, Math.round(box.height * dpr));
+  const cc = strip.getContext('2d');
+  cc.setTransform(dpr, 0, 0, dpr, 0, 0);
+  cc.fillStyle = '#090a0c';
+  cc.fillRect(0, 0, box.width, box.height);
+
+  const fps = S.run && S.run.fps ? S.run.fps : 60;
+  const startT = S.run.start_frame / fps;
+  const endT = S.run.end_frame / fps;
+  const count = Math.max(5, Math.min(12, Math.floor(box.width / 86)));
+  const thumbW = box.width / count;
+  vid.pause();
+
+  for(let i = 0; i < count; i++){
+    const t = startT + (i + 0.5) / count * (endT - startT);
+    await seekVideo(t);
+    if(gen !== S.trackStripGen || S.phase !== 'track') return;
+    cc.drawImage(vid, i * thumbW, 0, thumbW, box.height);
+    cc.strokeStyle = 'rgba(255,255,255,.12)';
+    cc.strokeRect(i * thumbW, 0, thumbW, box.height);
+  }
+
+  seekSourceFrameToCanvas(initialFrame);
+}
+
+let trackScrubbing = false;
+function scrubTrackPointer(e){
+  if(!S.run) return;
+  const r = $('hitTimeline').getBoundingClientRect();
+  const pct = Math.min(1, Math.max(0, (e.clientX - r.left) / r.width));
+  const frame = Math.round(S.run.start_frame + pct * (S.run.end_frame - S.run.start_frame));
+  seekSourceFrameToCanvas(frame);
+}
+$('hitTimeline').addEventListener('pointerdown', e => {
+  if(S.phase !== 'track') return;
+  $('hitTimeline').setPointerCapture(e.pointerId);
+  trackScrubbing = true;
+  scrubTrackPointer(e);
+});
+$('hitTimeline').addEventListener('pointermove', e => {
+  if(trackScrubbing) scrubTrackPointer(e);
+});
+$('hitTimeline').addEventListener('pointerup', e => {
+  trackScrubbing = false;
+  $('hitTimeline').releasePointerCapture(e.pointerId);
+});
+$('hitTimeline').addEventListener('pointercancel', () => { trackScrubbing = false; });
 
 function clampTrackedFrame(frame){
   if(!S.run) return;
@@ -1182,6 +1276,7 @@ async function seekSourceFrameToCanvas(frame, syncInput=true){
     const L = S.lines[k];
     if(L) drawFitLine(L.fit, CFG[k].hex);
   }
+  updateTrackCursor(frame);
   if(syncInput) $('judgeFrame').value = frame;
 }
 
@@ -1277,14 +1372,11 @@ function renderWallDiagram(data){
   c.classList.remove('hidden');
 }
 
-$('judgeBtn').onclick = async () => {
-  if(!S.run) return;
-  const frame = parseInt($('judgeFrame').value, 10);
-  if(Number.isNaN(frame)) return;
+async function judgeFrameRequest(frame){
+  if(!S.run || Number.isNaN(frame)) return;
   $('judgeBtn').disabled = true;
   $('judgeResult').classList.add('hidden');
   $('wallDiagram').classList.add('hidden');
-  seekSourceFrameToCanvas(frame);
 
   try{
     const response = await fetch('/api/judge', {
@@ -1302,6 +1394,14 @@ $('judgeBtn').onclick = async () => {
   } finally {
     $('judgeBtn').disabled = false;
   }
+}
+
+$('judgeBtn').onclick = () => {
+  if(!S.run) return;
+  const frame = parseInt($('judgeFrame').value, 10);
+  if(Number.isNaN(frame)) return;
+  seekSourceFrameToCanvas(frame);
+  judgeFrameRequest(frame);
 };
 
 $('exportBtn').onclick = () => {

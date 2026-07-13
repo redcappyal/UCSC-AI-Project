@@ -1,7 +1,5 @@
-import csv
 import json
 import os
-import pickle
 import subprocess
 import sys
 import threading
@@ -9,12 +7,11 @@ import time
 from pathlib import Path
 
 import cv2
-import numpy as np
 from flask import Flask, jsonify, request, send_file, send_from_directory
 from werkzeug.utils import secure_filename
 
+from detect_wall_hits import detect_hits
 from judge_call import Line, Point, judge_ball, load_ball_position
-from train_wall_hit_model import WINDOW_RADIUS, build_feature_vector, load_ball_positions
 
 try:
     from dotenv import load_dotenv
@@ -25,7 +22,6 @@ except ImportError:
 ROOT = Path(__file__).resolve().parent
 RUNS_DIR = ROOT / "ui_runs"
 UPLOADS_DIR = RUNS_DIR / "uploads"
-WALL_HIT_MODEL_PATH = ROOT / "wall_hit_model.pkl"
 
 if load_dotenv is not None:
     load_dotenv(ROOT / ".env")
@@ -118,7 +114,8 @@ def public_job(job):
 
     for key in (
         "rows",
-        "hit_prediction",
+        "hits",
+        "hits_error",
         "annotated_video_url",
         "csv_url",
         "error",
@@ -129,39 +126,47 @@ def public_job(job):
     return response
 
 
-def predict_wall_hit_frame(csv_path):
-    if not WALL_HIT_MODEL_PATH.exists():
-        return None
+def detect_and_judge_hits(run_dir, csv_path):
+    detected = detect_hits(csv_path)
 
-    positions = load_ball_positions(csv_path)
-    frames = np.array(sorted(positions), dtype=np.int64)
-    if len(frames) == 0:
-        return None
+    top_line = bottom_line = None
+    calibration_path = run_dir / "calibration.json"
+    if calibration_path.exists():
+        try:
+            calibration = json.loads(calibration_path.read_text(encoding="utf-8"))
+            top_line, bottom_line = load_calibration_lines(calibration)
+        except (ValueError, json.JSONDecodeError):
+            pass
 
-    X = np.array(
-        [build_feature_vector(positions, int(frame), WINDOW_RADIUS) for frame in frames],
-        dtype=np.float32,
+    hits = []
+    for hit in detected:
+        frame = int(hit["hit_frame"])
+        call, reason = "UNKNOWN", "judging_unavailable"
+        if top_line is not None:
+            try:
+                ball = load_ball_position(csv_path, frame)
+                call, reason, _, _ = judge_ball(ball, top_line, bottom_line)
+            except ValueError as error:
+                call, reason = "UNKNOWN", str(error)
+
+        hits.append(
+            {
+                "frame": frame,
+                "timestamp_seconds": hit["timestamp_seconds"],
+                "dv_magnitude": hit["dv_magnitude"],
+                "after_gap": hit["after_gap"],
+                "call": call,
+                "reason": reason,
+            }
+        )
+
+    (run_dir / "detected_hits.json").write_text(
+        json.dumps({"hits": hits}, indent=2), encoding="utf-8"
     )
-
-    with WALL_HIT_MODEL_PATH.open("rb") as model_file:
-        model = pickle.load(model_file)
-
-    if hasattr(model, "predict_proba"):
-        scores = model.predict_proba(X)[:, 1]
-    elif hasattr(model, "decision_function"):
-        raw_scores = model.decision_function(X)
-        scores = 1 / (1 + np.exp(-raw_scores))
-    else:
-        scores = model.predict(X).astype(float)
-
-    best_index = int(np.argmax(scores))
-    return {
-        "frame": int(frames[best_index]),
-        "score": float(scores[best_index]),
-    }
+    return hits
 
 
-def run_tracking_job(run_id, command, env, csv_path):
+def run_tracking_job(run_id, command, env, run_dir, csv_path):
     output_lines = []
     processed_frames = 0
 
@@ -202,11 +207,12 @@ def run_tracking_job(run_id, command, env, csv_path):
         )
         return
 
-    hit_prediction = None
+    hits = []
+    hits_error = None
     try:
-        hit_prediction = predict_wall_hit_frame(csv_path)
+        hits = detect_and_judge_hits(run_dir, csv_path)
     except Exception as error:
-        hit_prediction = {"error": str(error)}
+        hits_error = str(error)
 
     job = get_job(run_id) or {}
     total_frames = int(job.get("total_frames", processed_frames or 1))
@@ -215,7 +221,8 @@ def run_tracking_job(run_id, command, env, csv_path):
         status="complete",
         processed_frames=total_frames,
         rows=count_csv_rows(csv_path),
-        hit_prediction=hit_prediction,
+        hits=hits,
+        hits_error=hits_error,
         message="Tracking complete.",
     )
 
@@ -317,7 +324,7 @@ def track_clip():
 
     thread = threading.Thread(
         target=run_tracking_job,
-        args=(run_id, command, env, csv_path),
+        args=(run_id, command, env, run_dir, csv_path),
         daemon=True,
     )
     thread.start()
