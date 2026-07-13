@@ -1,0 +1,13 @@
+# Secrets — never commit API keys
+.env
+
+# Python build/cache junk
+__pycache__/
+*.pyc
+
+# Tool caches
+.matplotlib-cache/
+.roboflow-cache/
+
+# App output (uploaded videos, tracking results)
+ui_runs/
