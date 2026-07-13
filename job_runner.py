@@ -58,7 +58,7 @@ def persist_job(job):
         pass
 
 
-def update_job(run_id, **updates):
+def update_job(run_id, /, **updates):
     with JOBS_LOCK:
         job = JOBS.setdefault(run_id, {})
         job.update(updates)
