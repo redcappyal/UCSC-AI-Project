@@ -24,6 +24,7 @@ except ImportError:
 
 
 ROOT = Path(__file__).resolve().parent
+APP_VERSION = "coarse2fine-cpu-2026-07-13-1"
 
 if load_dotenv is not None:
     load_dotenv(ROOT / ".env")
@@ -157,12 +158,22 @@ def find_hit_impact_near_frame(run_id, run_dir, frame):
 
 @app.get("/")
 def index():
-    return send_file(ROOT / "index.html")
+    response = send_file(ROOT / "index.html", max_age=0)
+    response.headers["Cache-Control"] = "no-store, max-age=0"
+    return response
 
 
 @app.get("/api/health")
 def health():
-    return jsonify({"ok": True})
+    return jsonify(
+        {
+            "ok": True,
+            "version": APP_VERSION,
+            "root": str(ROOT),
+            "default_device": os.environ.get("DEFAULT_DEVICE"),
+            "onnx_providers": os.environ.get("ONNXRUNTIME_EXECUTION_PROVIDERS"),
+        }
+    )
 
 
 def video_path_for_id(video_id):
@@ -376,5 +387,12 @@ def run_file(run_id, filename):
 if __name__ == "__main__":
     RUNS_DIR.mkdir(exist_ok=True)
     UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
+    host = os.getenv("HOST", "127.0.0.1")
     port = int(os.getenv("PORT", "5000"))
-    app.run(host="127.0.0.1", port=port, debug=False)
+    print(f"Starting SquashAnalytics {APP_VERSION} from {ROOT}")
+    print(f"DEFAULT_DEVICE={os.environ.get('DEFAULT_DEVICE')}")
+    print(f"ONNXRUNTIME_EXECUTION_PROVIDERS={os.environ.get('ONNXRUNTIME_EXECUTION_PROVIDERS')}")
+    print(f"Open http://127.0.0.1:{port}/ on this Mac.")
+    if host == "127.0.0.1":
+        print(f"For phone access, restart with: HOST=0.0.0.0 PORT={port} python app.py")
+    app.run(host=host, port=port, debug=False)

@@ -8,6 +8,7 @@ from environment defaults, which must be set before `inference` loads.
 
 import os
 import threading
+from contextlib import nullcontext
 from pathlib import Path
 
 import cv2
@@ -29,6 +30,25 @@ os.environ.setdefault("MPLCONFIGDIR", str(ROOT / ".matplotlib-cache"))
 # inference time on macOS, and onnxruntime tries it by default. Pin CPU; a
 # GPU server can override this in .env (e.g. CUDAExecutionProvider).
 os.environ.setdefault("ONNXRUNTIME_EXECUTION_PROVIDERS", "[CPUExecutionProvider]")
+os.environ.setdefault("DEFAULT_DEVICE", "cpu")
+
+# Parts of the inference stack call torch.cuda.stream(None) even on CPU-only
+# machines, which crashes mid-run; make a None stream a no-op context.
+try:
+    import torch
+except ImportError:
+    torch = None
+
+if torch is not None and not getattr(torch.cuda.stream, "_squash_cpu_safe", False):
+    _torch_cuda_stream = torch.cuda.stream
+
+    def _cpu_safe_cuda_stream(stream):
+        if stream is None:
+            return nullcontext()
+        return _torch_cuda_stream(stream)
+
+    _cpu_safe_cuda_stream._squash_cpu_safe = True
+    torch.cuda.stream = _cpu_safe_cuda_stream
 
 DEFAULT_MODEL_ID = "squash-line-calling-model/1"
 DEFAULT_INFERENCE_WIDTH = int(os.getenv("INFERENCE_WIDTH", "960"))
@@ -36,6 +56,23 @@ DEFAULT_INFERENCE_WIDTH = int(os.getenv("INFERENCE_WIDTH", "960"))
 _MODEL = None
 _MODEL_ID = None
 _MODEL_LOAD_LOCK = threading.Lock()
+
+
+def configured_providers():
+    raw = os.environ.get("ONNXRUNTIME_EXECUTION_PROVIDERS", "[CPUExecutionProvider]")
+    return [item.strip() for item in raw.strip("[]").split(",") if item.strip()]
+
+
+def load_model(model_id, api_key):
+    from inference import get_model
+
+    return get_model(
+        model_id=model_id,
+        api_key=api_key,
+        countinference=False,
+        device=os.environ.get("DEFAULT_DEVICE", "cpu"),
+        onnx_execution_providers=configured_providers(),
+    )
 
 
 def get_tracking_model():
@@ -51,13 +88,7 @@ def get_tracking_model():
         if _MODEL is not None and _MODEL_ID == model_id:
             return _MODEL
 
-        from inference import get_model
-
-        _MODEL = get_model(
-            model_id=model_id,
-            api_key=api_key,
-            countinference=False,
-        )
+        _MODEL = load_model(model_id, api_key)
         _MODEL_ID = model_id
         return _MODEL
 

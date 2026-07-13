@@ -64,7 +64,8 @@ def test_upload_dedup_and_track_validation():
 
     client = app_module.app.test_client()
 
-    assert client.get("/api/health").get_json() == {"ok": True}
+    health = client.get("/api/health").get_json()
+    assert health["ok"] is True and "version" in health
 
     response = client.post("/api/track", data={})
     assert response.status_code == 400

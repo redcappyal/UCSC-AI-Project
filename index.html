@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Squash Line Calling</title>
 <style>
   :root{
@@ -19,107 +19,179 @@
     -webkit-tap-highlight-color:transparent}
   body{display:flex; flex-direction:column; min-height:100dvh}
 
-  header{padding:14px 16px 10px}
-  header h1{font-size:17px; font-weight:700; letter-spacing:.02em}
+  header{padding:26px 28px 18px}
+  header h1{font-size:34px; font-weight:700; letter-spacing:.02em}
   header h1 span{color:var(--red)}
-  .steps{display:grid; grid-template-columns:repeat(6,1fr); gap:6px; margin-top:10px}
-  .steps div{text-align:center; font-size:11px; color:var(--dim);
-    padding:6px 2px; border-top:3px solid #333a44; white-space:nowrap; overflow:hidden}
+  .steps{display:grid; grid-template-columns:repeat(6,1fr); gap:10px; margin-top:18px}
+  .steps div{text-align:center; font-size:20px; color:var(--dim);
+    padding:15px 8px; border-top:5px solid #333a44; white-space:nowrap; overflow:hidden}
   .steps div.on{color:var(--text); border-top-color:var(--red); font-weight:600}
   .steps div.done{border-top-color:#4a545f; color:#6e7883}
 
   #stage{position:relative; background:#000; line-height:0; overflow:hidden}
   #view{width:100%; height:auto; display:block; touch-action:none;
     transform-origin:0 0; will-change:transform}
-  #zoomCtrl{position:absolute; top:8px; right:8px; display:flex; gap:6px; z-index:5}
-  #zoomCtrl button{min-width:44px; min-height:44px; padding:8px 12px; font-size:15px;
+  #zoomCtrl{position:absolute; top:12px; right:12px; display:flex; gap:10px; z-index:5}
+  #zoomCtrl button{min-width:84px; min-height:84px; padding:16px 22px; font-size:28px;
     font-weight:600; background:rgba(29,33,39,.82); backdrop-filter:blur(2px)}
 
-  main{padding:14px 16px max(28px, env(safe-area-inset-bottom)); display:flex; flex-direction:column; gap:12px}
+  main{padding:28px 32px max(42px, env(safe-area-inset-bottom)); display:flex; flex-direction:column; gap:22px}
   body.phase-load main{flex:1; justify-content:center}
-  .card{background:var(--panel); border-radius:12px; padding:14px}
-  .card.hero{text-align:center; padding:32px 20px}
-  .card.hero h2{font-size:20px; margin-bottom:8px}
+  .card{background:var(--panel); border-radius:14px; padding:28px}
+  .card.hero{text-align:center; padding:64px 34px}
+  .card.hero h2{font-size:42px; margin-bottom:18px}
   .hidden{display:none !important}
 
-  .instruction{font-size:15px; line-height:1.45}
+  .instruction{font-size:30px; line-height:1.4}
   .instruction b.out{color:var(--out)} .instruction b.tin{color:var(--tin)}
-  .status{font-size:13px; color:var(--dim); line-height:1.45; min-height:1.2em}
+  .status{font-size:26px; color:var(--dim); line-height:1.4; min-height:1.2em}
   .status.warn{color:var(--warn)}
   .status.ok{color:#7ee08a}
 
-  button{font:inherit; border:none; border-radius:10px; padding:15px 18px;
-    font-size:16px; font-weight:600; color:var(--text); background:var(--panel-2);
-    width:100%; min-height:50px; display:flex; align-items:center; justify-content:center;
+  button{font:inherit; border:none; border-radius:16px; padding:28px 32px;
+    font-size:32px; font-weight:600; color:var(--text); background:var(--panel-2);
+    width:100%; min-height:98px; display:flex; align-items:center; justify-content:center;
     cursor:pointer}
   button:disabled{opacity:.35}
   button.primary{background:var(--red)}
-  button.small{width:auto; padding:11px 14px; font-size:14px; font-weight:500; min-height:44px}
-  .row{display:flex; gap:8px}
+  button.small{width:auto; padding:22px 26px; font-size:28px; font-weight:500; min-height:82px}
+  .row{display:flex; gap:16px}
   .row>*{flex:1}
 
   input[type=file]{display:none}
   label.filebtn{display:flex; align-items:center; justify-content:center; background:var(--red);
-    border-radius:10px; padding:15px 18px; font-size:16px; font-weight:600; min-height:50px; cursor:pointer}
+    border-radius:16px; padding:28px 32px; font-size:32px; font-weight:600; min-height:98px; cursor:pointer}
 
-  input[type=range]{width:100%; accent-color:var(--red)}
+  input[type=range]{width:100%; height:54px; accent-color:var(--red)}
   input[type=number]{width:100%; background:#111318; color:var(--text);
-    border:1px solid #2c333c; border-radius:8px; font:inherit; padding:12px}
-  .sliderlabel{display:flex; justify-content:space-between; font-size:12px;
-    color:var(--dim); margin-bottom:4px}
+    border:2px solid #2c333c; border-radius:14px; font:inherit; font-size:30px; padding:24px}
+  .sliderlabel{display:flex; justify-content:space-between; font-size:25px;
+    color:var(--dim); margin-bottom:12px}
   .sliderlabel output{color:var(--text)}
 
-  .stat{display:flex; justify-content:space-between; font-size:13px; padding:3px 0}
+  .stat{display:flex; justify-content:space-between; font-size:26px; padding:8px 0; gap:18px}
   .stat span:first-child{color:var(--dim)}
-  .swatch{display:inline-block; width:10px; height:10px; border-radius:2px; margin-right:6px; vertical-align:baseline}
-  .progressbox{margin-top:12px; padding:12px; border-radius:8px; background:#111318; border:1px solid #2c333c}
-  .progressbar{height:9px; border-radius:999px; background:#2c333c; overflow:hidden; margin-top:8px}
+  .swatch{display:inline-block; width:18px; height:18px; border-radius:4px; margin-right:10px; vertical-align:baseline}
+  .progressbox{margin-top:18px; padding:24px; border-radius:14px; background:#111318; border:2px solid #2c333c}
+  .progressbar{height:22px; border-radius:999px; background:#2c333c; overflow:hidden; margin-top:16px}
   .progressbar span{display:block; height:100%; width:0%; background:var(--red); transition:width .18s ease}
   .progressbar.indeterminate span{width:35%; animation:slidebar 1.1s ease-in-out infinite}
   @keyframes slidebar{0%{transform:translateX(-120%)} 100%{transform:translateX(320%)}}
-  #clipPreview{width:100%; display:block; margin-top:12px; background:#000; border-radius:8px}
-  .clipEditor{position:relative; height:92px; margin-top:12px; border-radius:8px; overflow:hidden;
-    background:#090a0c; border:1px solid #2c333c; touch-action:none}
+  #clipPreview{width:100%; display:block; margin-top:20px; background:#000; border-radius:12px}
+  .clipEditor{position:relative; height:180px; margin-top:20px; border-radius:12px; overflow:hidden;
+    background:#090a0c; border:2px solid #2c333c; touch-action:none}
   #filmstrip{position:absolute; inset:0; width:100%; height:100%; display:block}
   .clipShade{position:absolute; top:0; bottom:0; background:rgba(0,0,0,.58); pointer-events:none}
   #shadeLeft{left:0} #shadeRight{right:0}
-  #clipSelection{position:absolute; top:0; bottom:0; border:3px solid #ffd21f;
-    border-radius:6px; pointer-events:none; box-shadow:0 0 0 9999px rgba(0,0,0,.08) inset}
-  .clipHandle{position:absolute; top:0; bottom:0; width:22px; background:#ffd21f;
+  #clipSelection{position:absolute; top:0; bottom:0; border:5px solid #ffd21f;
+    border-radius:10px; pointer-events:none; box-shadow:0 0 0 9999px rgba(0,0,0,.08) inset}
+  .clipHandle{position:absolute; top:0; bottom:0; width:44px; background:#ffd21f;
     cursor:ew-resize; display:flex; align-items:center; justify-content:center}
-  .clipHandle::after{content:''; width:3px; height:48px; border-left:2px solid rgba(0,0,0,.55);
-    border-right:2px solid rgba(0,0,0,.55)}
-  #clipStartHandle{border-radius:6px 0 0 6px} #clipEndHandle{border-radius:0 6px 6px 0}
-  #clipCursor{position:absolute; top:0; bottom:0; width:2px; background:#f5f5f5;
-    box-shadow:0 0 0 1px rgba(0,0,0,.45); pointer-events:none}
-  #clipCursor::before{content:''; position:absolute; left:-6px; top:0; border-left:7px solid transparent;
-    border-right:7px solid transparent; border-top:9px solid #f5f5f5}
-  .hitTimeline{position:relative; height:72px; margin-top:10px; border-radius:8px; overflow:hidden;
-    background:#090a0c; border:1px solid #2c333c; touch-action:none; cursor:pointer}
+  .clipHandle::after{content:''; width:5px; height:92px; border-left:3px solid rgba(0,0,0,.55);
+    border-right:3px solid rgba(0,0,0,.55)}
+  #clipStartHandle{border-radius:10px 0 0 10px} #clipEndHandle{border-radius:0 10px 10px 0}
+  #clipCursor{position:absolute; top:0; bottom:0; width:4px; background:#f5f5f5;
+    box-shadow:0 0 0 2px rgba(0,0,0,.45); pointer-events:none}
+  #clipCursor::before{content:''; position:absolute; left:-12px; top:0; border-left:14px solid transparent;
+    border-right:14px solid transparent; border-top:18px solid #f5f5f5}
+  .hitTimeline{position:relative; height:140px; margin-top:18px; border-radius:12px; overflow:hidden;
+    background:#090a0c; border:2px solid #2c333c; touch-action:none; cursor:pointer}
   #trackStrip{position:absolute; inset:0; width:100%; height:100%; display:block}
   #hitBars{position:absolute; inset:0}
-  .hitBar{position:absolute; top:0; bottom:0; width:24px; margin-left:-12px; cursor:pointer;
+  .hitBar{position:absolute; top:0; bottom:0; width:44px; margin-left:-22px; cursor:pointer;
     display:flex; justify-content:center}
-  .hitBar::before{content:''; width:5px; height:100%; border-radius:2px;
-    box-shadow:0 0 0 1px rgba(0,0,0,.5)}
+  .hitBar::before{content:''; width:9px; height:100%; border-radius:4px;
+    box-shadow:0 0 0 2px rgba(0,0,0,.5)}
   .hitBar.in::before{background:#7ee08a}
   .hitBar.out::before{background:var(--red)}
   .hitBar.unknown::before{background:var(--warn)}
-  #trackCursor{position:absolute; top:0; bottom:0; width:2px; margin-left:-1px; background:#f5f5f5;
-    box-shadow:0 0 0 1px rgba(0,0,0,.45); pointer-events:none}
-  .callout{border:1px solid #2c333c; border-radius:8px; padding:12px; margin-top:12px;
-    background:#111318; font-size:14px; line-height:1.5}
-  .callout strong{font-size:28px; letter-spacing:.03em}
+  #trackCursor{position:absolute; top:0; bottom:0; width:4px; margin-left:-2px; background:#f5f5f5;
+    box-shadow:0 0 0 2px rgba(0,0,0,.45); pointer-events:none}
+  .hitbox{border-color:#425063}
+  .hitbox button{margin-top:10px}
+  .callout{border:2px solid #2c333c; border-radius:14px; padding:24px; margin-top:20px;
+    background:#111318; font-size:28px; line-height:1.45}
+  .callout strong{font-size:54px; letter-spacing:.03em}
   .callout strong.in{color:#7ee08a}
   .callout strong.out{color:var(--warn)}
-  #wallDiagram{width:auto; max-width:100%; display:block; margin-top:12px; background:#0b1014;
-    border:1px solid #2c333c; border-radius:8px}
-  textarea{width:100%; height:110px; background:#111318; color:#b8c0c9;
-    border:1px solid #2c333c; border-radius:8px; font-family:ui-monospace,Menlo,monospace;
-    font-size:11px; padding:8px; margin-top:8px}
+  #wallDiagram{width:auto; max-width:100%; display:block; margin-top:20px; background:#0b1014;
+    border:2px solid #2c333c; border-radius:12px}
+  textarea{width:100%; height:220px; background:#111318; color:#b8c0c9;
+    border:2px solid #2c333c; border-radius:12px; font-family:ui-monospace,Menlo,monospace;
+    font-size:22px; padding:18px; margin-top:14px}
 
   /* video kept renderable but invisible (display:none breaks canvas capture on some iOS versions) */
   #vid{position:absolute; width:2px; height:2px; opacity:0; pointer-events:none; left:-10px; top:-10px}
+
+  @media (max-width: 700px){
+    header{padding:22px 16px 16px}
+    header h1{font-size:30px; line-height:1.12}
+    header h1 span{display:block; margin-top:4px; font-size:24px}
+    .steps{grid-template-columns:repeat(2,1fr); gap:10px; margin-top:18px}
+    .steps div{font-size:20px; line-height:1.15; padding:14px 6px; border-top-width:5px}
+
+    main{padding:20px 14px max(30px, env(safe-area-inset-bottom)); gap:18px}
+    .card{border-radius:12px; padding:22px}
+    .card.hero{padding:44px 22px}
+    .card.hero h2{font-size:36px; line-height:1.12; margin-bottom:16px}
+
+    .instruction{font-size:28px; line-height:1.35}
+    .status{font-size:24px; line-height:1.35}
+    .stat{font-size:24px; line-height:1.3; gap:14px}
+    .sliderlabel{font-size:24px; margin-bottom:10px}
+
+    button,
+    label.filebtn{
+      min-height:88px;
+      padding:24px 18px;
+      border-radius:14px;
+      font-size:28px;
+      line-height:1.15;
+      text-align:center;
+      white-space:normal;
+    }
+    button.small{
+      min-height:78px;
+      padding:20px 14px;
+      font-size:24px;
+      border-radius:12px;
+    }
+    .row{gap:12px; flex-wrap:wrap}
+    .row > *{flex:1 1 calc(50% - 6px)}
+
+    input[type=range]{height:52px}
+    input[type=number]{
+      min-height:82px;
+      border-radius:12px;
+      padding:20px;
+      font-size:28px;
+    }
+    textarea{
+      height:220px;
+      border-radius:12px;
+      padding:18px;
+      font-size:20px;
+      line-height:1.4;
+    }
+
+    #zoomCtrl{top:10px; right:10px; gap:8px}
+    #zoomCtrl button{
+      min-width:76px;
+      min-height:76px;
+      padding:14px 16px;
+      font-size:26px;
+    }
+    #clipPreview{margin-top:18px}
+    .clipEditor{height:170px; margin-top:18px}
+    .clipHandle{width:42px}
+    .clipHandle::after{height:88px}
+    .progressbox,
+    .callout{border-radius:12px; padding:20px; font-size:24px}
+    .callout strong{font-size:46px}
+    .stat{align-items:flex-start; flex-wrap:wrap}
+    .stat span:first-child{min-width:0}
+    .stat span:last-child{margin-left:auto; text-align:right}
+  }
 </style>
 </head>
 <body>

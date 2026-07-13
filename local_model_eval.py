@@ -7,12 +7,13 @@ from pathlib import Path
 
 import cv2
 
-# inference_engine sets model-cache/metrics env defaults on import, before
-# the inference package loads.
+# inference_engine sets model-cache/metrics env defaults (and the CPU-safe
+# torch.cuda.stream patch) on import, before the inference package loads.
 from inference_engine import (
     DEFAULT_INFERENCE_WIDTH,
     DEFAULT_MODEL_ID,
     infer_frame_predictions,
+    load_model,
 )
 from tracking_common import (
     CONFIDENCE_THRESHOLD,
@@ -94,10 +95,8 @@ def main():
             "No Roboflow API key found. Set ROBOFLOW_API_KEY in your shell or .env."
         )
 
-    from inference import get_model
-
     print(f"Loading local Roboflow model: {args.model_id}")
-    model = get_model(model_id=args.model_id, api_key=args.api_key, countinference=False)
+    model = load_model(args.model_id, args.api_key)
     print("Model loaded.")
 
     cap.set(cv2.CAP_PROP_POS_FRAMES, start_frame)
