@@ -1086,27 +1086,44 @@ function hideTrackProgress(){
   $('progressPct').textContent = '0%';
 }
 
-function postTrackRequest(form){
+function postFormRequest(url, form, progressLabel){
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
-    xhr.open('POST', '/api/track');
+    xhr.open('POST', url);
     xhr.responseType = 'json';
 
-    xhr.upload.onprogress = e => {
-      if(e.lengthComputable) setTrackProgress('Uploading video', e.loaded / e.total * 100);
-      else setTrackProgress('Uploading video', 0, true);
-    };
+    if(progressLabel){
+      xhr.upload.onprogress = e => {
+        if(e.lengthComputable) setTrackProgress(progressLabel, e.loaded / e.total * 100);
+        else setTrackProgress(progressLabel, 0, true);
+      };
+      setTrackProgress(progressLabel, 0);
+    }
 
     xhr.onload = () => {
       const data = xhr.response || {};
       if(xhr.status >= 200 && xhr.status < 300 && data.ok) resolve(data);
-      else reject(new Error(data.error || `Tracking failed with HTTP ${xhr.status}.`));
+      else reject(new Error(data.error || `Request failed with HTTP ${xhr.status}.`));
     };
     xhr.onerror = () => reject(new Error('Could not reach the local tracking server.'));
-
-    setTrackProgress('Uploading video', 0);
     xhr.send(form);
   });
+}
+
+function videoUploadKey(file){
+  return `${file.name}:${file.size}:${file.lastModified}`;
+}
+
+async function ensureVideoUploaded(){
+  const key = videoUploadKey(S.videoFile);
+  if(S.uploadedVideoId && S.uploadedVideoKey === key) return S.uploadedVideoId;
+
+  const form = new FormData();
+  form.append('video_file', S.videoFile);
+  const data = await postFormRequest('/api/upload', form, 'Uploading video');
+  S.uploadedVideoId = data.video_id;
+  S.uploadedVideoKey = key;
+  return data.video_id;
 }
 
 async function waitForTracking(runId){
@@ -1115,8 +1132,11 @@ async function waitForTracking(runId){
     const data = await response.json();
     if(!data.ok) throw new Error(data.error || 'Could not read tracking status.');
 
+    const stageText = data.stage === 'refine' ? 'Refining hit windows'
+      : data.stage === 'judging' ? 'Judging hits'
+      : 'Analyzing';
     const label = data.status === 'queued' ? 'Queued'
-      : data.status === 'running' ? `Analyzing frame ${data.processed_frames}/${data.total_frames}`
+      : data.status === 'running' ? `${stageText} — frame ${data.processed_frames}/${data.total_frames}`
       : data.status === 'complete' ? 'Processing complete'
       : 'Tracking failed';
     setTrackProgress(label, data.progress || 0);
@@ -1147,16 +1167,18 @@ $('runTrackBtn').onclick = async () => {
   $('trackStatus').textContent = 'Preparing clip request…';
   $('trackStatus').className = 'status';
 
-  const form = new FormData();
-  form.append('video_file', S.videoFile);
-  form.append('calibration_json', JSON.stringify(buildJson()));
-  form.append('start_time', start.toString());
-  form.append('end_time', end.toString());
-  form.append('frame_stride', S.clip.frameStride.toString());
-  form.append('inference_width', S.clip.inferenceWidth.toString());
-
   try{
-    const started = await postTrackRequest(form);
+    const videoId = await ensureVideoUploaded();
+
+    const form = new FormData();
+    form.append('video_id', videoId);
+    form.append('calibration_json', JSON.stringify(buildJson()));
+    form.append('start_time', start.toString());
+    form.append('end_time', end.toString());
+    form.append('frame_stride', S.clip.frameStride.toString());
+    form.append('inference_width', S.clip.inferenceWidth.toString());
+
+    const started = await postFormRequest('/api/track', form);
     setTrackProgress('Analyzing frame 0/' + started.total_frames, 0);
     $('trackStatus').textContent = 'Running local model on the selected clip…';
     const data = await waitForTracking(started.run_id);
@@ -1213,7 +1235,7 @@ function buildHitTimeline(hits, initialFrame){
     const bar = document.createElement('div');
     bar.className = `hitBar ${cls}`;
     bar.style.left = `${frameToRunPct(hit.frame)}%`;
-    bar.title = `Frame ${hit.frame} · ${hit.call}`;
+    bar.title = `Frame ${hit.frame} · ${callWithMargin(hit.call, hit.margin_px)}`;
     bar.addEventListener('pointerdown', e => e.stopPropagation());
     bar.addEventListener('click', () => {
       seekSourceFrameToCanvas(hit.frame);
@@ -1328,11 +1350,20 @@ $('judgeFrame').addEventListener('input', () => {
   if(!Number.isNaN(frame) && isTrackedFrame(frame)) seekSourceFrameToCanvas(frame, false);
 });
 
+function callWithMargin(call, marginPx){
+  if(marginPx == null) return call;
+  const px = Math.abs(marginPx).toFixed(0);
+  if(call === 'IN') return `IN by ${px}px`;
+  if(call === 'OUT') return `OUT by ${px}px`;
+  return call;
+}
+
 function renderJudgeResult(data){
   const callClass = data.call === 'IN' ? 'in' : 'out';
+  const sourceText = data.source === 'impact_estimate' ? 'estimated impact point' : 'detected ball center';
   $('judgeResult').innerHTML =
-    `<strong class="${callClass}">${data.call}</strong>` +
-    `<div>Frame ${data.frame} · ball center (${data.ball.x.toFixed(1)}, ${data.ball.y.toFixed(1)})</div>` +
+    `<strong class="${callClass}">${callWithMargin(data.call, data.margin_px)}</strong>` +
+    `<div>Frame ${data.frame} · ${sourceText} (${data.ball.x.toFixed(1)}, ${data.ball.y.toFixed(1)})</div>` +
     `<div>Top line y ${data.top_y.toFixed(1)} · bottom line y ${data.bottom_y.toFixed(1)}</div>` +
     `<div>${data.reason}${data.outside_line_span ? ' · outside calibrated line span' : ''}</div>`;
   $('judgeResult').classList.remove('hidden');

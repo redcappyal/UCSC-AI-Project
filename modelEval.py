@@ -1,3 +1,9 @@
+"""CLI: run the Roboflow serverless workflow over a video (remote inference).
+
+For local in-process inference use local_model_eval.py; the web app uses
+job_runner.py. Shared helpers live in tracking_common.py.
+"""
+
 import base64
 import csv
 import os
@@ -6,11 +12,17 @@ from pathlib import Path
 
 import cv2
 import numpy as np
-from inference_sdk import InferenceHTTPClient
+
+from tracking_common import (
+    CSV_FIELDNAMES,
+    ball_csv_row,
+    draw_predictions,
+    find_predictions,
+    select_ball_prediction,
+)
 
 
 API_URL = "https://serverless.roboflow.com"
-API_KEY = os.getenv("ROBOFLOW_API_KEY", "")
 
 WORKSPACE = "squash-line-calling-model"
 WORKFLOW_ID = "squash-line-calling-vsquash-line-calling-1-rfdetr-medium-t1-logic"
@@ -29,30 +41,7 @@ START_FRAME = None
 END_FRAME = None
 MAX_FRAMES = None  # Use an integer like 300 for a quick test.
 START_SECONDS = None  # Used only when START_FRAME is None.
-CONFIDENCE_THRESHOLD = 0.25
 MAX_RETRIES = 3
-BALL_CLASS_NAMES = {"ball", "squash ball", "squash-ball", "squash_ball"}
-CSV_FIELDNAMES = [
-    "source_frame",
-    "timestamp_seconds",
-    "detected",
-    "class_name",
-    "confidence",
-    "x_center",
-    "y_center",
-    "width",
-    "height",
-    "x_min",
-    "y_min",
-    "x_max",
-    "y_max",
-]
-
-
-client = InferenceHTTPClient.init(
-    api_url=API_URL,
-    api_key=API_KEY,
-)
 
 
 def decode_output_image(value):
@@ -73,141 +62,7 @@ def decode_output_image(value):
     return None
 
 
-def find_predictions(obj):
-    predictions = []
-
-    if isinstance(obj, dict):
-        if all(key in obj for key in ("x", "y", "width", "height")):
-            predictions.append(obj)
-
-        for value in obj.values():
-            predictions.extend(find_predictions(value))
-
-    elif isinstance(obj, list):
-        for item in obj:
-            predictions.extend(find_predictions(item))
-
-    return predictions
-
-
-def draw_predictions(frame, predictions):
-    output_frame = frame.copy()
-    frame_height, frame_width = output_frame.shape[:2]
-
-    for prediction in predictions:
-        confidence = prediction.get("confidence", 1.0)
-        if confidence < CONFIDENCE_THRESHOLD:
-            continue
-
-        x = prediction["x"]
-        y = prediction["y"]
-        width = prediction["width"]
-        height = prediction["height"]
-
-        x1 = int(x - width / 2)
-        y1 = int(y - height / 2)
-        x2 = int(x + width / 2)
-        y2 = int(y + height / 2)
-
-        x1 = max(0, min(x1, frame_width - 1))
-        y1 = max(0, min(y1, frame_height - 1))
-        x2 = max(0, min(x2, frame_width - 1))
-        y2 = max(0, min(y2, frame_height - 1))
-
-        class_name = prediction.get("class", prediction.get("class_name", "object"))
-        label = f"{class_name} {confidence:.2f}"
-
-        cv2.rectangle(output_frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
-        cv2.putText(
-            output_frame,
-            label,
-            (x1, max(y1 - 8, 20)),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.6,
-            (0, 255, 0),
-            2,
-        )
-
-    return output_frame
-
-
-def prediction_class_name(prediction):
-    return str(
-        prediction.get(
-            "class",
-            prediction.get("class_name", prediction.get("name", "object")),
-        )
-    )
-
-
-def is_ball_prediction(prediction):
-    class_name = prediction_class_name(prediction).strip().lower()
-    return class_name in BALL_CLASS_NAMES
-
-
-def select_ball_prediction(predictions):
-    valid_predictions = [
-        prediction
-        for prediction in predictions
-        if prediction.get("confidence", 1.0) >= CONFIDENCE_THRESHOLD
-    ]
-    ball_predictions = [
-        prediction for prediction in valid_predictions if is_ball_prediction(prediction)
-    ]
-
-    if not ball_predictions and len(valid_predictions) == 1:
-        ball_predictions = valid_predictions
-
-    if not ball_predictions:
-        return None
-
-    return max(ball_predictions, key=lambda prediction: prediction.get("confidence", 1.0))
-
-
-def ball_csv_row(source_frame, source_fps, prediction):
-    row = {
-        "source_frame": source_frame,
-        "timestamp_seconds": f"{source_frame / source_fps:.6f}",
-        "detected": False,
-        "class_name": "",
-        "confidence": "",
-        "x_center": "",
-        "y_center": "",
-        "width": "",
-        "height": "",
-        "x_min": "",
-        "y_min": "",
-        "x_max": "",
-        "y_max": "",
-    }
-
-    if prediction is None:
-        return row
-
-    x = float(prediction["x"])
-    y = float(prediction["y"])
-    width = float(prediction["width"])
-    height = float(prediction["height"])
-
-    row.update(
-        {
-            "detected": True,
-            "class_name": prediction_class_name(prediction),
-            "confidence": f"{prediction.get('confidence', 1.0):.6f}",
-            "x_center": f"{x:.3f}",
-            "y_center": f"{y:.3f}",
-            "width": f"{width:.3f}",
-            "height": f"{height:.3f}",
-            "x_min": f"{x - width / 2:.3f}",
-            "y_min": f"{y - height / 2:.3f}",
-            "x_max": f"{x + width / 2:.3f}",
-            "y_max": f"{y + height / 2:.3f}",
-        }
-    )
-    return row
-
-
-def process_frame(frame):
+def process_frame(client, frame):
     last_error = None
 
     for attempt in range(1, MAX_RETRIES + 1):
@@ -243,6 +98,14 @@ def result_to_output(result):
 
 
 def main():
+    from inference_sdk import InferenceHTTPClient
+
+    api_key = os.getenv("ROBOFLOW_API_KEY", "")
+    if not api_key.strip():
+        raise RuntimeError("Set ROBOFLOW_API_KEY before running the remote workflow.")
+
+    client = InferenceHTTPClient.init(api_url=API_URL, api_key=api_key)
+
     cap = cv2.VideoCapture(str(VIDEO_INPUT_PATH))
     if not cap.isOpened():
         raise RuntimeError(f"Could not open video: {VIDEO_INPUT_PATH}")
@@ -296,7 +159,7 @@ def main():
                     read_count += 1
                     continue
 
-                result = process_frame(frame)
+                result = process_frame(client, frame)
                 output = result_to_output(result)
                 predictions = find_predictions(output)
                 ball_prediction = select_ball_prediction(predictions)

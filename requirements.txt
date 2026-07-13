@@ -5,4 +5,4 @@ numpy
 opencv-python
 Pillow
 python-dotenv
-scikit-learn
+pytest

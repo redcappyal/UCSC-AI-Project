@@ -1,29 +1,22 @@
+"""CLI: run the local Roboflow model over a video and write ball coordinates."""
+
 import argparse
 import csv
 import os
 from pathlib import Path
 
-os.environ.setdefault("CORE_MODEL_SAM_ENABLED", "False")
-os.environ.setdefault("CORE_MODEL_SAM3_ENABLED", "False")
-os.environ.setdefault("CORE_MODEL_GAZE_ENABLED", "False")
-os.environ.setdefault("CORE_MODEL_YOLO_WORLD_ENABLED", "False")
-os.environ.setdefault("MODEL_CACHE_DIR", str(Path(__file__).with_name(".roboflow-cache")))
-os.environ.setdefault("METRICS_ENABLED", "False")
-os.environ.setdefault("OTEL_METRICS_ENABLED", "False")
-os.environ.setdefault("MPLCONFIGDIR", str(Path(__file__).with_name(".matplotlib-cache")))
-
 import cv2
-from PIL import Image
 
-from modelEval import (
-    API_KEY,
+# inference_engine sets model-cache/metrics env defaults on import, before
+# the inference package loads.
+from inference_engine import (
+    DEFAULT_INFERENCE_WIDTH,
+    DEFAULT_MODEL_ID,
+    infer_frame_predictions,
+)
+from tracking_common import (
     CONFIDENCE_THRESHOLD,
     CSV_FIELDNAMES,
-    END_FRAME,
-    FRAME_STRIDE,
-    START_FRAME,
-    VIDEO_INPUT_PATH,
-    WORKFLOW_ID,
     ball_csv_row,
     draw_predictions,
     select_ball_prediction,
@@ -38,160 +31,9 @@ if load_dotenv is not None:
     load_dotenv(Path(__file__).with_name(".env"))
 
 
-def infer_model_id_from_workflow_id(workflow_id):
-    if "-v" not in workflow_id:
-        return None
-
-    project_id, workflow_suffix = workflow_id.split("-v", 1)
-    repeated_project_prefix = f"{project_id}-"
-    if not workflow_suffix.startswith(repeated_project_prefix):
-        return None
-
-    version_and_rest = workflow_suffix[len(repeated_project_prefix) :]
-    version = version_and_rest.split("-", 1)[0]
-    if not version.isdigit():
-        return None
-
-    return f"{project_id}/{version}"
-
-
-DEFAULT_MODEL_ID = os.getenv(
-    "ROBOFLOW_MODEL_ID",
-    infer_model_id_from_workflow_id(WORKFLOW_ID) or "squash-line-calling-model/1",
-)
+DEFAULT_VIDEO_INPUT_PATH = Path(__file__).with_name("SquashAnalytics.mp4")
 DEFAULT_OUTPUT_VIDEO_PATH = Path(__file__).with_name("annotated_output_local.mp4")
 DEFAULT_CSV_OUTPUT_PATH = Path(__file__).with_name("ball_coordinates_local.csv")
-DEFAULT_INFERENCE_WIDTH = int(os.getenv("INFERENCE_WIDTH", "960"))
-
-
-def object_to_dict(value):
-    if isinstance(value, dict):
-        return {key: object_to_dict(item) for key, item in value.items()}
-
-    if isinstance(value, list):
-        return [object_to_dict(item) for item in value]
-
-    if isinstance(value, tuple):
-        return [object_to_dict(item) for item in value]
-
-    if hasattr(value, "model_dump"):
-        return object_to_dict(value.model_dump())
-
-    if hasattr(value, "dict"):
-        return object_to_dict(value.dict())
-
-    return value
-
-
-def find_predictions(obj):
-    predictions = []
-
-    if isinstance(obj, dict):
-        if all(key in obj for key in ("x", "y", "width", "height")):
-            predictions.append(obj)
-
-        for value in obj.values():
-            predictions.extend(find_predictions(value))
-
-    elif isinstance(obj, list):
-        for item in obj:
-            predictions.extend(find_predictions(item))
-
-    return predictions
-
-
-def normalize_prediction(prediction):
-    normalized = dict(prediction)
-
-    if "class" not in normalized and "class_name" in normalized:
-        normalized["class"] = normalized["class_name"]
-
-    if "class_name" not in normalized and "class" in normalized:
-        normalized["class_name"] = normalized["class"]
-
-    if "x" in normalized and "y" in normalized and "width" in normalized and "height" in normalized:
-        return normalized
-
-    if all(key in normalized for key in ("x_min", "y_min", "x_max", "y_max")):
-        x_min = float(normalized["x_min"])
-        y_min = float(normalized["y_min"])
-        x_max = float(normalized["x_max"])
-        y_max = float(normalized["y_max"])
-        normalized["x"] = (x_min + x_max) / 2
-        normalized["y"] = (y_min + y_max) / 2
-        normalized["width"] = x_max - x_min
-        normalized["height"] = y_max - y_min
-        return normalized
-
-    if all(key in normalized for key in ("xmin", "ymin", "xmax", "ymax")):
-        x_min = float(normalized["xmin"])
-        y_min = float(normalized["ymin"])
-        x_max = float(normalized["xmax"])
-        y_max = float(normalized["ymax"])
-        normalized["x"] = (x_min + x_max) / 2
-        normalized["y"] = (y_min + y_max) / 2
-        normalized["width"] = x_max - x_min
-        normalized["height"] = y_max - y_min
-        return normalized
-
-    return normalized
-
-
-def normalize_predictions(raw_result):
-    raw_dict = object_to_dict(raw_result)
-    predictions = find_predictions(raw_dict)
-    return [normalize_prediction(prediction) for prediction in predictions]
-
-
-def resize_frame_for_inference(frame, max_width):
-    if not max_width or max_width <= 0:
-        return frame, 1.0, 1.0
-
-    height, width = frame.shape[:2]
-    if width <= max_width:
-        return frame, 1.0, 1.0
-
-    scale = max_width / width
-    inference_size = (int(max_width), max(1, int(round(height * scale))))
-    resized = cv2.resize(frame, inference_size, interpolation=cv2.INTER_AREA)
-    return resized, width / inference_size[0], height / inference_size[1]
-
-
-def scale_prediction(prediction, x_scale, y_scale):
-    if x_scale == 1.0 and y_scale == 1.0:
-        return prediction
-
-    scaled = dict(prediction)
-    for key in ("x", "width", "x_center", "x_min", "x_max", "xmin", "xmax"):
-        if key in scaled and scaled[key] not in (None, ""):
-            scaled[key] = float(scaled[key]) * x_scale
-
-    for key in ("y", "height", "y_center", "y_min", "y_max", "ymin", "ymax"):
-        if key in scaled and scaled[key] not in (None, ""):
-            scaled[key] = float(scaled[key]) * y_scale
-
-    return scaled
-
-
-def scale_predictions(predictions, x_scale, y_scale):
-    return [scale_prediction(prediction, x_scale, y_scale) for prediction in predictions]
-
-
-def infer_frame(model, frame, confidence):
-    rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-    image = Image.fromarray(rgb_frame)
-
-    try:
-        return model.infer(image=image, confidence=confidence)
-    except TypeError:
-        return model.infer(image)
-
-
-def infer_frame_predictions(model, frame, confidence, max_width=DEFAULT_INFERENCE_WIDTH):
-    inference_frame, x_scale, y_scale = resize_frame_for_inference(frame, max_width)
-    result = infer_frame(model, inference_frame, confidence)
-    predictions = normalize_predictions(result)
-    return scale_predictions(predictions, x_scale, y_scale)
 
 
 def positive_int_or_none(value):
@@ -206,14 +48,14 @@ def parse_args():
     parser = argparse.ArgumentParser(
         description="Run a Roboflow model locally with inference.get_model and write ball coordinates."
     )
-    parser.add_argument("--model-id", default=DEFAULT_MODEL_ID)
-    parser.add_argument("--api-key", default=os.getenv("ROBOFLOW_API_KEY", API_KEY))
-    parser.add_argument("--video", type=Path, default=VIDEO_INPUT_PATH)
+    parser.add_argument("--model-id", default=os.getenv("ROBOFLOW_MODEL_ID", DEFAULT_MODEL_ID))
+    parser.add_argument("--api-key", default=os.getenv("ROBOFLOW_API_KEY", ""))
+    parser.add_argument("--video", type=Path, default=DEFAULT_VIDEO_INPUT_PATH)
     parser.add_argument("--output-video", type=Path, default=DEFAULT_OUTPUT_VIDEO_PATH)
     parser.add_argument("--csv", type=Path, default=DEFAULT_CSV_OUTPUT_PATH)
-    parser.add_argument("--start-frame", type=positive_int_or_none, default=START_FRAME)
-    parser.add_argument("--end-frame", type=positive_int_or_none, default=END_FRAME)
-    parser.add_argument("--frame-stride", type=int, default=FRAME_STRIDE)
+    parser.add_argument("--start-frame", type=positive_int_or_none, default=None)
+    parser.add_argument("--end-frame", type=positive_int_or_none, default=None)
+    parser.add_argument("--frame-stride", type=int, default=1)
     parser.add_argument("--inference-width", type=int, default=DEFAULT_INFERENCE_WIDTH)
     parser.add_argument("--max-frames", type=positive_int_or_none, default=None)
     parser.add_argument("--confidence", type=float, default=CONFIDENCE_THRESHOLD)
@@ -249,8 +91,7 @@ def main():
 
     if not args.api_key.strip():
         raise RuntimeError(
-            "No Roboflow API key found. Set ROBOFLOW_API_KEY in your shell, "
-            "or put the key back into API_KEY in modelEval.py for local testing."
+            "No Roboflow API key found. Set ROBOFLOW_API_KEY in your shell or .env."
         )
 
     from inference import get_model

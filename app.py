@@ -1,4 +1,4 @@
-import csv
+import hashlib
 import json
 import os
 import threading
@@ -9,8 +9,13 @@ import cv2
 from flask import Flask, jsonify, request, send_file, send_from_directory
 from werkzeug.utils import secure_filename
 
-from detect_wall_hits import detect_hits
-from judge_call import Line, Point, judge_ball, load_ball_position
+from judge_call import (
+    Point,
+    calibration_wall_x_bounds,
+    judge_ball,
+    load_ball_positions,
+    load_calibration_lines,
+)
 
 try:
     from dotenv import load_dotenv
@@ -19,75 +24,33 @@ except ImportError:
 
 
 ROOT = Path(__file__).resolve().parent
-RUNS_DIR = ROOT / "ui_runs"
-UPLOADS_DIR = RUNS_DIR / "uploads"
-ROBOFLOW_CACHE_DIR = ROOT / ".roboflow-cache"
-
-os.environ.setdefault("MODEL_CACHE_DIR", str(ROBOFLOW_CACHE_DIR))
-os.environ.setdefault("METRICS_ENABLED", "False")
-os.environ.setdefault("OTEL_METRICS_ENABLED", "False")
 
 if load_dotenv is not None:
     load_dotenv(ROOT / ".env")
 
-from local_model_eval import (
-    CONFIDENCE_THRESHOLD,
-    CSV_FIELDNAMES,
-    DEFAULT_MODEL_ID,
-    ball_csv_row,
-    infer_frame_predictions,
-    select_ball_prediction,
+# inference_engine sets the model-cache/metrics env defaults on import;
+# import it (via job_runner) before anything touches the inference package.
+from job_runner import (
+    RUNS_DIR,
+    UPLOADS_DIR,
+    create_job,
+    get_job,
+    start_tracking_job,
 )
 
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = 2 * 1024 * 1024 * 1024
-JOBS = {}
-JOBS_LOCK = threading.Lock()
-TRACKING_MODEL = None
-TRACKING_MODEL_ID = None
-TRACKING_MODEL_LOCK = threading.Lock()
-TRACKING_MODEL_LOAD_LOCK = threading.Lock()
+
+BY_HASH_DIR = UPLOADS_DIR / "by-hash"
+
+BALL_POSITIONS_CACHE = {}
+BALL_POSITIONS_LOCK = threading.Lock()
+RUN_HITS_CACHE = {}
+JUDGE_HIT_FRAME_TOLERANCE = 2
 
 
 def error_response(message, status=400):
     return jsonify({"ok": False, "error": message}), status
-
-
-def load_calibration_lines(calibration):
-    lines = {line.get("name"): line for line in calibration.get("lines", [])}
-    top = lines.get("out_line_lower_edge")
-    bottom = lines.get("tin_top_edge")
-
-    if top is None or bottom is None:
-        raise ValueError("Calibration must include out_line_lower_edge and tin_top_edge.")
-
-    def line_from_calibration(line):
-        endpoints = line["endpoints"]
-        return Line(
-            Point(float(endpoints[0][0]), float(endpoints[0][1])),
-            Point(float(endpoints[1][0]), float(endpoints[1][1])),
-        )
-
-    return line_from_calibration(top), line_from_calibration(bottom)
-
-
-def line_x_bounds(line):
-    return (
-        min(line.left.x, line.right.x),
-        max(line.left.x, line.right.x),
-    )
-
-
-def calibration_wall_x_bounds(top_line, bottom_line, frame_width):
-    top_min, top_max = line_x_bounds(top_line)
-    bottom_min, bottom_max = line_x_bounds(bottom_line)
-    left = max(top_min, bottom_min)
-    right = min(top_max, bottom_max)
-
-    if right <= left:
-        return 0.0, max(1.0, float(frame_width or 1))
-
-    return left, right
 
 
 def video_info(path):
@@ -112,24 +75,6 @@ def video_info(path):
     }
 
 
-def count_csv_rows(path):
-    with path.open(newline="") as csv_file:
-        return max(0, sum(1 for _ in csv_file) - 1)
-
-
-def update_job(job_id, **updates):
-    with JOBS_LOCK:
-        job = JOBS.setdefault(job_id, {})
-        job.update(updates)
-        return dict(job)
-
-
-def get_job(job_id):
-    with JOBS_LOCK:
-        job = JOBS.get(job_id)
-        return dict(job) if job is not None else None
-
-
 def public_job(job):
     total_frames = max(1, int(job.get("total_frames", 1)))
     processed_frames = int(job.get("processed_frames", 0))
@@ -138,6 +83,7 @@ def public_job(job):
         "ok": True,
         "status": job.get("status", "queued"),
         "run_id": job.get("run_id"),
+        "stage": job.get("stage"),
         "start_frame": job.get("start_frame"),
         "end_frame": job.get("end_frame"),
         "fps": job.get("fps"),
@@ -163,157 +109,50 @@ def public_job(job):
     return response
 
 
-def detect_and_judge_hits(run_dir, csv_path):
-    detected = detect_hits(csv_path)
+def get_ball_positions(run_id, csv_path):
+    mtime = csv_path.stat().st_mtime_ns
+    with BALL_POSITIONS_LOCK:
+        cached = BALL_POSITIONS_CACHE.get(run_id)
+        if cached is not None and cached[0] == mtime:
+            return cached[1]
 
-    top_line = bottom_line = None
-    calibration_path = run_dir / "calibration.json"
-    if calibration_path.exists():
-        try:
-            calibration = json.loads(calibration_path.read_text(encoding="utf-8"))
-            top_line, bottom_line = load_calibration_lines(calibration)
-        except (ValueError, json.JSONDecodeError):
-            pass
+    positions = load_ball_positions(csv_path)
+    with BALL_POSITIONS_LOCK:
+        BALL_POSITIONS_CACHE[run_id] = (mtime, positions)
+    return positions
 
-    hits = []
-    for hit in detected:
-        frame = int(hit["hit_frame"])
-        call, reason = "UNKNOWN", "judging_unavailable"
-        if top_line is not None:
-            try:
-                ball = load_ball_position(csv_path, frame)
-                call, reason, _, _ = judge_ball(ball, top_line, bottom_line)
-            except ValueError as error:
-                call, reason = "UNKNOWN", str(error)
 
-        hits.append(
-            {
-                "frame": frame,
-                "timestamp_seconds": hit["timestamp_seconds"],
-                "dv_magnitude": hit["dv_magnitude"],
-                "after_gap": hit["after_gap"],
-                "call": call,
-                "reason": reason,
-            }
-        )
+def get_run_hits(run_id, run_dir):
+    hits_path = run_dir / "detected_hits.json"
+    if not hits_path.exists():
+        return []
 
-    (run_dir / "detected_hits.json").write_text(
-        json.dumps({"hits": hits}, indent=2), encoding="utf-8"
-    )
+    mtime = hits_path.stat().st_mtime_ns
+    with BALL_POSITIONS_LOCK:
+        cached = RUN_HITS_CACHE.get(run_id)
+        if cached is not None and cached[0] == mtime:
+            return cached[1]
+
+    try:
+        hits = json.loads(hits_path.read_text(encoding="utf-8")).get("hits", [])
+    except (OSError, json.JSONDecodeError):
+        hits = []
+
+    with BALL_POSITIONS_LOCK:
+        RUN_HITS_CACHE[run_id] = (mtime, hits)
     return hits
 
 
-def get_tracking_model():
-    global TRACKING_MODEL, TRACKING_MODEL_ID
-
-    model_id = os.getenv("ROBOFLOW_MODEL_ID", DEFAULT_MODEL_ID)
-    api_key = os.getenv("ROBOFLOW_API_KEY", "")
-
-    if not api_key.strip():
-        raise RuntimeError("No Roboflow API key found. Set ROBOFLOW_API_KEY in .env.")
-
-    with TRACKING_MODEL_LOAD_LOCK:
-        if TRACKING_MODEL is not None and TRACKING_MODEL_ID == model_id:
-            return TRACKING_MODEL
-
-        from inference import get_model
-
-        TRACKING_MODEL = get_model(
-            model_id=model_id,
-            api_key=api_key,
-            countinference=False,
-        )
-        TRACKING_MODEL_ID = model_id
-        return TRACKING_MODEL
-
-
-def run_tracking_job(
-    run_id,
-    video_path,
-    start_frame,
-    end_frame,
-    frame_stride,
-    inference_width,
-    run_dir,
-    csv_path,
-):
-    processed_frames = 0
-
-    try:
-        update_job(run_id, status="running", message="Loading local model...")
-        model = get_tracking_model()
-
-        cap = cv2.VideoCapture(str(video_path))
-        if not cap.isOpened():
-            raise RuntimeError(f"Could not open video: {video_path}")
-
-        source_fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
-        cap.set(cv2.CAP_PROP_POS_FRAMES, start_frame)
-        read_count = start_frame
-
-        csv_path.parent.mkdir(parents=True, exist_ok=True)
-        with csv_path.open("w", newline="") as csv_file:
-            csv_writer = csv.DictWriter(csv_file, fieldnames=CSV_FIELDNAMES)
-            csv_writer.writeheader()
-
-            while read_count <= end_frame:
-                ok, frame = cap.read()
-                if not ok:
-                    break
-
-                if (read_count - start_frame) % frame_stride != 0:
-                    read_count += 1
-                    continue
-
-                with TRACKING_MODEL_LOCK:
-                    predictions = infer_frame_predictions(
-                        model,
-                        frame,
-                        CONFIDENCE_THRESHOLD,
-                        inference_width,
-                    )
-                ball_prediction = select_ball_prediction(predictions)
-                csv_writer.writerow(ball_csv_row(read_count, source_fps, ball_prediction))
-
-                processed_frames += 1
-                detected_text = "detected" if ball_prediction is not None else "not detected"
-                message = f"Processed source frame {read_count} -> {detected_text}"
-                update_job(
-                    run_id,
-                    processed_frames=processed_frames,
-                    message=message,
-                )
-                read_count += 1
-    except Exception as error:
-        update_job(
-            run_id,
-            status="failed",
-            error=f"Tracking failed.\n\n{error}",
-            message="Tracking failed.",
-        )
-        return
-    finally:
-        if "cap" in locals():
-            cap.release()
-
-    hits = []
-    hits_error = None
-    try:
-        hits = detect_and_judge_hits(run_dir, csv_path)
-    except Exception as error:
-        hits_error = str(error)
-
-    job = get_job(run_id) or {}
-    total_frames = int(job.get("total_frames", processed_frames or 1))
-    update_job(
-        run_id,
-        status="complete",
-        processed_frames=total_frames,
-        rows=count_csv_rows(csv_path),
-        hits=hits,
-        hits_error=hits_error,
-        message="Tracking complete.",
-    )
+def find_hit_impact_near_frame(run_id, run_dir, frame):
+    best = None
+    for hit in get_run_hits(run_id, run_dir):
+        impact = hit.get("impact")
+        if impact is None:
+            continue
+        distance = abs(int(hit.get("frame", -10**9)) - frame)
+        if distance <= JUDGE_HIT_FRAME_TOLERANCE and (best is None or distance < best[0]):
+            best = (distance, impact)
+    return best[1] if best else None
 
 
 @app.get("/")
@@ -326,12 +165,54 @@ def health():
     return jsonify({"ok": True})
 
 
+def video_path_for_id(video_id):
+    video_id = secure_filename(str(video_id))
+    if not video_id:
+        return None
+
+    matches = sorted(BY_HASH_DIR.glob(f"{video_id}.*"))
+    return matches[0] if matches else None
+
+
+@app.post("/api/upload")
+def upload_video():
+    video_file = request.files.get("video_file")
+    if video_file is None or not video_file.filename:
+        return error_response("No video file provided.")
+
+    suffix = Path(secure_filename(video_file.filename)).suffix or ".mp4"
+    BY_HASH_DIR.mkdir(parents=True, exist_ok=True)
+
+    hasher = hashlib.sha256()
+    tmp_path = BY_HASH_DIR / f"upload-{int(time.time() * 1000)}-{threading.get_ident()}.tmp"
+    try:
+        with tmp_path.open("wb") as out:
+            while True:
+                chunk = video_file.stream.read(1024 * 1024)
+                if not chunk:
+                    break
+                hasher.update(chunk)
+                out.write(chunk)
+
+        video_id = hasher.hexdigest()
+        final_path = BY_HASH_DIR / f"{video_id}{suffix}"
+        if final_path.exists():
+            tmp_path.unlink()
+        else:
+            os.replace(tmp_path, final_path)
+    finally:
+        tmp_path.unlink(missing_ok=True)
+
+    return jsonify({"ok": True, "video_id": video_id})
+
+
 @app.post("/api/track")
 def track_clip():
     video_file = request.files.get("video_file")
+    video_id = request.form.get("video_id", "").strip()
     calibration_text = request.form.get("calibration_json", "")
 
-    if video_file is None or not video_file.filename:
+    if not video_id and (video_file is None or not video_file.filename):
         return error_response("Upload the source video before tracking.")
 
     try:
@@ -360,13 +241,18 @@ def track_clip():
 
     run_id = str(int(time.time() * 1000))
     run_dir = RUNS_DIR / run_id
-    upload_dir = UPLOADS_DIR / run_id
     run_dir.mkdir(parents=True, exist_ok=True)
-    upload_dir.mkdir(parents=True, exist_ok=True)
 
-    video_name = secure_filename(video_file.filename) or "source_video.mp4"
-    video_path = upload_dir / video_name
-    video_file.save(video_path)
+    if video_id:
+        video_path = video_path_for_id(video_id)
+        if video_path is None:
+            return error_response("Uploaded video was not found. Upload it again.", status=404)
+    else:
+        upload_dir = UPLOADS_DIR / run_id
+        upload_dir.mkdir(parents=True, exist_ok=True)
+        video_name = secure_filename(video_file.filename) or "source_video.mp4"
+        video_path = upload_dir / video_name
+        video_file.save(video_path)
 
     try:
         info = video_info(video_path)
@@ -379,16 +265,16 @@ def track_clip():
         return error_response("Selected clip is outside the video duration.")
 
     calibration_path = run_dir / "calibration.json"
-    csv_path = run_dir / "ball_coordinates.csv"
     calibration_path.write_text(json.dumps(calibration, indent=2), encoding="utf-8")
 
     selected_frames = end_frame - start_frame + 1
     total_frames = (selected_frames + frame_stride - 1) // frame_stride
-    update_job(
+    create_job(
         run_id,
-        run_id=run_id,
+        run_dir,
         status="queued",
         message="Queued tracking job.",
+        video_path=str(video_path),
         start_frame=start_frame,
         end_frame=end_frame,
         fps=info["fps"],
@@ -398,22 +284,7 @@ def track_clip():
         total_frames=total_frames,
         csv_url=f"/api/runs/{run_id}/ball_coordinates.csv",
     )
-
-    thread = threading.Thread(
-        target=run_tracking_job,
-        args=(
-            run_id,
-            video_path,
-            start_frame,
-            end_frame,
-            frame_stride,
-            inference_width,
-            run_dir,
-            csv_path,
-        ),
-        daemon=True,
-    )
-    thread.start()
+    start_tracking_job(run_id)
 
     return jsonify(public_job(get_job(run_id)))
 
@@ -449,8 +320,19 @@ def judge_frame():
     try:
         calibration = json.loads(calibration_path.read_text(encoding="utf-8"))
         top_line, bottom_line = load_calibration_lines(calibration)
-        ball = load_ball_position(csv_path, frame)
+
+        impact = find_hit_impact_near_frame(run_id, run_dir, frame)
+        if impact is not None:
+            ball = Point(float(impact["x"]), float(impact["y"]))
+            source = "impact_estimate"
+        else:
+            ball = get_ball_positions(run_id, csv_path).get(frame)
+            if ball is None:
+                raise ValueError(f"No ball detection recorded for frame {frame}.")
+            source = "detected_center"
+
         call, reason, top_y, bottom_y = judge_ball(ball, top_line, bottom_line)
+        margin_px = min(ball.y - top_y, bottom_y - ball.y)
         wall_left, wall_right = calibration_wall_x_bounds(
             top_line,
             bottom_line,
@@ -467,6 +349,8 @@ def judge_frame():
             "frame": frame,
             "call": call,
             "reason": reason,
+            "source": source,
+            "margin_px": margin_px,
             "ball": {"x": ball.x, "y": ball.y},
             "top_y": top_y,
             "bottom_y": bottom_y,
@@ -491,6 +375,6 @@ def run_file(run_id, filename):
 
 if __name__ == "__main__":
     RUNS_DIR.mkdir(exist_ok=True)
-    UPLOADS_DIR.mkdir(exist_ok=True)
+    UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
     port = int(os.getenv("PORT", "5000"))
     app.run(host="127.0.0.1", port=port, debug=False)

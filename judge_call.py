@@ -57,6 +57,56 @@ def prompt_int(label):
             print("Enter an integer frame number.")
 
 
+def line_from_calibration(line):
+    endpoints = line["endpoints"]
+    return Line(
+        Point(float(endpoints[0][0]), float(endpoints[0][1])),
+        Point(float(endpoints[1][0]), float(endpoints[1][1])),
+    )
+
+
+def load_calibration_lines(calibration):
+    lines = {line.get("name"): line for line in calibration.get("lines", [])}
+    top = lines.get("out_line_lower_edge")
+    bottom = lines.get("tin_top_edge")
+
+    if top is None or bottom is None:
+        raise ValueError("Calibration must include out_line_lower_edge and tin_top_edge.")
+
+    return line_from_calibration(top), line_from_calibration(bottom)
+
+
+def line_x_bounds(line):
+    return (
+        min(line.left.x, line.right.x),
+        max(line.left.x, line.right.x),
+    )
+
+
+def calibration_wall_x_bounds(top_line, bottom_line, frame_width):
+    top_min, top_max = line_x_bounds(top_line)
+    bottom_min, bottom_max = line_x_bounds(bottom_line)
+    left = max(top_min, bottom_min)
+    right = min(top_max, bottom_max)
+
+    if right <= left:
+        return 0.0, max(1.0, float(frame_width or 1))
+
+    return left, right
+
+
+def load_ball_positions(csv_path):
+    positions = {}
+    with csv_path.open(newline="") as csv_file:
+        for row in csv.DictReader(csv_file):
+            detected = row.get("detected", "").strip().lower()
+            if detected in {"true", "1", "yes"} and row.get("x_center"):
+                positions[int(row["source_frame"])] = Point(
+                    float(row["x_center"]), float(row["y_center"])
+                )
+    return positions
+
+
 def load_ball_position(csv_path, frame):
     with csv_path.open(newline="") as csv_file:
         reader = csv.DictReader(csv_file)
