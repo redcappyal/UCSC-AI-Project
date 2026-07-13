@@ -11,3 +11,5 @@ __pycache__/
 
 # App output (uploaded videos, tracking results)
 ui_runs/
+
+.venv/
