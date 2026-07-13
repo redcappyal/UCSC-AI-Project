@@ -22,10 +22,18 @@ ROOT = Path(__file__).resolve().parent
 RUNS_DIR = ROOT / "ui_runs"
 UPLOADS_DIR = RUNS_DIR / "uploads"
 ROBOFLOW_CACHE_DIR = ROOT / ".roboflow-cache"
+APP_VERSION = "iphone-cpu-2026-07-13-3"
 
+os.environ["CORE_MODEL_SAM_ENABLED"] = "False"
+os.environ["CORE_MODEL_SAM3_ENABLED"] = "False"
+os.environ["CORE_MODEL_GAZE_ENABLED"] = "False"
+os.environ["CORE_MODEL_YOLO_WORLD_ENABLED"] = "False"
+os.environ["DEFAULT_DEVICE"] = "cpu"
+os.environ["ONNXRUNTIME_EXECUTION_PROVIDERS"] = "[CPUExecutionProvider]"
 os.environ.setdefault("MODEL_CACHE_DIR", str(ROBOFLOW_CACHE_DIR))
 os.environ.setdefault("METRICS_ENABLED", "False")
 os.environ.setdefault("OTEL_METRICS_ENABLED", "False")
+os.environ.setdefault("MPLCONFIGDIR", str(ROOT / ".matplotlib-cache"))
 
 if load_dotenv is not None:
     load_dotenv(ROOT / ".env")
@@ -222,6 +230,8 @@ def get_tracking_model():
             model_id=model_id,
             api_key=api_key,
             countinference=False,
+            device="cpu",
+            onnx_execution_providers=["CPUExecutionProvider"],
         )
         TRACKING_MODEL_ID = model_id
         return TRACKING_MODEL
@@ -318,12 +328,22 @@ def run_tracking_job(
 
 @app.get("/")
 def index():
-    return send_file(ROOT / "index.html")
+    response = send_file(ROOT / "index.html", max_age=0)
+    response.headers["Cache-Control"] = "no-store, max-age=0"
+    return response
 
 
 @app.get("/api/health")
 def health():
-    return jsonify({"ok": True})
+    return jsonify(
+        {
+            "ok": True,
+            "version": APP_VERSION,
+            "root": str(ROOT),
+            "default_device": os.environ.get("DEFAULT_DEVICE"),
+            "onnx_providers": os.environ.get("ONNXRUNTIME_EXECUTION_PROVIDERS"),
+        }
+    )
 
 
 @app.post("/api/track")
@@ -492,5 +512,12 @@ def run_file(run_id, filename):
 if __name__ == "__main__":
     RUNS_DIR.mkdir(exist_ok=True)
     UPLOADS_DIR.mkdir(exist_ok=True)
+    host = os.getenv("HOST", "127.0.0.1")
     port = int(os.getenv("PORT", "5000"))
-    app.run(host="127.0.0.1", port=port, debug=False)
+    print(f"Starting SquashAnalytics {APP_VERSION} from {ROOT}")
+    print(f"DEFAULT_DEVICE={os.environ.get('DEFAULT_DEVICE')}")
+    print(f"ONNXRUNTIME_EXECUTION_PROVIDERS={os.environ.get('ONNXRUNTIME_EXECUTION_PROVIDERS')}")
+    print(f"Open http://127.0.0.1:{port}/ on this Mac.")
+    if host == "127.0.0.1":
+        print(f"For phone access, restart with: HOST=0.0.0.0 PORT={port} python app.py")
+    app.run(host=host, port=port, debug=False)

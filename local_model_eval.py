@@ -1,16 +1,35 @@
 import argparse
 import csv
 import os
+from contextlib import nullcontext
 from pathlib import Path
 
-os.environ.setdefault("CORE_MODEL_SAM_ENABLED", "False")
-os.environ.setdefault("CORE_MODEL_SAM3_ENABLED", "False")
-os.environ.setdefault("CORE_MODEL_GAZE_ENABLED", "False")
-os.environ.setdefault("CORE_MODEL_YOLO_WORLD_ENABLED", "False")
+os.environ["CORE_MODEL_SAM_ENABLED"] = "False"
+os.environ["CORE_MODEL_SAM3_ENABLED"] = "False"
+os.environ["CORE_MODEL_GAZE_ENABLED"] = "False"
+os.environ["CORE_MODEL_YOLO_WORLD_ENABLED"] = "False"
+os.environ["DEFAULT_DEVICE"] = "cpu"
+os.environ["ONNXRUNTIME_EXECUTION_PROVIDERS"] = "[CPUExecutionProvider]"
 os.environ.setdefault("MODEL_CACHE_DIR", str(Path(__file__).with_name(".roboflow-cache")))
 os.environ.setdefault("METRICS_ENABLED", "False")
 os.environ.setdefault("OTEL_METRICS_ENABLED", "False")
 os.environ.setdefault("MPLCONFIGDIR", str(Path(__file__).with_name(".matplotlib-cache")))
+
+try:
+    import torch
+except ImportError:
+    torch = None
+
+if torch is not None and not getattr(torch.cuda.stream, "_squash_cpu_safe", False):
+    _torch_cuda_stream = torch.cuda.stream
+
+    def _cpu_safe_cuda_stream(stream):
+        if stream is None:
+            return nullcontext()
+        return _torch_cuda_stream(stream)
+
+    _cpu_safe_cuda_stream._squash_cpu_safe = True
+    torch.cuda.stream = _cpu_safe_cuda_stream
 
 import cv2
 from PIL import Image
@@ -256,7 +275,13 @@ def main():
     from inference import get_model
 
     print(f"Loading local Roboflow model: {args.model_id}")
-    model = get_model(model_id=args.model_id, api_key=args.api_key, countinference=False)
+    model = get_model(
+        model_id=args.model_id,
+        api_key=args.api_key,
+        countinference=False,
+        device="cpu",
+        onnx_execution_providers=["CPUExecutionProvider"],
+    )
     print("Model loaded.")
 
     cap.set(cv2.CAP_PROP_POS_FRAMES, start_frame)
