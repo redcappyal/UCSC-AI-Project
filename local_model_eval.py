@@ -7,6 +7,9 @@ os.environ.setdefault("CORE_MODEL_SAM_ENABLED", "False")
 os.environ.setdefault("CORE_MODEL_SAM3_ENABLED", "False")
 os.environ.setdefault("CORE_MODEL_GAZE_ENABLED", "False")
 os.environ.setdefault("CORE_MODEL_YOLO_WORLD_ENABLED", "False")
+os.environ.setdefault("MODEL_CACHE_DIR", str(Path(__file__).with_name(".roboflow-cache")))
+os.environ.setdefault("METRICS_ENABLED", "False")
+os.environ.setdefault("OTEL_METRICS_ENABLED", "False")
 os.environ.setdefault("MPLCONFIGDIR", str(Path(__file__).with_name(".matplotlib-cache")))
 
 import cv2
@@ -58,6 +61,7 @@ DEFAULT_MODEL_ID = os.getenv(
 )
 DEFAULT_OUTPUT_VIDEO_PATH = Path(__file__).with_name("annotated_output_local.mp4")
 DEFAULT_CSV_OUTPUT_PATH = Path(__file__).with_name("ball_coordinates_local.csv")
+DEFAULT_INFERENCE_WIDTH = int(os.getenv("INFERENCE_WIDTH", "960"))
 
 
 def object_to_dict(value):
@@ -139,6 +143,40 @@ def normalize_predictions(raw_result):
     return [normalize_prediction(prediction) for prediction in predictions]
 
 
+def resize_frame_for_inference(frame, max_width):
+    if not max_width or max_width <= 0:
+        return frame, 1.0, 1.0
+
+    height, width = frame.shape[:2]
+    if width <= max_width:
+        return frame, 1.0, 1.0
+
+    scale = max_width / width
+    inference_size = (int(max_width), max(1, int(round(height * scale))))
+    resized = cv2.resize(frame, inference_size, interpolation=cv2.INTER_AREA)
+    return resized, width / inference_size[0], height / inference_size[1]
+
+
+def scale_prediction(prediction, x_scale, y_scale):
+    if x_scale == 1.0 and y_scale == 1.0:
+        return prediction
+
+    scaled = dict(prediction)
+    for key in ("x", "width", "x_center", "x_min", "x_max", "xmin", "xmax"):
+        if key in scaled and scaled[key] not in (None, ""):
+            scaled[key] = float(scaled[key]) * x_scale
+
+    for key in ("y", "height", "y_center", "y_min", "y_max", "ymin", "ymax"):
+        if key in scaled and scaled[key] not in (None, ""):
+            scaled[key] = float(scaled[key]) * y_scale
+
+    return scaled
+
+
+def scale_predictions(predictions, x_scale, y_scale):
+    return [scale_prediction(prediction, x_scale, y_scale) for prediction in predictions]
+
+
 def infer_frame(model, frame, confidence):
     rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
     image = Image.fromarray(rgb_frame)
@@ -147,6 +185,13 @@ def infer_frame(model, frame, confidence):
         return model.infer(image=image, confidence=confidence)
     except TypeError:
         return model.infer(image)
+
+
+def infer_frame_predictions(model, frame, confidence, max_width=DEFAULT_INFERENCE_WIDTH):
+    inference_frame, x_scale, y_scale = resize_frame_for_inference(frame, max_width)
+    result = infer_frame(model, inference_frame, confidence)
+    predictions = normalize_predictions(result)
+    return scale_predictions(predictions, x_scale, y_scale)
 
 
 def positive_int_or_none(value):
@@ -169,6 +214,7 @@ def parse_args():
     parser.add_argument("--start-frame", type=positive_int_or_none, default=START_FRAME)
     parser.add_argument("--end-frame", type=positive_int_or_none, default=END_FRAME)
     parser.add_argument("--frame-stride", type=int, default=FRAME_STRIDE)
+    parser.add_argument("--inference-width", type=int, default=DEFAULT_INFERENCE_WIDTH)
     parser.add_argument("--max-frames", type=positive_int_or_none, default=None)
     parser.add_argument("--confidence", type=float, default=CONFIDENCE_THRESHOLD)
     parser.add_argument("--no-video", action="store_true")
@@ -198,6 +244,9 @@ def main():
     if args.frame_stride < 1:
         raise RuntimeError("--frame-stride must be 1 or greater.")
 
+    if args.inference_width < 0:
+        raise RuntimeError("--inference-width must be 0 or greater.")
+
     if not args.api_key.strip():
         raise RuntimeError(
             "No Roboflow API key found. Set ROBOFLOW_API_KEY in your shell, "
@@ -207,7 +256,7 @@ def main():
     from inference import get_model
 
     print(f"Loading local Roboflow model: {args.model_id}")
-    model = get_model(model_id=args.model_id, api_key=args.api_key)
+    model = get_model(model_id=args.model_id, api_key=args.api_key, countinference=False)
     print("Model loaded.")
 
     cap.set(cv2.CAP_PROP_POS_FRAMES, start_frame)
@@ -219,6 +268,10 @@ def main():
     print(f"Source video: {source_frame_count} frames at {source_fps:.2f} FPS")
     print(f"Processing source frames {start_frame} through {end_frame}")
     print(f"Processing every {args.frame_stride} frame(s)")
+    print(
+        "Inference width: "
+        + ("original" if args.inference_width == 0 else f"{args.inference_width}px")
+    )
     print(f"Output CSV: {args.csv}")
     if not args.no_video:
         print(f"Output video: {args.output_video}")
@@ -236,8 +289,12 @@ def main():
                 read_count += 1
                 continue
 
-            result = infer_frame(model, frame, args.confidence)
-            predictions = normalize_predictions(result)
+            predictions = infer_frame_predictions(
+                model,
+                frame,
+                args.confidence,
+                args.inference_width,
+            )
             ball_prediction = select_ball_prediction(predictions)
             csv_writer.writerow(ball_csv_row(read_count, source_fps, ball_prediction))
 
