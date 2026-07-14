@@ -12,10 +12,20 @@ MAX_JUMP_PX_PER_FRAME = 200.0
 SMOOTH_WINDOW = 3
 MIN_GAP_FRAMES = 10
 TOP_K = 20
+MIN_DV_PX_PER_SECOND = 200.0
+MIN_TURN_DEGREES = 25.0
 IMPACT_FIT_SAMPLES = 4
 GAP_BRIDGE_SECONDS = 0.5
 MAX_IMPACT_MISMATCH_PX = 40.0
 REQUIRED_COLUMNS = ("source_frame", "timestamp_seconds", "detected", "x_center", "y_center")
+
+
+def turn_angle_degrees(v_before, v_after):
+    norms = np.linalg.norm(v_before) * np.linalg.norm(v_after)
+    if norms < 1e-9:
+        return 0.0
+    cos_angle = np.clip(float(v_before @ v_after) / norms, -1.0, 1.0)
+    return float(np.degrees(np.arccos(cos_angle)))
 
 
 def parse_bool(value):
@@ -126,6 +136,7 @@ def compute_candidates(frames, timestamps, positions, tracks, smooth_window, max
                     "dv_magnitude": float(dv_magnitude),
                     "speed_before": float(np.linalg.norm(velocities[sample - 1])),
                     "speed_after": float(np.linalg.norm(velocities[sample])),
+                    "turn_degrees": turn_angle_degrees(velocities[sample - 1], velocities[sample]),
                     "after_gap": bool(after_gap and sample <= 2),
                     "track_index": track_index,
                     "sample_global_index": start + sample,
@@ -160,6 +171,7 @@ def compute_candidates(frames, timestamps, positions, tracks, smooth_window, max
                 "dv_magnitude": float(np.linalg.norm(v_after - v_before)),
                 "speed_before": float(np.linalg.norm(v_before)),
                 "speed_after": float(np.linalg.norm(v_after)),
+                "turn_degrees": turn_angle_degrees(v_before, v_after),
                 "after_gap": True,
                 "track_index": track_index,
                 "sample_global_index": start,
@@ -262,6 +274,17 @@ def estimate_impact(timestamps, positions, tracks, hit):
     return min(estimates, key=lambda e: e["impact_mismatch_px"])
 
 
+def is_significant(candidate):
+    # A wall bounce turns the ball sharply within one sample; flight-path
+    # curvature (gravity) turns it only a few degrees per sample, even near
+    # the arc's apex where the ball is slow. The |dv| floor rejects
+    # direction flips from detector jitter on a slow or held ball.
+    return (
+        candidate["dv_magnitude"] >= MIN_DV_PX_PER_SECOND
+        and candidate["turn_degrees"] >= MIN_TURN_DEGREES
+    )
+
+
 def pick_peaks(candidates, min_gap, top_k, threshold):
     ranked = sorted(candidates, key=lambda c: c["dv_magnitude"], reverse=True)
     picked = []
@@ -269,6 +292,10 @@ def pick_peaks(candidates, min_gap, top_k, threshold):
     for candidate in ranked:
         if threshold is not None and candidate["dv_magnitude"] < threshold:
             break
+        # Significance depends on the candidate's own speed, so it is not
+        # monotonic in |dv|: keep scanning rather than stopping.
+        if threshold is None and not is_significant(candidate):
+            continue
         if any(abs(candidate["hit_frame"] - p["hit_frame"]) < min_gap for p in picked):
             continue
 
@@ -327,6 +354,7 @@ def save_hits(output_path, hits):
         "dv_magnitude",
         "speed_before",
         "speed_after",
+        "turn_degrees",
         "after_gap",
         "impact_frame",
         "impact_x",
@@ -344,6 +372,7 @@ def save_hits(output_path, hits):
                 "dv_magnitude": f"{hit['dv_magnitude']:.3f}",
                 "speed_before": f"{hit['speed_before']:.3f}",
                 "speed_after": f"{hit['speed_after']:.3f}",
+                "turn_degrees": f"{hit['turn_degrees']:.1f}",
             }
             for key in ("impact_frame", "impact_x", "impact_y", "impact_time", "impact_mismatch_px"):
                 if key in hit:
@@ -354,7 +383,7 @@ def save_hits(output_path, hits):
 def print_hits(hits):
     header = (
         f"{'rank':>4}  {'frame':>8}  {'time (s)':>10}  {'|dv| px/s':>12}  {'v before':>10}  "
-        f"{'v after':>10}  {'impact @':>10}  after_gap"
+        f"{'v after':>10}  {'turn deg':>9}  {'impact @':>10}  after_gap"
     )
     print(header)
     print("-" * len(header))
@@ -363,7 +392,8 @@ def print_hits(hits):
         print(
             f"{rank:>4}  {hit['hit_frame']:>8}  {hit['timestamp_seconds']:>10.3f}  "
             f"{hit['dv_magnitude']:>12.1f}  {hit['speed_before']:>10.1f}  "
-            f"{hit['speed_after']:>10.1f}  {impact_text:>10}  {'yes' if hit['after_gap'] else ''}"
+            f"{hit['speed_after']:>10.1f}  {hit['turn_degrees']:>9.1f}  "
+            f"{impact_text:>10}  {'yes' if hit['after_gap'] else ''}"
         )
 
 
@@ -423,7 +453,10 @@ def build_parser():
         "--threshold",
         type=float,
         default=None,
-        help="Report every hit with |dv| at or above this value instead of the top k.",
+        help=(
+            "Report every hit with |dv| at or above this value. Overrides the "
+            "default mode, which keeps only hits whose |dv| rivals the ball speed."
+        ),
     )
     return parser
 

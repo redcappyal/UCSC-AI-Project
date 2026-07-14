@@ -94,6 +94,19 @@
     box-shadow:0 0 0 2px rgba(0,0,0,.45); pointer-events:none}
   #clipCursor::before{content:''; position:absolute; left:-12px; top:0; border-left:14px solid transparent;
     border-right:14px solid transparent; border-top:18px solid #f5f5f5}
+  .clipHandle.offview{opacity:.35}
+  .clipOverview{position:relative; height:64px; margin-top:20px; border-radius:10px; overflow:hidden;
+    background:#090a0c; border:2px solid #2c333c; touch-action:none}
+  #overviewStrip{position:absolute; inset:0; width:100%; height:100%; display:block}
+  #overviewSelection{position:absolute; top:0; bottom:0; background:rgba(255,210,31,.45); pointer-events:none}
+  #overviewViewport{position:absolute; top:0; bottom:0; border:3px solid #35e0ff; border-radius:6px;
+    box-sizing:border-box; pointer-events:none}
+  .viewRange{display:flex; justify-content:space-between; font-size:22px; color:var(--dim); margin-top:6px}
+  .nudgeRow{display:flex; gap:10px; margin-top:12px; align-items:stretch}
+  .nudgeRow button.small{flex:1 1 0; min-height:60px; padding:14px 8px}
+  .nudgeLabel{flex:0 0 110px; font-size:24px; color:var(--dim);
+    display:flex; flex-direction:column; justify-content:center; gap:2px}
+  .nudgeLabel output{color:var(--text); font-size:26px}
   .hitTimeline{position:relative; height:140px; margin-top:18px; border-radius:12px; overflow:hidden;
     background:#090a0c; border:2px solid #2c333c; touch-action:none; cursor:pointer}
   #trackStrip{position:absolute; inset:0; width:100%; height:100%; display:block}
@@ -185,6 +198,12 @@
     .clipEditor{height:170px; margin-top:18px}
     .clipHandle{width:42px}
     .clipHandle::after{height:88px}
+    .clipOverview{height:56px; margin-top:18px}
+    .viewRange{font-size:20px}
+    .nudgeRow{gap:8px}
+    .nudgeRow button.small{min-height:78px; padding:14px 6px; font-size:24px}
+    .nudgeLabel{flex-basis:88px; font-size:20px}
+    .nudgeLabel output{font-size:24px}
     .progressbox,
     .callout{border-radius:12px; padding:20px; font-size:24px}
     .callout strong{font-size:46px}
@@ -279,9 +298,14 @@
 
   <!-- PHASE: clip -->
   <section class="card hidden" id="p-clip">
-    <p class="instruction">Select the short part of the video to track. Keep this tight around the rally or call to make processing faster.</p>
+    <p class="instruction">Select the short part of the video to track. Tap the top strip to jump anywhere in the video, then drag the yellow handles in the zoomed strip. Keep the clip tight around the rally or call to make processing faster.</p>
     <canvas id="clipPreview"></canvas>
     <button class="small" id="clipPlayBtn" type="button" style="margin-top:10px">Play preview</button>
+    <div class="clipOverview" id="clipOverview">
+      <canvas id="overviewStrip"></canvas>
+      <div id="overviewSelection"></div>
+      <div id="overviewViewport"></div>
+    </div>
     <div class="clipEditor" id="clipEditor">
       <canvas id="filmstrip"></canvas>
       <div class="clipShade" id="shadeLeft"></div>
@@ -291,17 +315,24 @@
       <div class="clipHandle" id="clipEndHandle"></div>
       <div id="clipCursor"></div>
     </div>
-    <div style="margin-top:12px">
-      <div class="sliderlabel"><span>Clip start</span><output id="clipStartOut">0.00s</output></div>
-      <input type="range" id="clipStart" min="0" max="1" step="0.01" value="0">
+    <div class="viewRange"><span id="viewStartLabel">0.00s</span><span id="viewEndLabel">0.00s</span></div>
+    <div class="nudgeRow">
+      <span class="nudgeLabel">Start<output id="clipStartOut">0.00s</output></span>
+      <button class="small" type="button" id="nStartM1s">&minus;1s</button>
+      <button class="small" type="button" id="nStartM1f">&minus;1f</button>
+      <button class="small" type="button" id="nStartP1f">+1f</button>
+      <button class="small" type="button" id="nStartP1s">+1s</button>
     </div>
-    <div style="margin-top:12px">
-      <div class="sliderlabel"><span>Clip end</span><output id="clipEndOut">0.00s</output></div>
-      <input type="range" id="clipEnd" min="0" max="1" step="0.01" value="1">
+    <div class="nudgeRow">
+      <span class="nudgeLabel">End<output id="clipEndOut">0.00s</output></span>
+      <button class="small" type="button" id="nEndM1s">&minus;1s</button>
+      <button class="small" type="button" id="nEndM1f">&minus;1f</button>
+      <button class="small" type="button" id="nEndP1f">+1f</button>
+      <button class="small" type="button" id="nEndP1s">+1s</button>
     </div>
     <div style="margin-top:12px">
       <div class="sliderlabel"><span>Analyze every</span><output id="frameStrideOut">1 frame</output></div>
-      <input type="range" id="frameStride" min="1" max="5" step="1" value="1">
+      <input type="range" id="frameStride" min="1" max="10" step="1" value="1">
     </div>
     <div style="margin-top:12px">
       <div class="sliderlabel"><span>Inference width</span><output id="inferenceWidthOut">960px</output></div>
@@ -372,7 +403,12 @@ const S = {
   run:null,                   // backend tracking result
   trackSeekId:0,
   trackStripGen:0,            // invalidates in-flight timeline thumbnail renders
-  clip:{start:0, end:1, cursor:0, dragging:null, thumbnails:false, playing:false, raf:null, frameStride:1, inferenceWidth:960},
+  videoFps:null,              // probed by the server at upload; null until known
+  clip:{start:0, end:0, cursor:0, dragging:null, playing:false, raf:null, frameStride:1, inferenceWidth:960,
+    viewStart:0, viewEnd:1,   // detail-strip visible window (seconds)
+    overviewThumbs:false, overviewDragging:false,
+    detailKey:'', detailToken:0, detailTimer:null,
+    pendingSeek:null, seeking:false},
   view:{scale:1, tx:0, ty:0}, // zoom/pan applied to the canvas while tapping
 };
 
@@ -447,7 +483,9 @@ $('fileIn').addEventListener('change', e => {
   if(!f) return;
   S.videoFile = f;
   S.videoName = f.name;
-  S.clip.thumbnails = false;
+  S.videoFps = null;
+  S.clip.overviewThumbs = false;
+  S.clip.detailKey = '';
   $('loadStatus').textContent = `Loading ${f.name}…`;
   $('loadStatus').className = 'status';
   if(S.loadTimer) clearTimeout(S.loadTimer);
@@ -489,8 +527,8 @@ $('scrub').addEventListener('input', e => { vid.currentTime = +e.target.value; }
 const nudge = dt => { vid.currentTime = Math.min(Math.max(vid.currentTime + dt, 0), vid.duration || 0); $('scrub').value = vid.currentTime; };
 $('bwd1s').onclick = () => nudge(-1);
 $('fwd1s').onclick = () => nudge(1);
-$('bwd1f').onclick = () => nudge(-1/60);
-$('fwd1f').onclick = () => nudge(1/60);
+$('bwd1f').onclick = () => nudge(-1/videoFps());
+$('fwd1f').onclick = () => nudge(1/videoFps());
 
 $('useFrame').onclick = () => {
   vid.pause();
@@ -886,8 +924,16 @@ function fmtTime(value){
   return `${(+value).toFixed(2)}s`;
 }
 
+function videoFps(){
+  return S.videoFps || S.run?.fps || 60;
+}
+
+function fpsIsKnown(){
+  return !!(S.videoFps || S.run?.fps);
+}
+
 function approxFrame(seconds){
-  return Math.round(seconds * (S.run?.fps || 60));
+  return Math.round(seconds * videoFps());
 }
 
 const INFERENCE_WIDTHS = [640, 960, 1280, 0];
@@ -900,12 +946,53 @@ function clipDuration(){
   return vid.duration || 1;
 }
 
-function timeToPct(time){
+const MIN_CLIP = 0.5;             // seconds; smallest selectable clip
+const MIN_VIEW_SPAN = 2;          // seconds; smallest detail-strip window
+const EDGE_RECENTER_FRAC = 0.08;  // recenter when a handle lands this close to a view edge
+
+function minClip(){
+  return Math.min(MIN_CLIP, clipDuration());
+}
+
+function viewSpan(){
+  return Math.max(0.001, S.clip.viewEnd - S.clip.viewStart);
+}
+
+function timeToDetailPct(time){
+  return Math.min(1, Math.max(0, (time - S.clip.viewStart) / viewSpan())) * 100;
+}
+
+function detailPctToTime(pct){
+  return S.clip.viewStart + Math.min(1, Math.max(0, pct)) * viewSpan();
+}
+
+function timeToOverviewPct(time){
   return Math.min(1, Math.max(0, time / clipDuration())) * 100;
 }
 
-function pctToTime(pct){
+function overviewPctToTime(pct){
   return Math.min(clipDuration(), Math.max(0, pct * clipDuration()));
+}
+
+// Fit the detail window around the selection (3x padding, clamped). Returns
+// true when the window moved enough that the thumbnails need re-rendering.
+function recenterView(){
+  const duration = clipDuration();
+  const selSpan = Math.max(0.001, S.clip.end - S.clip.start);
+  let span = Math.min(duration, Math.max(MIN_VIEW_SPAN, selSpan * 3));
+  let vs = 0;
+  if(span >= 0.85 * duration){
+    span = duration;
+  } else {
+    vs = (S.clip.start + S.clip.end) / 2 - span / 2;
+    vs = Math.max(0, Math.min(vs, duration - span));
+  }
+  $('clipOverview').classList.toggle('hidden', span >= duration - 1e-6);
+  const changed = Math.abs(vs - S.clip.viewStart) > span * 0.01
+    || Math.abs(vs + span - S.clip.viewEnd) > span * 0.01;
+  S.clip.viewStart = vs;
+  S.clip.viewEnd = vs + span;
+  return changed;
 }
 
 function drawClipPreview(time){
@@ -970,16 +1057,35 @@ async function seekVideo(time){
   });
 }
 
-async function renderFilmstrip(){
-  const strip = $('filmstrip');
-  const box = $('clipEditor').getBoundingClientRect();
+// Show the newest requested frame in the preview canvas, keeping at most one
+// video seek in flight (drags fire faster than the decoder can seek).
+async function requestPreviewFrame(time){
+  S.clip.pendingSeek = time;
+  if(S.clip.seeking) return;
+  S.clip.seeking = true;
+  try{
+    while(S.clip.pendingSeek !== null){
+      const next = S.clip.pendingSeek;
+      S.clip.pendingSeek = null;
+      await seekVideo(next);
+      drawClipPreview(next);
+    }
+  } finally {
+    S.clip.seeking = false;
+  }
+}
+
+async function renderStripCanvas(canvasEl, boxEl, t0, t1, opts = {}){
+  const box = boxEl.getBoundingClientRect();
+  if(box.width < 4) return false;
   const dpr = window.devicePixelRatio || 1;
-  strip.width = Math.max(1, Math.round(box.width * dpr));
-  strip.height = Math.max(1, Math.round(box.height * dpr));
-  const cc = strip.getContext('2d');
+  canvasEl.width = Math.max(1, Math.round(box.width * dpr));
+  canvasEl.height = Math.max(1, Math.round(box.height * dpr));
+  const cc = canvasEl.getContext('2d');
   cc.setTransform(dpr, 0, 0, dpr, 0, 0);
   cc.fillStyle = '#090a0c';
   cc.fillRect(0, 0, box.width, box.height);
+  if(opts.background) opts.background(cc, box.width, box.height);
 
   const count = Math.max(5, Math.min(12, Math.floor(box.width / 86)));
   const thumbW = box.width / count;
@@ -987,8 +1093,10 @@ async function renderFilmstrip(){
   vid.pause();
 
   for(let i = 0; i < count; i++){
-    const t = (i + 0.5) / count * clipDuration();
+    if(opts.shouldAbort && opts.shouldAbort()) return false;
+    const t = t0 + (i + 0.5) / count * (t1 - t0);
     await seekVideo(t);
+    if(opts.shouldAbort && opts.shouldAbort()) return false;
     cc.drawImage(vid, i * thumbW, 0, thumbW, box.height);
     cc.strokeStyle = 'rgba(255,255,255,.12)';
     cc.strokeRect(i * thumbW, 0, thumbW, box.height);
@@ -997,13 +1105,71 @@ async function renderFilmstrip(){
   await seekVideo(S.clip.cursor);
   drawClipPreview(S.clip.cursor);
   if(wasPlayingPreview) startClipPlayback();
-  S.clip.thumbnails = true;
+  return true;
+}
+
+async function renderOverviewStrip(){
+  if(S.clip.overviewThumbs) return;
+  const ok = await renderStripCanvas($('overviewStrip'), $('clipOverview'), 0, clipDuration());
+  if(ok) S.clip.overviewThumbs = true;
+}
+
+// Stretch the matching slice of the overview strip into the detail canvas —
+// blurry but instant context while the real thumbnails render.
+function paintDetailPlaceholder(cc, w, h){
+  const ov = $('overviewStrip');
+  if(!S.clip.overviewThumbs || !ov.width) return;
+  const dur = clipDuration();
+  const sx = S.clip.viewStart / dur * ov.width;
+  const sw = Math.max(1, viewSpan() / dur * ov.width);
+  cc.drawImage(ov, sx, 0, sw, ov.height, 0, 0, w, h);
+}
+
+function drawDetailPlaceholderNow(){
+  const box = $('clipEditor').getBoundingClientRect();
+  if(box.width < 4) return;
+  const strip = $('filmstrip');
+  const dpr = window.devicePixelRatio || 1;
+  const bw = Math.max(1, Math.round(box.width * dpr));
+  const bh = Math.max(1, Math.round(box.height * dpr));
+  if(strip.width !== bw) strip.width = bw;
+  if(strip.height !== bh) strip.height = bh;
+  const cc = strip.getContext('2d');
+  cc.setTransform(dpr, 0, 0, dpr, 0, 0);
+  cc.fillStyle = '#090a0c';
+  cc.fillRect(0, 0, box.width, box.height);
+  paintDetailPlaceholder(cc, box.width, box.height);
+}
+
+async function renderDetailStrip(){
+  const editor = $('clipEditor');
+  const box = editor.getBoundingClientRect();
+  if(box.width < 4) return;
+  const key = `${S.clip.viewStart.toFixed(3)}:${S.clip.viewEnd.toFixed(3)}:${Math.round(box.width)}`;
+  if(S.clip.detailKey === key) return;
+  const token = ++S.clip.detailToken;
+  const shouldAbort = () => token !== S.clip.detailToken || !!S.clip.dragging
+    || S.clip.overviewDragging || S.phase !== 'clip';
+  const ok = await renderStripCanvas($('filmstrip'), editor, S.clip.viewStart, S.clip.viewEnd,
+    {background: paintDetailPlaceholder, shouldAbort});
+  if(token !== S.clip.detailToken) return;
+  if(ok) S.clip.detailKey = key;
+  else if(S.phase === 'clip') scheduleDetailRender();
+}
+
+function scheduleDetailRender(delayMs = 250){
+  clearTimeout(S.clip.detailTimer);
+  S.clip.detailTimer = setTimeout(() => {
+    if(S.phase !== 'clip') return;
+    if(S.clip.dragging || S.clip.overviewDragging){ scheduleDetailRender(delayMs); return; }
+    renderDetailStrip();
+  }, delayMs);
 }
 
 function updateClipTimeline(){
-  const startPct = timeToPct(S.clip.start);
-  const endPct = timeToPct(S.clip.end);
-  const cursorPct = timeToPct(S.clip.cursor);
+  const startPct = timeToDetailPct(S.clip.start);
+  const endPct = timeToDetailPct(S.clip.end);
+  const cursorPct = timeToDetailPct(S.clip.cursor);
   $('shadeLeft').style.width = `${startPct}%`;
   $('shadeRight').style.left = `${endPct}%`;
   $('shadeRight').style.width = `${100 - endPct}%`;
@@ -1011,9 +1177,19 @@ function updateClipTimeline(){
   $('clipSelection').style.width = `${Math.max(0, endPct - startPct)}%`;
   $('clipStartHandle').style.left = `calc(${startPct}% - 1px)`;
   $('clipEndHandle').style.left = `calc(${endPct}% - 21px)`;
+  const outOfView = t => t < S.clip.viewStart - 1e-6 || t > S.clip.viewEnd + 1e-6;
+  $('clipStartHandle').classList.toggle('offview', outOfView(S.clip.start));
+  $('clipEndHandle').classList.toggle('offview', outOfView(S.clip.end));
   $('clipCursor').style.left = `${cursorPct}%`;
-  $('clipStart').value = S.clip.start.toFixed(2);
-  $('clipEnd').value = S.clip.end.toFixed(2);
+
+  const oStart = timeToOverviewPct(S.clip.start);
+  const oEnd = timeToOverviewPct(S.clip.end);
+  $('overviewSelection').style.left = `${oStart}%`;
+  $('overviewSelection').style.width = `${Math.max(0.5, oEnd - oStart)}%`;
+  $('overviewViewport').style.left = `${timeToOverviewPct(S.clip.viewStart)}%`;
+  $('overviewViewport').style.width = `${Math.max(0, timeToOverviewPct(S.clip.viewEnd) - timeToOverviewPct(S.clip.viewStart))}%`;
+  $('viewStartLabel').textContent = fmtTime(S.clip.viewStart);
+  $('viewEndLabel').textContent = fmtTime(S.clip.viewEnd);
   updateClipLabels();
 }
 
@@ -1021,19 +1197,15 @@ async function setClipCursor(time){
   stopClipPlayback();
   S.clip.cursor = Math.min(Math.max(time, 0), clipDuration());
   updateClipTimeline();
-  await seekVideo(S.clip.cursor);
-  drawClipPreview(S.clip.cursor);
+  await requestPreviewFrame(S.clip.cursor);
 }
 
 function setupClipControls(){
-  const duration = vid.duration || 1;
-  const start = $('clipStart');
-  const end = $('clipEnd');
-
-  start.max = duration.toFixed(2);
-  end.max = duration.toFixed(2);
-  start.step = end.step = '0.01';
-  $('inferenceWidth').value = Math.max(0, INFERENCE_WIDTHS.indexOf(S.clip.inferenceWidth)).toString();
+  const duration = clipDuration();
+  let widthIndex = INFERENCE_WIDTHS.indexOf(S.clip.inferenceWidth);
+  if(widthIndex < 0){ widthIndex = 1; S.clip.inferenceWidth = 960; }
+  $('inferenceWidth').value = widthIndex.toString();
+  $('frameStride').value = S.clip.frameStride.toString();
 
   if(S.clip.end <= S.clip.start || S.clip.end > duration){
     const center = S.frameTime || Math.min(duration / 2, 10);
@@ -1042,10 +1214,17 @@ function setupClipControls(){
     S.clip.cursor = center;
   }
 
+  recenterView();
   updateClipTimeline();
   updateClipPlayButton();
-  if(!S.clip.thumbnails) renderFilmstrip();
-  setClipCursor(S.clip.cursor);
+  (async () => {
+    await setClipCursor(S.clip.cursor);
+    await renderOverviewStrip();
+    updateClipTimeline();
+    await renderDetailStrip();
+  })();
+  // Upload in the background so fps is known while editing and Track starts faster.
+  if(S.videoFile) ensureVideoUploaded(null).catch(() => {});
 }
 
 function updateClipLabels(){
@@ -1053,10 +1232,11 @@ function updateClipLabels(){
   let end = S.clip.end;
   const stride = S.clip.frameStride;
   const inferenceWidth = S.clip.inferenceWidth;
-  if(end <= start){
-    end = Math.min(vid.duration || start + 0.01, start + 0.01);
+  if(end - start < minClip()){
+    end = Math.min(clipDuration(), start + minClip());
     S.clip.end = end;
   }
+  const approx = fpsIsKnown() ? '' : '~';
   const selectedFrames = Math.max(1, approxFrame(end) - approxFrame(start) + 1);
   const analyzedFrames = Math.ceil(selectedFrames / stride);
 
@@ -1065,24 +1245,43 @@ function updateClipLabels(){
   $('frameStrideOut').textContent = stride === 1 ? '1 frame' : `${stride} frames`;
   $('inferenceWidthOut').textContent = inferenceWidthLabel(inferenceWidth);
   $('clipStats').innerHTML =
-    `<div class="stat"><span>Approx frames</span><span>${approxFrame(start)}–${approxFrame(end)}</span></div>` +
-    `<div class="stat"><span>Frames analyzed</span><span>${analyzedFrames} of ${selectedFrames}</span></div>` +
+    `<div class="stat"><span>${approx ? 'Approx frames' : 'Frames'}</span><span>${approx}${approxFrame(start)}–${approxFrame(end)}</span></div>` +
+    `<div class="stat"><span>Frames analyzed</span><span>${approx}${analyzedFrames} of ${approx}${selectedFrames}</span></div>` +
     `<div class="stat"><span>Model input width</span><span>${inferenceWidthLabel(inferenceWidth)}</span></div>` +
     `<div class="stat"><span>Duration</span><span>${(end - start).toFixed(2)}s</span></div>`;
 }
 
-$('clipStart').addEventListener('input', e => {
+function nudgeClipEdge(which, delta){
   stopClipPlayback();
-  S.clip.start = Math.min(+e.target.value, S.clip.end - 0.01);
-  if(S.clip.cursor < S.clip.start) S.clip.cursor = S.clip.start;
+  let t;
+  if(which === 'start'){
+    t = Math.max(0, Math.min(S.clip.start + delta, S.clip.end - minClip()));
+    S.clip.start = t;
+  } else {
+    t = Math.min(clipDuration(), Math.max(S.clip.end + delta, S.clip.start + minClip()));
+    S.clip.end = t;
+  }
+  S.clip.cursor = t;
+  if(t < S.clip.viewStart || t > S.clip.viewEnd){
+    if(recenterView()){
+      drawDetailPlaceholderNow();
+      scheduleDetailRender();
+    }
+  }
   updateClipTimeline();
-});
-$('clipEnd').addEventListener('input', e => {
-  stopClipPlayback();
-  S.clip.end = Math.max(+e.target.value, S.clip.start + 0.01);
-  if(S.clip.cursor > S.clip.end) S.clip.cursor = S.clip.end;
-  updateClipTimeline();
-});
+  requestPreviewFrame(t);
+}
+
+const frameStep = () => 1 / videoFps();
+$('nStartM1s').onclick = () => nudgeClipEdge('start', -1);
+$('nStartM1f').onclick = () => nudgeClipEdge('start', -frameStep());
+$('nStartP1f').onclick = () => nudgeClipEdge('start', frameStep());
+$('nStartP1s').onclick = () => nudgeClipEdge('start', 1);
+$('nEndM1s').onclick = () => nudgeClipEdge('end', -1);
+$('nEndM1f').onclick = () => nudgeClipEdge('end', -frameStep());
+$('nEndP1f').onclick = () => nudgeClipEdge('end', frameStep());
+$('nEndP1s').onclick = () => nudgeClipEdge('end', 1);
+
 $('frameStride').addEventListener('input', e => {
   S.clip.frameStride = parseInt(e.target.value, 10) || 1;
   updateClipLabels();
@@ -1093,16 +1292,17 @@ $('inferenceWidth').addEventListener('input', e => {
   updateClipLabels();
 });
 
+const HANDLE_HIT_RADIUS = 26; // px around a handle that grabs it instead of the cursor
+
 $('clipEditor').addEventListener('pointerdown', e => {
   stopClipPlayback();
   const r = $('clipEditor').getBoundingClientRect();
-  const pct = Math.min(1, Math.max(0, (e.clientX - r.left) / r.width));
-  const time = pctToTime(pct);
-  const startDist = Math.abs(time - S.clip.start);
-  const endDist = Math.abs(time - S.clip.end);
-  const handleWindow = Math.max(0.25, clipDuration() * 0.025);
-  S.clip.dragging = startDist < handleWindow && startDist <= endDist ? 'start'
-    : endDist < handleWindow ? 'end'
+  const x = e.clientX - r.left;
+  const handleX = t => timeToDetailPct(t) / 100 * r.width;
+  const startDist = Math.abs(x - handleX(S.clip.start));
+  const endDist = Math.abs(x - handleX(S.clip.end));
+  S.clip.dragging = startDist <= HANDLE_HIT_RADIUS && startDist <= endDist ? 'start'
+    : endDist <= HANDLE_HIT_RADIUS ? 'end'
     : 'cursor';
   $('clipEditor').setPointerCapture(e.pointerId);
   moveClipPointer(e);
@@ -1112,26 +1312,92 @@ $('clipEditor').addEventListener('pointermove', e => {
   if(S.clip.dragging) moveClipPointer(e);
 });
 
-async function moveClipPointer(e){
+function moveClipPointer(e){
   const r = $('clipEditor').getBoundingClientRect();
-  const time = pctToTime((e.clientX - r.left) / r.width);
+  const time = detailPctToTime((e.clientX - r.left) / r.width);
   if(S.clip.dragging === 'start'){
-    S.clip.start = Math.min(time, S.clip.end - 0.01);
+    S.clip.start = Math.max(0, Math.min(time, S.clip.end - minClip()));
     S.clip.cursor = S.clip.start;
-    updateClipTimeline();
   } else if(S.clip.dragging === 'end'){
-    S.clip.end = Math.max(time, S.clip.start + 0.01);
+    S.clip.end = Math.min(clipDuration(), Math.max(time, S.clip.start + minClip()));
     S.clip.cursor = S.clip.end;
-    updateClipTimeline();
   } else {
-    await setClipCursor(time);
+    S.clip.cursor = Math.min(Math.max(time, 0), clipDuration());
+  }
+  updateClipTimeline();
+  requestPreviewFrame(S.clip.cursor);
+}
+
+// After a handle is released near a view edge (or the selection dwarfs /
+// vanishes within the view), refit the window and re-render thumbnails.
+function maybeRecenterAfterEdit(){
+  const span = viewSpan();
+  const startFrac = (S.clip.start - S.clip.viewStart) / span;
+  const endFrac = (S.clip.end - S.clip.viewStart) / span;
+  const selFrac = (S.clip.end - S.clip.start) / span;
+  const nearEdge = startFrac < EDGE_RECENTER_FRAC || endFrac > 1 - EDGE_RECENTER_FRAC;
+  if(nearEdge || selFrac > 0.9 || selFrac < 0.1){
+    if(recenterView()){
+      drawDetailPlaceholderNow();
+      scheduleDetailRender();
+    }
+    updateClipTimeline();
   }
 }
 
-$('clipEditor').addEventListener('pointerup', e => {
-  if(S.clip.dragging === 'start' || S.clip.dragging === 'end') setClipCursor(S.clip.cursor);
+function endClipDrag(e){
+  const wasHandle = S.clip.dragging === 'start' || S.clip.dragging === 'end';
   S.clip.dragging = null;
-  $('clipEditor').releasePointerCapture(e.pointerId);
+  try{ $('clipEditor').releasePointerCapture(e.pointerId); }catch(_){ }
+  if(wasHandle){
+    setClipCursor(S.clip.cursor);
+    maybeRecenterAfterEdit();
+  }
+}
+$('clipEditor').addEventListener('pointerup', endClipDrag);
+$('clipEditor').addEventListener('pointercancel', endClipDrag);
+
+function moveOverviewPointer(e){
+  const r = $('clipOverview').getBoundingClientRect();
+  const t = overviewPctToTime((e.clientX - r.left) / r.width);
+  const span = viewSpan();
+  const vs = Math.max(0, Math.min(t - span / 2, clipDuration() - span));
+  S.clip.viewStart = vs;
+  S.clip.viewEnd = vs + span;
+  drawDetailPlaceholderNow();
+  updateClipTimeline();
+}
+
+$('clipOverview').addEventListener('pointerdown', e => {
+  stopClipPlayback();
+  S.clip.overviewDragging = true;
+  $('clipOverview').setPointerCapture(e.pointerId);
+  moveOverviewPointer(e);
+});
+$('clipOverview').addEventListener('pointermove', e => {
+  if(S.clip.overviewDragging) moveOverviewPointer(e);
+});
+function endOverviewDrag(e){
+  if(!S.clip.overviewDragging) return;
+  S.clip.overviewDragging = false;
+  try{ $('clipOverview').releasePointerCapture(e.pointerId); }catch(_){ }
+  scheduleDetailRender(150);
+}
+$('clipOverview').addEventListener('pointerup', endOverviewDrag);
+$('clipOverview').addEventListener('pointercancel', endOverviewDrag);
+
+let clipResizeTimer = null;
+window.addEventListener('resize', () => {
+  if(S.phase !== 'clip') return;
+  clearTimeout(clipResizeTimer);
+  clipResizeTimer = setTimeout(async () => {
+    if(S.phase !== 'clip') return;
+    S.clip.overviewThumbs = false;
+    S.clip.detailKey = '';
+    await renderOverviewStrip();
+    updateClipTimeline();
+    scheduleDetailRender(0);
+  }, 300);
 });
 
 $('clipPlayBtn').onclick = () => {
@@ -1186,16 +1452,29 @@ function videoUploadKey(file){
   return `${file.name}:${file.size}:${file.lastModified}`;
 }
 
-async function ensureVideoUploaded(){
+function ensureVideoUploaded(progressLabel = 'Uploading video'){
   const key = videoUploadKey(S.videoFile);
-  if(S.uploadedVideoId && S.uploadedVideoKey === key) return S.uploadedVideoId;
+  if(S.uploadedVideoId && S.uploadedVideoKey === key) return Promise.resolve(S.uploadedVideoId);
+  if(S.uploadPromise && S.uploadPromiseKey === key) return S.uploadPromise;
 
   const form = new FormData();
   form.append('video_file', S.videoFile);
-  const data = await postFormRequest('/api/upload', form, 'Uploading video');
-  S.uploadedVideoId = data.video_id;
-  S.uploadedVideoKey = key;
-  return data.video_id;
+  S.uploadPromiseKey = key;
+  S.uploadPromise = postFormRequest('/api/upload', form, progressLabel)
+    .then(data => {
+      S.uploadedVideoId = data.video_id;
+      S.uploadedVideoKey = key;
+      if(Number.isFinite(data.fps) && data.fps > 0){
+        S.videoFps = data.fps;
+        if(S.phase === 'clip') updateClipLabels();
+      }
+      return data.video_id;
+    })
+    .finally(() => {
+      S.uploadPromise = null;
+      S.uploadPromiseKey = null;
+    });
+  return S.uploadPromise;
 }
 
 async function waitForTracking(runId){
@@ -1229,8 +1508,8 @@ $('runTrackBtn').onclick = async () => {
 
   const start = S.clip.start;
   const end = S.clip.end;
-  if(end <= start){
-    $('trackStatus').textContent = 'Clip end must be after clip start.';
+  if(end - start < minClip() - 1e-6){
+    $('trackStatus').textContent = `Clip must be at least ${minClip().toFixed(1)}s long.`;
     $('trackStatus').className = 'status warn';
     return;
   }

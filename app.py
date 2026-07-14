@@ -214,7 +214,18 @@ def upload_video():
     finally:
         tmp_path.unlink(missing_ok=True)
 
-    return jsonify({"ok": True, "video_id": video_id})
+    payload = {"ok": True, "video_id": video_id}
+    try:
+        info = video_info(final_path)
+        payload.update(
+            fps=info["fps"],
+            frame_count=info["frame_count"],
+            duration=info["duration"],
+        )
+    except ValueError:
+        pass
+
+    return jsonify(payload)
 
 
 @app.post("/api/track")
