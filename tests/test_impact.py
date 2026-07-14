@@ -54,10 +54,22 @@ def strongest(hits):
 def test_clean_bounce_impact_between_samples():
     hits = detect_hits_from_rows(bounce_rows(stride=1))
     hit = strongest(hits)
+    assert hit["score"] > 0
     assert "impact_x" in hit
     assert abs(hit["impact_x"] - TRUE_IMPACT[0]) < 3.0
     assert abs(hit["impact_y"] - TRUE_IMPACT[1]) < 3.0
     assert abs(hit["impact_frame"] - 60) < 2.0
+
+
+def test_horizontal_wall_gate_rejects_hits_outside_tin_span():
+    rows = bounce_rows()
+    assert detect_hits_from_rows(rows, wall_x_range=(0, 800)) == []
+
+
+def test_horizontal_wall_gate_keeps_hits_inside_tin_span():
+    rows = bounce_rows()
+    hits = detect_hits_from_rows(rows, wall_x_range=(0, 1000))
+    assert strongest(hits)["impact_x"] == pytest.approx(TRUE_IMPACT[0], abs=3.0)
 
 
 def test_impact_recovered_inside_detection_gap():
@@ -126,6 +138,21 @@ def test_judge_prefers_impact_estimate(calibrated_run):
     assert entry["judge_source"] == "impact_estimate"
     assert entry["call"] == "IN"
     assert entry["margin_px"] == pytest.approx(min(entry["impact"]["y"] - 100, 700 - entry["impact"]["y"]))
+    assert entry["velocity"]["scale_source"] == "tin_top_edge_21ft"
+    assert entry["velocity"]["pixels_per_foot"] == pytest.approx(2000 / 21)
+    assert entry["velocity"]["speed_before"]["mph"] > 0
+    assert entry["velocity"]["speed_after"]["mph"] > 0
+
+
+def test_judge_displays_nearest_detected_impact_frame(calibrated_run):
+    rows = bounce_rows()
+    hit = dict(strongest(detect_hits_from_rows(rows)))
+    hit["hit_frame"] = 64
+    hit["impact_frame"] = 60.2
+    judged = judge_hits(calibrated_run, results_map(rows), [hit])
+    assert judged[0]["frame"] == 60
+    assert judged[0]["candidate_frame"] == 64
+    assert judged[0]["judge_source"] == "impact_estimate"
 
 
 def test_judge_falls_back_to_detected_center(calibrated_run):
@@ -139,7 +166,26 @@ def test_judge_falls_back_to_detected_center(calibrated_run):
     assert judged[0]["call"] == "IN"
 
 
-def test_judge_unknown_when_nothing_available(calibrated_run):
+def test_judge_filters_hits_without_display_frame_detection(calibrated_run):
+    rows = bounce_rows()
+    hit = dict(strongest(detect_hits_from_rows(rows)))
+    missing_frame = int(hit["hit_frame"])
+    hit["impact_frame"] = float(missing_frame)
+    results = results_map(rows)
+    results[missing_frame] = {
+        **results[missing_frame],
+        "detected": "False",
+        "x_center": "",
+        "y_center": "",
+    }
+
+    judged = judge_hits(calibrated_run, results, [hit])
+    assert judged
+    assert judged[0]["frame"] != missing_frame
+    assert results[judged[0]["frame"]]["detected"] == "True"
+
+
+def test_judge_filters_hits_when_display_frame_is_missing(calibrated_run):
     rows = bounce_rows()
     hits = [dict(strongest(detect_hits_from_rows(rows)))]
     frame = hits[0]["hit_frame"]
@@ -148,9 +194,7 @@ def test_judge_unknown_when_nothing_available(calibrated_run):
             del hits[0][key]
     results = results_map(rows)
     del results[frame]
-    judged = judge_hits(calibrated_run, results, hits)
-    assert judged[0]["call"] == "UNKNOWN"
-    assert judged[0]["judge_source"] is None
+    assert judge_hits(calibrated_run, results, hits) == []
 
 
 def test_out_call_with_negative_margin(calibrated_run):

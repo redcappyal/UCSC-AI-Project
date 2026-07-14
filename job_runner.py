@@ -8,6 +8,7 @@ run on a thread inside Flask today or as a standalone worker process later:
 
 import csv
 import json
+import math
 import os
 import queue
 import threading
@@ -42,6 +43,9 @@ PROGRESS_UPDATE_FRAMES = 10
 PROGRESS_UPDATE_SECONDS = 0.5
 COARSE_INFERENCE_WIDTH = 640
 REFINE_WINDOW_MIN_RADIUS = 12
+DISPLAY_FRAME_SEARCH_RADIUS = 4
+TIN_WIDTH_FEET = 21.0
+FEET_PER_SECOND_TO_MPH = 0.6818181818
 
 
 def persist_job(job):
@@ -230,19 +234,105 @@ def ball_point_from_row(row):
     return Point(float(row["x_center"]), float(row["y_center"]))
 
 
+def row_has_ball_detection(row):
+    return ball_point_from_row(row) is not None
+
+
+def nearest_detected_frame(results, target_frame, max_distance=DISPLAY_FRAME_SEARCH_RADIUS):
+    low = int(target_frame - max_distance)
+    high = int(target_frame + max_distance)
+    best_frame = None
+    best_distance = None
+
+    for frame in range(low, high + 1):
+        if not row_has_ball_detection(results.get(frame)):
+            continue
+
+        distance = abs(frame - target_frame)
+        if best_distance is None or distance < best_distance:
+            best_frame = frame
+            best_distance = distance
+
+    return best_frame
+
+
+def display_frame_for_hit(results, hit):
+    if "impact_frame" in hit:
+        return nearest_detected_frame(results, float(hit["impact_frame"]))
+
+    frame = int(hit["hit_frame"])
+    return frame if row_has_ball_detection(results.get(frame)) else None
+
+
+def line_length_px(line):
+    return math.hypot(line.right.x - line.left.x, line.right.y - line.left.y)
+
+
+def velocity_scale_from_tin_line(bottom_line):
+    pixels_per_foot = line_length_px(bottom_line) / TIN_WIDTH_FEET
+    if pixels_per_foot <= 0:
+        return None
+    return pixels_per_foot
+
+
+def tin_horizontal_range_from_run(run_dir):
+    calibration_path = Path(run_dir) / "calibration.json"
+    if not calibration_path.exists():
+        return None
+
+    try:
+        calibration = json.loads(calibration_path.read_text(encoding="utf-8"))
+        _, bottom_line = load_calibration_lines(calibration)
+    except (ValueError, json.JSONDecodeError, OSError):
+        return None
+
+    return (
+        min(bottom_line.left.x, bottom_line.right.x),
+        max(bottom_line.left.x, bottom_line.right.x),
+    )
+
+
+def calibrated_velocity(hit, pixels_per_foot):
+    if not pixels_per_foot:
+        return None
+
+    def convert(px_per_second):
+        feet_per_second = float(px_per_second) / pixels_per_foot
+        return {
+            "px_per_second": float(px_per_second),
+            "feet_per_second": feet_per_second,
+            "mph": feet_per_second * FEET_PER_SECOND_TO_MPH,
+        }
+
+    return {
+        "scale_source": "tin_top_edge_21ft",
+        "pixels_per_foot": pixels_per_foot,
+        "speed_before": convert(hit["speed_before"]),
+        "speed_after": convert(hit["speed_after"]),
+        "velocity_change": convert(hit["dv_magnitude"]),
+    }
+
+
 def judge_hits(run_dir, results, detected):
     top_line = bottom_line = None
+    pixels_per_foot = None
     calibration_path = Path(run_dir) / "calibration.json"
     if calibration_path.exists():
         try:
             calibration = json.loads(calibration_path.read_text(encoding="utf-8"))
             top_line, bottom_line = load_calibration_lines(calibration)
+            pixels_per_foot = velocity_scale_from_tin_line(bottom_line)
         except (ValueError, json.JSONDecodeError):
             pass
 
     hits = []
     for hit in detected:
-        frame = int(hit["hit_frame"])
+        candidate_frame = int(hit["hit_frame"])
+        frame = display_frame_for_hit(results, hit)
+        if frame is None:
+            continue
+        display_row = results.get(frame)
+
         call, reason = "UNKNOWN", "judging_unavailable"
         judge_source = None
         margin_px = None
@@ -254,7 +344,7 @@ def judge_hits(run_dir, results, detected):
                 point = Point(hit["impact_x"], hit["impact_y"])
                 judge_source = "impact_estimate"
             else:
-                point = ball_point_from_row(results.get(frame))
+                point = ball_point_from_row(display_row)
                 judge_source = "detected_center" if point is not None else None
 
             if point is None:
@@ -269,7 +359,8 @@ def judge_hits(run_dir, results, detected):
 
         entry = {
             "frame": frame,
-            "timestamp_seconds": hit["timestamp_seconds"],
+            "timestamp_seconds": float(display_row["timestamp_seconds"]),
+            "score": hit.get("score"),
             "dv_magnitude": hit["dv_magnitude"],
             "after_gap": hit["after_gap"],
             "call": call,
@@ -277,6 +368,11 @@ def judge_hits(run_dir, results, detected):
             "judge_source": judge_source,
             "margin_px": margin_px,
         }
+        velocity = calibrated_velocity(hit, pixels_per_foot)
+        if velocity is not None:
+            entry["velocity"] = velocity
+        if candidate_frame != frame:
+            entry["candidate_frame"] = candidate_frame
         if "impact_x" in hit:
             entry["impact"] = {
                 "x": hit["impact_x"],
@@ -333,6 +429,7 @@ def run_tracking_job(run_id):
         try:
             update_job(run_id, status="running", stage="coarse", message="Loading local model...")
             model = get_tracking_model()
+            wall_x_range = tin_horizontal_range_from_run(run_dir)
 
             results = {}
             # A pass at stride > 1 only needs to be good enough to locate hit
@@ -352,7 +449,11 @@ def run_tracking_job(run_id):
             # Coarse samples are frame_stride apart; the default max_gap would
             # split every track at stride > 3.
             max_gap = max(MAX_GAP_FRAMES, frame_stride)
-            detected = detect_hits_from_rows(sorted_rows(results), max_gap=max_gap)
+            detected = detect_hits_from_rows(
+                sorted_rows(results),
+                max_gap=max_gap,
+                wall_x_range=wall_x_range,
+            )
 
             if frame_stride > 1 and detected:
                 segments = refine_segments_for_hits(detected, start_frame, end_frame, frame_stride)
@@ -373,7 +474,11 @@ def run_tracking_job(run_id):
                     make_progress_callback("Refine pass"),
                 )
                 write_results_csv(csv_path, results)
-                detected = detect_hits_from_rows(sorted_rows(results), max_gap=max_gap)
+                detected = detect_hits_from_rows(
+                    sorted_rows(results),
+                    max_gap=max_gap,
+                    wall_x_range=wall_x_range,
+                )
 
             hits = []
             hits_error = None

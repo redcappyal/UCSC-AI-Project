@@ -28,7 +28,7 @@ WORKSPACE = "squash-line-calling-model"
 WORKFLOW_ID = "squash-line-calling-vsquash-line-calling-1-rfdetr-medium-t1-logic"
 IMAGE_INPUT = "image"
 
-VIDEO_INPUT_PATH = Path(__file__).with_name("SquashAnalytics.mp4")
+VIDEO_INPUT_PATH = Path(__file__).with_name("SquashTestVid.mp4")
 VIDEO_OUTPUT_PATH = Path(__file__).with_name("annotated_output.mp4")
 CSV_OUTPUT_PATH = Path(__file__).with_name("ball_coordinates.csv")
 
@@ -100,7 +100,7 @@ def result_to_output(result):
 def main():
     from inference_sdk import InferenceHTTPClient
 
-    api_key = os.getenv("ROBOFLOW_API_KEY", "")
+    api_key = "fSbrLMfk0LmeJbQfbGRp"
     if not api_key.strip():
         raise RuntimeError("Set ROBOFLOW_API_KEY before running the remote workflow.")
 

@@ -20,6 +20,26 @@ MAX_IMPACT_MISMATCH_PX = 40.0
 REQUIRED_COLUMNS = ("source_frame", "timestamp_seconds", "detected", "x_center", "y_center")
 
 
+def normalize_x_range(wall_x_range):
+    if wall_x_range is None:
+        return None
+    left, right = wall_x_range
+    left = float(left)
+    right = float(right)
+    if right < left:
+        left, right = right, left
+    if right <= left:
+        return None
+    return left, right
+
+
+def is_inside_x_range(x, wall_x_range):
+    if wall_x_range is None:
+        return True
+    left, right = wall_x_range
+    return left <= float(x) <= right
+
+
 def turn_angle_degrees(v_before, v_after):
     norms = np.linalg.norm(v_before) * np.linalg.norm(v_after)
     if norms < 1e-9:
@@ -133,6 +153,8 @@ def compute_candidates(frames, timestamps, positions, tracks, smooth_window, max
                 {
                     "hit_frame": int(track_frames[sample]),
                     "timestamp_seconds": float(track_times[sample]),
+                    "candidate_x": float(track_positions[sample][0]),
+                    "candidate_y": float(track_positions[sample][1]),
                     "dv_magnitude": float(dv_magnitude),
                     "speed_before": float(np.linalg.norm(velocities[sample - 1])),
                     "speed_after": float(np.linalg.norm(velocities[sample])),
@@ -168,6 +190,8 @@ def compute_candidates(frames, timestamps, positions, tracks, smooth_window, max
             {
                 "hit_frame": int(frames[start]),
                 "timestamp_seconds": float(timestamps[start]),
+                "candidate_x": float(positions[start][0]),
+                "candidate_y": float(positions[start][1]),
                 "dv_magnitude": float(np.linalg.norm(v_after - v_before)),
                 "speed_before": float(np.linalg.norm(v_before)),
                 "speed_after": float(np.linalg.norm(v_after)),
@@ -285,8 +309,25 @@ def is_significant(candidate):
     )
 
 
+def score_candidate(candidate):
+    dv_score = candidate["dv_magnitude"] / MIN_DV_PX_PER_SECOND
+    turn_score = candidate["turn_degrees"] / MIN_TURN_DEGREES
+    speed_score = min(candidate["speed_before"], candidate["speed_after"]) / MIN_DV_PX_PER_SECOND
+
+    # Ranking, not filtering: keep the old thresholds in is_significant(), but
+    # prefer candidates with both a sharp turn and meaningful ball speed.
+    return float(
+        0.55 * dv_score
+        + 0.35 * turn_score
+        + 0.10 * min(speed_score, 4.0)
+    )
+
+
 def pick_peaks(candidates, min_gap, top_k, threshold):
-    ranked = sorted(candidates, key=lambda c: c["dv_magnitude"], reverse=True)
+    for candidate in candidates:
+        candidate["score"] = score_candidate(candidate)
+
+    ranked = sorted(candidates, key=lambda c: (c["score"], c["dv_magnitude"]), reverse=True)
     picked = []
 
     for candidate in ranked:
@@ -317,9 +358,16 @@ def detect_hits_from_positions(
     min_gap=MIN_GAP_FRAMES,
     top_k=TOP_K,
     threshold=None,
+    wall_x_range=None,
 ):
+    wall_x_range = normalize_x_range(wall_x_range)
     tracks = split_into_tracks(frames, positions, max_gap, max_jump)
     candidates = compute_candidates(frames, timestamps, positions, tracks, smooth)
+    candidates = [
+        candidate
+        for candidate in candidates
+        if is_inside_x_range(candidate["candidate_x"], wall_x_range)
+    ]
     hits = pick_peaks(candidates, min_gap, top_k, threshold)
 
     # timestamp = frame / fps, so the frame at any time is time * fps.
@@ -334,6 +382,11 @@ def detect_hits_from_positions(
             impact["impact_frame"] = impact["impact_time"] * fps
             hit.update(impact)
 
+    hits = [
+        hit
+        for hit in hits
+        if is_inside_x_range(hit.get("impact_x", hit["candidate_x"]), wall_x_range)
+    ]
     return sorted(hits, key=lambda hit: hit["hit_frame"])
 
 
@@ -351,6 +404,7 @@ def save_hits(output_path, hits):
     fieldnames = [
         "hit_frame",
         "timestamp_seconds",
+        "score",
         "dv_magnitude",
         "speed_before",
         "speed_after",
@@ -369,6 +423,7 @@ def save_hits(output_path, hits):
             row = {
                 **hit,
                 "timestamp_seconds": f"{hit['timestamp_seconds']:.6f}",
+                "score": f"{hit['score']:.3f}",
                 "dv_magnitude": f"{hit['dv_magnitude']:.3f}",
                 "speed_before": f"{hit['speed_before']:.3f}",
                 "speed_after": f"{hit['speed_after']:.3f}",
@@ -382,7 +437,7 @@ def save_hits(output_path, hits):
 
 def print_hits(hits):
     header = (
-        f"{'rank':>4}  {'frame':>8}  {'time (s)':>10}  {'|dv| px/s':>12}  {'v before':>10}  "
+        f"{'rank':>4}  {'frame':>8}  {'time (s)':>10}  {'score':>8}  {'|dv| px/s':>12}  {'v before':>10}  "
         f"{'v after':>10}  {'turn deg':>9}  {'impact @':>10}  after_gap"
     )
     print(header)
@@ -391,6 +446,7 @@ def print_hits(hits):
         impact_text = f"{hit['impact_frame']:.1f}" if "impact_frame" in hit else "-"
         print(
             f"{rank:>4}  {hit['hit_frame']:>8}  {hit['timestamp_seconds']:>10.3f}  "
+            f"{hit['score']:>8.2f}  "
             f"{hit['dv_magnitude']:>12.1f}  {hit['speed_before']:>10.1f}  "
             f"{hit['speed_after']:>10.1f}  {hit['turn_degrees']:>9.1f}  "
             f"{impact_text:>10}  {'yes' if hit['after_gap'] else ''}"
