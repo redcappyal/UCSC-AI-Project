@@ -6,7 +6,7 @@ from pathlib import Path
 import cv2
 
 
-DEFAULT_VIDEO_PATH = Path(__file__).with_name("annotated_output.mp4")
+DEFAULT_VIDEO_PATH = Path(__file__).with_name("ModelTrainTest.mp4")
 DEFAULT_LABELS_PATH = Path(__file__).with_name("wall_hits.csv")
 WINDOW_NAME = "Squash Wall Hit Labeler"
 

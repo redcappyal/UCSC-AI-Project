@@ -7,7 +7,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from job_runner import refine_segments_for_hits
+from job_runner import audio_hits_from_candidates, refine_segments_for_audio_candidates, refine_segments_for_hits
 
 
 def test_refine_windows_merge_and_clamp():
@@ -20,6 +20,20 @@ def test_refine_windows_merge_and_clamp():
 def test_refine_windows_clamped_to_clip():
     segments = refine_segments_for_hits([{"hit_frame": 5}], 0, 1000, 1)
     assert segments == [(0, 17, 1)]
+
+
+def test_audio_candidate_windows_merge_and_emit_hits():
+    candidates = [
+        {"frame": 100, "window_start_frame": 96, "window_end_frame": 104, "score": 12.5},
+        {"frame": 110, "window_start_frame": 106, "window_end_frame": 114, "score": 8.0},
+    ]
+    assert refine_segments_for_audio_candidates(candidates, 0, 200) == [(92, 118, 1)]
+
+    hits = audio_hits_from_candidates(candidates, 50.0)
+    assert hits[0]["source"] == "audio"
+    assert hits[0]["call"] == "AUDIO"
+    assert hits[0]["timestamp_seconds"] == 2.0
+    assert hits[0]["window_start_seconds"] == 96 / 50.0
 
 
 def test_job_restart_recovery(tmp_path, monkeypatch):

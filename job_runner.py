@@ -403,7 +403,6 @@ def run_tracking_job(run_id):
     frame_stride = int(job["frame_stride"])
     inference_width = int(job["inference_width"])
     source_fps = float(job["fps"]) or 30.0
-
     with TRACKING_JOB_SEMAPHORE:
         processed_frames = 0
         last_update = time.monotonic()
@@ -454,9 +453,9 @@ def run_tracking_job(run_id):
                 max_gap=max_gap,
                 wall_x_range=wall_x_range,
             )
+            segments = refine_segments_for_hits(detected, start_frame, end_frame, frame_stride)
 
-            if frame_stride > 1 and detected:
-                segments = refine_segments_for_hits(detected, start_frame, end_frame, frame_stride)
+            if frame_stride > 1 and segments:
                 refine_total = sum(high - low + 1 for low, high, _ in segments)
                 update_job(
                     run_id,
@@ -474,16 +473,16 @@ def run_tracking_job(run_id):
                     make_progress_callback("Refine pass"),
                 )
                 write_results_csv(csv_path, results)
-                detected = detect_hits_from_rows(
-                    sorted_rows(results),
-                    max_gap=max_gap,
-                    wall_x_range=wall_x_range,
-                )
 
             hits = []
             hits_error = None
             try:
                 update_job(run_id, stage="judging", message="Judging wall hits...")
+                detected = detect_hits_from_rows(
+                    sorted_rows(results),
+                    max_gap=max(MAX_GAP_FRAMES, frame_stride),
+                    wall_x_range=wall_x_range,
+                )
                 hits = judge_hits(run_dir, results, detected)
             except Exception as error:
                 hits_error = str(error)
