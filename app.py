@@ -245,7 +245,7 @@ def track_clip():
     try:
         start_time = float(request.form.get("start_time", "0"))
         end_time = float(request.form.get("end_time", "0"))
-        frame_stride = int(request.form.get("frame_stride", "1"))
+        frame_stride = int(request.form.get("frame_stride", "4"))
         inference_width = int(request.form.get("inference_width", "960"))
     except ValueError:
         return error_response(
