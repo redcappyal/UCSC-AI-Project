@@ -43,6 +43,7 @@ PROGRESS_UPDATE_FRAMES = 10
 PROGRESS_UPDATE_SECONDS = 0.5
 COARSE_INFERENCE_WIDTH = 640
 REFINE_WINDOW_MIN_RADIUS = 12
+AUDIO_WINDOW_PAD_FRAMES = 4
 DISPLAY_FRAME_SEARCH_RADIUS = 4
 TIN_WIDTH_FEET = 21.0
 FEET_PER_SECOND_TO_MPH = 0.6818181818
@@ -203,9 +204,20 @@ def write_results_csv(csv_path, results):
             csv_writer.writerow(results[frame_idx])
 
 
+def merge_frame_windows(windows):
+    merged = []
+    for low, high in sorted(windows):
+        if merged and low <= merged[-1][1] + 1:
+            merged[-1] = (merged[-1][0], max(merged[-1][1], high))
+        else:
+            merged.append((low, high))
+
+    return [(low, high, 1) for low, high in merged]
+
+
 def refine_segments_for_hits(hits, start_frame, end_frame, stride):
     radius = max(REFINE_WINDOW_MIN_RADIUS, 4 * stride)
-    windows = sorted(
+    return merge_frame_windows(
         (
             max(start_frame, int(hit["hit_frame"]) - radius),
             min(end_frame, int(hit["hit_frame"]) + radius),
@@ -213,14 +225,30 @@ def refine_segments_for_hits(hits, start_frame, end_frame, stride):
         for hit in hits
     )
 
-    merged = []
-    for low, high in windows:
-        if merged and low <= merged[-1][1] + 1:
-            merged[-1] = (merged[-1][0], max(merged[-1][1], high))
-        else:
-            merged.append((low, high))
 
-    return [(low, high, 1) for low, high in merged]
+def refine_segments_for_audio_candidates(candidates, start_frame, end_frame):
+    return merge_frame_windows(
+        (
+            max(start_frame, int(candidate["window_start_frame"]) - AUDIO_WINDOW_PAD_FRAMES),
+            min(end_frame, int(candidate["window_end_frame"]) + AUDIO_WINDOW_PAD_FRAMES),
+        )
+        for candidate in candidates
+    )
+
+
+def audio_hits_from_candidates(candidates, fps):
+    return [
+        {
+            "frame": int(candidate["frame"]),
+            "source": "audio",
+            "call": "AUDIO",
+            "score": candidate.get("score"),
+            "timestamp_seconds": int(candidate["frame"]) / fps,
+            "window_start_seconds": int(candidate["window_start_frame"]) / fps,
+            "window_end_seconds": int(candidate["window_end_frame"]) / fps,
+        }
+        for candidate in candidates
+    ]
 
 
 def ball_point_from_row(row):
