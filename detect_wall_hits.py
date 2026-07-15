@@ -1,5 +1,7 @@
 import argparse
 import csv
+import json
+from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
@@ -18,6 +20,22 @@ IMPACT_FIT_SAMPLES = 4
 GAP_BRIDGE_SECONDS = 0.5
 MAX_IMPACT_MISMATCH_PX = 40.0
 REQUIRED_COLUMNS = ("source_frame", "timestamp_seconds", "detected", "x_center", "y_center")
+
+# Which bounce detector localizes the impact for each picked hit. Set to
+# "legacy_sign_flip" to restore the pre-two-stage impact fit exactly.
+BOUNCE_DETECTOR = "two_stage"
+TWO_STAGE_DEFAULTS = {
+    "min_trajectory_points": 7,
+    "window_half_width": 7,
+    "min_segment_points": 3,
+    "min_direction_change_deg": 20.0,
+    "min_split_improvement": 0.30,
+}
+# Samples kept on each side of a picked hit when handing the two-stage
+# detector its per-event trajectory slice. Matching the fitting half-width
+# keeps the stage-1 distance search anchored to this event; a wider slice
+# lets the minimum drift onto post-bounce flight toward the other line.
+EVENT_WINDOW_HALF_WIDTH = TWO_STAGE_DEFAULTS["window_half_width"]
 
 
 def normalize_x_range(wall_x_range):
@@ -298,6 +316,242 @@ def estimate_impact(timestamps, positions, tracks, hit):
     return min(estimates, key=lambda e: e["impact_mismatch_px"])
 
 
+@dataclass(frozen=True)
+class BounceResult:
+    impact_index: int  # index into the trajectory of the nearest sample
+    impact_t: float  # sub-frame impact time, in trajectory-timestamp seconds
+    impact_xy: tuple  # sub-frame impact position in pixels
+    method: str
+    diagnostics: dict
+
+
+def calibration_line_coefficients(calibration):
+    """Slope/intercept (y = m*x + b) for each named calibrated line."""
+    coefficients = {}
+    for index, line in enumerate(calibration.get("lines", [])):
+        endpoints = line.get("endpoints") or []
+        if len(endpoints) < 2:
+            continue
+        (x1, y1), (x2, y2) = endpoints[0], endpoints[1]
+        if float(x1) == float(x2):
+            # Vertical lines have no y = m*x + b form; wall lines never are.
+            continue
+        slope = (float(y2) - float(y1)) / (float(x2) - float(x1))
+        intercept = float(y1) - slope * float(x1)
+        coefficients[line.get("name") or f"line_{index}"] = (slope, intercept)
+    return coefficients
+
+
+def fit_segment_with_residual(times, positions):
+    """fit_linear_motion plus the fit's summed squared residual, or None."""
+    fit = fit_linear_motion(times, positions)
+    if fit is None:
+        return None
+    p0, v = fit
+    predicted = p0 + times[:, np.newaxis] * v
+    return p0, v, float(np.sum((positions - predicted) ** 2))
+
+
+def detect_bounce_legacy(trajectory, calibration, config=None, diagnostics_out=None):
+    """The pre-two-stage detector behind the strategy interface, unchanged.
+
+    Runs the original candidate/peak/impact-fit machinery on the trajectory
+    and reports its strongest event. `calibration` is unused; registered as
+    "legacy_sign_flip", the config name for the pre-two-stage method.
+    """
+    frames, timestamps, positions = trajectory
+    frames = np.asarray(frames, dtype=np.int64)
+    timestamps = np.asarray(timestamps, dtype=np.float64)
+    positions = np.asarray(positions, dtype=np.float64)
+
+    tracks = split_into_tracks(frames, positions, MAX_GAP_FRAMES, MAX_JUMP_PX_PER_FRAME)
+    candidates = compute_candidates(frames, timestamps, positions, tracks, SMOOTH_WINDOW)
+    hits = pick_peaks(candidates, MIN_GAP_FRAMES, TOP_K, None)
+    if not hits:
+        if isinstance(diagnostics_out, dict):
+            diagnostics_out["rejected"] = "no significant velocity change"
+        return None
+
+    hit = max(hits, key=lambda h: h["dv_magnitude"])
+    index = int(hit["sample_global_index"])
+    impact = estimate_impact(timestamps, positions, tracks, hit)
+
+    diagnostics = {
+        key: hit[key]
+        for key in ("dv_magnitude", "turn_degrees", "speed_before", "speed_after", "after_gap")
+    }
+    if impact is None:
+        impact_t = float(timestamps[index])
+        impact_xy = (float(positions[index][0]), float(positions[index][1]))
+    else:
+        impact_t = float(impact["impact_time"])
+        impact_xy = (float(impact["impact_x"]), float(impact["impact_y"]))
+        diagnostics["impact_mismatch_px"] = impact["impact_mismatch_px"]
+    if isinstance(diagnostics_out, dict):
+        diagnostics_out.update(diagnostics)
+
+    return BounceResult(
+        impact_index=index,
+        impact_t=impact_t,
+        impact_xy=impact_xy,
+        method="legacy_sign_flip",
+        diagnostics=diagnostics,
+    )
+
+
+def detect_bounce_two_stage(trajectory, calibration, config=None, diagnostics_out=None):
+    """Two-stage bounce detector.
+
+    Stage 1 localizes the impact at the trajectory's closest approach to a
+    calibrated wall line (the lines lie on the impact surface, so this works
+    even for flat drives whose image-space velocity barely changes). Stage 2
+    refines it with a two-segment least-squares fit of x(t) and y(t) inside a
+    window around the candidate and intersects the segments for a sub-frame
+    impact. Returns None, with the reason in `diagnostics_out`, when there is
+    no clear break: a smooth fit failing silently is worse than no detection.
+    """
+    cfg = dict(TWO_STAGE_DEFAULTS)
+    if config:
+        cfg.update(config)
+    diagnostics = diagnostics_out if isinstance(diagnostics_out, dict) else {}
+
+    _, timestamps, positions = trajectory
+    timestamps = np.asarray(timestamps, dtype=np.float64)
+    positions = np.asarray(positions, dtype=np.float64)
+    count = len(timestamps)
+    if count < cfg["min_trajectory_points"]:
+        diagnostics["rejected"] = f"only {count} trajectory point(s)"
+        return None
+
+    lines = calibration_line_coefficients(calibration) if calibration else {}
+    if not lines:
+        diagnostics["rejected"] = "no usable calibrated lines"
+        return None
+
+    # Stage 1: perpendicular pixel distance to each line, minimum over lines.
+    names = list(lines)
+    distances = np.stack(
+        [
+            np.abs(m * positions[:, 0] - positions[:, 1] + b) / np.sqrt(m * m + 1)
+            for m, b in (lines[name] for name in names)
+        ]
+    )
+    per_point = distances.min(axis=0)
+    candidate = int(np.argmin(per_point))
+    nearest_line = names[int(np.argmin(distances[:, candidate]))]
+
+    # Stage 2 fits only a window around the candidate; other events in the
+    # buffer (a floor bounce, a nick) would corrupt a global fit.
+    half = cfg["window_half_width"]
+    lo = max(0, candidate - half)
+    hi = min(count, candidate + half + 1)
+    min_points = cfg["min_segment_points"]
+
+    diagnostics.update(
+        {
+            "nearest_line": nearest_line,
+            "min_line_distance_px": float(per_point[candidate]),
+            "window": (int(lo), int(hi - 1)),
+        }
+    )
+
+    single = fit_segment_with_residual(timestamps[lo:hi], positions[lo:hi])
+    best = None
+    for k in range(lo + min_points - 1, hi - min_points + 1):
+        fit_a = fit_segment_with_residual(timestamps[lo : k + 1], positions[lo : k + 1])
+        fit_b = fit_segment_with_residual(timestamps[k:hi], positions[k:hi])
+        if fit_a is None or fit_b is None:
+            continue
+        total = fit_a[2] + fit_b[2]
+        if best is None or total < best[0]:
+            best = (total, k, fit_a, fit_b)
+
+    if single is None or best is None:
+        diagnostics["rejected"] = "window too small for a two-segment fit"
+        return None
+
+    single_ssr = single[2]
+    total, k_star, (p_a, v_a, ssr_a), (p_b, v_b, ssr_b) = best
+    diagnostics.update(
+        {
+            "split_index": int(k_star),
+            "single_fit_ssr": single_ssr,
+            "split_ssr": total,
+            "rms_residual_in": float(np.sqrt(ssr_a / (k_star - lo + 1))),
+            "rms_residual_out": float(np.sqrt(ssr_b / (hi - k_star))),
+        }
+    )
+
+    if single_ssr < 1e-9 or total > (1.0 - cfg["min_split_improvement"]) * single_ssr:
+        kept = 100.0 * total / max(single_ssr, 1e-12)
+        needed = 100.0 * (1.0 - cfg["min_split_improvement"])
+        diagnostics["rejected"] = (
+            f"no clear break: two-segment fit keeps {kept:.1f}% of the "
+            f"single-fit residual (needs <= {needed:.0f}%)"
+        )
+        return None
+
+    angle = turn_angle_degrees(v_a, v_b)
+    diagnostics["direction_change_deg"] = angle
+
+    # Near-parallel segments mean the split improvement was noise, not a
+    # bounce; emitting the candidate centroid here would hallucinate one.
+    if angle < cfg["min_direction_change_deg"]:
+        diagnostics["rejected"] = (
+            f"direction change {angle:.1f} deg is below "
+            f"{cfg['min_direction_change_deg']:g} deg (near-parallel segments)"
+        )
+        return None
+
+    # Sub-frame impact: closest approach in time of the two fitted motions
+    # (same reasoning as _impact_from_index_sets).
+    w = v_a - v_b
+    ww = float(w @ w)
+    t_star = None
+    if ww >= 1e-9:
+        t_candidate = float(-((p_a - p_b) @ w) / ww)
+        t_low = float(timestamps[max(lo, k_star - 1)])
+        t_high = float(timestamps[min(hi - 1, k_star + 1)])
+        if t_low <= t_candidate <= t_high:
+            t_star = t_candidate
+
+    if t_star is None:
+        diagnostics["fallback"] = "no reliable intersection"
+        impact_index = int(k_star)
+        impact_t = float(timestamps[k_star])
+        impact_xy = (float(positions[k_star][0]), float(positions[k_star][1]))
+    else:
+        impact_t = t_star
+        point = ((p_a + v_a * t_star) + (p_b + v_b * t_star)) / 2
+        impact_xy = (float(point[0]), float(point[1]))
+        impact_index = int(np.argmin(np.abs(timestamps - impact_t)))
+
+    return BounceResult(
+        impact_index=impact_index,
+        impact_t=impact_t,
+        impact_xy=impact_xy,
+        method="two_stage",
+        diagnostics=dict(diagnostics),
+    )
+
+
+BOUNCE_DETECTORS = {
+    "legacy_sign_flip": detect_bounce_legacy,
+    "two_stage": detect_bounce_two_stage,
+}
+
+
+def detect_bounce(trajectory, calibration, config=None, diagnostics_out=None):
+    """Run the configured bounce detector on one event's trajectory buffer.
+
+    `trajectory` is the (frames, timestamps, positions) triple produced by
+    load_detected_positions*; `calibration` is the parsed calibration.json
+    dict (the legacy method ignores it). Returns BounceResult or None.
+    """
+    name = (config or {}).get("bounce_detector", BOUNCE_DETECTOR)
+    return BOUNCE_DETECTORS[name](trajectory, calibration, config, diagnostics_out)
+
+
 def is_significant(candidate):
     # A wall bounce turns the ball sharply within one sample; flight-path
     # curvature (gravity) turns it only a few degrees per sample, even near
@@ -359,8 +613,11 @@ def detect_hits_from_positions(
     top_k=TOP_K,
     threshold=None,
     wall_x_range=None,
+    calibration=None,
+    bounce_detector=None,
 ):
     wall_x_range = normalize_x_range(wall_x_range)
+    detector = bounce_detector or BOUNCE_DETECTOR
     tracks = split_into_tracks(frames, positions, max_gap, max_jump)
     candidates = compute_candidates(frames, timestamps, positions, tracks, smooth)
     candidates = [
@@ -374,7 +631,37 @@ def detect_hits_from_positions(
     time_span = timestamps[-1] - timestamps[0] if len(timestamps) > 1 else 0.0
     fps = (frames[-1] - frames[0]) / time_span if time_span > 0 else 30.0
 
+    # The two-stage detector localizes against the calibrated wall lines;
+    # without a calibration the legacy impact fit is the only option.
+    two_stage = detector == "two_stage" and calibration is not None
+
     for hit in hits:
+        if two_stage:
+            pivot = hit["sample_global_index"]
+            lo = max(0, pivot - EVENT_WINDOW_HALF_WIDTH)
+            hi = min(len(frames), pivot + EVENT_WINDOW_HALF_WIDTH + 1)
+            diagnostics = {}
+            result = detect_bounce_two_stage(
+                (frames[lo:hi], timestamps[lo:hi], positions[lo:hi]),
+                calibration,
+                diagnostics_out=diagnostics,
+            )
+            hit.pop("track_index", None)
+            hit.pop("sample_global_index", None)
+            hit["method"] = "two_stage"
+            hit["diagnostics"] = diagnostics
+            if result is not None:
+                hit.update(
+                    {
+                        "impact_x": result.impact_xy[0],
+                        "impact_y": result.impact_xy[1],
+                        "impact_time": result.impact_t,
+                        # Display seeks a captured frame, not a sub-frame time.
+                        "impact_frame": float(frames[lo + result.impact_index]),
+                    }
+                )
+            continue
+
         impact = estimate_impact(timestamps, positions, tracks, hit)
         hit.pop("track_index", None)
         hit.pop("sample_global_index", None)
@@ -514,11 +801,27 @@ def build_parser():
             "default mode, which keeps only hits whose |dv| rivals the ball speed."
         ),
     )
+    parser.add_argument(
+        "--calibration",
+        type=Path,
+        default=None,
+        help="calibration.json with the fitted wall lines; required by the two_stage detector.",
+    )
+    parser.add_argument(
+        "--bounce-detector",
+        choices=sorted(BOUNCE_DETECTORS),
+        default=None,
+        help=f"Impact localization method. Defaults to {BOUNCE_DETECTOR}.",
+    )
     return parser
 
 
 def main():
     args = build_parser().parse_args()
+
+    calibration = None
+    if args.calibration is not None:
+        calibration = json.loads(args.calibration.read_text(encoding="utf-8"))
 
     frames, timestamps, positions, duplicate_count = load_detected_positions(args.ball_csv)
     tracks = split_into_tracks(frames, positions, args.max_gap, args.max_jump)
@@ -533,6 +836,8 @@ def main():
         min_gap=args.min_gap,
         top_k=args.top_k,
         threshold=args.threshold,
+        calibration=calibration,
+        bounce_detector=args.bounce_detector,
     )
 
     print(f"Detected samples: {len(frames)} (dropped {duplicate_count} consecutive duplicate position(s))")

@@ -373,6 +373,10 @@ def judge_hits(run_dir, results, detected):
             entry["velocity"] = velocity
         if candidate_frame != frame:
             entry["candidate_frame"] = candidate_frame
+        if "method" in hit:
+            entry["method"] = hit["method"]
+        if "diagnostics" in hit:
+            entry["diagnostics"] = hit["diagnostics"]
         if "impact_x" in hit:
             entry["impact"] = {
                 "x": hit["impact_x"],
@@ -445,6 +449,15 @@ def run_tracking_job(run_id):
             )
             write_results_csv(csv_path, results)
 
+            # The two-stage bounce detector needs the calibrated wall lines.
+            calibration = None
+            calibration_path = run_dir / "calibration.json"
+            if calibration_path.exists():
+                try:
+                    calibration = json.loads(calibration_path.read_text(encoding="utf-8"))
+                except (OSError, json.JSONDecodeError):
+                    calibration = None
+
             # Coarse samples are frame_stride apart; the default max_gap would
             # split every track at stride > 3.
             max_gap = max(MAX_GAP_FRAMES, frame_stride)
@@ -452,6 +465,7 @@ def run_tracking_job(run_id):
                 sorted_rows(results),
                 max_gap=max_gap,
                 wall_x_range=wall_x_range,
+                calibration=calibration,
             )
             segments = refine_segments_for_hits(detected, start_frame, end_frame, frame_stride)
 
@@ -482,6 +496,7 @@ def run_tracking_job(run_id):
                     sorted_rows(results),
                     max_gap=max(MAX_GAP_FRAMES, frame_stride),
                     wall_x_range=wall_x_range,
+                    calibration=calibration,
                 )
                 hits = judge_hits(run_dir, results, detected)
             except Exception as error:
