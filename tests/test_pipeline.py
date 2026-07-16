@@ -36,6 +36,85 @@ def test_audio_candidate_windows_merge_and_emit_hits():
     assert hits[0]["window_start_seconds"] == 96 / 50.0
 
 
+def test_judge_hits_skips_line_call_for_racket_events(tmp_path):
+    from job_runner import judge_hits
+
+    results = {
+        60: {
+            "source_frame": 60,
+            "timestamp_seconds": "2.000000",
+            "detected": "True",
+            "x_center": "900.000",
+            "y_center": "180.000",
+        }
+    }
+    signals = {"audio_score": 6.0, "audio_rms": 0.05, "audio_offset_s": 0.01,
+               "ball_size_px": 30.0, "size_ratio": 1.5, "gap_prev_s": None, "gap_next_s": 1.2}
+    hit = {
+        "hit_frame": 60,
+        "timestamp_seconds": 2.0,
+        "dv_magnitude": 400.0,
+        "after_gap": False,
+        "event_type": "racket",
+        "wall_score": -0.8,
+        "signals": signals,
+    }
+
+    judged = judge_hits(tmp_path, results, [hit], audio_available=True)
+
+    entry = judged[0]
+    assert entry["call"] == "RACKET"
+    assert entry["reason"] == "classified_as_racket_hit"
+    assert entry["margin_px"] is None and entry["judge_source"] is None
+    assert entry["event_type"] == "racket"
+    assert entry["wall_score"] == -0.8
+    assert entry["signals"] == signals
+
+    payload = json.loads((tmp_path / "detected_hits.json").read_text())
+    assert payload["audio_available"] is True
+    assert payload["hits"][0]["call"] == "RACKET"
+
+
+def test_judge_hits_wall_events_judged_as_before(tmp_path):
+    import json as json_module
+
+    from job_runner import judge_hits
+
+    (tmp_path / "calibration.json").write_text(json_module.dumps({
+        "lines": [
+            {"name": "out_line_lower_edge", "endpoints": [[0, 100], [2000, 100]]},
+            {"name": "tin_top_edge", "endpoints": [[0, 700], [2000, 700]]},
+        ]
+    }))
+    results = {
+        60: {
+            "source_frame": 60,
+            "timestamp_seconds": "2.000000",
+            "detected": "True",
+            "x_center": "900.000",
+            "y_center": "180.000",
+        }
+    }
+    hit = {
+        "hit_frame": 60,
+        "timestamp_seconds": 2.0,
+        "dv_magnitude": 400.0,
+        "speed_before": 400.0,
+        "speed_after": 380.0,
+        "after_gap": False,
+        "event_type": "wall",
+        "wall_score": 0.9,
+        "signals": {"audio_score": 24.0},
+    }
+
+    judged = judge_hits(tmp_path, results, [hit], audio_available=True)
+
+    entry = judged[0]
+    assert entry["call"] == "IN"
+    assert entry["judge_source"] == "detected_center"
+    assert entry["event_type"] == "wall"
+
+
 def test_job_restart_recovery(tmp_path, monkeypatch):
     import job_runner
 

@@ -17,6 +17,8 @@ from pathlib import Path
 
 import cv2
 
+from audio_events import extract_audio_candidates
+from classify_events import classify_events
 from detect_wall_hits import MAX_GAP_FRAMES, detect_hits_from_rows
 from inference_engine import get_tracking_model, infer_frame_predictions
 from judge_call import Point, judge_ball, load_calibration_lines
@@ -341,7 +343,7 @@ def calibrated_velocity(hit, pixels_per_foot):
     }
 
 
-def judge_hits(run_dir, results, detected):
+def judge_hits(run_dir, results, detected, audio_available=None):
     top_line = bottom_line = None
     pixels_per_foot = None
     calibration_path = Path(run_dir) / "calibration.json"
@@ -365,7 +367,11 @@ def judge_hits(run_dir, results, detected):
         judge_source = None
         margin_px = None
 
-        if top_line is not None:
+        if hit.get("event_type") == "racket":
+            # Classified as a racket strike, not a wall bounce: line judging
+            # does not apply.
+            call, reason = "RACKET", "classified_as_racket_hit"
+        elif top_line is not None:
             # Prefer the fitted impact point (where the ball met the wall)
             # over the detected center at the nearest sampled frame.
             if "impact_x" in hit:
@@ -401,6 +407,10 @@ def judge_hits(run_dir, results, detected):
             entry["velocity"] = velocity
         if candidate_frame != frame:
             entry["candidate_frame"] = candidate_frame
+        if "event_type" in hit:
+            entry["event_type"] = hit["event_type"]
+            entry["wall_score"] = hit.get("wall_score")
+            entry["signals"] = hit.get("signals")
         if "method" in hit:
             entry["method"] = hit["method"]
         if "diagnostics" in hit:
@@ -415,8 +425,11 @@ def judge_hits(run_dir, results, detected):
             }
         hits.append(entry)
 
+    payload = {"hits": hits}
+    if audio_available is not None:
+        payload["audio_available"] = audio_available
     (Path(run_dir) / "detected_hits.json").write_text(
-        json.dumps({"hits": hits}, indent=2), encoding="utf-8"
+        json.dumps(payload, indent=2), encoding="utf-8"
     )
     return hits
 
@@ -519,6 +532,12 @@ def run_tracking_job(run_id):
             hits = []
             hits_error = None
             try:
+                update_job(run_id, stage="judging", message="Analyzing audio...")
+                # Audio is verification-only: peaks are matched against the
+                # trajectory-detected events below and never add or move hits.
+                audio_candidates = extract_audio_candidates(
+                    video_path, start_frame, end_frame, source_fps
+                )
                 update_job(run_id, stage="judging", message="Judging wall hits...")
                 detected = detect_hits_from_rows(
                     sorted_rows(results),
@@ -526,7 +545,19 @@ def run_tracking_job(run_id):
                     wall_x_range=wall_x_range,
                     calibration=calibration,
                 )
-                hits = judge_hits(run_dir, results, detected)
+                classified = classify_events(
+                    detected,
+                    results,
+                    audio_candidates,
+                    source_fps,
+                    config=job.get("classify"),
+                )
+                hits = judge_hits(
+                    run_dir,
+                    results,
+                    classified,
+                    audio_available=audio_candidates is not None,
+                )
             except Exception as error:
                 hits_error = str(error)
 

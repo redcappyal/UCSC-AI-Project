@@ -4,230 +4,194 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Squash Line Calling</title>
+<meta name="theme-color" content="#141416">
+<script>
+(function(){
+  var t = localStorage.getItem('slc-theme');
+  if(t !== 'dark' && t !== 'light')
+    t = matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
+  document.documentElement.dataset.theme = t;
+})();
+</script>
 <style>
-  :root{
-    --bg:#14161a; --panel:#1d2127; --panel-2:#232830;
-    --text:#e9ecef; --dim:#9aa3ad;
-    --red:#e03a2f;           /* court-line red: primary action */
+  :root{ color-scheme:dark;
+    --bg:#141416; --surface:#1e1e21; --line:#28282c; --dim:#a0a0a8; --text:#ececee;
+    --btn-border:#3a3a3f; --accent-bg:#ececee; --accent-text:#141416;
+    --strip-bg:#0a0a0c;
     --out:#35e0ff;           /* fitted out-line edge */
     --tin:#b4ff3a;           /* fitted tin edge */
-    --warn:#ffb02e;
+    --in:#2ecc5e; --outcall:#e03a2f;   /* IN/OUT verdict colors only */
+  }
+  :root[data-theme="light"]{ color-scheme:light;
+    --bg:#f5f5f7; --surface:#ffffff; --line:#e5e5ea; --dim:#6e6e76; --text:#1d1d20;
+    --btn-border:#d9d9df; --accent-bg:#1d1d20; --accent-text:#f7f7f8;
+    --strip-bg:#e3e3e8;
+    --out:#007da6; --tin:#557a00;
   }
   *{box-sizing:border-box; margin:0; padding:0}
-  html,body{background:var(--bg); color:var(--text);
+  html{height:100%}
+  body{height:100dvh; overflow:hidden; display:flex; flex-direction:column;
+    background:var(--bg); color:var(--text); font-size:17px; line-height:1.35;
     font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
     -webkit-tap-highlight-color:transparent}
-  body{display:flex; flex-direction:column; min-height:100dvh}
-
-  header{padding:26px 28px 18px}
-  header h1{font-size:34px; font-weight:700; letter-spacing:.02em}
-  header h1 span{color:var(--red)}
-  .steps{display:grid; grid-template-columns:repeat(6,1fr); gap:10px; margin-top:18px}
-  .steps div{text-align:center; font-size:20px; color:var(--dim);
-    padding:15px 8px; border-top:5px solid #333a44; white-space:nowrap; overflow:hidden}
-  .steps div.on{color:var(--text); border-top-color:var(--red); font-weight:600}
-  .steps div.done{border-top-color:#4a545f; color:#6e7883}
-
-  #stage{position:relative; background:#000; line-height:0; overflow:hidden}
-  #view{width:100%; height:auto; display:block; touch-action:none;
-    transform-origin:0 0; will-change:transform}
-  #zoomCtrl{position:absolute; top:12px; right:12px; display:flex; gap:10px; z-index:5}
-  #zoomCtrl button{min-width:84px; min-height:84px; padding:16px 22px; font-size:28px;
-    font-weight:600; background:rgba(29,33,39,.82); backdrop-filter:blur(2px)}
-
-  main{padding:28px 32px max(42px, env(safe-area-inset-bottom)); display:flex; flex-direction:column; gap:22px}
-  body.phase-load main{flex:1; justify-content:center}
-  .card{background:var(--panel); border-radius:14px; padding:28px}
-  .card.hero{text-align:center; padding:64px 34px}
-  .card.hero h2{font-size:42px; margin-bottom:18px}
   .hidden{display:none !important}
 
-  .instruction{font-size:30px; line-height:1.4}
-  .instruction b.out{color:var(--out)} .instruction b.tin{color:var(--tin)}
-  .status{font-size:26px; color:var(--dim); line-height:1.4; min-height:1.2em}
-  .status.warn{color:var(--warn)}
-  .status.ok{color:#7ee08a}
+  #errBanner{position:fixed; top:0; left:0; right:0; z-index:30; display:flex; gap:12px;
+    align-items:center; background:var(--bg); border-bottom:3px solid var(--text); padding:12px 14px}
+  #errBanner span{flex:1; font-weight:700; font-size:15px}
+  #errBanner button{width:auto; min-height:44px; padding:6px 14px; font-size:14px}
 
-  button{font:inherit; border:none; border-radius:16px; padding:28px 32px;
-    font-size:32px; font-weight:600; color:var(--text); background:var(--panel-2);
-    width:100%; min-height:98px; display:flex; align-items:center; justify-content:center;
-    cursor:pointer}
-  button:disabled{opacity:.35}
-  button.primary{background:var(--red)}
-  button.small{width:auto; padding:22px 26px; font-size:28px; font-weight:500; min-height:82px}
-  .row{display:flex; gap:16px}
+  header{flex:0 0 auto; display:flex; align-items:center; gap:12px;
+    padding:8px 14px; min-height:56px; border-bottom:1px solid var(--line)}
+  #stepLabel{font-size:17px; font-weight:600}
+  #themeBtn{margin-left:auto; width:44px; min-width:44px; min-height:44px; padding:0;
+    background:none; border:none}
+  #themeBtn .sun-and-moon > *{transform-origin:center}
+  #themeBtn .sun{transform:scale(1.75); transition:transform .5s cubic-bezier(.25,0,.3,1)}
+  #themeBtn .sun-beams{stroke-width:2; opacity:0; transform:rotateZ(-25deg);
+    transition:transform .5s cubic-bezier(.5,1.25,.75,1.25), opacity .5s cubic-bezier(.25,0,.3,1)}
+  #themeBtn .moonmask > circle{transform:translateX(-7px); transition:transform .35s cubic-bezier(0,0,0,1)}
+  :root[data-theme="light"] #themeBtn .sun{transform:none}
+  :root[data-theme="light"] #themeBtn .sun-beams{opacity:1; transform:none}
+  :root[data-theme="light"] #themeBtn .moonmask > circle{transform:none}
+  ::view-transition-old(root), ::view-transition-new(root){animation:none; mix-blend-mode:normal}
+  #instr{flex:0 0 auto; padding:8px 14px; font-size:15px; color:var(--dim);
+    border-bottom:1px solid var(--line)}
+  #instr b.out{color:var(--out)} #instr b.tin{color:var(--tin)}
+
+  #stage{position:relative; flex:1 1 0; min-height:0; display:flex; align-items:center;
+    justify-content:center; overflow:hidden; background:var(--strip-bg)}
+  #view{max-width:100%; max-height:100%; touch-action:none;
+    transform-origin:0 0; will-change:transform}
+  #zoomCtrl{position:absolute; top:8px; right:8px; display:flex; gap:8px; z-index:5}
+  #zoomCtrl button{width:auto; min-width:48px; min-height:48px; padding:0 12px; font-size:18px;
+    color:#fff; background:rgba(0,0,0,.72); border:1px solid #666}
+
+  main{flex:0 0 auto; overflow:hidden;
+    padding:12px 14px max(12px, env(safe-area-inset-bottom))}
+  body.phase-load main{flex:1; display:flex; flex-direction:column; justify-content:center}
+  main section{display:flex; flex-direction:column; gap:10px}
+
+  h2{font-size:21px; text-align:center}
+  .instruction{font-size:15px; color:var(--dim); text-align:center}
+  .status{font-size:14px; color:var(--dim); min-height:1.2em}
+  .status.warn{color:var(--text); font-weight:700}
+  .status.ok{color:var(--text)}
+
+  button, label.filebtn{font:inherit; font-size:17px; font-weight:600; color:var(--text);
+    background:var(--surface); border:1px solid var(--btn-border); border-radius:10px;
+    width:100%; min-height:48px; padding:10px 16px;
+    display:flex; align-items:center; justify-content:center; cursor:pointer}
+  button:disabled{opacity:.4}
+  button.primary, label.filebtn{background:var(--accent-bg); color:var(--accent-text); border-color:var(--accent-bg)}
+  button.small{width:auto; min-height:44px; padding:8px 12px; font-size:15px; font-weight:500}
+  .row{display:flex; gap:10px}
   .row>*{flex:1}
 
   input[type=file]{display:none}
-  label.filebtn{display:flex; align-items:center; justify-content:center; background:var(--red);
-    border-radius:16px; padding:28px 32px; font-size:32px; font-weight:600; min-height:98px; cursor:pointer}
-
-  input[type=range]{width:100%; height:54px; accent-color:var(--red)}
-  input[type=number]{width:100%; background:#111318; color:var(--text);
-    border:2px solid #2c333c; border-radius:14px; font:inherit; font-size:30px; padding:24px}
-  .sliderlabel{display:flex; justify-content:space-between; font-size:25px;
-    color:var(--dim); margin-bottom:12px}
+  input[type=range]{width:100%; height:44px; accent-color:var(--accent-bg)}
+  input[type=number]{width:100%; background:var(--surface); color:var(--text); border:1px solid var(--line);
+    border-radius:10px; font:inherit; font-size:17px; padding:10px 12px; min-height:48px}
+  .sliderlabel{display:flex; justify-content:space-between; font-size:14px; color:var(--dim)}
   .sliderlabel output{color:var(--text)}
 
-  .stat{display:flex; justify-content:space-between; font-size:26px; padding:8px 0; gap:18px}
-  .stat span:first-child{color:var(--dim)}
-  .swatch{display:inline-block; width:18px; height:18px; border-radius:4px; margin-right:10px; vertical-align:baseline}
-  .progressbox{margin-top:18px; padding:24px; border-radius:14px; background:#111318; border:2px solid #2c333c}
-  .progressbar{height:22px; border-radius:999px; background:#2c333c; overflow:hidden; margin-top:16px}
-  .progressbar span{display:block; height:100%; width:0%; background:var(--red); transition:width .18s ease}
+  .stat{display:flex; justify-content:space-between; font-size:14px; color:var(--dim)}
+  .progressbox{padding:10px 12px; border-radius:10px; border:1px solid var(--line)}
+  .progressbar{height:10px; border-radius:999px; background:var(--line); overflow:hidden; margin-top:8px}
+  .progressbar span{display:block; height:100%; width:0%; background:var(--accent-bg); transition:width .18s ease}
   .progressbar.indeterminate span{width:35%; animation:slidebar 1.1s ease-in-out infinite}
   @keyframes slidebar{0%{transform:translateX(-120%)} 100%{transform:translateX(320%)}}
-  #clipPreview{width:100%; display:block; margin-top:20px; background:#000; border-radius:12px}
-  .clipEditor{position:relative; height:180px; margin-top:20px; border-radius:12px; overflow:hidden;
-    background:#090a0c; border:2px solid #2c333c; touch-action:none}
-  #filmstrip{position:absolute; inset:0; width:100%; height:100%; display:block}
-  .clipShade{position:absolute; top:0; bottom:0; background:rgba(0,0,0,.58); pointer-events:none}
-  #shadeLeft{left:0} #shadeRight{right:0}
-  #clipSelection{position:absolute; top:0; bottom:0; border:5px solid #ffd21f;
-    border-radius:10px; pointer-events:none; box-shadow:0 0 0 9999px rgba(0,0,0,.08) inset}
-  .clipHandle{position:absolute; top:0; bottom:0; width:44px; background:#ffd21f;
-    cursor:ew-resize; display:flex; align-items:center; justify-content:center}
-  .clipHandle::after{content:''; width:5px; height:92px; border-left:3px solid rgba(0,0,0,.55);
-    border-right:3px solid rgba(0,0,0,.55)}
-  #clipStartHandle{border-radius:10px 0 0 10px} #clipEndHandle{border-radius:0 10px 10px 0}
-  #clipCursor{position:absolute; top:0; bottom:0; width:4px; background:#f5f5f5;
-    box-shadow:0 0 0 2px rgba(0,0,0,.45); pointer-events:none}
-  #clipCursor::before{content:''; position:absolute; left:-12px; top:0; border-left:14px solid transparent;
-    border-right:14px solid transparent; border-top:18px solid #f5f5f5}
-  .clipHandle.offview{opacity:.35}
-  .clipOverview{position:relative; height:64px; margin-top:20px; border-radius:10px; overflow:hidden;
-    background:#090a0c; border:2px solid #2c333c; touch-action:none}
+
+  .clipOverview{position:relative; height:44px; border-radius:8px; overflow:hidden;
+    background:var(--strip-bg); border:1px solid var(--line); touch-action:none}
   #overviewStrip{position:absolute; inset:0; width:100%; height:100%; display:block}
-  #overviewSelection{position:absolute; top:0; bottom:0; background:rgba(255,210,31,.45); pointer-events:none}
-  #overviewViewport{position:absolute; top:0; bottom:0; border:3px solid #35e0ff; border-radius:6px;
+  #overviewSelection{position:absolute; top:0; bottom:0; background:rgba(255,255,255,.35); pointer-events:none}
+  #overviewViewport{position:absolute; top:0; bottom:0; border:2px solid #999; border-radius:4px;
     box-sizing:border-box; pointer-events:none}
-  .viewRange{display:flex; justify-content:space-between; font-size:22px; color:var(--dim); margin-top:6px}
-  .nudgeRow{display:flex; gap:10px; margin-top:12px; align-items:stretch}
-  .nudgeRow button.small{flex:1 1 0; min-height:60px; padding:14px 8px}
-  .nudgeLabel{flex:0 0 110px; font-size:24px; color:var(--dim);
-    display:flex; flex-direction:column; justify-content:center; gap:2px}
-  .nudgeLabel output{color:var(--text); font-size:26px}
-  .hitTimeline{position:relative; height:140px; margin-top:18px; border-radius:12px; overflow:hidden;
-    background:#090a0c; border:2px solid #2c333c; touch-action:none; cursor:pointer}
+  .clipEditor{position:relative; height:96px; border-radius:8px; overflow:hidden;
+    background:var(--strip-bg); border:1px solid var(--line); touch-action:none}
+  #filmstrip{position:absolute; inset:0; width:100%; height:100%; display:block}
+  .clipShade{position:absolute; top:0; bottom:0; background:rgba(0,0,0,.62); pointer-events:none}
+  #shadeLeft{left:0} #shadeRight{right:0}
+  #clipSelection{position:absolute; top:0; bottom:0; border:3px solid #fff;
+    border-radius:6px; pointer-events:none}
+  .clipHandle{position:absolute; top:0; bottom:0; width:32px; background:#fff;
+    cursor:ew-resize; display:flex; align-items:center; justify-content:center}
+  .clipHandle::after{content:''; width:4px; height:52px; border-left:2px solid rgba(0,0,0,.55);
+    border-right:2px solid rgba(0,0,0,.55)}
+  #clipStartHandle{border-radius:6px 0 0 6px} #clipEndHandle{border-radius:0 6px 6px 0}
+  #clipCursor{position:absolute; top:0; bottom:0; width:3px; background:#f5f5f5;
+    box-shadow:0 0 0 1px rgba(0,0,0,.45); pointer-events:none}
+  .clipHandle.offview{opacity:.35}
+  .nudgeRow{display:flex; gap:8px; align-items:stretch}
+  .nudgeLabel{flex:0 0 60px; font-size:13px; color:var(--dim);
+    display:flex; flex-direction:column; justify-content:center}
+  .nudgeLabel output{color:var(--text); font-size:15px; font-variant-numeric:tabular-nums}
+  .stepper{flex:1 1 0; display:flex; align-items:center; justify-content:center; min-height:44px}
+  .stepper button{flex:0 0 44px; width:44px; min-height:44px; padding:0;
+    border:none; border-radius:999px; background:transparent; color:var(--text);
+    font-size:26px; font-weight:400; line-height:1}
+  .stepper button:active{background:var(--line)}   /* momentary press feedback only — no resting fill */
+  .stepUnit{flex:0 1 auto; text-align:center; padding:0 2px;
+    font-size:13px; color:var(--dim); white-space:nowrap; user-select:none; pointer-events:none}
+
+  .hitTimeline{position:relative; height:88px; border-radius:8px; overflow:hidden;
+    background:var(--strip-bg); border:1px solid var(--line); touch-action:none; cursor:pointer}
   #trackStrip{position:absolute; inset:0; width:100%; height:100%; display:block}
   #hitBars{position:absolute; inset:0}
-  .hitBar{position:absolute; top:0; bottom:0; width:44px; margin-left:-22px; cursor:pointer;
+  .hitBar{position:absolute; top:0; bottom:0; width:36px; margin-left:-18px; cursor:pointer;
     display:flex; justify-content:center}
-  .hitBar::before{content:''; width:9px; height:100%; border-radius:4px;
-    box-shadow:0 0 0 2px rgba(0,0,0,.5)}
-  .hitBar.in::before{background:#7ee08a}
-  .hitBar.out::before{background:var(--red)}
-  .hitBar.unknown::before{background:var(--warn)}
-  #trackCursor{position:absolute; top:0; bottom:0; width:4px; margin-left:-2px; background:#f5f5f5;
-    box-shadow:0 0 0 2px rgba(0,0,0,.45); pointer-events:none}
-  .hitbox{border-color:#425063}
-  .hitbox button{margin-top:10px}
-  .callout{border:2px solid #2c333c; border-radius:14px; padding:24px; margin-top:20px;
-    background:#111318; font-size:28px; line-height:1.45}
-  .callout strong{font-size:54px; letter-spacing:.03em}
-  .callout strong.in{color:#7ee08a}
-  .callout strong.out{color:var(--warn)}
-  #wallDiagram{width:auto; max-width:100%; display:block; margin-top:20px; background:#0b1014;
-    border:2px solid #2c333c; border-radius:12px}
-  textarea{width:100%; height:220px; background:#111318; color:#b8c0c9;
-    border:2px solid #2c333c; border-radius:12px; font-family:ui-monospace,Menlo,monospace;
-    font-size:22px; padding:18px; margin-top:14px}
+  .hitBar::before{content:''; width:7px; height:100%; border-radius:3px;
+    box-shadow:0 0 0 1px rgba(0,0,0,.5)}
+  .hitBar.in::before{background:var(--in)}
+  .hitBar.out::before{background:var(--outcall)}
+  .hitBar.unknown::before{background:#999}
+  .hitBar.racket::before{background:#5b7fa6; width:4px; opacity:.55}
+  #trackCursor{position:absolute; top:0; bottom:0; width:3px; margin-left:-1px; background:#f5f5f5;
+    box-shadow:0 0 0 1px rgba(0,0,0,.45); pointer-events:none}
+
+  .verdict{border-radius:12px; padding:14px; text-align:center; font-size:13px; line-height:1.4}
+  .verdict strong{display:block; font-size:38px; letter-spacing:.04em}
+  .verdict.in{background:var(--in); color:#03230c}
+  .verdict.out{background:var(--outcall); color:#fff}
 
   /* video kept renderable but invisible (display:none breaks canvas capture on some iOS versions) */
   #vid{position:absolute; width:2px; height:2px; opacity:0; pointer-events:none; left:-10px; top:-10px}
-
-  @media (max-width: 700px){
-    header{padding:22px 16px 16px}
-    header h1{font-size:30px; line-height:1.12}
-    header h1 span{display:block; margin-top:4px; font-size:24px}
-    .steps{grid-template-columns:repeat(2,1fr); gap:10px; margin-top:18px}
-    .steps div{font-size:20px; line-height:1.15; padding:14px 6px; border-top-width:5px}
-
-    main{padding:20px 14px max(30px, env(safe-area-inset-bottom)); gap:18px}
-    .card{border-radius:12px; padding:22px}
-    .card.hero{padding:44px 22px}
-    .card.hero h2{font-size:36px; line-height:1.12; margin-bottom:16px}
-
-    .instruction{font-size:28px; line-height:1.35}
-    .status{font-size:24px; line-height:1.35}
-    .stat{font-size:24px; line-height:1.3; gap:14px}
-    .sliderlabel{font-size:24px; margin-bottom:10px}
-
-    button,
-    label.filebtn{
-      min-height:88px;
-      padding:24px 18px;
-      border-radius:14px;
-      font-size:28px;
-      line-height:1.15;
-      text-align:center;
-      white-space:normal;
-    }
-    button.small{
-      min-height:78px;
-      padding:20px 14px;
-      font-size:24px;
-      border-radius:12px;
-    }
-    .row{gap:12px; flex-wrap:wrap}
-    .row > *{flex:1 1 calc(50% - 6px)}
-
-    input[type=range]{height:52px}
-    input[type=number]{
-      min-height:82px;
-      border-radius:12px;
-      padding:20px;
-      font-size:28px;
-    }
-    textarea{
-      height:220px;
-      border-radius:12px;
-      padding:18px;
-      font-size:20px;
-      line-height:1.4;
-    }
-
-    #zoomCtrl{top:10px; right:10px; gap:8px}
-    #zoomCtrl button{
-      min-width:76px;
-      min-height:76px;
-      padding:14px 16px;
-      font-size:26px;
-    }
-    #clipPreview{margin-top:18px}
-    .clipEditor{height:170px; margin-top:18px}
-    .clipHandle{width:42px}
-    .clipHandle::after{height:88px}
-    .clipOverview{height:56px; margin-top:18px}
-    .viewRange{font-size:20px}
-    .nudgeRow{gap:8px}
-    .nudgeRow button.small{min-height:78px; padding:14px 6px; font-size:24px}
-    .nudgeLabel{flex-basis:88px; font-size:20px}
-    .nudgeLabel output{font-size:24px}
-    .progressbox,
-    .callout{border-radius:12px; padding:20px; font-size:24px}
-    .callout strong{font-size:46px}
-    .stat{align-items:flex-start; flex-wrap:wrap}
-    .stat span:first-child{min-width:0}
-    .stat span:last-child{margin-left:auto; text-align:right}
-  }
 </style>
 </head>
 <body>
 
-<header>
-  <h1>Squash Line Calling <span>· front wall</span></h1>
-  <div class="steps">
-    <div id="st-frame">1 · Frame</div>
-    <div id="st-out">2 · Out line</div>
-    <div id="st-tin">3 · Tin</div>
-    <div id="st-export">4 · Review</div>
-    <div id="st-clip">5 · Clip</div>
-    <div id="st-judge">6 · Call</div>
-  </div>
-</header>
+<div id="errBanner" class="hidden">
+  <span id="errText"></span>
+  <button id="errClose" type="button">Dismiss</button>
+</div>
 
-<div id="stage">
+<header>
+  <button class="small hidden" id="hdrBack" type="button">&#8249; Back</button>
+  <div id="stepLabel">Squash Line Calling</div>
+  <button class="small" id="themeBtn" type="button">
+    <svg class="sun-and-moon" width="24" height="24" viewBox="0 0 24 24" aria-hidden="true">
+      <mask class="moonmask" id="moonMask">
+        <rect width="100%" height="100%" fill="#fff"/>
+        <circle cx="24" cy="10" r="6" fill="#000"/>
+      </mask>
+      <circle class="sun" cx="12" cy="12" r="6" fill="currentColor" mask="url(#moonMask)"/>
+      <g class="sun-beams" stroke="currentColor" stroke-linecap="round">
+        <line x1="12" y1="1" x2="12" y2="3"/>
+        <line x1="12" y1="21" x2="12" y2="23"/>
+        <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/>
+        <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/>
+        <line x1="1" y1="12" x2="3" y2="12"/>
+        <line x1="21" y1="12" x2="23" y2="12"/>
+        <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/>
+        <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/>
+      </g>
+    </svg>
+  </button>
+</header>
+<p id="instr" class="hidden"></p>
+
+<div id="stage" class="hidden">
   <canvas id="view"></canvas>
   <div id="zoomCtrl" class="hidden">
     <button class="small" id="zoomOutBtn" type="button">−</button>
@@ -238,69 +202,47 @@
 
 <main>
   <!-- PHASE: load -->
-  <section class="card hero" id="p-load">
-    <h2>Get started</h2>
-    <p class="instruction">Load a clip from this phone to begin calibrating the court lines.</p>
-    <label class="filebtn" style="margin-top:20px">Load clip
+  <section class="hidden" id="p-load">
+    <p class="instruction">Load a clip from this phone to begin.</p>
+    <label class="filebtn">Load clip
       <input type="file" id="fileIn" accept="video/*">
     </label>
-    <p class="status" id="loadStatus" style="margin-top:12px"></p>
+    <p class="status" id="loadStatus"></p>
   </section>
 
   <!-- PHASE: frame -->
-  <section class="card hidden" id="p-frame">
-    <p class="instruction">Scrub to a frame where both red lines are clearly visible and no one is standing in front of them.</p>
-    <div style="margin-top:10px">
-      <input type="range" id="scrub" min="0" max="1" step="0.01" value="0">
+  <section class="hidden" id="p-frame">
+    <input type="range" id="scrub" min="0" max="1" step="0.01" value="0">
+    <div class="nudgeRow">
+      <div class="stepper">
+        <button type="button" id="bwd1s" aria-label="Back one second">&minus;</button>
+        <span class="stepUnit">second</span>
+        <button type="button" id="fwd1s" aria-label="Forward one second">+</button>
+      </div>
+      <div class="stepper">
+        <button type="button" id="bwd1f" aria-label="Back one frame">&minus;</button>
+        <span class="stepUnit">frame</span>
+        <button type="button" id="fwd1f" aria-label="Forward one frame">+</button>
+      </div>
     </div>
-    <div class="row" style="margin-top:8px">
-      <button class="small" id="bwd1s">−1s</button>
-      <button class="small" id="bwd1f">−1f</button>
-      <button class="small" id="fwd1f">+1f</button>
-      <button class="small" id="fwd1s">+1s</button>
-    </div>
-    <div class="row" style="margin-top:12px">
-      <button id="frameBackBtn">Back</button>
-      <button class="primary" id="useFrame">Use this frame</button>
-    </div>
+    <button class="primary" id="useFrame">Use this frame</button>
   </section>
 
   <!-- PHASE: tap out / tap tin -->
-  <section class="card hidden" id="p-tap">
-    <p class="instruction" id="tapInstr"></p>
-    <p class="status" id="tapStatus" style="margin-top:6px"></p>
-    <div style="margin-top:12px">
-      <div class="sliderlabel"><span>Fill tolerance</span><output id="tolOut">35</output></div>
-      <input type="range" id="tol" min="0" max="100" step="1" value="35">
-    </div>
-    <div class="row" style="margin-top:12px">
-      <button id="backBtn">Back</button>
-      <button class="primary" id="confirmBtn" disabled>Looks right</button>
-    </div>
+  <section class="hidden" id="p-tap">
+    <button class="primary" id="confirmBtn" disabled>Looks right</button>
+    <div class="row"><button class="small" id="clearTapsBtn" disabled>Clear selection</button></div>
+    <p class="status" id="tapStatus"></p>
   </section>
 
   <!-- PHASE: review -->
-  <section class="card hidden" id="p-review">
-    <p class="instruction">Check the overlay: each fitted edge should hug the real paint edge across the whole line.</p>
-    <div style="margin-top:10px" id="reviewStats"></div>
-    <p class="status" id="reviewWarn" style="margin-top:6px"></p>
-    <div class="row" style="margin-top:12px">
-      <button id="reviewBackBtn">Back</button>
-      <button class="primary" id="chooseClipBtn">Choose clip</button>
-    </div>
-    <div class="row" style="margin-top:8px">
-      <button id="exportBtn">Save calibration.json</button>
-      <button id="copyBtn">Copy JSON</button>
-      <button id="restartBtn">Start over</button>
-    </div>
-    <textarea id="jsonBox" readonly spellcheck="false"></textarea>
+  <section class="hidden" id="p-review">
+    <button class="primary" id="chooseClipBtn">Use these lines</button>
+    <p class="status" id="reviewWarn"></p>
   </section>
 
   <!-- PHASE: clip -->
-  <section class="card hidden" id="p-clip">
-    <p class="instruction">Select the short part of the video to track. Tap the top strip to jump anywhere in the video, then drag the yellow handles in the zoomed strip. Keep the clip tight around the rally or call to make processing faster.</p>
-    <canvas id="clipPreview"></canvas>
-    <button class="small" id="clipPlayBtn" type="button" style="margin-top:10px">Play preview</button>
+  <section class="hidden" id="p-clip">
     <div class="clipOverview" id="clipOverview">
       <canvas id="overviewStrip"></canvas>
       <div id="overviewSelection"></div>
@@ -315,61 +257,57 @@
       <div class="clipHandle" id="clipEndHandle"></div>
       <div id="clipCursor"></div>
     </div>
-    <div class="viewRange"><span id="viewStartLabel">0.00s</span><span id="viewEndLabel">0.00s</span></div>
     <div class="nudgeRow">
       <span class="nudgeLabel">Start<output id="clipStartOut">0.00s</output></span>
-      <button class="small" type="button" id="nStartM1s">&minus;1s</button>
-      <button class="small" type="button" id="nStartM1f">&minus;1f</button>
-      <button class="small" type="button" id="nStartP1f">+1f</button>
-      <button class="small" type="button" id="nStartP1s">+1s</button>
+      <div class="stepper">
+        <button type="button" id="nStartM1s" aria-label="Start earlier one second">&minus;</button>
+        <span class="stepUnit">second</span>
+        <button type="button" id="nStartP1s" aria-label="Start later one second">+</button>
+      </div>
+      <div class="stepper">
+        <button type="button" id="nStartM1f" aria-label="Start earlier one frame">&minus;</button>
+        <span class="stepUnit">frame</span>
+        <button type="button" id="nStartP1f" aria-label="Start later one frame">+</button>
+      </div>
     </div>
     <div class="nudgeRow">
       <span class="nudgeLabel">End<output id="clipEndOut">0.00s</output></span>
-      <button class="small" type="button" id="nEndM1s">&minus;1s</button>
-      <button class="small" type="button" id="nEndM1f">&minus;1f</button>
-      <button class="small" type="button" id="nEndP1f">+1f</button>
-      <button class="small" type="button" id="nEndP1s">+1s</button>
+      <div class="stepper">
+        <button type="button" id="nEndM1s" aria-label="End earlier one second">&minus;</button>
+        <span class="stepUnit">second</span>
+        <button type="button" id="nEndP1s" aria-label="End later one second">+</button>
+      </div>
+      <div class="stepper">
+        <button type="button" id="nEndM1f" aria-label="End earlier one frame">&minus;</button>
+        <span class="stepUnit">frame</span>
+        <button type="button" id="nEndP1f" aria-label="End later one frame">+</button>
+      </div>
     </div>
-    <div style="margin-top:12px">
-      <div class="sliderlabel"><span>Analyze every</span><output id="frameStrideOut">1 frame</output></div>
-      <input type="range" id="frameStride" min="1" max="10" step="1" value="1">
-    </div>
-    <div style="margin-top:12px">
-      <div class="sliderlabel"><span>Inference width</span><output id="inferenceWidthOut">960px</output></div>
-      <input type="range" id="inferenceWidth" min="0" max="3" step="1" value="1">
-    </div>
-    <div style="margin-top:10px" id="clipStats"></div>
-    <p class="status" id="trackStatus" style="margin-top:6px"></p>
     <div class="progressbox hidden" id="trackProgressBox">
       <div class="stat"><span id="progressLabel">Uploading</span><span id="progressPct">0%</span></div>
       <div class="progressbar" id="trackProgress"><span></span></div>
     </div>
-    <div class="row" style="margin-top:12px">
-      <button id="clipBackBtn">Back</button>
+    <div class="row">
+      <button id="clipPlayBtn" type="button">Play preview</button>
       <button class="primary" id="runTrackBtn">Track ball</button>
     </div>
+    <p class="status" id="trackStatus"></p>
   </section>
 
   <!-- PHASE: track + judge -->
-  <section class="card hidden" id="p-track">
-    <p class="instruction">Scrub the timeline to view any frame. Vertical bars are detected wall hits — <b style="color:#7ee08a">green IN</b>, <b style="color:var(--red)">red OUT</b>. Tap a bar to see the bounce frame and its call.</p>
-    <div style="margin-top:10px" id="trackStats"></div>
+  <section class="hidden" id="p-track">
     <div class="hitTimeline hidden" id="hitTimeline">
       <canvas id="trackStrip"></canvas>
       <div id="hitBars"></div>
       <div id="trackCursor"></div>
     </div>
-    <p class="status" id="hitsStatus" style="margin-top:6px"></p>
-    <div style="margin-top:12px">
-      <div class="sliderlabel"><span>Frame to judge</span><output id="judgeFrameOut"></output></div>
+    <p class="status" id="hitsStatus"></p>
+    <div class="sliderlabel"><span>Frame to judge</span><output id="judgeFrameOut"></output></div>
+    <div class="row">
       <input type="number" id="judgeFrame" step="1">
-    </div>
-    <div class="row" style="margin-top:12px">
-      <button id="trackBackBtn">Back</button>
       <button class="primary" id="judgeBtn">Judge frame</button>
     </div>
-    <div class="callout hidden" id="judgeResult"></div>
-    <canvas class="hidden" id="wallDiagram"></canvas>
+    <div class="verdict hidden" id="judgeResult"></div>
   </section>
 </main>
 
@@ -392,14 +330,15 @@ const CFG = {
 const ORDER = ['out','tin'];
 const MIN_COLS = 40;          // minimum horizontal span (in columns) for a trustworthy fit
 const FILL_CAP_FRAC = 0.25;   // abort fill if it exceeds this fraction of the frame
+const FILL_TOL = 35;          // flood-fill tolerance (fixed; slider removed in utility pass)
 
 const S = {
   phase:'load', W:0, H:0, videoName:'', frameTime:0,
   videoFile:null,
   loadTimer:null,
   base:null,                  // ImageData of the locked frame
-  work:null,                  // {key, seed:[x,y], mask, maskCanvas, fit, msg, msgKind}
-  lines:{out:null, tin:null}, // committed: {seed, maskCanvas, fit}
+  work:null,                  // {key, seeds:[[x,y],...], mask, maskCanvas, fit, msg, msgKind}
+  lines:{out:null, tin:null}, // committed: {seeds, maskCanvas, fit}
   run:null,                   // backend tracking result
   trackSeekId:0,
   trackStripGen:0,            // invalidates in-flight timeline thumbnail renders
@@ -413,6 +352,16 @@ const S = {
 };
 
 /* ---------- phase / UI ---------- */
+const STEP_META = {
+  load:   {label:'Squash Line Calling', instr:''},
+  frame:  {label:'1 / 6 · Pick a frame', instr:'Scrub to a frame where both red lines are fully visible and unblocked.'},
+  tap_out:{label:'2 / 6 · Mark the out line', instr:''},
+  tap_tin:{label:'3 / 6 · Mark the tin', instr:''},
+  review: {label:'4 / 6 · Review lines', instr:'Check that each fitted edge hugs the real paint edge across the whole line.'},
+  clip:   {label:'5 / 6 · Clip & track', instr:'Drag the top strip to slide the clip along the video, then drag the handles to trim it tight around the shot.'},
+  track:  {label:'6 / 6 · Call', instr:'Tap a hit bar or enter a frame number, then judge it.'},
+};
+
 function setPhase(p){
   if(S.phase === 'clip' && p !== 'clip') stopClipPlayback();
   S.phase = p;
@@ -420,47 +369,31 @@ function setPhase(p){
   stage.classList.toggle('hidden', p === 'load');
   document.body.classList.toggle('phase-load', p === 'load');
   for(const id of ['p-load','p-frame','p-tap','p-review','p-clip','p-track']) $(id).classList.add('hidden');
-  const stepEls = {
-    frame:$('st-frame'), out:$('st-out'), tin:$('st-tin'), export:$('st-export'),
-    clip:$('st-clip'), judge:$('st-judge')
-  };
-  for(const el of Object.values(stepEls)) el.classList.remove('on','done');
+  $('stepLabel').textContent = STEP_META[p].label;
+  $('hdrBack').classList.toggle('hidden', p === 'load');
+
+  if(p === 'tap_out' || p === 'tap_tin'){
+    const c = CFG[curKey()];
+    $('instr').innerHTML = `Tap the red paint of the <b class="${c.key}">${c.label}</b>. If glare breaks the selection, tap the missed stretch to extend it. Pinch to zoom for a precise tap.`;
+    $('instr').classList.remove('hidden');
+  } else {
+    $('instr').textContent = STEP_META[p].instr;
+    $('instr').classList.toggle('hidden', !STEP_META[p].instr);
+  }
 
   if(p === 'load'){ $('p-load').classList.remove('hidden'); }
-  if(p === 'frame'){ $('p-frame').classList.remove('hidden'); stepEls.frame.classList.add('on'); }
+  if(p === 'frame'){ $('p-frame').classList.remove('hidden'); }
   if(p === 'tap_out' || p === 'tap_tin'){
     $('p-tap').classList.remove('hidden');
-    stepEls.frame.classList.add('done');
-    if(p === 'tap_tin') stepEls.out.classList.add('done');
-    stepEls[p === 'tap_out' ? 'out' : 'tin'].classList.add('on');
-    const c = CFG[curKey()];
-    $('tapInstr').innerHTML = `Tap anywhere on the red paint of the <b class="${c.key}">${c.label}</b>. The tool will flood-fill the band and fit its ${c.edge === 'max' ? 'lower' : 'top'} edge.<br><span style="color:var(--dim); font-size:13px">Pinch to zoom in for a precise tap; drag with one finger to pan while zoomed.</span>`;
     $('confirmBtn').disabled = !(S.work && S.work.fit);
     $('zoomCtrl').classList.remove('hidden');
     updateTapStatus();
   } else {
     $('zoomCtrl').classList.add('hidden');
   }
-  if(p === 'review'){
-    $('p-review').classList.remove('hidden');
-    stepEls.frame.classList.add('done'); stepEls.out.classList.add('done');
-    stepEls.tin.classList.add('done'); stepEls.export.classList.add('on');
-    buildReview();
-  }
-  if(p === 'clip'){
-    $('p-clip').classList.remove('hidden');
-    stepEls.frame.classList.add('done'); stepEls.out.classList.add('done');
-    stepEls.tin.classList.add('done'); stepEls.export.classList.add('done');
-    stepEls.clip.classList.add('on');
-    setupClipControls();
-  }
-  if(p === 'track'){
-    $('p-track').classList.remove('hidden');
-    stepEls.frame.classList.add('done'); stepEls.out.classList.add('done');
-    stepEls.tin.classList.add('done'); stepEls.export.classList.add('done');
-    stepEls.clip.classList.add('done'); stepEls.judge.classList.add('on');
-    buildTrackView();
-  }
+  if(p === 'review'){ $('p-review').classList.remove('hidden'); buildReview(); }
+  if(p === 'clip'){ $('p-clip').classList.remove('hidden'); setupClipControls(); }
+  if(p === 'track'){ $('p-track').classList.remove('hidden'); buildTrackView(); }
   render();
 }
 const curKey = () => S.phase === 'tap_out' ? 'out' : 'tin';
@@ -473,8 +406,7 @@ async function checkBackend(){
     $('loadStatus').textContent = 'Backend connected.';
     $('loadStatus').className = 'status ok';
   } catch(_){
-    $('loadStatus').textContent = 'Open this page from the Flask server, not as a file. Use http://127.0.0.1:5001';
-    $('loadStatus').className = 'status warn';
+    showError('Backend not reachable. Open this page from the Flask server, not as a file.');
   }
 }
 
@@ -537,11 +469,50 @@ $('useFrame').onclick = () => {
   S.frameTime = vid.currentTime;
   setPhase('tap_out');
 };
-$('frameBackBtn').onclick = () => {
-  vid.pause();
-  S.base = null;
-  $('fileIn').value = '';
-  setPhase('load');
+function showError(message){
+  $('errText').textContent = message;
+  $('errBanner').classList.remove('hidden');
+}
+$('errClose').onclick = () => $('errBanner').classList.add('hidden');
+
+function applyTheme(t){
+  document.documentElement.dataset.theme = t;
+  localStorage.setItem('slc-theme', t);
+  $('themeBtn').setAttribute('aria-label', t === 'dark' ? 'Switch to light mode' : 'Switch to dark mode');
+  const mc = document.querySelector('meta[name="theme-color"]');
+  if(mc) mc.content = getComputedStyle(document.documentElement).getPropertyValue('--bg').trim();
+}
+$('themeBtn').onclick = () => {
+  const next = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark';
+  if(!document.startViewTransition || matchMedia('(prefers-reduced-motion: reduce)').matches){
+    applyTheme(next);
+    return;
+  }
+  const b = $('themeBtn').getBoundingClientRect();
+  const x = b.left + b.width / 2, y = b.top + b.height / 2;
+  const r = Math.hypot(Math.max(x, innerWidth - x), Math.max(y, innerHeight - y));
+  document.startViewTransition(() => applyTheme(next)).ready.then(() =>
+    document.documentElement.animate(
+      {clipPath:[`circle(0px at ${x}px ${y}px)`, `circle(${r}px at ${x}px ${y}px)`]},
+      {duration:500, easing:'cubic-bezier(.25,0,.3,1)', pseudoElement:'::view-transition-new(root)'}
+    ));
+};
+applyTheme(document.documentElement.dataset.theme);
+
+$('hdrBack').onclick = () => {
+  if(S.phase === 'frame'){
+    vid.pause(); S.base = null; $('fileIn').value = ''; setPhase('load');
+  } else if(S.phase === 'tap_out'){
+    S.work = null; S.base = null; setPhase('frame'); ctx.drawImage(vid, 0, 0, S.W, S.H);
+  } else if(S.phase === 'tap_tin'){
+    S.work = null; S.lines.out = null; setPhase('tap_out');
+  } else if(S.phase === 'review'){
+    S.work = null; S.lines.tin = null; setPhase('tap_tin');
+  } else if(S.phase === 'clip'){
+    setPhase('review');
+  } else if(S.phase === 'track'){
+    setPhase('clip');
+  }
 };
 
 /* ---------- zoom / pan (active during tap phases only) ---------- */
@@ -642,31 +613,19 @@ function endPointer(e){
 canvas.addEventListener('pointerup', endPointer);
 canvas.addEventListener('pointercancel', endPointer);
 
-$('tol').addEventListener('input', e => { $('tolOut').textContent = e.target.value; });
-$('tol').addEventListener('change', () => {           // recompute on release, not per-pixel drag
-  if(S.work) buildWork(S.work.key, S.work.seed[0], S.work.seed[1]);
-});
+$('clearTapsBtn').onclick = () => {
+  S.work = null;
+  $('confirmBtn').disabled = true;
+  updateTapStatus();
+  render();
+};
 
 $('confirmBtn').onclick = () => {
   if(!S.work || !S.work.fit) return;
   const k = S.work.key;
-  S.lines[k] = { seed:S.work.seed, maskCanvas:S.work.maskCanvas, fit:S.work.fit };
+  S.lines[k] = { seeds:S.work.seeds, maskCanvas:S.work.maskCanvas, fit:S.work.fit };
   S.work = null;
   setPhase(k === 'out' ? 'tap_tin' : 'review');
-};
-$('backBtn').onclick = () => {
-  S.work = null;
-  if(S.phase === 'tap_out'){ S.base = null; setPhase('frame'); ctx.drawImage(vid,0,0,S.W,S.H); }
-  else { S.lines.out = null; setPhase('tap_out'); }
-};
-$('restartBtn').onclick = () => {
-  S.work = null; S.lines = {out:null, tin:null}; S.base = null;
-  setPhase('frame'); ctx.drawImage(vid, 0, 0, S.W, S.H);
-};
-$('reviewBackBtn').onclick = () => {
-  S.work = null;
-  S.lines.tin = null;
-  setPhase('tap_tin');
 };
 
 /* ---------- flood fill (HSV similarity) ---------- */
@@ -683,13 +642,18 @@ function rgb2hsv(r, g, b){
   return [h, mx === 0 ? 0 : d / mx, mx];
 }
 
+function hsvClose(hsv, seed, tol){
+  const hueTol = 6 + tol * 0.34;              // 6°–40°
+  const satTol = 0.18 + tol * 0.004;          // 0.18–0.58
+  const valTol = 0.25 + tol * 0.0045;         // 0.25–0.70
+  let dh = Math.abs(hsv[0] - seed[0]); if(dh > 180) dh = 360 - dh;
+  return dh <= hueTol && Math.abs(hsv[1]-seed[1]) <= satTol && Math.abs(hsv[2]-seed[2]) <= valTol;
+}
+
 function floodFill(imgData, W, H, sx, sy, tol){
   const px = imgData.data;
   const si = sy * W + sx;
   const seed = rgb2hsv(px[si*4], px[si*4+1], px[si*4+2]);
-  const hueTol = 6 + tol * 0.34;              // 6°–40°
-  const satTol = 0.18 + tol * 0.004;          // 0.18–0.58
-  const valTol = 0.25 + tol * 0.0045;         // 0.25–0.70
   const mask = new Uint8Array(W * H);
   const cap = Math.floor(W * H * FILL_CAP_FRAC);
   const stack = [si];
@@ -698,9 +662,7 @@ function floodFill(imgData, W, H, sx, sy, tol){
 
   const ok = i => {
     const j = i * 4;
-    const hsv = rgb2hsv(px[j], px[j+1], px[j+2]);
-    let dh = Math.abs(hsv[0] - seed[0]); if(dh > 180) dh = 360 - dh;
-    return dh <= hueTol && Math.abs(hsv[1]-seed[1]) <= satTol && Math.abs(hsv[2]-seed[2]) <= valTol;
+    return hsvClose(rgb2hsv(px[j], px[j+1], px[j+2]), seed, tol);
   };
 
   while(stack.length){
@@ -751,20 +713,75 @@ function lsq(xs, ys){
   return { m, b, rms: Math.sqrt(se/n), n };
 }
 
-function robustFit(xs, ys){
-  let f = lsq(xs, ys);
-  if(!f) return null;
-  const thr = Math.max(2, 2.5 * f.rms);          // one outlier-rejection pass (glare, chips, overlap)
-  const kx = [], ky = [];
-  for(let i=0;i<xs.length;i++){
-    if(Math.abs(ys[i] - (f.m*xs[i] + f.b)) <= thr){ kx.push(xs[i]); ky.push(ys[i]); }
+const RANSAC_THR = 3;         // inlier distance (px) — sidewall tails bend away past this within a few columns
+
+/* RANSAC candidate line. The sidewall out-lines are coherent segments (not
+   noise), so a mean-based rejection pass can't remove them — and when the
+   camera is tilted their pull no longer cancels. The front-wall span is the
+   longest segment, so maximizing inliers locks onto it. Seeded LCG keeps the
+   fit deterministic for a given selection. */
+function ransacLine(xs, ys){
+  const n = xs.length;
+  const minSep = Math.max(10, (xs[n-1] - xs[0]) * 0.2);
+  let seed = 0x2F6E2B1;
+  const rand = () => ((seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff);
+  let best = null, bestCount = 0;
+  for(let it = 0; it < 400; it++){
+    const i = (rand() * n) | 0, j = (rand() * n) | 0;
+    if(Math.abs(xs[i] - xs[j]) < minSep) continue;
+    const m = (ys[j] - ys[i]) / (xs[j] - xs[i]);
+    const b = ys[i] - m * xs[i];
+    let cnt = 0;
+    for(let k = 0; k < n; k++) if(Math.abs(ys[k] - (m*xs[k] + b)) <= RANSAC_THR) cnt++;
+    if(cnt > bestCount){ bestCount = cnt; best = { m, b }; }
   }
-  if(kx.length >= MIN_COLS && kx.length < xs.length){
-    const f2 = lsq(kx, ky);
-    if(f2){
-      f = f2;
-      f.xMin = Math.min(...kx);
-      f.xMax = Math.max(...kx);
+  return bestCount >= MIN_COLS ? best : null;
+}
+
+function robustFit(xs, ys){
+  let f = null;
+  const cand = ransacLine(xs, ys);
+  if(cand){
+    // Refit on the longest contiguous run of inliers only, so the fitted span
+    // ends at the front-wall corners and stray collinear pixels elsewhere
+    // (e.g. where a sidewall line crosses the band) can't stretch it.
+    const maxGap = Math.max(16, (xs[xs.length-1] - xs[0]) * 0.05);
+    const runs = [];
+    let cur = [];
+    for(let i = 0; i < xs.length; i++){
+      if(Math.abs(ys[i] - (cand.m*xs[i] + cand.b)) > RANSAC_THR) continue;
+      if(cur.length && xs[i] - xs[cur[cur.length-1]] > maxGap){ runs.push(cur); cur = []; }
+      cur.push(i);
+    }
+    if(cur.length) runs.push(cur);
+    runs.sort((a, b) => b.length - a.length);
+    if(runs.length && runs[0].length >= MIN_COLS){
+      // Keep every long collinear run, not just the longest: glare can split
+      // the selection into segments that all lie on the real line, and the
+      // span must still reach the corners. Short runs (a sidewall crossing
+      // the band, stray specks) stay excluded.
+      const minRun = Math.max(25, runs[0].length * 0.2);
+      const idx = runs.filter(r => r.length >= minRun).flat().sort((a, b) => a - b);
+      const kx = idx.map(i => xs[i]), ky = idx.map(i => ys[i]);
+      const f2 = lsq(kx, ky);
+      if(f2){ f = f2; f.xMin = kx[0]; f.xMax = kx[kx.length - 1]; }
+    }
+  }
+  if(!f){                                        // fallback: global fit + one rejection pass
+    f = lsq(xs, ys);
+    if(!f) return null;
+    const thr = Math.max(2, 2.5 * f.rms);
+    const kx = [], ky = [];
+    for(let i=0;i<xs.length;i++){
+      if(Math.abs(ys[i] - (f.m*xs[i] + f.b)) <= thr){ kx.push(xs[i]); ky.push(ys[i]); }
+    }
+    if(kx.length >= MIN_COLS && kx.length < xs.length){
+      const f2 = lsq(kx, ky);
+      if(f2){
+        f = f2;
+        f.xMin = Math.min(...kx);
+        f.xMax = Math.max(...kx);
+      }
     }
   }
   if(!Number.isFinite(f.xMin) || !Number.isFinite(f.xMax)){
@@ -772,32 +789,95 @@ function robustFit(xs, ys){
     f.xMax = Math.max(...xs);
   }
   f.total = xs.length;
+  f.trimmed = f.total - f.n;
   return f;
 }
 
 /* ---------- build working selection ---------- */
+/* Probe along the fitted line beyond both ends of the current selection for
+   pixels that still match the band colour — paint continuing past a glare
+   break lies on the same straight line, so the fit tells us where to look. */
+function findExtensionSeed(mask, fit, mode, seedHsv, tol){
+  const px = S.base.data, W = S.W, H = S.H;
+  const reach = Math.round(W * 0.3);
+  const into = mode === 'min' ? 1 : -1;       // step into the band: below a top edge, above a lower edge
+  for(const dir of [-1, 1]){
+    const x0 = Math.round(dir < 0 ? fit.xMin : fit.xMax);
+    for(let d = 6; d <= reach; d += 3){
+      const x = x0 + dir * d;
+      if(x < 1 || x >= W - 1) break;
+      const yLine = fit.m * x + fit.b;
+      for(const off of [3, 5, 8]){
+        const y = Math.round(yLine + into * off);
+        if(y < 1 || y >= H - 1) continue;
+        const i = y * W + x;
+        if(mask[i]) continue;
+        const j = i * 4;
+        if(hsvClose(rgb2hsv(px[j], px[j+1], px[j+2]), seedHsv, tol)) return { x, y };
+      }
+    }
+  }
+  return null;
+}
+
+function extendAlongFit(mask, cfgEdge, fit, seedHsv, tol){
+  let edge = null;
+  for(let pass = 0; pass < 8; pass++){
+    const pt = findExtensionSeed(mask, fit, cfgEdge, seedHsv, tol);
+    if(!pt) break;
+    const extra = floodFill(S.base, S.W, S.H, pt.x, pt.y, tol);
+    if(extra.overflow || extra.count < 25) break;
+    let grew = false;
+    for(let i = 0; i < mask.length; i++) if(extra.mask[i] && !mask[i]){ mask[i] = 1; grew = true; }
+    if(!grew) break;
+    const e2 = extractEdge(mask, S.W, S.H, cfgEdge);
+    const f2 = robustFit(e2.xs, e2.ys);
+    if(!f2) break;
+    fit = f2; edge = e2;
+  }
+  return { fit, edge };
+}
+
 function buildWork(key, sx, sy){
-  const tol = +$('tol').value;
+  const tol = FILL_TOL;
   const cfg = CFG[key];
-  const { mask, count, overflow } = floodFill(S.base, S.W, S.H, sx, sy, tol);
+  const prev = (S.work && S.work.key === key && S.work.fit) ? S.work : null;
+  const fill = floodFill(S.base, S.W, S.H, sx, sy, tol);
 
-  const work = { key, seed:[sx, sy], mask, fit:null, msg:'', msgKind:'' };
+  if(fill.overflow && prev){                   // bad extension tap: keep what we had
+    prev.msg = 'That tap leaked off the line and was ignored — selection kept. Tap a cleaner spot to extend.';
+    prev.msgKind = 'warn';
+    updateTapStatus();
+    render();
+    return;
+  }
 
-  if(overflow){
+  const mask = fill.mask;
+  if(prev) for(let i = 0; i < mask.length; i++) if(prev.mask[i]) mask[i] = 1;   // taps accumulate
+
+  const seeds = prev ? prev.seeds.concat([[sx, sy]]) : [[sx, sy]];
+  const work = { key, seeds, mask, fit:null, msg:'', msgKind:'' };
+
+  if(fill.overflow){
     work.msg = 'Fill leaked off the line — lower the tolerance or tap a cleaner spot.';
     work.msgKind = 'warn';
   } else {
-    const edge = extractEdge(mask, S.W, S.H, cfg.edge);
+    let edge = extractEdge(mask, S.W, S.H, cfg.edge);
     if(edge.xs.length < MIN_COLS){
       work.msg = `Selection too small (${edge.xs.length} columns) — tap on the painted band, or raise the tolerance.`;
       work.msgKind = 'warn';
     } else {
-      const fit = robustFit(edge.xs, edge.ys);
+      let fit = robustFit(edge.xs, edge.ys);
       if(fit){
+        const ext = extendAlongFit(mask, cfg.edge, fit, fill.seedHsv, tol);
+        fit = ext.fit;
+        if(ext.edge) edge = ext.edge;
         work.fit = fit;
         work.msg = `Fitted through ${fit.n.toLocaleString()} edge pixels · RMS ${fit.rms.toFixed(2)} px · span ${edge.xs.length} columns`;
+        if(fit.trimmed >= MIN_COLS) work.msg += ` · dropped ${fit.trimmed} columns (sidewall/outliers)`;
         work.msgKind = fit.rms <= 2 ? 'ok' : 'warn';
         if(fit.rms > 2) work.msg += ' — edge is wobbly; try lower tolerance or a cleaner frame.';
+        else work.msg += ' — if the line stops short, tap the missed stretch to extend.';
       } else {
         work.msg = 'Could not fit a line to that selection.'; work.msgKind = 'warn';
       }
@@ -813,7 +893,8 @@ function buildWork(key, sx, sy){
 
 function updateTapStatus(){
   const el = $('tapStatus');
-  if(!S.work){ el.textContent = 'Waiting for a tap…'; el.className = 'status'; return; }
+  $('clearTapsBtn').disabled = !S.work;
+  if(!S.work){ el.textContent = 'Tap the line to select it first.'; el.className = 'status'; return; }
   el.textContent = S.work.msg;
   el.className = 'status ' + S.work.msgKind;
 }
@@ -859,10 +940,12 @@ function render(){
   if(S.work){
     ctx.drawImage(S.work.maskCanvas, 0, 0);
     if(S.work.fit) drawFitLine(S.work.fit, CFG[S.work.key].hex);
-    const [x, y] = S.work.seed;
     ctx.save();
     ctx.strokeStyle = '#fff'; ctx.lineWidth = Math.max(2, S.W / 900);
-    ctx.beginPath(); ctx.arc(x, y, Math.max(8, S.W / 120), 0, Math.PI * 2); ctx.stroke();
+    const r = Math.max(8, S.W / 120);
+    for(const [x, y] of S.work.seeds){
+      ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.stroke();
+    }
     ctx.restore();
   }
 }
@@ -871,20 +954,29 @@ function render(){
 function midY(fit){ return fit.m * (S.W / 2) + fit.b; }
 
 function buildReview(){
-  const rows = ORDER.map(k => {
-    const c = CFG[k], f = S.lines[k].fit;
-    return `<div class="stat"><span><i class="swatch" style="background:${c.hex}"></i>${c.edgeName}</span>` +
-           `<span>RMS ${f.rms.toFixed(2)} px · ${f.n.toLocaleString()} px</span></div>`;
-  }).join('');
-  $('reviewStats').innerHTML = rows;
-
   const w = $('reviewWarn');
-  if(midY(S.lines.out.fit) >= midY(S.lines.tin.fit)){
-    w.textContent = 'Warning: the out line was fitted below the tin. The taps were probably swapped — start over.';
-    w.className = 'status warn';
-  } else { w.textContent = ''; }
+  const out = S.lines.out.fit, tin = S.lines.tin.fit;
 
-  $('jsonBox').value = JSON.stringify(buildJson(), null, 2);
+  // Both lines span the same 21 ft front wall, so their endpoints should
+  // roughly agree in x. The tin is the more trustworthy of the two (its paint
+  // doesn't continue onto the sidewalls), so when an out-line endpoint
+  // disagrees badly — truncated by glare, or leaked — snap it to the tin's,
+  // keeping the out line's own slope/intercept.
+  const tinSpan = tin.xMax - tin.xMin;
+  let snapped = false;
+  if(tinSpan > 0){
+    const tolPx = tinSpan * 0.08;
+    if(Math.abs(out.xMin - tin.xMin) > tolPx){ out.xMin = tin.xMin; snapped = true; }
+    if(Math.abs(out.xMax - tin.xMax) > tolPx){ out.xMax = tin.xMax; snapped = true; }
+    if(snapped) out.snappedToTin = true;
+  }
+
+  const notes = [];
+  if(snapped) notes.push('Out-line span disagreed with the tin — endpoints snapped to the tin’s span (angle kept).');
+  if(midY(out) >= midY(tin)) notes.push('Warning: the out line was fitted below the tin — go Back and redo the taps.');
+  w.textContent = notes.join(' ');
+  w.className = 'status' + (notes.length ? ' warn' : '');
+  render();
 }
 
 function buildJson(){
@@ -901,6 +993,7 @@ function buildJson(){
       slope: f.m, intercept: f.b,
       fit_rms_px: +f.rms.toFixed(2),
       x_span_px: [+x0.toFixed(2), +x1.toFixed(2)],
+      x_span_source: f.snappedToTin ? 'tin_top_edge' : 'fit',
       edge_pixels_used: f.n
     };
   };
@@ -917,8 +1010,6 @@ function buildJson(){
 }
 
 $('chooseClipBtn').onclick = () => setPhase('clip');
-$('clipBackBtn').onclick = () => setPhase('review');
-$('trackBackBtn').onclick = () => setPhase('clip');
 
 function fmtTime(value){
   return `${(+value).toFixed(2)}s`;
@@ -926,20 +1017,6 @@ function fmtTime(value){
 
 function videoFps(){
   return S.videoFps || S.run?.fps || 60;
-}
-
-function fpsIsKnown(){
-  return !!(S.videoFps || S.run?.fps);
-}
-
-function approxFrame(seconds){
-  return Math.round(seconds * videoFps());
-}
-
-const INFERENCE_WIDTHS = [640, 960, 1280, 0];
-
-function inferenceWidthLabel(width){
-  return width === 0 ? 'Original' : `${width}px`;
 }
 
 function clipDuration(){
@@ -997,12 +1074,11 @@ function recenterView(){
 
 function drawClipPreview(time){
   if(!S.W || !S.H) return;
-  const c = $('clipPreview');
-  const maxW = 960;
-  c.width = Math.min(S.W, maxW);
-  c.height = Math.round(c.width * S.H / S.W);
-  const cc = c.getContext('2d');
-  cc.drawImage(vid, 0, 0, c.width, c.height);
+  ctx.drawImage(vid, 0, 0, S.W, S.H);
+  for(const k of ORDER){
+    const L = S.lines[k];
+    if(L) drawFitLine(L.fit, CFG[k].hex);
+  }
 }
 
 function updateClipPlayButton(){
@@ -1075,6 +1151,9 @@ async function requestPreviewFrame(time){
   }
 }
 
+const stripBg = () => getComputedStyle(document.documentElement)
+  .getPropertyValue('--strip-bg').trim() || '#0a0a0c';
+
 async function renderStripCanvas(canvasEl, boxEl, t0, t1, opts = {}){
   const box = boxEl.getBoundingClientRect();
   if(box.width < 4) return false;
@@ -1083,7 +1162,7 @@ async function renderStripCanvas(canvasEl, boxEl, t0, t1, opts = {}){
   canvasEl.height = Math.max(1, Math.round(box.height * dpr));
   const cc = canvasEl.getContext('2d');
   cc.setTransform(dpr, 0, 0, dpr, 0, 0);
-  cc.fillStyle = '#090a0c';
+  cc.fillStyle = stripBg();
   cc.fillRect(0, 0, box.width, box.height);
   if(opts.background) opts.background(cc, box.width, box.height);
 
@@ -1136,7 +1215,7 @@ function drawDetailPlaceholderNow(){
   if(strip.height !== bh) strip.height = bh;
   const cc = strip.getContext('2d');
   cc.setTransform(dpr, 0, 0, dpr, 0, 0);
-  cc.fillStyle = '#090a0c';
+  cc.fillStyle = stripBg();
   cc.fillRect(0, 0, box.width, box.height);
   paintDetailPlaceholder(cc, box.width, box.height);
 }
@@ -1149,7 +1228,7 @@ async function renderDetailStrip(){
   if(S.clip.detailKey === key) return;
   const token = ++S.clip.detailToken;
   const shouldAbort = () => token !== S.clip.detailToken || !!S.clip.dragging
-    || S.clip.overviewDragging || S.phase !== 'clip';
+    || S.clip.overviewDragging || S.clip.seeking || S.phase !== 'clip';
   const ok = await renderStripCanvas($('filmstrip'), editor, S.clip.viewStart, S.clip.viewEnd,
     {background: paintDetailPlaceholder, shouldAbort});
   if(token !== S.clip.detailToken) return;
@@ -1188,8 +1267,6 @@ function updateClipTimeline(){
   $('overviewSelection').style.width = `${Math.max(0.5, oEnd - oStart)}%`;
   $('overviewViewport').style.left = `${timeToOverviewPct(S.clip.viewStart)}%`;
   $('overviewViewport').style.width = `${Math.max(0, timeToOverviewPct(S.clip.viewEnd) - timeToOverviewPct(S.clip.viewStart))}%`;
-  $('viewStartLabel').textContent = fmtTime(S.clip.viewStart);
-  $('viewEndLabel').textContent = fmtTime(S.clip.viewEnd);
   updateClipLabels();
 }
 
@@ -1202,11 +1279,6 @@ async function setClipCursor(time){
 
 function setupClipControls(){
   const duration = clipDuration();
-  let widthIndex = INFERENCE_WIDTHS.indexOf(S.clip.inferenceWidth);
-  if(widthIndex < 0){ widthIndex = 1; S.clip.inferenceWidth = 960; }
-  $('inferenceWidth').value = widthIndex.toString();
-  $('frameStride').value = S.clip.frameStride.toString();
-
   if(S.clip.end <= S.clip.start || S.clip.end > duration){
     const center = S.frameTime || Math.min(duration / 2, 10);
     S.clip.start = Math.max(0, center - 2);
@@ -1228,27 +1300,14 @@ function setupClipControls(){
 }
 
 function updateClipLabels(){
-  let start = S.clip.start;
+  const start = S.clip.start;
   let end = S.clip.end;
-  const stride = S.clip.frameStride;
-  const inferenceWidth = S.clip.inferenceWidth;
   if(end - start < minClip()){
     end = Math.min(clipDuration(), start + minClip());
     S.clip.end = end;
   }
-  const approx = fpsIsKnown() ? '' : '~';
-  const selectedFrames = Math.max(1, approxFrame(end) - approxFrame(start) + 1);
-  const analyzedFrames = Math.ceil(selectedFrames / stride);
-
   $('clipStartOut').textContent = fmtTime(start);
   $('clipEndOut').textContent = fmtTime(end);
-  $('frameStrideOut').textContent = stride === 1 ? '1 frame' : `${stride} frames`;
-  $('inferenceWidthOut').textContent = inferenceWidthLabel(inferenceWidth);
-  $('clipStats').innerHTML =
-    `<div class="stat"><span>${approx ? 'Approx frames' : 'Frames'}</span><span>${approx}${approxFrame(start)}–${approxFrame(end)}</span></div>` +
-    `<div class="stat"><span>Frames analyzed</span><span>${approx}${analyzedFrames} of ${approx}${selectedFrames}</span></div>` +
-    `<div class="stat"><span>Model input width</span><span>${inferenceWidthLabel(inferenceWidth)}</span></div>` +
-    `<div class="stat"><span>Duration</span><span>${(end - start).toFixed(2)}s</span></div>`;
 }
 
 function nudgeClipEdge(which, delta){
@@ -1282,16 +1341,6 @@ $('nEndM1f').onclick = () => nudgeClipEdge('end', -frameStep());
 $('nEndP1f').onclick = () => nudgeClipEdge('end', frameStep());
 $('nEndP1s').onclick = () => nudgeClipEdge('end', 1);
 
-$('frameStride').addEventListener('input', e => {
-  S.clip.frameStride = parseInt(e.target.value, 10) || 1;
-  updateClipLabels();
-});
-$('inferenceWidth').addEventListener('input', e => {
-  const index = parseInt(e.target.value, 10) || 0;
-  S.clip.inferenceWidth = INFERENCE_WIDTHS[index] ?? 960;
-  updateClipLabels();
-});
-
 const HANDLE_HIT_RADIUS = 26; // px around a handle that grabs it instead of the cursor
 
 $('clipEditor').addEventListener('pointerdown', e => {
@@ -1315,17 +1364,24 @@ $('clipEditor').addEventListener('pointermove', e => {
 function moveClipPointer(e){
   const r = $('clipEditor').getBoundingClientRect();
   const time = detailPctToTime((e.clientX - r.left) / r.width);
-  if(S.clip.dragging === 'start'){
-    S.clip.start = Math.max(0, Math.min(time, S.clip.end - minClip()));
-    S.clip.cursor = S.clip.start;
-  } else if(S.clip.dragging === 'end'){
-    S.clip.end = Math.min(clipDuration(), Math.max(time, S.clip.start + minClip()));
-    S.clip.cursor = S.clip.end;
+  if(S.clip.dragging === 'start' || S.clip.dragging === 'end'){
+    // Trimming a handle previews the frame at the handle so you can see what
+    // you're cutting to, but the playhead stays put — it only moves when the
+    // timeline itself is scrubbed. On release, endClipDrag snaps the preview
+    // back to the playhead's frame.
+    let edge;
+    if(S.clip.dragging === 'start'){
+      edge = S.clip.start = Math.max(0, Math.min(time, S.clip.end - minClip()));
+    } else {
+      edge = S.clip.end = Math.min(clipDuration(), Math.max(time, S.clip.start + minClip()));
+    }
+    updateClipTimeline();
+    requestPreviewFrame(edge);
   } else {
     S.clip.cursor = Math.min(Math.max(time, 0), clipDuration());
+    updateClipTimeline();
+    requestPreviewFrame(S.clip.cursor);
   }
-  updateClipTimeline();
-  requestPreviewFrame(S.clip.cursor);
 }
 
 // After a handle is released near a view edge (or the selection dwarfs /
@@ -1357,15 +1413,30 @@ function endClipDrag(e){
 $('clipEditor').addEventListener('pointerup', endClipDrag);
 $('clipEditor').addEventListener('pointercancel', endClipDrag);
 
+// The coarse strip positions the clip itself (Apple-trimmer style): the
+// selection keeps its length and slides to where you point, and the detail
+// window pans in lockstep so the handles stay put on screen while the
+// footage slides underneath them.
 function moveOverviewPointer(e){
   const r = $('clipOverview').getBoundingClientRect();
   const t = overviewPctToTime((e.clientX - r.left) / r.width);
+  const dur = clipDuration();
+  const selLen = Math.min(dur, Math.max(minClip(), S.clip.end - S.clip.start));
+  const newStart = Math.max(0, Math.min(t - selLen / 2, dur - selLen));
+  const shift = newStart - S.clip.start;
+  const cursorRel = Math.min(Math.max(S.clip.cursor - S.clip.start, 0), selLen);
+  S.clip.start = newStart;
+  S.clip.end = newStart + selLen;
+  S.clip.cursor = newStart + cursorRel;
+
   const span = viewSpan();
-  const vs = Math.max(0, Math.min(t - span / 2, clipDuration() - span));
+  const vs = Math.max(0, Math.min(S.clip.viewStart + shift, dur - span));
   S.clip.viewStart = vs;
   S.clip.viewEnd = vs + span;
+
   drawDetailPlaceholderNow();
   updateClipTimeline();
+  requestPreviewFrame(S.clip.cursor);
 }
 
 $('clipOverview').addEventListener('pointerdown', e => {
@@ -1538,8 +1609,9 @@ $('runTrackBtn').onclick = async () => {
     $('trackStatus').className = 'status ok';
     setPhase('track');
   } catch(error){
-    $('trackStatus').textContent = error.message;
-    $('trackStatus').className = 'status warn';
+    showError(error.message);
+    $('trackStatus').textContent = '';
+    $('trackStatus').className = 'status';
   } finally {
     $('runTrackBtn').disabled = false;
     setTimeout(hideTrackProgress, 700);
@@ -1550,19 +1622,12 @@ function buildTrackView(){
   if(!S.run) return;
   const hits = S.run.hits || [];
   const initialFrame = hits.length ? hits[0].frame : S.run.start_frame;
-  $('trackStats').innerHTML =
-    `<div class="stat"><span>Tracked source frames</span><span>${S.run.start_frame}–${S.run.end_frame}</span></div>` +
-    `<div class="stat"><span>Analyzed every</span><span>${S.run.frame_stride || 1} frame(s)</span></div>` +
-    `<div class="stat"><span>Model input width</span><span>${inferenceWidthLabel(S.run.inference_width || 0)}</span></div>` +
-    `<div class="stat"><span>Rows</span><span>${S.run.rows}</span></div>` +
-    `<div class="stat"><span>Wall hits detected</span><span>${hits.length}</span></div>`;
   $('judgeFrame').min = S.run.start_frame;
   $('judgeFrame').max = S.run.end_frame;
   $('judgeFrame').value = initialFrame;
   $('judgeFrameOut').textContent = `${S.run.start_frame}–${S.run.end_frame}`;
-  $('judgeResult').classList.add('hidden');
+  $('judgeResult').className = 'verdict hidden';
   $('judgeResult').innerHTML = '';
-  $('wallDiagram').classList.add('hidden');
   buildHitTimeline(hits, initialFrame);
 }
 
@@ -1582,11 +1647,17 @@ function buildHitTimeline(hits, initialFrame){
   bars.innerHTML = '';
 
   for(const hit of hits){
-    const cls = hit.call === 'IN' ? 'in' : hit.call === 'OUT' ? 'out' : 'unknown';
+    const cls = hit.call === 'RACKET' ? 'racket'
+      : hit.call === 'IN' ? 'in' : hit.call === 'OUT' ? 'out' : 'unknown';
     const bar = document.createElement('div');
     bar.className = `hitBar ${cls}`;
     bar.style.left = `${frameToRunPct(hit.frame)}%`;
-    bar.title = `Frame ${hit.frame} · ${callWithMargin(hit.call, hit.margin_px)}`;
+    const label = hit.call === 'RACKET'
+      ? 'racket hit'
+      : `${callWithMargin(hit.call, hit.margin_px)}${hit.event_type === 'wall' ? ' · wall' : ''}`;
+    const audioDb = hit.signals && hit.signals.audio_score;
+    const audio = audioDb == null ? '' : ` (audio +${audioDb.toFixed(1)} dB)`;
+    bar.title = `Frame ${hit.frame} · ${label}${audio}`;
     bar.addEventListener('pointerdown', e => e.stopPropagation());
     bar.addEventListener('click', () => {
       seekSourceFrameToCanvas(hit.frame);
@@ -1619,7 +1690,7 @@ async function renderTrackStrip(initialFrame){
   strip.height = Math.max(1, Math.round(box.height * dpr));
   const cc = strip.getContext('2d');
   cc.setTransform(dpr, 0, 0, dpr, 0, 0);
-  cc.fillStyle = '#090a0c';
+  cc.fillStyle = stripBg();
   cc.fillRect(0, 0, box.width, box.height);
 
   const fps = S.run && S.run.fps ? S.run.fps : 60;
@@ -1712,92 +1783,17 @@ function callWithMargin(call, marginPx){
 function renderJudgeResult(data){
   const callClass = data.call === 'IN' ? 'in' : 'out';
   const sourceText = data.source === 'impact_estimate' ? 'estimated impact point' : 'detected ball center';
+  $('judgeResult').className = `verdict ${callClass}`;
   $('judgeResult').innerHTML =
-    `<strong class="${callClass}">${callWithMargin(data.call, data.margin_px)}</strong>` +
-    `<div>Frame ${data.frame} · ${sourceText} (${data.ball.x.toFixed(1)}, ${data.ball.y.toFixed(1)})</div>` +
-    `<div>Top line y ${data.top_y.toFixed(1)} · bottom line y ${data.bottom_y.toFixed(1)}</div>` +
-    `<div>${data.reason}${data.outside_line_span ? ' · outside calibrated line span' : ''}</div>`;
-  $('judgeResult').classList.remove('hidden');
-  renderWallDiagram(data);
-}
-
-function renderWallDiagram(data){
-  const c = $('wallDiagram');
-  const cssWidth = Math.min(720, c.parentElement.clientWidth || 720);
-  const cssHeight = Math.round(cssWidth * 0.56);
-  const dpr = window.devicePixelRatio || 1;
-  c.width = Math.round(cssWidth * dpr);
-  c.height = Math.round(cssHeight * dpr);
-  c.style.width = `${cssWidth}px`;
-  c.style.height = `${cssHeight}px`;
-  const dc = c.getContext('2d');
-  dc.setTransform(dpr, 0, 0, dpr, 0, 0);
-  dc.clearRect(0, 0, cssWidth, cssHeight);
-
-  const pad = 24;
-  const wallX = pad;
-  const wallY = pad;
-  const wallW = cssWidth - pad * 2;
-  const wallH = cssHeight - pad * 2;
-  const outY = wallY + wallH * 0.18;
-  const tinY = wallY + wallH * 0.82;
-  const ballMap = data.wall_diagram || {x:0.5, y:0.5};
-  const ballX = wallX + Math.min(1, Math.max(0, ballMap.x)) * wallW;
-  const rawBallY = outY + ballMap.y * (tinY - outY);
-  const ballY = Math.min(wallY + wallH, Math.max(wallY, rawBallY));
-  const clipped = Math.abs(ballY - rawBallY) > 0.5;
-
-  dc.fillStyle = '#121820';
-  dc.fillRect(wallX, wallY, wallW, wallH);
-  dc.strokeStyle = '#53606c';
-  dc.lineWidth = 2;
-  dc.strokeRect(wallX, wallY, wallW, wallH);
-
-  dc.strokeStyle = CFG.out.hex;
-  dc.lineWidth = 3;
-  dc.beginPath();
-  dc.moveTo(wallX, outY);
-  dc.lineTo(wallX + wallW, outY);
-  dc.stroke();
-
-  dc.strokeStyle = CFG.tin.hex;
-  dc.beginPath();
-  dc.moveTo(wallX, tinY);
-  dc.lineTo(wallX + wallW, tinY);
-  dc.stroke();
-
-  dc.strokeStyle = 'rgba(255,255,255,.18)';
-  dc.lineWidth = 1;
-  dc.beginPath();
-  dc.moveTo(wallX + wallW / 2, wallY);
-  dc.lineTo(wallX + wallW / 2, wallY + wallH);
-  dc.stroke();
-
-  dc.fillStyle = '#d9e0e7';
-  dc.font = '12px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif';
-  dc.fillText('OUT line', wallX + 8, outY - 8);
-  dc.fillText('TIN', wallX + 8, tinY + 18);
-
-  dc.fillStyle = data.call === 'IN' ? '#7ee08a' : '#ffb02e';
-  dc.strokeStyle = '#ffffff';
-  dc.lineWidth = 2;
-  dc.beginPath();
-  dc.arc(ballX, ballY, 8, 0, Math.PI * 2);
-  dc.fill();
-  dc.stroke();
-
-  dc.fillStyle = clipped ? '#ffb02e' : '#c8d0d8';
-  const pctX = Math.round(ballMap.x * 100);
-  const pctY = Math.round(ballMap.y * 100);
-  dc.fillText(`Frame ${data.frame} · wall map ${pctX}%, ${pctY}%`, wallX, cssHeight - 6);
-  c.classList.remove('hidden');
+    `<strong>${callWithMargin(data.call, data.margin_px)}</strong>` +
+    `<div>Frame ${data.frame} · ${sourceText} (${data.ball.x.toFixed(1)}, ${data.ball.y.toFixed(1)}) · ` +
+    `${data.reason}${data.outside_line_span ? ' · outside calibrated line span' : ''}</div>`;
 }
 
 async function judgeFrameRequest(frame){
   if(!S.run || Number.isNaN(frame)) return;
   $('judgeBtn').disabled = true;
-  $('judgeResult').classList.add('hidden');
-  $('wallDiagram').classList.add('hidden');
+  $('judgeResult').className = 'verdict hidden';
 
   try{
     const response = await fetch('/api/judge', {
@@ -1809,9 +1805,7 @@ async function judgeFrameRequest(frame){
     if(!data.ok) throw new Error(data.error || 'Judgement failed.');
     renderJudgeResult(data);
   } catch(error){
-    $('judgeResult').innerHTML = error.message;
-    $('judgeResult').classList.remove('hidden');
-    $('wallDiagram').classList.add('hidden');
+    showError(error.message);
   } finally {
     $('judgeBtn').disabled = false;
   }
@@ -1823,19 +1817,6 @@ $('judgeBtn').onclick = () => {
   if(Number.isNaN(frame)) return;
   seekSourceFrameToCanvas(frame);
   judgeFrameRequest(frame);
-};
-
-$('exportBtn').onclick = () => {
-  const blob = new Blob([JSON.stringify(buildJson(), null, 2)], { type:'application/json' });
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(blob);
-  a.download = 'calibration.json';
-  document.body.appendChild(a); a.click(); a.remove();
-};
-$('copyBtn').onclick = async () => {
-  try{ await navigator.clipboard.writeText($('jsonBox').value); $('copyBtn').textContent = 'Copied ✓';
-       setTimeout(() => $('copyBtn').textContent = 'Copy JSON', 1500); }
-  catch(_){ $('jsonBox').select(); }
 };
 
 setPhase('load');
