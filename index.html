@@ -124,9 +124,13 @@
     box-shadow:0 0 0 1px rgba(0,0,0,.45); pointer-events:none}
   .clipHandle.offview{opacity:.35}
   .nudgeRow{display:flex; gap:8px; align-items:stretch}
-  .nudgeLabel{flex:0 0 60px; font-size:13px; color:var(--dim);
+  .nudgeLabel{flex:0 0 78px; font-size:13px; color:var(--dim);
     display:flex; flex-direction:column; justify-content:center}
   .nudgeLabel output{color:var(--text); font-size:15px; font-variant-numeric:tabular-nums}
+  .frameOut{font-size:13px!important; color:var(--dim)!important}
+  .clipFrameSummary{display:flex; justify-content:space-between; gap:10px; padding:2px 0 4px;
+    color:var(--dim); font-size:14px; font-variant-numeric:tabular-nums}
+  .clipFrameSummary output{color:var(--text)}
   .stepper{flex:1 1 0; display:flex; align-items:center; justify-content:center; min-height:44px}
   .stepper button{flex:0 0 44px; width:44px; min-height:44px; padding:0;
     border:none; border-radius:999px; background:transparent; color:var(--text);
@@ -262,7 +266,7 @@
       <div id="clipCursor"></div>
     </div>
     <div class="nudgeRow">
-      <span class="nudgeLabel">Start<output id="clipStartOut">0.00s</output></span>
+      <span class="nudgeLabel">Start<output id="clipStartOut">0.00s</output><output class="frameOut" id="clipStartFrameOut">Frame 0</output></span>
       <div class="stepper">
         <button type="button" id="nStartM1s" aria-label="Start earlier one second">&minus;</button>
         <span class="stepUnit">second</span>
@@ -275,7 +279,7 @@
       </div>
     </div>
     <div class="nudgeRow">
-      <span class="nudgeLabel">End<output id="clipEndOut">0.00s</output></span>
+      <span class="nudgeLabel">End<output id="clipEndOut">0.00s</output><output class="frameOut" id="clipEndFrameOut">Frame 0</output></span>
       <div class="stepper">
         <button type="button" id="nEndM1s" aria-label="End earlier one second">&minus;</button>
         <span class="stepUnit">second</span>
@@ -286,6 +290,10 @@
         <span class="stepUnit">frame</span>
         <button type="button" id="nEndP1f" aria-label="End later one frame">+</button>
       </div>
+    </div>
+    <div class="clipFrameSummary">
+      <span>Selected frames</span>
+      <output id="clipFrameRangeOut">0-0 (1 frame)</output>
     </div>
     <div class="progressbox hidden" id="trackProgressBox">
       <div class="stat"><span id="progressLabel">Uploading</span><span id="progressPct">0%</span></div>
@@ -1043,6 +1051,10 @@ function videoFps(){
   return S.videoFps || S.run?.fps || 60;
 }
 
+function timeToFrame(time){
+  return Math.max(0, Math.round(time * videoFps()));
+}
+
 function clipDuration(){
   return vid.duration || 1;
 }
@@ -1330,8 +1342,14 @@ function updateClipLabels(){
     end = Math.min(clipDuration(), start + minClip());
     S.clip.end = end;
   }
+  const startFrame = timeToFrame(start);
+  const endFrame = timeToFrame(end);
+  const selectedFrames = Math.max(1, endFrame - startFrame + 1);
   $('clipStartOut').textContent = fmtTime(start);
   $('clipEndOut').textContent = fmtTime(end);
+  $('clipStartFrameOut').textContent = `Frame ${startFrame}`;
+  $('clipEndFrameOut').textContent = `Frame ${endFrame}`;
+  $('clipFrameRangeOut').textContent = `${startFrame}-${endFrame} (${selectedFrames} frame${selectedFrames === 1 ? '' : 's'})`;
 }
 
 function nudgeClipEdge(which, delta){
