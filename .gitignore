@@ -13,3 +13,5 @@ __pycache__/
 ui_runs/
 
 .venv/
+# Local virtualenv (this checkout uses venv/ not .venv/)
+venv/

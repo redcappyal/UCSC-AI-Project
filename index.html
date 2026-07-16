@@ -1554,6 +1554,7 @@ function postFormRequest(url, form, progressLabel){
     xhr.onload = () => {
       const data = xhr.response || {};
       if(xhr.status >= 200 && xhr.status < 300 && data.ok) resolve(data);
+      else if(xhr.status === 413) reject(new Error(data.error || 'File too large — the maximum is 2 GB.'));
       else reject(new Error(data.error || `Request failed with HTTP ${xhr.status}.`));
     };
     xhr.onerror = () => reject(new Error('Could not reach the local tracking server.'));
