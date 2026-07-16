@@ -232,6 +232,10 @@
   <section class="hidden" id="p-tap">
     <button class="primary" id="confirmBtn" disabled>Looks right</button>
     <div class="row"><button class="small" id="clearTapsBtn" disabled>Clear selection</button></div>
+    <div>
+      <div class="sliderlabel"><span>Fill tolerance</span><output id="fillTolOut">35</output></div>
+      <input type="range" id="fillTol" min="5" max="60" step="1" value="35">
+    </div>
     <p class="status" id="tapStatus"></p>
   </section>
 
@@ -330,11 +334,12 @@ const CFG = {
 const ORDER = ['out','tin'];
 const MIN_COLS = 40;          // minimum horizontal span (in columns) for a trustworthy fit
 const FILL_CAP_FRAC = 0.25;   // abort fill if it exceeds this fraction of the frame
-const FILL_TOL = 35;          // flood-fill tolerance (fixed; slider removed in utility pass)
+const DEFAULT_FILL_TOL = 35;
 
 const S = {
   phase:'load', W:0, H:0, videoName:'', frameTime:0,
   videoFile:null,
+  fillTol:DEFAULT_FILL_TOL,
   loadTimer:null,
   base:null,                  // ImageData of the locked frame
   work:null,                  // {key, seeds:[[x,y],...], mask, maskCanvas, fit, msg, msgKind}
@@ -620,6 +625,25 @@ $('clearTapsBtn').onclick = () => {
   render();
 };
 
+function updateFillTolOutput(){
+  $('fillTolOut').textContent = S.fillTol.toString();
+}
+
+function rebuildWorkFromSeeds(key, seeds){
+  S.work = null;
+  for(const [x, y] of seeds) buildWork(key, x, y);
+}
+
+$('fillTol').addEventListener('input', e => {
+  S.fillTol = +e.target.value;
+  updateFillTolOutput();
+});
+
+$('fillTol').addEventListener('change', () => {
+  if(!S.work || !S.work.seeds.length) return;
+  rebuildWorkFromSeeds(S.work.key, S.work.seeds);
+});
+
 $('confirmBtn').onclick = () => {
   if(!S.work || !S.work.fit) return;
   const k = S.work.key;
@@ -839,7 +863,7 @@ function extendAlongFit(mask, cfgEdge, fit, seedHsv, tol){
 }
 
 function buildWork(key, sx, sy){
-  const tol = FILL_TOL;
+  const tol = S.fillTol;
   const cfg = CFG[key];
   const prev = (S.work && S.work.key === key && S.work.fit) ? S.work : null;
   const fill = floodFill(S.base, S.W, S.H, sx, sy, tol);
