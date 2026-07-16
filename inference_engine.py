@@ -50,7 +50,7 @@ if torch is not None and not getattr(torch.cuda.stream, "_squash_cpu_safe", Fals
     _cpu_safe_cuda_stream._squash_cpu_safe = True
     torch.cuda.stream = _cpu_safe_cuda_stream
 
-DEFAULT_MODEL_ID = "squash-line-calling-model/1"
+DEFAULT_MODEL_ID = "ai-squash-line-tracker/4"
 DEFAULT_INFERENCE_WIDTH = int(os.getenv("INFERENCE_WIDTH", "960"))
 
 _MODEL = None
