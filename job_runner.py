@@ -18,11 +18,12 @@ from pathlib import Path
 import cv2
 
 from audio_events import extract_audio_candidates, extract_repeating_audio_windows
+from bounce_gb_model_detector import detect_hits_with_gb_model
 from event_engine import detect_events_fused
 from classify_events import classify_events
 from detect_wall_hits import MAX_GAP_FRAMES, detect_hits_from_rows
 from inference_engine import get_tracking_model, infer_frame_predictions
-from judge_call import Point, judge_ball, load_calibration_lines
+from judge_call import Point, judge_ball, judge_margin_px, load_calibration_lines
 from tracking_common import (
     CONFIDENCE_THRESHOLD,
     CSV_FIELDNAMES,
@@ -46,10 +47,11 @@ PROGRESS_UPDATE_FRAMES = 10
 PROGRESS_UPDATE_SECONDS = 0.5
 COARSE_INFERENCE_WIDTH = 640
 REFINE_WINDOW_MIN_RADIUS = 12
-# Which event engine labels detected events. "fusion" = audio repetition x
-# derivative peaks x parabolic arcs + squash sequence grammar (event_engine);
-# "votes" = the prior detect + classify_events pipeline, kept for comparison.
-EVENT_ENGINE = "fusion"
+# Which event engine labels detected events. "gb_model" = trained
+# GradientBoostingClassifier; "fusion" = audio repetition x derivative peaks x
+# parabolic arcs + squash sequence grammar (event_engine); "votes" = the prior
+# detect + classify_events pipeline, kept for comparison.
+EVENT_ENGINE = "gb_model"
 AUDIO_WINDOW_PAD_FRAMES = 4
 # Audio windows with no ball detections get one re-track at this width so
 # the event has a position to judge (the normal refine pass skips stride 1).
@@ -401,9 +403,9 @@ def judge_hits(run_dir, results, detected, audio_available=None):
                 reason = f"No ball detection recorded for frame {frame}."
             else:
                 try:
-                    call, reason, top_y, bottom_y = judge_ball(point, top_line, bottom_line)
+                    call, reason, _, _ = judge_ball(point, top_line, bottom_line)
                     # Positive: IN by this many pixels; negative: OUT by |margin|.
-                    margin_px = min(point.y - top_y, bottom_y - point.y)
+                    margin_px = judge_margin_px(point, top_line, bottom_line)
                 except ValueError as error:
                     call, reason, judge_source = "UNKNOWN", str(error), None
 
@@ -629,8 +631,8 @@ def run_tracking_job(run_id):
             hits = []
             hits_error = None
             try:
-                update_job(run_id, stage="judging", message="Judging wall hits...")
                 if engine == "fusion":
+                    update_job(run_id, stage="judging", message="Judging wall hits...")
                     classified = detect_events_fused(
                         sorted_rows(results),
                         audio_windows=audio_windows,
@@ -640,7 +642,31 @@ def run_tracking_job(run_id):
                         max_gap=max(MAX_GAP_FRAMES, frame_stride),
                     )
                     audio_available = audio_windows is not None
+                elif engine == "gb_model":
+                    update_job(run_id, stage="judging", message="Analyzing audio...")
+                    audio_candidates = extract_audio_candidates(
+                        video_path, start_frame, end_frame, source_fps
+                    )
+                    update_job(
+                        run_id,
+                        stage="judging",
+                        message="Judging wall hits with bounce_gb_better_features.pkl...",
+                    )
+                    detected = detect_hits_with_gb_model(
+                        sorted_rows(results),
+                        wall_x_range=wall_x_range,
+                        calibration=calibration,
+                    )
+                    classified = classify_events(
+                        detected,
+                        results,
+                        audio_candidates,
+                        source_fps,
+                        config=job.get("classify"),
+                    )
+                    audio_available = audio_candidates is not None
                 else:
+                    update_job(run_id, stage="judging", message="Judging wall hits...")
                     detected = detect_hits_from_rows(
                         sorted_rows(results),
                         max_gap=max(MAX_GAP_FRAMES, frame_stride),
