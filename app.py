@@ -101,6 +101,7 @@ def public_job(job):
     for key in (
         "rows",
         "hits",
+        "target_zones",
         "hits_error",
         "annotated_video_url",
         "csv_url",

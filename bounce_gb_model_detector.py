@@ -1,28 +1,38 @@
 """Runtime detector for GradientBoostingClassifier bounce artifacts."""
 
+import os
 from pathlib import Path
 
 import joblib
 import pandas as pd
 
-from judge_call import load_calibration_lines
+from judge_call import Point, load_calibration_lines
 from train_bounce_classifier import build_features_for_frame, finite_point, parse_bool
 
 
 ROOT = Path(__file__).resolve().parent
 DEFAULT_MODEL_PATH = ROOT / "bounce_gb_better_features.pkl"
 DEFAULT_MIN_GAP_FRAMES = 10
-DEFAULT_THRESHOLD = 0.25
+DEFAULT_THRESHOLD = 0.20
+DEFAULT_WALL_GATE_PAD_PX = 80.0
+DEFAULT_WALL_GATE_PAD_FRACTION = 0.85
 
 _ARTIFACT_CACHE = {}
 
 
 def load_artifact(model_path=DEFAULT_MODEL_PATH):
     model_path = Path(model_path)
-    artifact = _ARTIFACT_CACHE.get(model_path)
-    if artifact is None:
+    stat = model_path.stat()
+    signature = (stat.st_mtime_ns, stat.st_size)
+    cached = _ARTIFACT_CACHE.get(model_path)
+    if cached is None or cached["signature"] != signature:
         artifact = joblib.load(model_path)
-        _ARTIFACT_CACHE[model_path] = artifact
+        _ARTIFACT_CACHE[model_path] = {
+            "artifact": artifact,
+            "signature": signature,
+        }
+    else:
+        artifact = cached["artifact"]
     return artifact
 
 
@@ -82,11 +92,77 @@ def normalize_x_range(wall_x_range):
     return left, right
 
 
-def inside_x_range(x, wall_x_range):
+def inside_x_range(x, wall_x_range, pad_px=0.0):
     wall_x_range = normalize_x_range(wall_x_range)
     if wall_x_range is None:
         return True
-    return wall_x_range[0] <= float(x) <= wall_x_range[1]
+    pad_px = max(0.0, float(pad_px))
+    return wall_x_range[0] - pad_px <= float(x) <= wall_x_range[1] + pad_px
+
+
+def env_float(name, default):
+    raw_value = os.getenv(name)
+    if raw_value is None or raw_value.strip() == "":
+        return default
+    try:
+        return float(raw_value)
+    except ValueError:
+        return default
+
+
+def runtime_threshold(artifact, threshold):
+    if threshold is not None:
+        return float(threshold)
+    artifact_threshold = float(artifact.get("hit_threshold", DEFAULT_THRESHOLD))
+    default_threshold = env_float("BOUNCE_GB_RUNTIME_THRESHOLD", DEFAULT_THRESHOLD)
+    return min(artifact_threshold, default_threshold)
+
+
+def point_progress_on_line(point, line):
+    length_squared = line.dx * line.dx + line.dy * line.dy
+    if length_squared <= 1e-9:
+        return 0.0
+    return (
+        (point.x - line.left.x) * line.dx
+        + (point.y - line.left.y) * line.dy
+    ) / length_squared
+
+
+def calibrated_wall_gate(calibration):
+    if not calibration:
+        return None
+    try:
+        top_line, bottom_line = load_calibration_lines(calibration)
+    except ValueError:
+        return None
+    return top_line, bottom_line
+
+
+def inside_calibrated_wall_gate(x, y, wall_gate, wall_x_range):
+    point = Point(float(x), float(y))
+    pad_px = env_float("BOUNCE_GB_WALL_GATE_PAD_PX", DEFAULT_WALL_GATE_PAD_PX)
+    pad_fraction = env_float(
+        "BOUNCE_GB_WALL_GATE_PAD_FRACTION",
+        DEFAULT_WALL_GATE_PAD_FRACTION,
+    )
+    if wall_gate is None:
+        line_width = 0.0
+        normalized = normalize_x_range(wall_x_range)
+        if normalized is not None:
+            line_width = normalized[1] - normalized[0]
+        return inside_x_range(x, wall_x_range, max(pad_px, pad_fraction * line_width))
+
+    top_line, bottom_line = wall_gate
+    top_margin = top_line.signed_distance_below(point)
+    bottom_margin = -bottom_line.signed_distance_below(point)
+    if top_margin < -pad_px or bottom_margin < -pad_px:
+        return False
+
+    # Camera tilt means raw x can be misleading. Use progress along the
+    # calibrated tin/out-line direction, then allow a generous extension
+    # because users often label only the clearly visible middle of the line.
+    u = point_progress_on_line(point, bottom_line)
+    return -pad_fraction <= u <= 1.0 + pad_fraction
 
 
 def pick_probability_peaks(candidates, min_gap):
@@ -107,11 +183,12 @@ def detect_hits_with_gb_model(
     min_gap=DEFAULT_MIN_GAP_FRAMES,
     wall_x_range=None,
     calibration=None,
+    apply_spatial_filter=True,
 ):
     artifact = load_artifact(model_path)
     model = artifact["model"]
     feature_columns = list(artifact["feature_columns"])
-    threshold = float(artifact.get("hit_threshold", DEFAULT_THRESHOLD) if threshold is None else threshold)
+    threshold = runtime_threshold(artifact, threshold)
     context = infer_context(feature_columns)
     include_geometry = any(
         column in feature_columns
@@ -122,6 +199,7 @@ def detect_hits_with_gb_model(
         )
     )
     geometry = calibration_geometry(calibration) if include_geometry else None
+    wall_gate = calibrated_wall_gate(calibration)
 
     parsed_rows = rows_by_frame(rows)
     if not parsed_rows:
@@ -156,7 +234,12 @@ def detect_hits_with_gb_model(
             continue
         candidate_x = float(row["x"])
         candidate_y = float(row["y"])
-        if not inside_x_range(candidate_x, wall_x_range):
+        if apply_spatial_filter and not inside_calibrated_wall_gate(
+            candidate_x,
+            candidate_y,
+            wall_gate,
+            wall_x_range,
+        ):
             continue
         candidates.append(
             {
@@ -172,6 +255,8 @@ def detect_hits_with_gb_model(
                 "candidate_x": candidate_x,
                 "candidate_y": candidate_y,
                 "detector": "gradient_boosting",
+                "event_type": "wall",
+                "classification_source": "gradient_boosting_model",
             }
         )
 

@@ -184,21 +184,26 @@ def classify_events(hits, results, audio_candidates, fps, config=None):
 
     classified = []
     for hit, signal in zip(hits, signals):
-        votes = _votes(signal, audio_available, config)
-        total_weight = sum(config["weights"][name] for name in votes)
-
-        if total_weight > 0:
-            score = sum(config["weights"][name] * vote for name, vote in votes.items())
-            score /= total_weight
-            if score >= config["wall_threshold"]:
-                event_type = EVENT_WALL
-            elif score <= config["racket_threshold"]:
-                event_type = EVENT_RACKET
-            else:
-                event_type = EVENT_UNKNOWN
+        if hit.get("classification_source") == "gradient_boosting_model":
+            votes = {}
+            score = hit.get("wall_score")
+            event_type = hit.get("event_type", EVENT_WALL)
         else:
-            score = None
-            event_type = EVENT_UNKNOWN
+            votes = _votes(signal, audio_available, config)
+            total_weight = sum(config["weights"][name] for name in votes)
+
+            if total_weight > 0:
+                score = sum(config["weights"][name] * vote for name, vote in votes.items())
+                score /= total_weight
+                if score >= config["wall_threshold"]:
+                    event_type = EVENT_WALL
+                elif score <= config["racket_threshold"]:
+                    event_type = EVENT_RACKET
+                else:
+                    event_type = EVENT_UNKNOWN
+            else:
+                score = None
+                event_type = EVENT_UNKNOWN
 
         entry = dict(hit)
         entry["event_type"] = event_type
