@@ -1,8 +1,9 @@
-"""Classify trajectory-detected impact events as wall bounces vs racket hits.
+"""Classify detected impact events as wall bounces vs racket hits.
 
-Runs after the trajectory detectors — they remain the only source of events;
-this layer only labels each one. Three verification signals, each voting in
-[-1, +1] (+1 = wall, -1 = racket) or abstaining (None) when unavailable:
+Runs after detection (trajectory detectors plus audio-rescued events); this
+layer only labels each event, never adds or moves one. Three verification
+signals, each voting in [-1, +1] (+1 = wall, -1 = racket) or abstaining
+(None) when unavailable:
 
 - audio: wall hits are much louder than racket hits
 - size: the ball is farther from camera (smaller bbox) at the front wall

@@ -19,6 +19,7 @@ MIN_TURN_DEGREES = 25.0
 IMPACT_FIT_SAMPLES = 4
 GAP_BRIDGE_SECONDS = 0.5
 MAX_IMPACT_MISMATCH_PX = 40.0
+AUDIO_MATCH_TOLERANCE_S = 0.15
 REQUIRED_COLUMNS = ("source_frame", "timestamp_seconds", "detected", "x_center", "y_center")
 
 # Which bounce detector localizes the impact for each picked hit. Set to
@@ -601,6 +602,60 @@ def pick_peaks(candidates, min_gap, top_k, threshold):
     return picked
 
 
+def audio_rescue_hits(candidates, picked, audio_candidates, tolerance_s, min_gap):
+    """Recall pass: surface a hit for every audio impact peak.
+
+    For each audio peak with no picked hit nearby, promote the best-scoring
+    trajectory candidate within tolerance_s even though it failed the
+    is_significant() gate — the audible impact corroborates it. When the ball
+    was not tracked near the peak at all, emit a bare audio-only hit so the
+    event still reaches classification and judging instead of vanishing.
+    """
+    rescued = []
+    anchors = list(picked)
+    for peak in sorted(audio_candidates, key=lambda item: item["time_seconds"]):
+        peak_time = float(peak["time_seconds"])
+        peak_frame = int(peak["frame"])
+        if any(
+            abs(hit["timestamp_seconds"] - peak_time) <= tolerance_s
+            or abs(hit["hit_frame"] - peak_frame) < min_gap
+            for hit in anchors
+        ):
+            continue
+
+        window = [
+            candidate
+            for candidate in candidates
+            if abs(candidate["timestamp_seconds"] - peak_time) <= tolerance_s
+        ]
+        # A promoted candidate must itself clear min_gap, or it duplicates an
+        # existing hit; if every window candidate is that close, the event is
+        # already covered and the peak needs no rescue.
+        clear = [
+            candidate
+            for candidate in window
+            if all(abs(candidate["hit_frame"] - hit["hit_frame"]) >= min_gap for hit in anchors)
+        ]
+        if clear:
+            hit = max(clear, key=score_candidate)
+            hit["score"] = score_candidate(hit)
+            hit["source"] = "audio_rescued"
+        elif window:
+            continue
+        else:
+            hit = {
+                "hit_frame": peak_frame,
+                "timestamp_seconds": peak_time,
+                "score": None,
+                "source": "audio",
+            }
+        hit["audio_assisted"] = True
+        hit["audio_peak_time_seconds"] = peak_time
+        rescued.append(hit)
+        anchors.append(hit)
+    return rescued
+
+
 def detect_hits_from_positions(
     frames,
     timestamps,
@@ -615,6 +670,8 @@ def detect_hits_from_positions(
     wall_x_range=None,
     calibration=None,
     bounce_detector=None,
+    audio_candidates=None,
+    audio_match_tolerance_s=AUDIO_MATCH_TOLERANCE_S,
 ):
     wall_x_range = normalize_x_range(wall_x_range)
     detector = bounce_detector or BOUNCE_DETECTOR
@@ -626,6 +683,10 @@ def detect_hits_from_positions(
         if is_inside_x_range(candidate["candidate_x"], wall_x_range)
     ]
     hits = pick_peaks(candidates, min_gap, top_k, threshold)
+    if audio_candidates:
+        hits = hits + audio_rescue_hits(
+            candidates, hits, audio_candidates, audio_match_tolerance_s, min_gap
+        )
 
     # timestamp = frame / fps, so the frame at any time is time * fps.
     time_span = timestamps[-1] - timestamps[0] if len(timestamps) > 1 else 0.0
@@ -636,6 +697,9 @@ def detect_hits_from_positions(
     two_stage = detector == "two_stage" and calibration is not None
 
     for hit in hits:
+        # Audio-only rescues have no trajectory sample to anchor a fit on.
+        if "sample_global_index" not in hit:
+            continue
         if two_stage:
             pivot = hit["sample_global_index"]
             lo = max(0, pivot - EVENT_WINDOW_HALF_WIDTH)
@@ -669,10 +733,13 @@ def detect_hits_from_positions(
             impact["impact_frame"] = impact["impact_time"] * fps
             hit.update(impact)
 
+    # Audio-assisted hits skip the impact-x gate: recall over precision, and
+    # audio-only rescues have no position to gate on at all.
     hits = [
         hit
         for hit in hits
-        if is_inside_x_range(hit.get("impact_x", hit["candidate_x"]), wall_x_range)
+        if hit.get("audio_assisted")
+        or is_inside_x_range(hit.get("impact_x", hit["candidate_x"]), wall_x_range)
     ]
     return sorted(hits, key=lambda hit: hit["hit_frame"])
 

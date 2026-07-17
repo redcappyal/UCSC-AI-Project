@@ -17,7 +17,8 @@ from pathlib import Path
 
 import cv2
 
-from audio_events import extract_audio_candidates
+from audio_events import extract_audio_candidates, extract_repeating_audio_windows
+from event_engine import detect_events_fused
 from classify_events import classify_events
 from detect_wall_hits import MAX_GAP_FRAMES, detect_hits_from_rows
 from inference_engine import get_tracking_model, infer_frame_predictions
@@ -45,7 +46,15 @@ PROGRESS_UPDATE_FRAMES = 10
 PROGRESS_UPDATE_SECONDS = 0.5
 COARSE_INFERENCE_WIDTH = 640
 REFINE_WINDOW_MIN_RADIUS = 12
+# Which event engine labels detected events. "fusion" = audio repetition x
+# derivative peaks x parabolic arcs + squash sequence grammar (event_engine);
+# "votes" = the prior detect + classify_events pipeline, kept for comparison.
+EVENT_ENGINE = "fusion"
 AUDIO_WINDOW_PAD_FRAMES = 4
+# Audio windows with no ball detections get one re-track at this width so
+# the event has a position to judge (the normal refine pass skips stride 1).
+AUDIO_RESCUE_INFERENCE_WIDTH = 1600
+AUDIO_RESCUE_PAD_FRAMES = 8
 DISPLAY_FRAME_SEARCH_RADIUS = 4
 TIN_WIDTH_FEET = 21.0
 FEET_PER_SECOND_TO_MPH = 0.6818181818
@@ -360,7 +369,13 @@ def judge_hits(run_dir, results, detected, audio_available=None):
         candidate_frame = int(hit["hit_frame"])
         frame = display_frame_for_hit(results, hit)
         if frame is None:
-            continue
+            if not hit.get("audio_assisted"):
+                continue
+            # Audio-rescued events may have no ball detection near the peak;
+            # recall-first means they still surface, just without a line call.
+            frame = nearest_detected_frame(results, candidate_frame)
+            if frame is None:
+                frame = candidate_frame
         display_row = results.get(frame)
 
         call, reason = "UNKNOWN", "judging_unavailable"
@@ -371,6 +386,10 @@ def judge_hits(run_dir, results, detected, audio_available=None):
             # Classified as a racket strike, not a wall bounce: line judging
             # does not apply.
             call, reason = "RACKET", "classified_as_racket_hit"
+        elif hit.get("event_type") == "floor":
+            call, reason = "FLOOR", "classified_as_floor_bounce"
+        elif hit.get("event_type") == "side_wall":
+            call, reason = "SIDE_WALL", "classified_as_side_wall_hit"
         elif top_line is not None:
             # Prefer the fitted impact point (where the ball met the wall)
             # over the detected center at the nearest sampled frame.
@@ -393,18 +412,29 @@ def judge_hits(run_dir, results, detected, audio_available=None):
 
         entry = {
             "frame": frame,
-            "timestamp_seconds": float(display_row["timestamp_seconds"]),
+            "timestamp_seconds": (
+                float(display_row["timestamp_seconds"])
+                if display_row is not None
+                else float(hit["timestamp_seconds"])
+            ),
             "score": hit.get("score"),
-            "dv_magnitude": hit["dv_magnitude"],
-            "after_gap": hit["after_gap"],
+            "dv_magnitude": hit.get("dv_magnitude"),
+            "after_gap": hit.get("after_gap"),
             "call": call,
             "reason": reason,
             "judge_source": judge_source,
             "margin_px": margin_px,
         }
-        velocity = calibrated_velocity(hit, pixels_per_foot)
-        if velocity is not None:
-            entry["velocity"] = velocity
+        if "speed_before" in hit:
+            velocity = calibrated_velocity(hit, pixels_per_foot)
+            if velocity is not None:
+                entry["velocity"] = velocity
+        if hit.get("audio_assisted"):
+            entry["audio_assisted"] = True
+        if "source" in hit:
+            entry["source"] = hit["source"]
+        if "methods" in hit:
+            entry["methods"] = hit["methods"]
         if candidate_frame != frame:
             entry["candidate_frame"] = candidate_frame
         if "event_type" in hit:
@@ -499,6 +529,23 @@ def run_tracking_job(run_id):
                 except (OSError, json.JSONDecodeError):
                     calibration = None
 
+            # Audio impact events drive recall: they add refine windows around
+            # events the coarse trajectory pass missed, and later feed the
+            # event engine. They corroborate or add detections; they never
+            # move trajectory-detected ones.
+            engine = job.get("event_engine") or EVENT_ENGINE
+            update_job(run_id, stage="coarse", message="Analyzing audio...")
+            audio_windows = audio_candidates = None
+            if engine == "fusion":
+                audio_windows = extract_repeating_audio_windows(
+                    video_path, start_frame, end_frame, source_fps
+                )
+            else:
+                audio_candidates = extract_audio_candidates(
+                    video_path, start_frame, end_frame, source_fps
+                )
+            refine_audio = audio_windows if audio_windows else audio_candidates
+
             # Coarse samples are frame_stride apart; the default max_gap would
             # split every track at stride > 3.
             max_gap = max(MAX_GAP_FRAMES, frame_stride)
@@ -509,6 +556,13 @@ def run_tracking_job(run_id):
                 calibration=calibration,
             )
             segments = refine_segments_for_hits(detected, start_frame, end_frame, frame_stride)
+            if refine_audio:
+                audio_segments = refine_segments_for_audio_candidates(
+                    refine_audio, start_frame, end_frame
+                )
+                segments = merge_frame_windows(
+                    (low, high) for low, high, _ in segments + audio_segments
+                )
 
             if frame_stride > 1 and segments:
                 refine_total = sum(high - low + 1 for low, high, _ in segments)
@@ -529,34 +583,87 @@ def run_tracking_job(run_id):
                 )
                 write_results_csv(csv_path, results)
 
+            # Audio events with no ball detections anywhere near them cannot
+            # be positioned or judged. Re-track just those windows at a
+            # boosted inference width — even at stride 1, where the normal
+            # refine pass is skipped because the whole clip was already
+            # tracked at the requested width.
+            if refine_audio:
+                unseen = [
+                    window
+                    for window in refine_audio
+                    if not any(
+                        row_has_ball_detection(results.get(f))
+                        for f in range(
+                            int(window["window_start_frame"]) - AUDIO_RESCUE_PAD_FRAMES,
+                            int(window["window_end_frame"]) + AUDIO_RESCUE_PAD_FRAMES + 1,
+                        )
+                    )
+                ]
+                if unseen:
+                    rescue_segments = merge_frame_windows(
+                        (
+                            max(start_frame, int(w["window_start_frame"]) - AUDIO_RESCUE_PAD_FRAMES),
+                            min(end_frame, int(w["window_end_frame"]) + AUDIO_RESCUE_PAD_FRAMES),
+                        )
+                        for w in unseen
+                    )
+                    rescue_total = sum(high - low + 1 for low, high, _ in rescue_segments)
+                    update_job(
+                        run_id,
+                        stage="refine",
+                        total_frames=processed_frames + rescue_total,
+                        message=(
+                            f"Re-tracking {len(rescue_segments)} audio window(s) "
+                            "with no ball detections..."
+                        ),
+                    )
+                    track_segments(
+                        model,
+                        video_path,
+                        rescue_segments,
+                        max(inference_width, AUDIO_RESCUE_INFERENCE_WIDTH),
+                        source_fps,
+                        results,
+                        make_progress_callback("Audio rescue"),
+                    )
+                    write_results_csv(csv_path, results)
+
             hits = []
             hits_error = None
             try:
-                update_job(run_id, stage="judging", message="Analyzing audio...")
-                # Audio is verification-only: peaks are matched against the
-                # trajectory-detected events below and never add or move hits.
-                audio_candidates = extract_audio_candidates(
-                    video_path, start_frame, end_frame, source_fps
-                )
                 update_job(run_id, stage="judging", message="Judging wall hits...")
-                detected = detect_hits_from_rows(
-                    sorted_rows(results),
-                    max_gap=max(MAX_GAP_FRAMES, frame_stride),
-                    wall_x_range=wall_x_range,
-                    calibration=calibration,
-                )
-                classified = classify_events(
-                    detected,
-                    results,
-                    audio_candidates,
-                    source_fps,
-                    config=job.get("classify"),
-                )
+                if engine == "fusion":
+                    classified = detect_events_fused(
+                        sorted_rows(results),
+                        audio_windows=audio_windows,
+                        calibration=calibration,
+                        wall_x_range=wall_x_range,
+                        config=job.get("fusion"),
+                        max_gap=max(MAX_GAP_FRAMES, frame_stride),
+                    )
+                    audio_available = audio_windows is not None
+                else:
+                    detected = detect_hits_from_rows(
+                        sorted_rows(results),
+                        max_gap=max(MAX_GAP_FRAMES, frame_stride),
+                        wall_x_range=wall_x_range,
+                        calibration=calibration,
+                        audio_candidates=audio_candidates,
+                    )
+                    classified = classify_events(
+                        detected,
+                        results,
+                        audio_candidates,
+                        source_fps,
+                        config=job.get("classify"),
+                    )
+                    audio_available = audio_candidates is not None
                 hits = judge_hits(
                     run_dir,
                     results,
                     classified,
-                    audio_available=audio_candidates is not None,
+                    audio_available=audio_available,
                 )
             except Exception as error:
                 hits_error = str(error)
