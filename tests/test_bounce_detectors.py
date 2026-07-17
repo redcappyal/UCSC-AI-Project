@@ -92,6 +92,28 @@ def test_flat_drive_found_by_two_stage_only():
     assert result.diagnostics["nearest_line"] == "tin_top_edge"
 
 
+def test_flat_drive_found_by_line_distance_candidates():
+    trajectory = flat_drive()
+    hits = detect_hits_from_rows(rows_from_trajectory(trajectory), calibration=CALIBRATION)
+
+    assert hits
+    hit = min(hits, key=lambda h: abs(h.get("impact_frame", -999) - 24))
+    assert hit["method"] == "two_stage"
+    assert "line_distance" in hit["diagnostics"]["candidate_source"]
+    assert hit["diagnostics"]["nearest_line"] == "tin_top_edge"
+    assert abs(hit["impact_frame"] - 24) <= 1
+
+
+def test_straight_line_crossing_calibrated_line_is_not_a_hit():
+    points = [(200 + 250 * (f / FPS), 620 + 100 * (f / FPS)) for f in range(60)]
+    hits = detect_hits_from_rows(
+        rows_from_trajectory(trajectory_from_points(points)),
+        calibration=CALIBRATION,
+    )
+
+    assert hits == []
+
+
 def test_noise_robustness_two_stage_beats_legacy():
     rng = np.random.default_rng(7)
     legacy_errors, two_stage_errors = [], []

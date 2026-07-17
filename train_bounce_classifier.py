@@ -22,6 +22,7 @@ To generate only the minimum missing ball-coordinate rows needed for training:
 
 import argparse
 import csv
+import itertools
 import json
 import math
 import random
@@ -34,6 +35,7 @@ import pandas as pd
 from sklearn.ensemble import GradientBoostingClassifier
 from sklearn.metrics import classification_report, confusion_matrix
 from sklearn.model_selection import train_test_split
+from sklearn.utils.class_weight import compute_sample_weight
 
 from audio_events import detect_audio_candidates_from_file
 from inference_engine import (
@@ -59,11 +61,26 @@ DEFAULT_EXISTING_BALL_CSV_PATH = ROOT / "ball_coordinates.csv"
 DEFAULT_FEATURES_PATH = ROOT / "bounce_training_features.csv"
 DEFAULT_MODEL_PATH = ROOT / "bounce_gb_model.pkl"
 
-CONTEXT_FRAMES = 10
+CONTEXT_FRAMES = 4
 NEGATIVE_EXCLUSION_FRAMES = 8
 POSITIVE_WINDOW_FRAMES = 1
 AUDIO_PEAK_WINDOW_FRAMES = 5
-DEFAULT_HIT_THRESHOLD = 0.25
+DEFAULT_HIT_THRESHOLD = 0.40
+MODEL_FEATURE_COLUMNS = [
+    "velocity_change_px_s",
+    "speed_after_px_s",
+    "speed_ratio_after_before",
+    "x_span_context",
+    "vy_after_px_s",
+    "vx_sign_change",
+    "vy_sign_change",
+    "area_span_context",
+    "local_velocity_change_px_s",
+    "min_nearest_wall_line_distance_context",
+    "local_accel_mag_px_s2",
+    "local_turn_degrees",
+    "speed_before_px_s",
+]
 
 
 def parse_bool(value):
@@ -403,6 +420,10 @@ def velocity_between(prev_row, next_row):
     return vx, vy, math.hypot(vx, vy)
 
 
+def finite_or_zero(value):
+    return 0.0 if not math.isfinite(value) else value
+
+
 def angle_between(v1, v2):
     if any(not math.isfinite(value) for value in (*v1, *v2)):
         return np.nan
@@ -414,6 +435,19 @@ def angle_between(v1, v2):
     return math.degrees(math.acos(cos_angle))
 
 
+def line_distances(row, geometry):
+    if geometry is None or not finite_point(row):
+        return None
+    x = row["x"]
+    y = row["y"]
+    try:
+        out_distance = y - geometry["top_line"].y_at_x(x)
+        tin_distance = geometry["bottom_line"].y_at_x(x) - y
+    except ValueError:
+        return None
+    return out_distance, tin_distance
+
+
 def geometry_features(row, geometry):
     features = {
         "inside_tin_x_range": 0.0,
@@ -423,6 +457,7 @@ def geometry_features(row, geometry):
         "normalized_wall_y": 0.0,
         "distance_to_out_line_px": 0.0,
         "distance_to_tin_line_px": 0.0,
+        "nearest_wall_line_distance_px": 0.0,
         "judge_margin_px": 0.0,
     }
     if geometry is None or not finite_point(row):
@@ -446,6 +481,10 @@ def geometry_features(row, geometry):
         bottom_y = bottom_line.y_at_x(x)
         features["distance_to_out_line_px"] = y - top_y
         features["distance_to_tin_line_px"] = bottom_y - y
+        features["nearest_wall_line_distance_px"] = min(
+            abs(features["distance_to_out_line_px"]),
+            abs(features["distance_to_tin_line_px"]),
+        )
         if bottom_y > top_y:
             features["normalized_wall_y"] = (y - top_y) / (bottom_y - top_y)
         _, _, _, _ = judge_ball(Point(x, y), top_line, bottom_line)
@@ -472,6 +511,12 @@ def build_features_for_frame(
     confidences = []
     xs = []
     ys = []
+    widths = []
+    heights = []
+    areas = []
+    out_distances = []
+    tin_distances = []
+    nearest_line_distances = []
 
     for offset in range(-context, context + 1):
         row = rows.get(frame + offset)
@@ -484,11 +529,26 @@ def build_features_for_frame(
         features[f"{prefix}_width"] = row["width"] if row else 0.0
         features[f"{prefix}_height"] = row["height"] if row else 0.0
 
+        width = row["width"] if row else 0.0
+        height = row["height"] if row else 0.0
+        if width > 0:
+            widths.append(width)
+        if height > 0:
+            heights.append(height)
+        if width > 0 and height > 0:
+            areas.append(width * height)
+
         if finite_point(row):
             detected_count += 1
             confidences.append(row["confidence"])
             xs.append(row["x"])
             ys.append(row["y"])
+            distances = line_distances(row, geometry) if include_geometry else None
+            if distances is not None:
+                out_distance, tin_distance = distances
+                out_distances.append(out_distance)
+                tin_distances.append(tin_distance)
+                nearest_line_distances.append(min(abs(out_distance), abs(tin_distance)))
 
     features["detected_count_context"] = detected_count
     features["missing_count_context"] = (context * 2 + 1) - detected_count
@@ -496,25 +556,128 @@ def build_features_for_frame(
     features["max_confidence_context"] = max(confidences) if confidences else 0.0
     features["x_span_context"] = max(xs) - min(xs) if xs else 0.0
     features["y_span_context"] = max(ys) - min(ys) if ys else 0.0
+    features["mean_width_context"] = float(np.mean(widths)) if widths else 0.0
+    features["mean_height_context"] = float(np.mean(heights)) if heights else 0.0
+    features["mean_area_context"] = float(np.mean(areas)) if areas else 0.0
+    features["max_area_context"] = max(areas) if areas else 0.0
+    features["area_span_context"] = max(areas) - min(areas) if areas else 0.0
 
     before = rows.get(frame - 1)
     after = rows.get(frame + 1)
     vx_before, vy_before, speed_before = velocity_between(rows.get(frame - context), center)
     vx_after, vy_after, speed_after = velocity_between(center, rows.get(frame + context))
     vx_local, vy_local, speed_local = velocity_between(before, after)
-    features["vx_before_px_s"] = 0.0 if not math.isfinite(vx_before) else vx_before
-    features["vy_before_px_s"] = 0.0 if not math.isfinite(vy_before) else vy_before
-    features["speed_before_px_s"] = 0.0 if not math.isfinite(speed_before) else speed_before
-    features["vx_after_px_s"] = 0.0 if not math.isfinite(vx_after) else vx_after
-    features["vy_after_px_s"] = 0.0 if not math.isfinite(vy_after) else vy_after
-    features["speed_after_px_s"] = 0.0 if not math.isfinite(speed_after) else speed_after
-    features["local_speed_px_s"] = 0.0 if not math.isfinite(speed_local) else speed_local
+    vx_1f_before, vy_1f_before, speed_1f_before = velocity_between(before, center)
+    vx_1f_after, vy_1f_after, speed_1f_after = velocity_between(center, after)
+    features["vx_before_px_s"] = finite_or_zero(vx_before)
+    features["vy_before_px_s"] = finite_or_zero(vy_before)
+    features["speed_before_px_s"] = finite_or_zero(speed_before)
+    features["vx_after_px_s"] = finite_or_zero(vx_after)
+    features["vy_after_px_s"] = finite_or_zero(vy_after)
+    features["speed_after_px_s"] = finite_or_zero(speed_after)
+    features["speed_ratio_after_before"] = (
+        speed_after / speed_before
+        if math.isfinite(speed_after) and math.isfinite(speed_before) and speed_before > 1e-9
+        else 0.0
+    )
+    features["vx_sign_change"] = (
+        1.0
+        if math.isfinite(vx_before)
+        and math.isfinite(vx_after)
+        and abs(vx_before) > 1e-9
+        and abs(vx_after) > 1e-9
+        and vx_before * vx_after < 0
+        else 0.0
+    )
+    features["vy_sign_change"] = (
+        1.0
+        if math.isfinite(vy_before)
+        and math.isfinite(vy_after)
+        and abs(vy_before) > 1e-9
+        and abs(vy_after) > 1e-9
+        and vy_before * vy_after < 0
+        else 0.0
+    )
+    features["local_vx_px_s"] = finite_or_zero(vx_local)
+    features["local_vy_px_s"] = finite_or_zero(vy_local)
+    features["local_speed_px_s"] = finite_or_zero(speed_local)
+    features["vx_1f_before_px_s"] = finite_or_zero(vx_1f_before)
+    features["vy_1f_before_px_s"] = finite_or_zero(vy_1f_before)
+    features["speed_1f_before_px_s"] = finite_or_zero(speed_1f_before)
+    features["vx_1f_after_px_s"] = finite_or_zero(vx_1f_after)
+    features["vy_1f_after_px_s"] = finite_or_zero(vy_1f_after)
+    features["speed_1f_after_px_s"] = finite_or_zero(speed_1f_after)
 
     dvx = vx_after - vx_before if math.isfinite(vx_after) and math.isfinite(vx_before) else np.nan
     dvy = vy_after - vy_before if math.isfinite(vy_after) and math.isfinite(vy_before) else np.nan
-    features["velocity_change_px_s"] = 0.0 if not math.isfinite(dvx) else math.hypot(dvx, dvy)
+    local_dvx = (
+        vx_1f_after - vx_1f_before
+        if math.isfinite(vx_1f_after) and math.isfinite(vx_1f_before)
+        else np.nan
+    )
+    local_dvy = (
+        vy_1f_after - vy_1f_before
+        if math.isfinite(vy_1f_after) and math.isfinite(vy_1f_before)
+        else np.nan
+    )
+    features["velocity_change_px_s"] = finite_or_zero(math.hypot(dvx, dvy) if math.isfinite(dvx) else np.nan)
+    features["local_velocity_change_px_s"] = finite_or_zero(
+        math.hypot(local_dvx, local_dvy) if math.isfinite(local_dvx) else np.nan
+    )
+    accel_dt = (
+        after["timestamp"] - before["timestamp"]
+        if finite_point(before) and finite_point(after)
+        else np.nan
+    )
+    accel_x = local_dvx / accel_dt if math.isfinite(local_dvx) and accel_dt > 0 else np.nan
+    accel_y = local_dvy / accel_dt if math.isfinite(local_dvy) and accel_dt > 0 else np.nan
+    features["local_accel_x_px_s2"] = finite_or_zero(accel_x)
+    features["local_accel_y_px_s2"] = finite_or_zero(accel_y)
+    features["local_accel_mag_px_s2"] = finite_or_zero(
+        math.hypot(accel_x, accel_y) if math.isfinite(accel_x) else np.nan
+    )
     turn = angle_between((vx_before, vy_before), (vx_after, vy_after))
-    features["turn_degrees"] = 0.0 if not math.isfinite(turn) else turn
+    local_turn = angle_between((vx_1f_before, vy_1f_before), (vx_1f_after, vy_1f_after))
+    features["turn_degrees"] = finite_or_zero(turn)
+    features["local_turn_degrees"] = finite_or_zero(local_turn)
+
+    if include_geometry:
+        features["min_abs_out_line_distance_context"] = (
+            min(abs(value) for value in out_distances) if out_distances else 0.0
+        )
+        features["min_abs_tin_line_distance_context"] = (
+            min(abs(value) for value in tin_distances) if tin_distances else 0.0
+        )
+        features["min_nearest_wall_line_distance_context"] = (
+            min(nearest_line_distances) if nearest_line_distances else 0.0
+        )
+        features["nearest_wall_line_distance_span_context"] = (
+            max(nearest_line_distances) - min(nearest_line_distances)
+            if nearest_line_distances
+            else 0.0
+        )
+        center_distance = (
+            min(abs(value) for value in line_distances(center, geometry))
+            if line_distances(center, geometry) is not None
+            else 0.0
+        )
+        prev_distance = (
+            min(abs(value) for value in line_distances(before, geometry))
+            if line_distances(before, geometry) is not None
+            else center_distance
+        )
+        next_distance = (
+            min(abs(value) for value in line_distances(after, geometry))
+            if line_distances(after, geometry) is not None
+            else center_distance
+        )
+        features["wall_line_distance_valley_depth_px"] = max(
+            0.0,
+            min(prev_distance - center_distance, next_distance - center_distance),
+        )
+        features["wall_line_distance_decreases_then_increases"] = (
+            1.0 if prev_distance > center_distance and next_distance > center_distance else 0.0
+        )
 
     if include_geometry:
         if finite_point(center):
@@ -595,9 +758,39 @@ def build_training_table(
     return pd.DataFrame(records).sort_values("frame").reset_index(drop=True)
 
 
-def train_model(features, model_output, random_seed, hit_threshold):
+def metrics_from_confusion(cm):
+    tn, fp, fn, tp = cm.ravel()
+    precision = tp / (tp + fp) if tp + fp else 0.0
+    recall = tp / (tp + fn) if tp + fn else 0.0
+    f1 = 2 * precision * recall / (precision + recall) if precision + recall else 0.0
+    accuracy = (tp + tn) / max(1, tn + fp + fn + tp)
+    return {
+        "tn": int(tn),
+        "fp": int(fp),
+        "fn": int(fn),
+        "tp": int(tp),
+        "precision": float(precision),
+        "recall": float(recall),
+        "f1": float(f1),
+        "accuracy": float(accuracy),
+    }
+
+
+def train_model(
+    features,
+    model_output,
+    random_seed,
+    hit_threshold,
+    class_balance,
+    gb_params=None,
+    save_model=True,
+):
     y = features["is_wall_hit"].astype(int)
-    x = features.drop(columns=["is_wall_hit", "frame"])
+    missing_features = [column for column in MODEL_FEATURE_COLUMNS if column not in features.columns]
+    if missing_features:
+        missing_text = ", ".join(missing_features)
+        raise RuntimeError(f"Training table is missing model feature column(s): {missing_text}")
+    x = features[MODEL_FEATURE_COLUMNS]
 
     if y.nunique() < 2:
         raise RuntimeError("Need both positive and negative examples to train.")
@@ -620,17 +813,32 @@ def train_model(features, model_output, random_seed, hit_threshold):
         flush=True,
     )
 
-    model = GradientBoostingClassifier(random_state=random_seed)
+    gb_params = dict(gb_params or {})
+    model = GradientBoostingClassifier(random_state=random_seed, **gb_params)
+    if gb_params:
+        print(f"GradientBoosting hyperparameters: {gb_params}", flush=True)
     print("Fitting classifier...", flush=True)
-    model.fit(x_train, y_train)
+    sample_weight = None
+    if class_balance:
+        sample_weight = compute_sample_weight(class_weight="balanced", y=y_train)
+        negative_weight = float(sample_weight[y_train.to_numpy() == 0][0])
+        positive_weight = float(sample_weight[y_train.to_numpy() == 1][0])
+        print(
+            "Using balanced sample weights: "
+            f"negative={negative_weight:.3f}, positive={positive_weight:.3f}",
+            flush=True,
+        )
+    model.fit(x_train, y_train, sample_weight=sample_weight)
     print("Classifier fit complete. Evaluating...", flush=True)
 
     positive_class_index = list(model.classes_).index(1)
     hit_probabilities = model.predict_proba(x_test)[:, positive_class_index]
     predictions = (hit_probabilities >= hit_threshold).astype(int)
+    cm = confusion_matrix(y_test, predictions, labels=[0, 1])
+    metrics = metrics_from_confusion(cm)
     print(f"Using hit probability threshold: {hit_threshold:.3f}", flush=True)
     print("Confusion matrix:")
-    print(confusion_matrix(y_test, predictions))
+    print(cm)
     print()
     print(classification_report(y_test, predictions, digits=3, zero_division=0))
 
@@ -639,9 +847,12 @@ def train_model(features, model_output, random_seed, hit_threshold):
         "feature_columns": list(x.columns),
         "positive_label": "is_wall_hit",
         "hit_threshold": hit_threshold,
+        "class_balance": bool(class_balance),
+        "gb_params": gb_params,
     }
-    joblib.dump(artifact, model_output)
-    print(f"Saved model artifact to {model_output}")
+    if save_model:
+        joblib.dump(artifact, model_output)
+        print(f"Saved model artifact to {model_output}")
 
     importances = sorted(
         zip(x.columns, model.feature_importances_),
@@ -651,6 +862,71 @@ def train_model(features, model_output, random_seed, hit_threshold):
     print("\nTop feature importances:")
     for name, value in importances[:20]:
         print(f"  {name}: {value:.4f}")
+
+    return {
+        "artifact": artifact,
+        "metrics": metrics,
+        "confusion_matrix": cm,
+        "feature_importances": importances,
+    }
+
+
+def parse_int_grid(value):
+    values = []
+    for part in str(value).split(","):
+        part = part.strip()
+        if not part:
+            continue
+        values.append(int(part))
+    if not values:
+        raise argparse.ArgumentTypeError("grid must contain at least one integer")
+    return values
+
+
+def parse_float_grid(value):
+    values = []
+    for part in str(value).split(","):
+        part = part.strip()
+        if not part:
+            continue
+        values.append(float(part))
+    if not values:
+        raise argparse.ArgumentTypeError("grid must contain at least one number")
+    return values
+
+
+def metric_sort_key(result):
+    metrics = result["result"]["metrics"]
+    # Recall matters most for this project; F1 and precision break ties.
+    return (
+        metrics["recall"],
+        metrics["f1"],
+        metrics["precision"],
+        metrics["accuracy"],
+    )
+
+
+def print_best_result(best):
+    metrics = best["result"]["metrics"]
+    params = best["params"]
+    print("\nBest hyperparameters:")
+    print(f"  context_frames: {params['context']}")
+    print(f"  positive_window_frames: {params['positive_window']}")
+    print(f"  negative_exclusion_frames: {params['negative_exclusion']}")
+    print(f"  gb_n_estimators: {params['gb_n_estimators']}")
+    print(f"  gb_learning_rate: {params['gb_learning_rate']}")
+    print(f"  gb_max_depth: {params['gb_max_depth']}")
+    print(f"  gb_min_samples_leaf: {params['gb_min_samples_leaf']}")
+    print(f"  gb_subsample: {params['gb_subsample']}")
+    print("\nBest metrics:")
+    print(f"  precision: {metrics['precision']:.3f}")
+    print(f"  recall: {metrics['recall']:.3f}")
+    print(f"  f1: {metrics['f1']:.3f}")
+    print(f"  accuracy: {metrics['accuracy']:.3f}")
+    print(
+        "  confusion_matrix: "
+        f"[[{metrics['tn']} {metrics['fp']}], [{metrics['fn']} {metrics['tp']}]]"
+    )
 
 
 def parse_args():
@@ -664,7 +940,34 @@ def parse_args():
     parser.add_argument("--features-output", type=Path, default=DEFAULT_FEATURES_PATH)
     parser.add_argument("--model-output", type=Path, default=DEFAULT_MODEL_PATH)
     parser.add_argument("--context", type=int, default=CONTEXT_FRAMES)
+    parser.add_argument(
+        "--hyperparameter-matrix",
+        action="store_true",
+        help=(
+            "Train every combination from --context-grid, --positive-window-grid, "
+            "and --negative-exclusion-grid, then save the best model."
+        ),
+    )
+    parser.add_argument("--context-grid", type=parse_int_grid, default=None)
+    parser.add_argument("--positive-window-grid", type=parse_int_grid, default=None)
+    parser.add_argument("--negative-exclusion-grid", type=parse_int_grid, default=None)
+    parser.add_argument("--gb-n-estimators", type=int, default=100)
+    parser.add_argument("--gb-n-estimators-grid", type=parse_int_grid, default=None)
+    parser.add_argument("--gb-learning-rate", type=float, default=0.1)
+    parser.add_argument("--gb-learning-rate-grid", type=parse_float_grid, default=None)
+    parser.add_argument("--gb-max-depth", type=int, default=3)
+    parser.add_argument("--gb-max-depth-grid", type=parse_int_grid, default=None)
+    parser.add_argument("--gb-min-samples-leaf", type=int, default=1)
+    parser.add_argument("--gb-min-samples-leaf-grid", type=parse_int_grid, default=None)
+    parser.add_argument("--gb-subsample", type=float, default=1.0)
+    parser.add_argument("--gb-subsample-grid", type=parse_float_grid, default=None)
     parser.add_argument("--negative-ratio", type=int, default=6)
+    parser.add_argument(
+        "--negative-exclusion",
+        type=int,
+        default=NEGATIVE_EXCLUSION_FRAMES,
+        help="Do not sample negative examples within +/- this many frames of a positive label.",
+    )
     parser.add_argument(
         "--positive-window",
         type=int,
@@ -676,6 +979,11 @@ def parse_args():
         type=float,
         default=DEFAULT_HIT_THRESHOLD,
         help="Classify a frame as a hit when predict_proba(hit) is at least this value.",
+    )
+    parser.add_argument(
+        "--no-class-balance",
+        action="store_true",
+        help="Disable balanced sample weights during GradientBoostingClassifier training.",
     )
     parser.add_argument("--random-seed", type=int, default=7)
     parser.add_argument("--start-frame", type=int, default=0)
@@ -779,15 +1087,9 @@ def main():
         raise RuntimeError(
             f"No labels from {args.labels} fall inside frame range {start_frame}-{end_frame}."
         )
-    positive_labels = expand_labels(labels, start_frame, end_frame, max(0, args.positive_window))
     print(
         f"Loaded {len(labels)} total labeled hit frame(s); "
         f"{len(labels_in_range)} inside selected range.",
-        flush=True,
-    )
-    print(
-        f"Positive label window: +/-{max(0, args.positive_window)} frame(s), "
-        f"creating {len(positive_labels)} positive training frame(s).",
         flush=True,
     )
 
@@ -802,35 +1104,130 @@ def main():
         )
         args.ball_csv = DEFAULT_EXISTING_BALL_CSV_PATH
 
-    positives, negatives = sample_training_frames(
-        positive_labels,
-        start_frame,
-        end_frame,
-        args.negative_ratio,
-        NEGATIVE_EXCLUSION_FRAMES,
-        args.random_seed,
-    )
+    if args.hyperparameter_matrix:
+        context_values = args.context_grid or [3, 4, 5]
+        positive_window_values = args.positive_window_grid or [1, 2, 3]
+        negative_exclusion_values = args.negative_exclusion_grid or [6, 8, 10]
+        gb_n_estimators_values = args.gb_n_estimators_grid or [args.gb_n_estimators]
+        gb_learning_rate_values = args.gb_learning_rate_grid or [args.gb_learning_rate]
+        gb_max_depth_values = args.gb_max_depth_grid or [args.gb_max_depth]
+        gb_min_samples_leaf_values = args.gb_min_samples_leaf_grid or [args.gb_min_samples_leaf]
+        gb_subsample_values = args.gb_subsample_grid or [args.gb_subsample]
+    else:
+        context_values = [args.context]
+        positive_window_values = [max(0, args.positive_window)]
+        negative_exclusion_values = [max(0, args.negative_exclusion)]
+        gb_n_estimators_values = [args.gb_n_estimators]
+        gb_learning_rate_values = [args.gb_learning_rate]
+        gb_max_depth_values = [args.gb_max_depth]
+        gb_min_samples_leaf_values = [args.gb_min_samples_leaf]
+        gb_subsample_values = [args.gb_subsample]
+
+    config_plans = []
+    required_frames = set()
+    data_window_plans = {}
+    for context, positive_window, negative_exclusion in itertools.product(
+        context_values,
+        positive_window_values,
+        negative_exclusion_values,
+    ):
+        data_key = (context, positive_window, negative_exclusion)
+        positive_labels = expand_labels(labels, start_frame, end_frame, max(0, positive_window))
+        positives, negatives = sample_training_frames(
+            positive_labels,
+            start_frame,
+            end_frame,
+            args.negative_ratio,
+            max(0, negative_exclusion),
+            args.random_seed,
+        )
+        training_frames = sorted(set(positives) | set(negatives))
+        plan_required_frames = tracking_frame_plan(
+            training_frames,
+            start_frame,
+            end_frame,
+            context,
+            args.track_all_frames,
+        )
+        required_frames.update(plan_required_frames)
+        data_window_plans[data_key] = {
+            "positive_labels": positive_labels,
+            "positives": positives,
+            "negatives": negatives,
+            "training_frames": training_frames,
+            "required_frames": plan_required_frames,
+        }
+
+    for (
+        context,
+        positive_window,
+        negative_exclusion,
+        gb_n_estimators,
+        gb_learning_rate,
+        gb_max_depth,
+        gb_min_samples_leaf,
+        gb_subsample,
+    ) in itertools.product(
+        context_values,
+        positive_window_values,
+        negative_exclusion_values,
+        gb_n_estimators_values,
+        gb_learning_rate_values,
+        gb_max_depth_values,
+        gb_min_samples_leaf_values,
+        gb_subsample_values,
+    ):
+        data_key = (context, positive_window, negative_exclusion)
+        data_plan = data_window_plans[data_key]
+        config_plans.append(
+            {
+                "params": {
+                    "context": context,
+                    "positive_window": positive_window,
+                    "negative_exclusion": negative_exclusion,
+                    "gb_n_estimators": gb_n_estimators,
+                    "gb_learning_rate": gb_learning_rate,
+                    "gb_max_depth": gb_max_depth,
+                    "gb_min_samples_leaf": gb_min_samples_leaf,
+                    "gb_subsample": gb_subsample,
+                },
+                "positives": data_plan["positives"],
+                "negatives": data_plan["negatives"],
+                "training_frames": data_plan["training_frames"],
+                "required_frames": data_plan["required_frames"],
+            }
+        )
+
+    if args.hyperparameter_matrix:
+        print(
+            "Hyperparameter matrix: "
+            f"{len(context_values)} context value(s) x "
+            f"{len(positive_window_values)} positive-window value(s) x "
+            f"{len(negative_exclusion_values)} negative-exclusion value(s) x "
+            f"{len(gb_n_estimators_values)} estimator value(s) x "
+            f"{len(gb_learning_rate_values)} learning-rate value(s) x "
+            f"{len(gb_max_depth_values)} max-depth value(s) x "
+            f"{len(gb_min_samples_leaf_values)} min-leaf value(s) x "
+            f"{len(gb_subsample_values)} subsample value(s) = "
+            f"{len(config_plans)} run(s).",
+            flush=True,
+        )
+    first_plan = config_plans[0]
     print(
-        f"Sampled training frames: {len(positives)} positive and "
-        f"{len(negatives)} negative.",
+        f"First config sampled frames: {len(first_plan['positives'])} positive and "
+        f"{len(first_plan['negatives'])} negative.",
         flush=True,
-    )
-    training_frames = sorted(set(positives) | set(negatives))
-    required_frames = tracking_frame_plan(
-        training_frames,
-        start_frame,
-        end_frame,
-        args.context,
-        args.track_all_frames,
     )
     if args.track_all_frames:
         print(
-            f"Training will use {len(training_frames)} labeled/sampled frames; "
+            f"Training will use {len(first_plan['training_frames'])} labeled/sampled frames "
+            f"for the first config; "
             f"tracking plan covers all {len(required_frames)} frame(s)."
         )
     else:
         print(
-            f"Training will use {len(training_frames)} labeled/sampled frames; "
+            f"Training will use {len(first_plan['training_frames'])} labeled/sampled frames "
+            f"for the first config; "
             f"tracking plan covers {len(required_frames)} required context frame(s)."
         )
 
@@ -872,25 +1269,100 @@ def main():
             f"matching radius +/-{args.audio_window_frames} frame(s).",
             flush=True,
         )
-    features = build_training_table(
-        positives,
-        negatives,
-        rows,
-        geometry,
-        args.context,
-        args.include_geometry,
-        audio_candidates,
-        max(0, args.audio_window_frames),
-    )
+    best = None
+    all_results = []
+    feature_cache = {}
+    for index, plan in enumerate(config_plans, start=1):
+        params = plan["params"]
+        if args.hyperparameter_matrix:
+            print(
+                "\n"
+                f"Matrix run {index}/{len(config_plans)}: "
+                f"context={params['context']}, "
+                f"positive_window={params['positive_window']}, "
+                f"negative_exclusion={params['negative_exclusion']}, "
+                f"gb_n_estimators={params['gb_n_estimators']}, "
+                f"gb_learning_rate={params['gb_learning_rate']}, "
+                f"gb_max_depth={params['gb_max_depth']}, "
+                f"gb_min_samples_leaf={params['gb_min_samples_leaf']}, "
+                f"gb_subsample={params['gb_subsample']}",
+                flush=True,
+            )
+        feature_key = (params["context"], params["positive_window"], params["negative_exclusion"])
+        features = feature_cache.get(feature_key)
+        if features is None:
+            features = build_training_table(
+                plan["positives"],
+                plan["negatives"],
+                rows,
+                geometry,
+                params["context"],
+                args.include_geometry,
+                audio_candidates,
+                max(0, args.audio_window_frames),
+            )
+            feature_cache[feature_key] = features
+        else:
+            print(
+                "Reusing feature table for "
+                f"context={params['context']}, "
+                f"positive_window={params['positive_window']}, "
+                f"negative_exclusion={params['negative_exclusion']}.",
+                flush=True,
+            )
+        result = train_model(
+            features,
+            args.model_output,
+            args.random_seed,
+            args.hit_threshold,
+            class_balance=not args.no_class_balance,
+            gb_params={
+                "n_estimators": params["gb_n_estimators"],
+                "learning_rate": params["gb_learning_rate"],
+                "max_depth": params["gb_max_depth"],
+                "min_samples_leaf": params["gb_min_samples_leaf"],
+                "subsample": params["gb_subsample"],
+            },
+            save_model=not args.hyperparameter_matrix,
+        )
+        entry = {"params": params, "features": features, "result": result}
+        all_results.append(entry)
+        if best is None or metric_sort_key(entry) > metric_sort_key(best):
+            best = entry
+
+    if args.hyperparameter_matrix:
+        print("\nHyperparameter matrix summary:")
+        for entry in all_results:
+            params = entry["params"]
+            metrics = entry["result"]["metrics"]
+            print(
+                f"  context={params['context']}, "
+                f"positive_window={params['positive_window']}, "
+                f"negative_exclusion={params['negative_exclusion']} -> "
+                f"gb=(n={params['gb_n_estimators']}, "
+                f"lr={params['gb_learning_rate']}, "
+                f"depth={params['gb_max_depth']}, "
+                f"leaf={params['gb_min_samples_leaf']}, "
+                f"subsample={params['gb_subsample']}) -> "
+                f"precision={metrics['precision']:.3f}, "
+                f"recall={metrics['recall']:.3f}, "
+                f"f1={metrics['f1']:.3f}, "
+                f"accuracy={metrics['accuracy']:.3f}, "
+                f"fp={metrics['fp']}, fn={metrics['fn']}"
+            )
+        print_best_result(best)
+        best["result"]["artifact"]["hyperparameters"] = dict(best["params"])
+        joblib.dump(best["result"]["artifact"], args.model_output)
+        print(f"\nSaved best model artifact to {args.model_output}")
+        features = best["features"]
+
     args.features_output.parent.mkdir(parents=True, exist_ok=True)
     features.to_csv(args.features_output, index=False)
     print(
-        f"Saved {len(features)} training row(s) "
+        f"Saved best/last training rows: {len(features)} row(s) "
         f"({int(features['is_wall_hit'].sum())} positive) to {args.features_output}",
         flush=True,
     )
-
-    train_model(features, args.model_output, args.random_seed, args.hit_threshold)
     print("Training pipeline complete.", flush=True)
 
 

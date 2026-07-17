@@ -378,6 +378,9 @@
       <div id="trackCursor"></div>
     </div>
     <p class="status" id="hitsStatus"></p>
+    <div class="row">
+      <button id="trackPlayBtn" type="button">Play judged clip</button>
+    </div>
     <div class="sliderlabel"><span>Frame to judge</span><output id="judgeFrameOut"></output></div>
     <div class="row">
       <input type="number" id="judgeFrame" step="1">
@@ -460,6 +463,8 @@ const S = {
   lines:{out:null, tin:null}, // committed: {seeds, maskCanvas, fit}
   run:null,                   // backend tracking result
   trackSeekId:0,
+  trackPlaying:false,
+  trackRaf:null,
   trackStripGen:0,            // invalidates in-flight timeline thumbnail renders
   trackView:{startF:0, endF:0, cursor:0, key:'', ovDone:false, timer:null}, // fine-window state for the call page's coarse-fine timeline
   videoFps:null,              // probed by the server at upload; null until known
@@ -507,6 +512,7 @@ function syncHeaderAction(action){
 
 function setPhase(p){
   if(S.phase === 'clip' && p !== 'clip') stopClipPlayback();
+  if(S.phase === 'track' && p !== 'track') stopTrackPlayback();
   S.phase = p;
   resetZoom();
   stage.classList.toggle('hidden', p === 'load');
@@ -1821,6 +1827,7 @@ $('runTrackBtn').onclick = async () => {
 
 function buildTrackView(){
   if(!S.run) return;
+  stopTrackPlayback();
   const hits = S.run.hits || [];
   const initialFrame = hits.length ? hits[0].frame : S.run.start_frame;
   $('judgeFrame').min = S.run.start_frame;
@@ -1897,6 +1904,7 @@ function makeHitBar(hit, leftPct, mini){
   bar.title = `Frame ${hit.frame} · ${label}${audio}`;
   bar.addEventListener('pointerdown', e => e.stopPropagation());
   bar.addEventListener('click', () => {
+    stopTrackPlayback();
     seekSourceFrameToCanvas(hit.frame);
     // Verdicts apply to front-wall hits only; other events show their
     // classification without requesting a line call.
@@ -2043,6 +2051,62 @@ async function renderTrackStrips(initialFrame){
 
 let trackScrubbing = false;
 let trackOvScrubbing = false;
+
+function updateTrackPlayButton(){
+  $('trackPlayBtn').textContent = S.trackPlaying ? 'Pause judged clip' : 'Play judged clip';
+}
+
+function drawTrackPlaybackFrame(){
+  if(!S.run || !S.W || !S.H) return;
+  canvas.width = S.W;
+  canvas.height = S.H;
+  ctx.drawImage(vid, 0, 0, S.W, S.H);
+  for(const k of ORDER){
+    const L = S.lines[k];
+    if(L) drawFitLine(L.fit, CFG[k].hex);
+  }
+  const frame = clampTrackedFrame(Math.round(vid.currentTime * S.run.fps));
+  updateTrackCursor(frame);
+  $('judgeFrame').value = frame;
+}
+
+function stopTrackPlayback(){
+  if(S.trackRaf) cancelAnimationFrame(S.trackRaf);
+  S.trackRaf = null;
+  S.trackPlaying = false;
+  vid.pause();
+  updateTrackPlayButton();
+}
+
+function tickTrackPlayback(){
+  if(!S.trackPlaying || S.phase !== 'track' || !S.run) return;
+  const endT = S.run.end_frame / S.run.fps;
+  if(vid.currentTime >= endT){
+    vid.currentTime = S.run.start_frame / S.run.fps;
+  }
+  drawTrackPlaybackFrame();
+  S.trackRaf = requestAnimationFrame(tickTrackPlayback);
+}
+
+async function startTrackPlayback(){
+  if(!S.run || !Number.isFinite(S.run.fps) || S.run.fps <= 0) return;
+  const currentFrame = parseInt($('judgeFrame').value, 10);
+  const frame = isTrackedFrame(currentFrame) ? currentFrame : S.run.start_frame;
+  await seekVideo(frame / S.run.fps);
+  S.trackPlaying = true;
+  updateTrackPlayButton();
+  try{
+    await vid.play();
+  } catch(_){
+    S.trackPlaying = false;
+    updateTrackPlayButton();
+    $('hitsStatus').textContent = 'Playback could not start. Tap Play again after the frame loads.';
+    $('hitsStatus').className = 'status warn';
+    return;
+  }
+  tickTrackPlayback();
+}
+
 function scrubTrackPointer(e){
   if(!S.run) return;
   const r = $('hitTimeline').getBoundingClientRect();
@@ -2080,6 +2144,7 @@ $('trackOverview').addEventListener('pointerup', endTrackOvScrub);
 $('trackOverview').addEventListener('pointercancel', endTrackOvScrub);
 $('hitTimeline').addEventListener('pointerdown', e => {
   if(S.phase !== 'track') return;
+  stopTrackPlayback();
   try{ $('hitTimeline').setPointerCapture(e.pointerId); }catch(_){ }
   trackScrubbing = true;
   scrubTrackPointer(e);
@@ -2096,6 +2161,10 @@ $('hitTimeline').addEventListener('pointercancel', () => {
   trackScrubbing = false;
   scheduleTrackDetailRender(150);
 });
+$('trackPlayBtn').onclick = () => {
+  if(S.trackPlaying) stopTrackPlayback();
+  else startTrackPlayback();
+};
 
 function clampTrackedFrame(frame){
   if(!S.run) return;
@@ -2126,10 +2195,12 @@ async function seekSourceFrameToCanvas(frame, syncInput=true){
 }
 
 $('judgeFrame').addEventListener('change', () => {
+  stopTrackPlayback();
   const frame = parseInt($('judgeFrame').value, 10);
   if(!Number.isNaN(frame)) seekSourceFrameToCanvas(frame);
 });
 $('judgeFrame').addEventListener('input', () => {
+  stopTrackPlayback();
   const frame = parseInt($('judgeFrame').value, 10);
   if(!Number.isNaN(frame) && isTrackedFrame(frame)) seekSourceFrameToCanvas(frame, false);
 });
