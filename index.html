@@ -2050,7 +2050,13 @@ async function buildLabelView(){
       if(response.ok) labelState.events = (await response.json()).events || [];
     }catch(_error){ /* no ground truth yet */ }
   }
-  if(labelState.frame == null) labelState.frame = lr.start_frame;
+  if(labelState.frame == null){
+    // Resume where labeling left off: events arrive sorted, so the last
+    // one is the furthest point reached in a previous session.
+    labelState.frame = labelState.events.length
+      ? labelState.events[labelState.events.length - 1].frame
+      : lr.start_frame;
+  }
   renderLabelMarks();
   updateLabelStatus();
   setLabelFrame(labelState.frame);
