@@ -248,7 +248,7 @@
 <main>
   <!-- PHASE: load -->
   <section class="hidden" id="p-load">
-    <p class="instruction">Load a clip from this phone to begin.</p>
+    <p class="instruction" id="loadHint">Load a clip from this phone to begin.</p>
     <label class="filebtn">Load clip
       <input type="file" id="fileIn" accept="video/*">
     </label>
@@ -427,6 +427,8 @@ const DEFAULT_FILL_TOL = 35;
 
 const S = {
   phase:'load', W:0, H:0, videoName:'', frameTime:0,
+  mode:'judge',               // chosen on the start screen: 'judge' | 'label'
+  labelRun:null,              // label-only run for the loaded video
   videoFile:null,
   fillTol:DEFAULT_FILL_TOL,
   loadTimer:null,
@@ -490,8 +492,9 @@ function setPhase(p){
   if(p === 'clip'){ $('p-clip').classList.remove('hidden'); setupClipControls(); }
   if(p === 'track'){ $('p-track').classList.remove('hidden'); buildTrackView(); }
   if(p === 'label'){ $('p-label').classList.remove('hidden'); buildLabelView(); }
-  $('navJudge').classList.toggle('active', p !== 'label');
-  $('navLabel').classList.toggle('active', p === 'label');
+  // The mode switcher only exists on the start screen; once a clip is
+  // loaded into a path, Back is the only way out to switch modes.
+  $('navPill').classList.toggle('hidden', p !== 'load');
   render();
 }
 const curKey = () => S.phase === 'tap_out' ? 'out' : 'tin';
@@ -514,6 +517,8 @@ $('fileIn').addEventListener('change', e => {
   S.videoFile = f;
   S.videoName = f.name;
   S.videoFps = null;
+  S.labelRun = null;          // a new video means a new label run
+  labelState.runId = null;
   S.clip.overviewThumbs = false;
   S.clip.detailKey = '';
   $('loadStatus').textContent = `Loading ${f.name}…`;
@@ -541,7 +546,8 @@ vid.addEventListener('loadedmetadata', () => {
   canvas.width = S.W; canvas.height = S.H;
   $('scrub').max = vid.duration.toFixed(2);
   vid.currentTime = 0.01;
-  setPhase('frame');
+  // The clip routes into whichever mode was chosen on the start screen.
+  setPhase(S.mode === 'label' ? 'label' : 'frame');
 });
 vid.addEventListener('error', () => {
   if(S.loadTimer) clearTimeout(S.loadTimer);
@@ -611,18 +617,20 @@ $('hdrBack').onclick = () => {
   } else if(S.phase === 'track'){
     setPhase('clip');
   } else if(S.phase === 'label'){
-    setPhase(S.judgePhase || 'load');
+    vid.pause(); S.base = null; $('fileIn').value = ''; setPhase('load');
   }
 };
 
-$('navJudge').onclick = () => {
-  if(S.phase === 'label') setPhase(S.judgePhase || 'load');
-};
-$('navLabel').onclick = () => {
-  if(S.phase === 'label') return;
-  S.judgePhase = S.phase;
-  setPhase('label');
-};
+function updateModePill(){
+  $('navJudge').classList.toggle('active', S.mode !== 'label');
+  $('navLabel').classList.toggle('active', S.mode === 'label');
+  $('loadHint').textContent = S.mode === 'label'
+    ? 'Load a rally clip, then tag each bounce frame to build ground truth.'
+    : 'Load a clip from this phone to begin.';
+}
+$('navJudge').onclick = () => { S.mode = 'judge'; updateModePill(); };
+$('navLabel').onclick = () => { S.mode = 'label'; updateModePill(); };
+updateModePill();
 
 /* ---------- zoom / pan (active during tap phases only) ---------- */
 const MAX_ZOOM = 6;
@@ -1988,10 +1996,11 @@ const LABEL_REPLACE_RADIUS = 2;  // tapping a type near an existing label retype
 
 const labelState = { runId:null, events:[], selected:-1, frame:null, saveTimer:null, stripGen:0 };
 
-/* Labels attach to a tracked run when one exists; otherwise to a
-   label-only run created on demand from the loaded video (no tracking
-   needed — the run id is derived from the video hash server-side). */
-function labelRun(){ return S.run || S.labelRun || null; }
+/* Labels always live in the label-only run for the loaded video (its id
+   is derived from the video hash server-side, so every labeling session
+   for the same clip shares one ground truth — independent of any
+   tracking runs for that video). */
+function labelRun(){ return S.labelRun || null; }
 
 function labelControlsEnabled(on){
   for(const b of document.querySelectorAll('#p-label button')) b.disabled = !on;
