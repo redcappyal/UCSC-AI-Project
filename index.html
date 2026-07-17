@@ -1426,15 +1426,20 @@ function moveClipPointer(e){
   }
 }
 
-// After a handle is released near a view edge (or the selection dwarfs /
-// vanishes within the view), refit the window and re-render thumbnails.
+// After a handle is released near a view edge, or once the selection has
+// drifted out of the band around recenterView's 3x target (in either
+// direction), refit the window and re-render thumbnails. Widening pushes the
+// handles at the view edges, so nearEdge covers it; shrinking moves them away
+// from the edges, so it needs the SEL_FRAC_MIN check to zoom back in.
+const SEL_FRAC_MIN = 0.22;        // shrink past this and the window tightens
+const SEL_FRAC_MAX = 0.9;         // grow past this and the window coarsens
 function maybeRecenterAfterEdit(){
   const span = viewSpan();
   const startFrac = (S.clip.start - S.clip.viewStart) / span;
   const endFrac = (S.clip.end - S.clip.viewStart) / span;
   const selFrac = (S.clip.end - S.clip.start) / span;
   const nearEdge = startFrac < EDGE_RECENTER_FRAC || endFrac > 1 - EDGE_RECENTER_FRAC;
-  if(nearEdge || selFrac > 0.9 || selFrac < 0.1){
+  if(nearEdge || selFrac > SEL_FRAC_MAX || selFrac < SEL_FRAC_MIN){
     if(recenterView()){
       drawDetailPlaceholderNow();
       scheduleDetailRender();
