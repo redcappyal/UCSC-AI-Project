@@ -12,6 +12,9 @@ __pycache__/
 # App output (uploaded videos, tracking results)
 ui_runs/
 
+# Local usage/metrics database
+usage.db
+
 .venv/
 # Local virtualenv (this checkout uses venv/ not .venv/)
 venv/
