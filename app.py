@@ -24,7 +24,7 @@ except ImportError:
 
 
 ROOT = Path(__file__).resolve().parent
-APP_VERSION = "coarse2fine-cpu-2026-07-13-1"
+APP_VERSION = "coarse2fine-gpu-2026-07-16-1"
 
 if load_dotenv is not None:
     load_dotenv(ROOT / ".env")
@@ -38,6 +38,7 @@ from job_runner import (
     get_job,
     start_tracking_job,
 )
+from inference_engine import TRACKING_BACKEND
 
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = 2 * 1024 * 1024 * 1024
@@ -170,6 +171,7 @@ def health():
             "ok": True,
             "version": APP_VERSION,
             "root": str(ROOT),
+            "tracking_backend": TRACKING_BACKEND,
             "default_device": os.environ.get("DEFAULT_DEVICE"),
             "onnx_providers": os.environ.get("ONNXRUNTIME_EXECUTION_PROVIDERS"),
         }
@@ -401,7 +403,7 @@ if __name__ == "__main__":
     host = os.getenv("HOST", "127.0.0.1")
     port = int(os.getenv("PORT", "5000"))
     print(f"Starting SquashAnalytics {APP_VERSION} from {ROOT}")
-    print(f"DEFAULT_DEVICE={os.environ.get('DEFAULT_DEVICE')}")
+    print(f"TRACKING_BACKEND={TRACKING_BACKEND} DEFAULT_DEVICE={os.environ.get('DEFAULT_DEVICE')}")
     print(f"ONNXRUNTIME_EXECUTION_PROVIDERS={os.environ.get('ONNXRUNTIME_EXECUTION_PROVIDERS')}")
     print(f"Open http://127.0.0.1:{port}/ on this Mac.")
     if host == "127.0.0.1":

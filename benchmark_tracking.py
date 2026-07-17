@@ -35,11 +35,18 @@ def parse_args():
         default="default",
         help="ONNX execution provider preset (must be chosen before the model loads).",
     )
+    parser.add_argument(
+        "--backend",
+        choices=["auto", "torch", "onnx"],
+        default="auto",
+        help="Tracking backend: torch runs on GPU (MPS) when available, onnx on CPU.",
+    )
     parser.add_argument("--warmup", type=int, default=3)
     return parser.parse_args()
 
 
-def setup_environment(providers):
+def setup_environment(providers, backend):
+    os.environ["TRACKING_BACKEND"] = backend
     os.environ.setdefault("MODEL_CACHE_DIR", str(ROOT / ".roboflow-cache"))
     os.environ.setdefault("METRICS_ENABLED", "False")
     os.environ.setdefault("OTEL_METRICS_ENABLED", "False")
@@ -122,24 +129,30 @@ def print_results(results):
 
 def main():
     args = parse_args()
-    setup_environment(args.providers)
+    setup_environment(args.providers, args.backend)
 
     import cv2
     from PIL import Image
 
-    from inference_engine import DEFAULT_MODEL_ID, resize_frame_for_inference
+    from inference_engine import (
+        DEFAULT_MODEL_ID,
+        TRACKING_BACKEND,
+        load_model,
+        resize_frame_for_inference,
+    )
     from tracking_common import CONFIDENCE_THRESHOLD
 
     api_key = os.getenv("ROBOFLOW_API_KEY", "")
     if not api_key.strip():
         raise RuntimeError("Set ROBOFLOW_API_KEY in .env before benchmarking.")
 
-    from inference import get_model
-
     model_id = os.getenv("ROBOFLOW_MODEL_ID", DEFAULT_MODEL_ID)
-    print(f"Loading model {model_id} (providers preset: {args.providers})")
+    print(
+        f"Loading model {model_id} (backend: {TRACKING_BACKEND}, "
+        f"device: {os.environ.get('DEFAULT_DEVICE')}, providers preset: {args.providers})"
+    )
     load_start = time.perf_counter()
-    model = get_model(model_id=model_id, api_key=api_key, countinference=False)
+    model = load_model(model_id, api_key)
     print(f"Model loaded in {time.perf_counter() - load_start:.1f}s")
 
     # inference >= 1.3 wraps the real model in an adapter; introspect both.

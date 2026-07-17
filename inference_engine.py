@@ -8,6 +8,7 @@ from environment defaults, which must be set before `inference` loads.
 
 import os
 import threading
+import warnings
 from contextlib import nullcontext
 from pathlib import Path
 
@@ -26,11 +27,11 @@ os.environ.setdefault("MODEL_CACHE_DIR", str(ROOT / ".roboflow-cache"))
 os.environ.setdefault("METRICS_ENABLED", "False")
 os.environ.setdefault("OTEL_METRICS_ENABLED", "False")
 os.environ.setdefault("MPLCONFIGDIR", str(ROOT / ".matplotlib-cache"))
-# The CoreML execution provider compiles this RF-DETR export but fails at
-# inference time on macOS, and onnxruntime tries it by default. Pin CPU; a
-# GPU server can override this in .env (e.g. CUDAExecutionProvider).
+# The CoreML execution provider runs this RF-DETR export but only claims
+# ~80% of the graph, fragmenting it into 100+ partitions that end up slower
+# than pure CPU. Pin CPU for the ONNX fallback path; a GPU server can
+# override this in .env (e.g. CUDAExecutionProvider).
 os.environ.setdefault("ONNXRUNTIME_EXECUTION_PROVIDERS", "[CPUExecutionProvider]")
-os.environ.setdefault("DEFAULT_DEVICE", "cpu")
 
 # Parts of the inference stack call torch.cuda.stream(None) even on CPU-only
 # machines, which crashes mid-run; make a None stream a no-op context.
@@ -50,6 +51,38 @@ if torch is not None and not getattr(torch.cuda.stream, "_squash_cpu_safe", Fals
     _cpu_safe_cuda_stream._squash_cpu_safe = True
     torch.cuda.stream = _cpu_safe_cuda_stream
 
+
+def best_torch_device():
+    if torch is None:
+        return "cpu"
+    if torch.cuda.is_available():
+        return "cuda"
+    mps = getattr(torch.backends, "mps", None)
+    if mps is not None and mps.is_available():
+        return "mps"
+    return "cpu"
+
+
+# The torch backend runs RF-DETR on the GPU (MPS on Apple Silicon), measured
+# ~4x faster than ONNX on CPU (68ms vs 275ms per 960px frame on an M2).
+# "auto" picks it whenever a GPU exists; TRACKING_BACKEND=onnx forces the
+# ONNX/CPU path.
+TRACKING_BACKEND = os.environ.get("TRACKING_BACKEND", "auto").strip().lower()
+if TRACKING_BACKEND not in {"torch", "onnx"}:
+    TRACKING_BACKEND = "torch" if best_torch_device() != "cpu" else "onnx"
+
+if TRACKING_BACKEND == "torch":
+    os.environ.setdefault("DEFAULT_DEVICE", best_torch_device())
+    # The auto-loader in inference-models tries backends in its own order;
+    # disabling the alternatives is the only way to select the torch package.
+    # Must be set before the first `inference` import.
+    os.environ.setdefault(
+        "DISABLED_INFERENCE_MODELS_BACKENDS",
+        "onnx,trt,torch-script,ultralytics,hugging-face",
+    )
+else:
+    os.environ.setdefault("DEFAULT_DEVICE", "cpu")
+
 DEFAULT_MODEL_ID = "ai-squash-line-tracker/4"
 DEFAULT_INFERENCE_WIDTH = int(os.getenv("INFERENCE_WIDTH", "960"))
 
@@ -63,16 +96,86 @@ def configured_providers():
     return [item.strip() for item in raw.strip("[]").split(",") if item.strip()]
 
 
-def load_model(model_id, api_key):
+def _patch_rfdetr_checkpoint_loading():
+    # Roboflow's torch checkpoints for RF-DETR carry a stray _kp_active_mask
+    # buffer from keypoint-capable training code that inference-models
+    # (<= 0.31.0) rejects during strict state_dict loading.
+    try:
+        from inference_models.models.rfdetr.rfdetr_base_pytorch import LWDETR
+    except ImportError:
+        return
+
+    if getattr(LWDETR.load_state_dict, "_squash_kp_mask_safe", False):
+        return
+
+    original = LWDETR.load_state_dict
+
+    def load_state_dict(self, state_dict, *args, **kwargs):
+        cleaned = {key: value for key, value in state_dict.items() if key != "_kp_active_mask"}
+        return original(self, cleaned, *args, **kwargs)
+
+    load_state_dict._squash_kp_mask_safe = True
+    LWDETR.load_state_dict = load_state_dict
+
+
+def _optimize_torch_model(model, device):
+    inner = getattr(model, "_model", None)
+    if inner is None or not hasattr(inner, "optimize_for_inference"):
+        return
+
+    # fp16 halves inference time on GPU devices; on CPU it is slower.
+    dtype = torch.float16 if device in {"mps", "cuda"} else torch.float32
+    try:
+        inner.optimize_for_inference(compile=True, batch_size=1, dtype=dtype)
+    except Exception as error:
+        warnings.warn(f"optimize_for_inference failed; using the plain torch model: {error}")
+        try:
+            inner.remove_optimized_model()
+        except Exception:
+            pass
+
+
+def _load_onnx_model(model_id, api_key):
     from inference import get_model
+    from inference.core import env as inference_env
+
+    # Re-enable the backends disabled above to prefer torch; the adapter
+    # re-reads this set on every model construction.
+    disabled = getattr(inference_env, "DISABLED_INFERENCE_MODELS_BACKENDS", None)
+    if isinstance(disabled, set):
+        disabled.clear()
 
     return get_model(
         model_id=model_id,
         api_key=api_key,
         countinference=False,
-        device=os.environ.get("DEFAULT_DEVICE", "cpu"),
+        device="cpu",
         onnx_execution_providers=configured_providers(),
     )
+
+
+def load_model(model_id, api_key):
+    if TRACKING_BACKEND == "torch":
+        device = os.environ.get("DEFAULT_DEVICE", "cpu")
+        try:
+            from inference import get_model
+
+            _patch_rfdetr_checkpoint_loading()
+            model = get_model(
+                model_id=model_id,
+                api_key=api_key,
+                countinference=False,
+                device=device,
+            )
+            _optimize_torch_model(model, device)
+            return model
+        except Exception as error:
+            warnings.warn(
+                f"Torch backend unavailable for {model_id} on {device}; "
+                f"falling back to ONNX on CPU: {error}"
+            )
+
+    return _load_onnx_model(model_id, api_key)
 
 
 def get_tracking_model():
