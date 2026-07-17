@@ -397,6 +397,45 @@ def run_file(run_id, filename):
     return send_from_directory(run_dir, filename, as_attachment=False)
 
 
+GROUND_TRUTH_TYPES = {"wall", "racket", "floor", "side_wall"}
+
+
+@app.post("/api/runs/<run_id>/ground_truth")
+def save_ground_truth(run_id):
+    """Persist user-labeled bounce events for a run (the eval ground truth)."""
+    run_dir = RUNS_DIR / secure_filename(run_id)
+    if not run_dir.is_dir():
+        return error_response("Run was not found.", status=404)
+
+    data = request.get_json(silent=True) or {}
+    events = data.get("events")
+    if not isinstance(events, list):
+        return error_response("Body must include an events list.")
+
+    cleaned = []
+    for event in events:
+        try:
+            frame = int(event["frame"])
+            kind = str(event["type"])
+        except (KeyError, TypeError, ValueError):
+            return error_response("Each event needs an integer frame and a type.")
+        if kind not in GROUND_TRUTH_TYPES:
+            return error_response(f"Unknown event type: {kind}")
+        cleaned.append({"frame": frame, "type": kind})
+    cleaned.sort(key=lambda event: event["frame"])
+
+    payload = {"tolerance_frames": 1, "events": cleaned}
+    (run_dir / "ground_truth.json").write_text(
+        json.dumps(payload, indent=2), encoding="utf-8"
+    )
+    return jsonify({"ok": True, "count": len(cleaned)})
+
+
+@app.get("/fonts/<path:filename>")
+def font_file(filename):
+    return send_from_directory(ROOT / "fonts", filename, max_age=86400)
+
+
 if __name__ == "__main__":
     RUNS_DIR.mkdir(exist_ok=True)
     UPLOADS_DIR.mkdir(parents=True, exist_ok=True)

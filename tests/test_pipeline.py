@@ -190,3 +190,37 @@ def test_upload_dedup_and_track_validation():
             match.unlink()
 
     assert client.get("/api/track/status/does-not-exist").status_code == 404
+
+
+def test_ground_truth_save_and_fetch_roundtrip():
+    import app as app_module
+
+    client = app_module.app.test_client()
+    run_id = "gt-route-test"
+    run_dir = app_module.RUNS_DIR / run_id
+    run_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        response = client.post(f"/api/runs/{run_id}/ground_truth", json={
+            "events": [
+                {"frame": 60, "type": "wall"},
+                {"frame": 20, "type": "racket"},
+            ],
+        })
+        assert response.status_code == 200
+        assert response.get_json()["count"] == 2
+
+        fetched = client.get(f"/api/runs/{run_id}/ground_truth.json").get_json()
+        assert fetched["tolerance_frames"] == 1
+        # Events come back sorted by frame regardless of submitted order.
+        assert [e["frame"] for e in fetched["events"]] == [20, 60]
+
+        response = client.post(f"/api/runs/{run_id}/ground_truth", json={
+            "events": [{"frame": 5, "type": "volley_boast"}],
+        })
+        assert response.status_code == 400
+
+        response = client.post("/api/runs/no-such-run/ground_truth", json={"events": []})
+        assert response.status_code == 404
+    finally:
+        import shutil
+        shutil.rmtree(run_dir, ignore_errors=True)

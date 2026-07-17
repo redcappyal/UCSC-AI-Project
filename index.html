@@ -28,11 +28,20 @@
     --strip-bg:#e3e3e8;
     --out:#007da6; --tin:#557a00;
   }
+  /* Self-hosted (fonts/ + /fonts route) so the app works offline; falls back
+     to the system stack until the woff2 loads. */
+  @font-face{font-family:'Chakra Petch'; font-style:normal; font-weight:400; font-display:swap;
+    src:url('/fonts/chakra-petch-400.woff2') format('woff2')}
+  @font-face{font-family:'Chakra Petch'; font-style:normal; font-weight:600; font-display:swap;
+    src:url('/fonts/chakra-petch-600.woff2') format('woff2')}
+  @font-face{font-family:'Chakra Petch'; font-style:normal; font-weight:700; font-display:swap;
+    src:url('/fonts/chakra-petch-700.woff2') format('woff2')}
+
   *{box-sizing:border-box; margin:0; padding:0}
   html{height:100%}
   body{height:100dvh; overflow:hidden; display:flex; flex-direction:column;
-    background:var(--bg); color:var(--text); font-size:17px; line-height:1.35;
-    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+    background:var(--bg); color:var(--text); font-size:16px; line-height:1.4;
+    font-family:'Chakra Petch',-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
     -webkit-tap-highlight-color:transparent}
   .hidden{display:none !important}
 
@@ -43,7 +52,7 @@
 
   header{flex:0 0 auto; display:flex; align-items:center; gap:12px;
     padding:8px 14px; min-height:56px; border-bottom:1px solid var(--line)}
-  #stepLabel{font-size:17px; font-weight:600}
+  #stepLabel{font-size:16px; font-weight:700; letter-spacing:.05em; text-transform:uppercase}
   #themeBtn{margin-left:auto; width:44px; min-width:44px; min-height:44px; padding:0;
     background:none; border:none}
   #themeBtn .sun-and-moon > *{transform-origin:center}
@@ -68,7 +77,7 @@
     color:#fff; background:rgba(0,0,0,.72); border:1px solid #666}
 
   main{flex:0 0 auto; overflow:hidden;
-    padding:12px 14px max(12px, env(safe-area-inset-bottom))}
+    padding:12px 14px calc(70px + env(safe-area-inset-bottom))}
   body.phase-load main{flex:1; display:flex; flex-direction:column; justify-content:center}
   main section{display:flex; flex-direction:column; gap:10px}
 
@@ -78,13 +87,14 @@
   .status.warn{color:var(--text); font-weight:700}
   .status.ok{color:var(--text)}
 
-  button, label.filebtn{font:inherit; font-size:17px; font-weight:600; color:var(--text);
-    background:var(--surface); border:1px solid var(--btn-border); border-radius:10px;
-    width:100%; min-height:48px; padding:10px 16px;
+  button, label.filebtn{font:inherit; font-size:15px; font-weight:600; letter-spacing:.05em;
+    text-transform:uppercase; color:var(--text);
+    background:var(--surface); border:1px solid var(--btn-border); border-radius:999px;
+    width:100%; min-height:48px; padding:10px 18px;
     display:flex; align-items:center; justify-content:center; cursor:pointer}
   button:disabled{opacity:.4}
   button.primary, label.filebtn{background:var(--accent-bg); color:var(--accent-text); border-color:var(--accent-bg)}
-  button.small{width:auto; min-height:44px; padding:8px 12px; font-size:15px; font-weight:500}
+  button.small{width:auto; min-height:44px; padding:8px 14px; font-size:13px; font-weight:600}
   .row{display:flex; gap:10px}
   .row>*{flex:1}
 
@@ -153,6 +163,29 @@
   .hitBar.racket::before{background:#5b7fa6; width:4px; opacity:.55}
   .hitBar.floor::before{background:#b58a3c; width:4px; opacity:.55}
   .hitBar.side::before{background:#8a6fb8; width:4px; opacity:.55}
+  .hitBar.selected::before{box-shadow:0 0 0 2px var(--text); opacity:1}
+
+  /* Floating liquid-glass mode switcher */
+  #navPill{position:fixed; left:50%; bottom:calc(12px + env(safe-area-inset-bottom));
+    transform:translateX(-50%); z-index:40; display:flex; gap:4px; padding:5px;
+    border-radius:999px;
+    background:color-mix(in srgb, var(--surface) 62%, transparent);
+    -webkit-backdrop-filter:blur(20px) saturate(1.5);
+    backdrop-filter:blur(20px) saturate(1.5);
+    border:1px solid color-mix(in srgb, var(--text) 14%, transparent);
+    box-shadow:0 12px 32px rgba(0,0,0,.4)}
+  #navPill button{width:auto; min-height:44px; padding:0 18px; gap:8px;
+    border:0; background:transparent; color:var(--dim); font-size:13px}
+  #navPill button.active{background:var(--accent-bg); color:var(--accent-text)}
+  #navPill svg{width:17px; height:17px; flex:0 0 auto}
+
+  /* Bounce labeling */
+  .labelGrid{display:grid; grid-template-columns:1fr 1fr; gap:10px}
+  .labelGrid .dot{width:10px; height:10px; border-radius:50%; margin-right:9px; flex:0 0 auto}
+  .dot.wall{background:var(--in)} .dot.racket{background:#5b7fa6}
+  .dot.floor{background:#b58a3c} .dot.side{background:#8a6fb8}
+  #labelCursor{position:absolute; top:0; bottom:0; width:3px; margin-left:-1px; background:#f5f5f5;
+    box-shadow:0 0 0 1px rgba(0,0,0,.45); pointer-events:none}
   #trackCursor{position:absolute; top:0; bottom:0; width:3px; margin-left:-1px; background:#f5f5f5;
     box-shadow:0 0 0 1px rgba(0,0,0,.45); pointer-events:none}
 
@@ -329,7 +362,47 @@
     </div>
     <div class="verdict blank" id="judgeResult"><div>No line call yet</div></div>
   </section>
+
+  <!-- MODE: bounce labeling (ground truth for the event engine) -->
+  <section class="hidden" id="p-label">
+    <div class="hitTimeline" id="labelTimeline">
+      <canvas id="labelStrip"></canvas>
+      <div id="labelMarks"></div>
+      <div id="labelCursor"></div>
+    </div>
+    <div class="sliderlabel"><span>Frame</span><output id="labelFrameOut">–</output></div>
+    <div class="row">
+      <button class="small" id="lStepB5" type="button">−5</button>
+      <button class="small" id="lStepB1" type="button">−1</button>
+      <button class="small" id="lStepF1" type="button">+1</button>
+      <button class="small" id="lStepF5" type="button">+5</button>
+    </div>
+    <div class="labelGrid">
+      <button data-label-type="wall" type="button"><i class="dot wall"></i>Front wall</button>
+      <button data-label-type="racket" type="button"><i class="dot racket"></i>Racket</button>
+      <button data-label-type="floor" type="button"><i class="dot floor"></i>Floor</button>
+      <button data-label-type="side_wall" type="button"><i class="dot side"></i>Side wall</button>
+    </div>
+    <button id="labelDeleteBtn" type="button" disabled>Delete selected label</button>
+    <p class="status" id="labelStatus"></p>
+  </section>
 </main>
+
+<nav id="navPill">
+  <button id="navJudge" class="active" type="button">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+      <circle cx="12" cy="12" r="7.5"/><circle cx="12" cy="12" r="2.4" fill="currentColor" stroke="none"/>
+      <path d="M12 1.5v3M12 19.5v3M1.5 12h3M19.5 12h3"/>
+    </svg>
+    <span>Judge</span>
+  </button>
+  <button id="navLabel" type="button">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <path d="M20 12l-8.5 8.5a2 2 0 0 1-2.8 0L3.5 15.3a2 2 0 0 1 0-2.8L12 4h8z"/><circle cx="16" cy="8" r="1.4" fill="currentColor" stroke="none"/>
+    </svg>
+    <span>Label</span>
+  </button>
+</nav>
 
 <video id="vid" playsinline muted preload="metadata"></video>
 
@@ -381,6 +454,7 @@ const STEP_META = {
   review: {label:'4 / 6 · Review lines', instr:'Check that each fitted edge hugs the real paint edge across the whole line.'},
   clip:   {label:'5 / 6 · Clip & track', instr:'Drag the top strip to slide the clip along the video, then drag the handles to trim it tight around the shot.'},
   track:  {label:'6 / 6 · Call', instr:'Tap a hit bar or enter a frame number, then judge it.'},
+  label:  {label:'Label bounces', instr:'Step to the exact impact frame, then tap its bounce type. Tap a marker to revisit it — labels save automatically.'},
 };
 
 function setPhase(p){
@@ -389,7 +463,7 @@ function setPhase(p){
   resetZoom();
   stage.classList.toggle('hidden', p === 'load');
   document.body.classList.toggle('phase-load', p === 'load');
-  for(const id of ['p-load','p-frame','p-tap','p-review','p-clip','p-track']) $(id).classList.add('hidden');
+  for(const id of ['p-load','p-frame','p-tap','p-review','p-clip','p-track','p-label']) $(id).classList.add('hidden');
   $('stepLabel').textContent = STEP_META[p].label;
   $('hdrBack').classList.toggle('hidden', p === 'load');
 
@@ -415,6 +489,9 @@ function setPhase(p){
   if(p === 'review'){ $('p-review').classList.remove('hidden'); buildReview(); }
   if(p === 'clip'){ $('p-clip').classList.remove('hidden'); setupClipControls(); }
   if(p === 'track'){ $('p-track').classList.remove('hidden'); buildTrackView(); }
+  if(p === 'label'){ $('p-label').classList.remove('hidden'); buildLabelView(); }
+  $('navJudge').classList.toggle('active', p !== 'label');
+  $('navLabel').classList.toggle('active', p === 'label');
   render();
 }
 const curKey = () => S.phase === 'tap_out' ? 'out' : 'tin';
@@ -533,7 +610,18 @@ $('hdrBack').onclick = () => {
     setPhase('review');
   } else if(S.phase === 'track'){
     setPhase('clip');
+  } else if(S.phase === 'label'){
+    setPhase(S.judgePhase || 'load');
   }
+};
+
+$('navJudge').onclick = () => {
+  if(S.phase === 'label') setPhase(S.judgePhase || 'load');
+};
+$('navLabel').onclick = () => {
+  if(S.phase === 'label') return;
+  S.judgePhase = S.phase;
+  setPhase('label');
 };
 
 /* ---------- zoom / pan (active during tap phases only) ---------- */
@@ -1892,6 +1980,183 @@ $('judgeBtn').onclick = () => {
   seekSourceFrameToCanvas(frame);
   judgeFrameRequest(frame);
 };
+
+/* ---------- bounce labeling (event-engine ground truth) ---------- */
+const LABEL_BAR_CLASS = { wall:'in', racket:'racket', floor:'floor', side_wall:'side' };
+const LABEL_NAMES = { wall:'Front wall', racket:'Racket', floor:'Floor', side_wall:'Side wall' };
+const LABEL_REPLACE_RADIUS = 2;  // tapping a type near an existing label retypes it
+
+const labelState = { runId:null, events:[], selected:-1, frame:null, saveTimer:null, stripGen:0 };
+
+function labelControlsEnabled(on){
+  for(const b of document.querySelectorAll('#p-label button')) b.disabled = !on;
+  $('labelDeleteBtn').disabled = !on || labelState.selected < 0;
+}
+
+async function buildLabelView(){
+  if(!S.run){
+    $('labelTimeline').classList.add('hidden');
+    $('labelStatus').textContent = 'Track a clip first — labels attach to a tracked run.';
+    labelControlsEnabled(false);
+    return;
+  }
+  $('labelTimeline').classList.remove('hidden');
+  labelControlsEnabled(true);
+  if(labelState.runId !== S.run.run_id){
+    labelState.runId = S.run.run_id;
+    labelState.events = [];
+    labelState.selected = -1;
+    labelState.frame = null;
+    try{
+      const response = await fetch(`/api/runs/${S.run.run_id}/ground_truth.json`);
+      if(response.ok) labelState.events = (await response.json()).events || [];
+    }catch(_error){ /* no ground truth yet */ }
+  }
+  if(labelState.frame == null) labelState.frame = S.run.start_frame;
+  renderLabelMarks();
+  updateLabelStatus();
+  setLabelFrame(labelState.frame);
+  renderLabelStrip();
+}
+
+async function renderLabelStrip(){
+  const gen = ++labelState.stripGen;
+  const strip = $('labelStrip');
+  const box = $('labelTimeline').getBoundingClientRect();
+  const dpr = window.devicePixelRatio || 1;
+  strip.width = Math.max(1, Math.round(box.width * dpr));
+  strip.height = Math.max(1, Math.round(box.height * dpr));
+  const cc = strip.getContext('2d');
+  cc.setTransform(dpr, 0, 0, dpr, 0, 0);
+  cc.fillStyle = stripBg();
+  cc.fillRect(0, 0, box.width, box.height);
+
+  const fps = S.run && S.run.fps ? S.run.fps : 60;
+  const startT = S.run.start_frame / fps;
+  const endT = S.run.end_frame / fps;
+  const count = Math.max(5, Math.min(12, Math.floor(box.width / 86)));
+  const thumbW = box.width / count;
+  vid.pause();
+
+  for(let i = 0; i < count; i++){
+    const t = startT + (i + 0.5) / count * (endT - startT);
+    await seekVideo(t);
+    if(gen !== labelState.stripGen || S.phase !== 'label') return;
+    cc.drawImage(vid, i * thumbW, 0, thumbW, box.height);
+    cc.strokeStyle = 'rgba(255,255,255,.12)';
+    cc.strokeRect(i * thumbW, 0, thumbW, box.height);
+  }
+  seekSourceFrameToCanvas(labelState.frame, false);
+}
+
+function setLabelFrame(frame, seek = true){
+  if(!S.run) return;
+  frame = Math.min(S.run.end_frame, Math.max(S.run.start_frame, Math.round(frame)));
+  labelState.frame = frame;
+  $('labelFrameOut').textContent = String(frame);
+  $('labelCursor').style.left = `${frameToRunPct(frame)}%`;
+  if(seek) seekSourceFrameToCanvas(frame, false);
+}
+
+function renderLabelMarks(){
+  const marks = $('labelMarks');
+  marks.innerHTML = '';
+  labelState.events.forEach((event, index) => {
+    const bar = document.createElement('div');
+    bar.className = `hitBar ${LABEL_BAR_CLASS[event.type] || 'unknown'}`
+      + (index === labelState.selected ? ' selected' : '');
+    bar.style.left = `${frameToRunPct(event.frame)}%`;
+    bar.title = `Frame ${event.frame} · ${LABEL_NAMES[event.type] || event.type}`;
+    bar.addEventListener('pointerdown', e => e.stopPropagation());
+    bar.addEventListener('click', e => {
+      e.stopPropagation();
+      labelState.selected = index;
+      setLabelFrame(event.frame);
+      renderLabelMarks();
+      updateLabelStatus();
+      $('labelDeleteBtn').disabled = false;
+    });
+    marks.appendChild(bar);
+  });
+}
+
+function updateLabelStatus(extra){
+  const n = labelState.events.length;
+  const selected = labelState.selected >= 0 ? labelState.events[labelState.selected] : null;
+  const selText = selected
+    ? ` · selected: ${LABEL_NAMES[selected.type].toLowerCase()} @ ${selected.frame}` : '';
+  $('labelStatus').textContent = `${n} label${n === 1 ? '' : 's'}${selText}${extra ? ` · ${extra}` : ''}`;
+}
+
+function scheduleLabelSave(){
+  clearTimeout(labelState.saveTimer);
+  updateLabelStatus('saving…');
+  labelState.saveTimer = setTimeout(async () => {
+    try{
+      const response = await fetch(`/api/runs/${labelState.runId}/ground_truth`, {
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({ events: labelState.events }),
+      });
+      updateLabelStatus(response.ok ? 'saved' : 'save failed');
+    }catch(_error){
+      updateLabelStatus('save failed');
+    }
+  }, 500);
+}
+
+function addLabelAtCurrentFrame(type){
+  if(!S.run || labelState.frame == null) return;
+  const frame = labelState.frame;
+  const near = labelState.events.findIndex(ev => Math.abs(ev.frame - frame) <= LABEL_REPLACE_RADIUS);
+  if(near >= 0){
+    labelState.events[near] = { frame, type };
+    labelState.selected = near;
+  } else {
+    labelState.events.push({ frame, type });
+    labelState.events.sort((a, b) => a.frame - b.frame);
+    labelState.selected = labelState.events.findIndex(ev => ev.frame === frame && ev.type === type);
+  }
+  $('labelDeleteBtn').disabled = false;
+  renderLabelMarks();
+  scheduleLabelSave();
+}
+
+for(const btn of document.querySelectorAll('#p-label [data-label-type]')){
+  btn.addEventListener('click', () => addLabelAtCurrentFrame(btn.dataset.labelType));
+}
+$('labelDeleteBtn').onclick = () => {
+  if(labelState.selected < 0) return;
+  labelState.events.splice(labelState.selected, 1);
+  labelState.selected = -1;
+  $('labelDeleteBtn').disabled = true;
+  renderLabelMarks();
+  scheduleLabelSave();
+};
+$('lStepB5').onclick = () => setLabelFrame(labelState.frame - 5);
+$('lStepB1').onclick = () => setLabelFrame(labelState.frame - 1);
+$('lStepF1').onclick = () => setLabelFrame(labelState.frame + 1);
+$('lStepF5').onclick = () => setLabelFrame(labelState.frame + 5);
+
+let labelScrubbing = false;
+function scrubLabelPointer(e){
+  if(!S.run) return;
+  const r = $('labelTimeline').getBoundingClientRect();
+  const pct = Math.min(1, Math.max(0, (e.clientX - r.left) / r.width));
+  setLabelFrame(S.run.start_frame + pct * (S.run.end_frame - S.run.start_frame));
+}
+$('labelTimeline').addEventListener('pointerdown', e => {
+  if(S.phase !== 'label') return;
+  $('labelTimeline').setPointerCapture(e.pointerId);
+  labelScrubbing = true;
+  scrubLabelPointer(e);
+});
+$('labelTimeline').addEventListener('pointermove', e => { if(labelScrubbing) scrubLabelPointer(e); });
+$('labelTimeline').addEventListener('pointerup', e => {
+  labelScrubbing = false;
+  $('labelTimeline').releasePointerCapture(e.pointerId);
+});
+$('labelTimeline').addEventListener('pointercancel', () => { labelScrubbing = false; });
 
 setPhase('load');
 checkBackend();
