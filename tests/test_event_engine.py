@@ -280,5 +280,6 @@ def test_judge_labels_floor_bounce(tmp_path):
         "after_gap": False,
     }
     entries = judge_hits(tmp_path, results, [hit])
-    assert entries[0]["call"] == "FLOOR"
-    assert entries[0]["reason"] == "classified_as_floor_bounce"
+    # Verdicts apply to front-wall hits only: no call, just the classification.
+    assert entries[0]["call"] is None
+    assert entries[0]["reason"] == "classified_as_floor"

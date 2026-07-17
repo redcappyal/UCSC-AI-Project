@@ -382,14 +382,11 @@ def judge_hits(run_dir, results, detected, audio_available=None):
         judge_source = None
         margin_px = None
 
-        if hit.get("event_type") == "racket":
-            # Classified as a racket strike, not a wall bounce: line judging
-            # does not apply.
-            call, reason = "RACKET", "classified_as_racket_hit"
-        elif hit.get("event_type") == "floor":
-            call, reason = "FLOOR", "classified_as_floor_bounce"
-        elif hit.get("event_type") == "side_wall":
-            call, reason = "SIDE_WALL", "classified_as_side_wall_hit"
+        event_type = hit.get("event_type")
+        if event_type in ("racket", "floor", "side_wall"):
+            # Verdicts (IN/OUT line calls) apply to front-wall hits only;
+            # other events carry their classification but no call.
+            call, reason = None, f"classified_as_{event_type}"
         elif top_line is not None:
             # Prefer the fitted impact point (where the ball met the wall)
             # over the detected center at the nearest sampled frame.

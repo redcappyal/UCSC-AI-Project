@@ -63,8 +63,9 @@ def test_judge_hits_skips_line_call_for_racket_events(tmp_path):
     judged = judge_hits(tmp_path, results, [hit], audio_available=True)
 
     entry = judged[0]
-    assert entry["call"] == "RACKET"
-    assert entry["reason"] == "classified_as_racket_hit"
+    # Verdicts apply to front-wall hits only: no call for racket events.
+    assert entry["call"] is None
+    assert entry["reason"] == "classified_as_racket"
     assert entry["margin_px"] is None and entry["judge_source"] is None
     assert entry["event_type"] == "racket"
     assert entry["wall_score"] == -0.8
@@ -72,7 +73,7 @@ def test_judge_hits_skips_line_call_for_racket_events(tmp_path):
 
     payload = json.loads((tmp_path / "detected_hits.json").read_text())
     assert payload["audio_available"] is True
-    assert payload["hits"][0]["call"] == "RACKET"
+    assert payload["hits"][0]["call"] is None
 
 
 def test_judge_hits_wall_events_judged_as_before(tmp_path):

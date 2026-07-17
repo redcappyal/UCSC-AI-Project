@@ -151,13 +151,21 @@
   .hitBar.out::before{background:var(--outcall)}
   .hitBar.unknown::before{background:#999}
   .hitBar.racket::before{background:#5b7fa6; width:4px; opacity:.55}
+  .hitBar.floor::before{background:#b58a3c; width:4px; opacity:.55}
+  .hitBar.side::before{background:#8a6fb8; width:4px; opacity:.55}
   #trackCursor{position:absolute; top:0; bottom:0; width:3px; margin-left:-1px; background:#f5f5f5;
     box-shadow:0 0 0 1px rgba(0,0,0,.45); pointer-events:none}
 
-  .verdict{border-radius:12px; padding:14px; text-align:center; font-size:13px; line-height:1.4}
+  /* The verdict box always occupies the same space: empty (blank), event
+     classification (neutral), and IN/OUT states share one reserved height so
+     showing or clearing a verdict never shifts the layout around it. */
+  .verdict{border-radius:12px; padding:14px; text-align:center; font-size:13px; line-height:1.4;
+    min-height:118px; display:flex; flex-direction:column; justify-content:center}
   .verdict strong{display:block; font-size:38px; letter-spacing:.04em}
   .verdict.in{background:var(--in); color:#03230c}
   .verdict.out{background:var(--outcall); color:#fff}
+  .verdict.neutral{background:var(--surface); border:1px solid var(--line); color:var(--text)}
+  .verdict.blank{background:transparent; border:1px dashed var(--line); color:var(--dim)}
 
   /* video kept renderable but invisible (display:none breaks canvas capture on some iOS versions) */
   #vid{position:absolute; width:2px; height:2px; opacity:0; pointer-events:none; left:-10px; top:-10px}
@@ -319,7 +327,7 @@
       <input type="number" id="judgeFrame" step="1">
       <button class="primary" id="judgeBtn">Judge frame</button>
     </div>
-    <div class="verdict hidden" id="judgeResult"></div>
+    <div class="verdict blank" id="judgeResult"><div>No line call yet</div></div>
   </section>
 </main>
 
@@ -1674,8 +1682,7 @@ function buildTrackView(){
   $('judgeFrame').max = S.run.end_frame;
   $('judgeFrame').value = initialFrame;
   $('judgeFrameOut').textContent = `${S.run.start_frame}–${S.run.end_frame}`;
-  $('judgeResult').className = 'verdict hidden';
-  $('judgeResult').innerHTML = '';
+  clearJudgeResult();
   buildHitTimeline(hits, initialFrame);
 }
 
@@ -1695,21 +1702,26 @@ function buildHitTimeline(hits, initialFrame){
   bars.innerHTML = '';
 
   for(const hit of hits){
-    const cls = hit.call === 'RACKET' ? 'racket'
+    const type = hit.event_type;
+    const nonWall = EVENT_LABELS[type] !== undefined;
+    const cls = nonWall ? (type === 'side_wall' ? 'side' : type)
       : hit.call === 'IN' ? 'in' : hit.call === 'OUT' ? 'out' : 'unknown';
     const bar = document.createElement('div');
     bar.className = `hitBar ${cls}`;
     bar.style.left = `${frameToRunPct(hit.frame)}%`;
-    const label = hit.call === 'RACKET'
-      ? 'racket hit'
-      : `${callWithMargin(hit.call, hit.margin_px)}${hit.event_type === 'wall' ? ' · wall' : ''}`;
+    const label = nonWall
+      ? EVENT_LABELS[type].toLowerCase()
+      : `${callWithMargin(hit.call, hit.margin_px)}${type === 'wall' ? ' · wall' : ''}`;
     const audioDb = hit.signals && hit.signals.audio_score;
     const audio = audioDb == null ? '' : ` (audio +${audioDb.toFixed(1)} dB)`;
     bar.title = `Frame ${hit.frame} · ${label}${audio}`;
     bar.addEventListener('pointerdown', e => e.stopPropagation());
     bar.addEventListener('click', () => {
       seekSourceFrameToCanvas(hit.frame);
-      judgeFrameRequest(hit.frame);
+      // Verdicts apply to front-wall hits only; other events show their
+      // classification without requesting a line call.
+      if(nonWall) renderEventCard(hit);
+      else judgeFrameRequest(hit.frame);
     });
     bars.appendChild(bar);
   }
@@ -1828,8 +1840,22 @@ function callWithMargin(call, marginPx){
   return call;
 }
 
+const EVENT_LABELS = { racket:'Racket hit', floor:'Floor bounce', side_wall:'Side wall' };
+
+function clearJudgeResult(){
+  $('judgeResult').className = 'verdict blank';
+  $('judgeResult').innerHTML = '<div>No line call yet</div>';
+}
+
+function renderEventCard(hit){
+  $('judgeResult').className = 'verdict neutral';
+  $('judgeResult').innerHTML =
+    `<strong>${EVENT_LABELS[hit.event_type] || hit.event_type}</strong>` +
+    `<div>Frame ${hit.frame} · line calls apply to front-wall hits only</div>`;
+}
+
 function renderJudgeResult(data){
-  const callClass = data.call === 'IN' ? 'in' : 'out';
+  const callClass = data.call === 'IN' ? 'in' : data.call === 'OUT' ? 'out' : 'neutral';
   const sourceText = data.source === 'impact_estimate' ? 'estimated impact point' : 'detected ball center';
   $('judgeResult').className = `verdict ${callClass}`;
   $('judgeResult').innerHTML =
@@ -1841,7 +1867,7 @@ function renderJudgeResult(data){
 async function judgeFrameRequest(frame){
   if(!S.run || Number.isNaN(frame)) return;
   $('judgeBtn').disabled = true;
-  $('judgeResult').className = 'verdict hidden';
+  clearJudgeResult();
 
   try{
     const response = await fetch('/api/judge', {
