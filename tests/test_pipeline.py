@@ -224,3 +224,53 @@ def test_ground_truth_save_and_fetch_roundtrip():
     finally:
         import shutil
         shutil.rmtree(run_dir, ignore_errors=True)
+
+
+def test_label_run_creation_from_uploaded_video(tmp_path):
+    import shutil
+
+    import app as app_module
+    import cv2
+    import numpy as np
+
+    video_path = tmp_path / "tiny.mp4"
+    writer = cv2.VideoWriter(str(video_path), cv2.VideoWriter_fourcc(*"avc1"), 30.0, (64, 48))
+    for _ in range(12):
+        writer.write(np.zeros((48, 64, 3), dtype=np.uint8))
+    writer.release()
+
+    client = app_module.app.test_client()
+
+    response = client.post("/api/label_runs", json={"video_id": "0000dead0000"})
+    assert response.status_code == 404
+    assert client.post("/api/label_runs", json={}).status_code == 400
+
+    with video_path.open("rb") as f:
+        video_id = client.post(
+            "/api/upload",
+            data={"video_file": (f, "tiny.mp4")},
+            content_type="multipart/form-data",
+        ).get_json()["video_id"]
+
+    run_dir = None
+    try:
+        data = client.post("/api/label_runs", json={"video_id": video_id}).get_json()
+        assert data["run_id"] == f"label-{video_id[:12]}"
+        assert data["label_only"] is True
+        assert data["start_frame"] == 0 and data["end_frame"] == 11
+        assert abs(data["fps"] - 30.0) < 0.1
+
+        run_dir = app_module.RUNS_DIR / data["run_id"]
+        meta = json.loads((run_dir / "label_run.json").read_text())
+        assert meta["video_path"].endswith(f"{video_id}.mp4")
+
+        # ground truth saves into the label-only run like any other run
+        response = client.post(f"/api/runs/{data['run_id']}/ground_truth", json={
+            "events": [{"frame": 6, "type": "wall"}],
+        })
+        assert response.status_code == 200
+    finally:
+        if run_dir is not None:
+            shutil.rmtree(run_dir, ignore_errors=True)
+        for stray in app_module.BY_HASH_DIR.glob(f"{video_id}.*"):
+            stray.unlink()

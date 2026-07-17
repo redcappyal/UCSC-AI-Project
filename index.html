@@ -1988,39 +1988,94 @@ const LABEL_REPLACE_RADIUS = 2;  // tapping a type near an existing label retype
 
 const labelState = { runId:null, events:[], selected:-1, frame:null, saveTimer:null, stripGen:0 };
 
+/* Labels attach to a tracked run when one exists; otherwise to a
+   label-only run created on demand from the loaded video (no tracking
+   needed — the run id is derived from the video hash server-side). */
+function labelRun(){ return S.run || S.labelRun || null; }
+
 function labelControlsEnabled(on){
   for(const b of document.querySelectorAll('#p-label button')) b.disabled = !on;
   $('labelDeleteBtn').disabled = !on || labelState.selected < 0;
 }
 
+async function createLabelRun(){
+  const videoId = await ensureVideoUploaded('Uploading video for labeling');
+  const response = await fetch('/api/label_runs', {
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({ video_id: videoId }),
+  });
+  const data = await response.json();
+  if(!response.ok) throw new Error(data.error || 'Could not create the labeling run.');
+  return data;
+}
+
 async function buildLabelView(){
-  if(!S.run){
+  let lr = labelRun();
+  if(!lr){
     $('labelTimeline').classList.add('hidden');
-    $('labelStatus').textContent = 'Track a clip first — labels attach to a tracked run.';
     labelControlsEnabled(false);
-    return;
+    if(!S.videoFile){
+      $('labelStatus').textContent = 'Load a clip first — then label its impact frames (no tracking needed).';
+      return;
+    }
+    $('labelStatus').textContent = 'Preparing labeling run…';
+    try{
+      S.labelRun = await createLabelRun();
+    }catch(error){
+      $('labelStatus').textContent = `Labeling unavailable: ${error.message}`;
+      return;
+    }
+    if(S.phase !== 'label') return;
+    lr = labelRun();
   }
   $('labelTimeline').classList.remove('hidden');
   labelControlsEnabled(true);
-  if(labelState.runId !== S.run.run_id){
-    labelState.runId = S.run.run_id;
+  if(labelState.runId !== lr.run_id){
+    labelState.runId = lr.run_id;
     labelState.events = [];
     labelState.selected = -1;
     labelState.frame = null;
     try{
-      const response = await fetch(`/api/runs/${S.run.run_id}/ground_truth.json`);
+      const response = await fetch(`/api/runs/${lr.run_id}/ground_truth.json`);
       if(response.ok) labelState.events = (await response.json()).events || [];
     }catch(_error){ /* no ground truth yet */ }
   }
-  if(labelState.frame == null) labelState.frame = S.run.start_frame;
+  if(labelState.frame == null) labelState.frame = lr.start_frame;
   renderLabelMarks();
   updateLabelStatus();
   setLabelFrame(labelState.frame);
   renderLabelStrip();
 }
 
+function labelPct(frame){
+  const lr = labelRun();
+  const span = Math.max(1, lr.end_frame - lr.start_frame);
+  return Math.min(100, Math.max(0, (frame - lr.start_frame) / span * 100));
+}
+
+async function labelSeek(frame){
+  const lr = labelRun();
+  if(!lr || !Number.isFinite(lr.fps) || lr.fps <= 0) return;
+  const seekId = ++S.trackSeekId;
+  vid.pause();
+  // Mid-frame timestamp: seeking to the exact frame boundary can land on
+  // the previous frame, an off-by-one a +/-1-frame ground truth can't absorb.
+  await seekVideo((frame + 0.5) / lr.fps);
+  if(seekId !== S.trackSeekId) return;
+  canvas.width = S.W;
+  canvas.height = S.H;
+  ctx.drawImage(vid, 0, 0, S.W, S.H);
+  for(const k of ORDER){
+    const L = S.lines[k];
+    if(L) drawFitLine(L.fit, CFG[k].hex);
+  }
+}
+
 async function renderLabelStrip(){
   const gen = ++labelState.stripGen;
+  const lr = labelRun();
+  if(!lr) return;
   const strip = $('labelStrip');
   const box = $('labelTimeline').getBoundingClientRect();
   const dpr = window.devicePixelRatio || 1;
@@ -2031,9 +2086,9 @@ async function renderLabelStrip(){
   cc.fillStyle = stripBg();
   cc.fillRect(0, 0, box.width, box.height);
 
-  const fps = S.run && S.run.fps ? S.run.fps : 60;
-  const startT = S.run.start_frame / fps;
-  const endT = S.run.end_frame / fps;
+  const fps = Number.isFinite(lr.fps) && lr.fps > 0 ? lr.fps : 60;
+  const startT = lr.start_frame / fps;
+  const endT = lr.end_frame / fps;
   const count = Math.max(5, Math.min(12, Math.floor(box.width / 86)));
   const thumbW = box.width / count;
   vid.pause();
@@ -2046,16 +2101,17 @@ async function renderLabelStrip(){
     cc.strokeStyle = 'rgba(255,255,255,.12)';
     cc.strokeRect(i * thumbW, 0, thumbW, box.height);
   }
-  seekSourceFrameToCanvas(labelState.frame, false);
+  labelSeek(labelState.frame);
 }
 
 function setLabelFrame(frame, seek = true){
-  if(!S.run) return;
-  frame = Math.min(S.run.end_frame, Math.max(S.run.start_frame, Math.round(frame)));
+  const lr = labelRun();
+  if(!lr) return;
+  frame = Math.min(lr.end_frame, Math.max(lr.start_frame, Math.round(frame)));
   labelState.frame = frame;
   $('labelFrameOut').textContent = String(frame);
-  $('labelCursor').style.left = `${frameToRunPct(frame)}%`;
-  if(seek) seekSourceFrameToCanvas(frame, false);
+  $('labelCursor').style.left = `${labelPct(frame)}%`;
+  if(seek) labelSeek(frame);
 }
 
 function renderLabelMarks(){
@@ -2065,7 +2121,7 @@ function renderLabelMarks(){
     const bar = document.createElement('div');
     bar.className = `hitBar ${LABEL_BAR_CLASS[event.type] || 'unknown'}`
       + (index === labelState.selected ? ' selected' : '');
-    bar.style.left = `${frameToRunPct(event.frame)}%`;
+    bar.style.left = `${labelPct(event.frame)}%`;
     bar.title = `Frame ${event.frame} · ${LABEL_NAMES[event.type] || event.type}`;
     bar.addEventListener('pointerdown', e => e.stopPropagation());
     bar.addEventListener('click', e => {
@@ -2106,7 +2162,7 @@ function scheduleLabelSave(){
 }
 
 function addLabelAtCurrentFrame(type){
-  if(!S.run || labelState.frame == null) return;
+  if(!labelRun() || labelState.frame == null) return;
   const frame = labelState.frame;
   const near = labelState.events.findIndex(ev => Math.abs(ev.frame - frame) <= LABEL_REPLACE_RADIUS);
   if(near >= 0){
@@ -2140,10 +2196,11 @@ $('lStepF5').onclick = () => setLabelFrame(labelState.frame + 5);
 
 let labelScrubbing = false;
 function scrubLabelPointer(e){
-  if(!S.run) return;
+  const lr = labelRun();
+  if(!lr) return;
   const r = $('labelTimeline').getBoundingClientRect();
   const pct = Math.min(1, Math.max(0, (e.clientX - r.left) / r.width));
-  setLabelFrame(S.run.start_frame + pct * (S.run.end_frame - S.run.start_frame));
+  setLabelFrame(lr.start_frame + pct * (lr.end_frame - lr.start_frame));
 }
 $('labelTimeline').addEventListener('pointerdown', e => {
   if(S.phase !== 'label') return;
