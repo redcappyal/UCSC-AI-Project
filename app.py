@@ -11,10 +11,11 @@ from werkzeug.utils import secure_filename
 
 from judge_call import (
     Point,
-    calibration_wall_x_bounds,
     judge_ball,
+    judge_margin_px,
     load_ball_positions,
     load_calibration_lines,
+    wall_diagram_coordinates,
 )
 
 try:
@@ -100,6 +101,7 @@ def public_job(job):
     for key in (
         "rows",
         "hits",
+        "target_zones",
         "hits_error",
         "annotated_video_url",
         "csv_url",
@@ -356,14 +358,13 @@ def judge_frame():
             source = "detected_center"
 
         call, reason, top_y, bottom_y = judge_ball(ball, top_line, bottom_line)
-        margin_px = min(ball.y - top_y, bottom_y - ball.y)
-        wall_left, wall_right = calibration_wall_x_bounds(
+        margin_px = judge_margin_px(ball, top_line, bottom_line)
+        diagram = wall_diagram_coordinates(
+            ball,
             top_line,
             bottom_line,
             calibration.get("frame_width", 1),
         )
-        wall_x = (ball.x - wall_left) / (wall_right - wall_left)
-        wall_y = (ball.y - top_y) / (bottom_y - top_y)
     except Exception as error:
         return error_response(str(error))
 
@@ -379,9 +380,9 @@ def judge_frame():
             "top_y": top_y,
             "bottom_y": bottom_y,
             "wall_diagram": {
-                "x": wall_x,
-                "y": wall_y,
-                "x_span": [wall_left, wall_right],
+                "x": diagram["x"],
+                "y": diagram["y"],
+                "x_span": diagram["x_span"],
                 "y_reference": "0 is the out-line lower edge; 1 is the tin top edge",
             },
             "outside_line_span": (

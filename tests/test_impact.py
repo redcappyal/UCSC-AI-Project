@@ -9,6 +9,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from detect_wall_hits import detect_hits_from_rows
+from judge_call import Line, Point, judge_ball, judge_margin_px, wall_diagram_coordinates
 from job_runner import judge_hits
 from tracking_common import ball_csv_row
 
@@ -213,3 +214,35 @@ def test_out_call_with_negative_margin(calibrated_run):
     judged = judge_hits(calibrated_run, results_map(rows), [strongest(hits)])
     assert judged[0]["call"] == "OUT"
     assert judged[0]["margin_px"] < 0
+
+
+def test_tilted_judge_uses_perpendicular_margin():
+    top = Line(Point(0, 100), Point(1000, 200))
+    bottom = Line(Point(0, 700), Point(1000, 800))
+    ball = Point(500, 450)
+
+    call, reason, top_y, bottom_y = judge_ball(ball, top, bottom)
+
+    assert call == "IN"
+    assert reason == "between_lines"
+    assert top_y == pytest.approx(150)
+    assert bottom_y == pytest.approx(750)
+    # Vertical distance would be 300px; tilted-line perpendicular distance is
+    # slightly smaller and is the value callers should display as margin.
+    assert judge_margin_px(ball, top, bottom) == pytest.approx(300 / (1.01 ** 0.5))
+
+
+def test_tilted_wall_diagram_coordinates_follow_line_tilt():
+    top = Line(Point(100, 100), Point(1100, 200))
+    bottom = Line(Point(200, 700), Point(1200, 800))
+    top_mid = top.point_at(0.25)
+    bottom_mid = bottom.point_at(0.25)
+    ball = Point(
+        top_mid.x + 0.4 * (bottom_mid.x - top_mid.x),
+        top_mid.y + 0.4 * (bottom_mid.y - top_mid.y),
+    )
+
+    diagram = wall_diagram_coordinates(ball, top, bottom)
+
+    assert diagram["x"] == pytest.approx(0.25, abs=0.002)
+    assert diagram["y"] == pytest.approx(0.4, abs=0.002)

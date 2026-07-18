@@ -20,6 +20,8 @@ IMPACT_FIT_SAMPLES = 4
 GAP_BRIDGE_SECONDS = 0.5
 MAX_IMPACT_MISMATCH_PX = 40.0
 AUDIO_MATCH_TOLERANCE_S = 0.15
+MAX_LINE_DISTANCE_PX = 80.0
+MIN_LINE_SPLIT_IMPROVEMENT = 0.30
 REQUIRED_COLUMNS = ("source_frame", "timestamp_seconds", "detected", "x_center", "y_center")
 
 # Which bounce detector localizes the impact for each picked hit. Set to
@@ -224,6 +226,119 @@ def compute_candidates(frames, timestamps, positions, tracks, smooth_window, max
     return candidates
 
 
+def compute_line_distance_candidates(frames, timestamps, positions, tracks, smooth_window, calibration):
+    """Candidate impacts from local minima in distance to calibrated wall lines."""
+    lines = calibration_line_coefficients(calibration) if calibration else {}
+    if not lines:
+        return []
+
+    candidates = []
+    cfg = TWO_STAGE_DEFAULTS
+
+    for track_index, (start, end) in enumerate(tracks):
+        track_frames = frames[start:end]
+        track_times = timestamps[start:end]
+        track_positions = smooth_positions(positions[start:end], smooth_window)
+        if len(track_frames) < max(3, cfg["min_trajectory_points"]):
+            continue
+
+        line_names = list(lines)
+        distances = np.stack(
+            [distance_to_line(track_positions, *lines[name]) for name in line_names]
+        )
+        nearest_line_indices = np.argmin(distances, axis=0)
+        nearest_distances = distances[nearest_line_indices, np.arange(len(track_frames))]
+
+        for sample in range(1, len(track_frames) - 1):
+            distance = float(nearest_distances[sample])
+            if distance > MAX_LINE_DISTANCE_PX:
+                continue
+
+            left_drop = float(nearest_distances[sample - 1] - nearest_distances[sample])
+            right_rise = float(nearest_distances[sample + 1] - nearest_distances[sample])
+            decreases_then_increases = left_drop > 0 and right_rise > 0
+            if not decreases_then_increases:
+                continue
+
+            global_index = start + sample
+            metrics = split_fit_metrics_at_index(
+                timestamps,
+                positions,
+                global_index,
+                cfg["window_half_width"],
+                cfg["min_segment_points"],
+            )
+            if metrics is None or metrics["split_improvement"] < MIN_LINE_SPLIT_IMPROVEMENT:
+                continue
+
+            dt_before = track_times[sample] - track_times[sample - 1]
+            dt_after = track_times[sample + 1] - track_times[sample]
+            if dt_before <= 0 or dt_after <= 0:
+                continue
+
+            v_before = (track_positions[sample] - track_positions[sample - 1]) / dt_before
+            v_after = (track_positions[sample + 1] - track_positions[sample]) / dt_after
+            nearest_line = line_names[int(nearest_line_indices[sample])]
+            valley_depth = min(left_drop, right_rise)
+
+            candidates.append(
+                {
+                    "hit_frame": int(track_frames[sample]),
+                    "timestamp_seconds": float(track_times[sample]),
+                    "candidate_x": float(track_positions[sample][0]),
+                    "candidate_y": float(track_positions[sample][1]),
+                    "dv_magnitude": float(np.linalg.norm(v_after - v_before)),
+                    "speed_before": float(np.linalg.norm(v_before)),
+                    "speed_after": float(np.linalg.norm(v_after)),
+                    "turn_degrees": turn_angle_degrees(v_before, v_after),
+                    "after_gap": False,
+                    "track_index": track_index,
+                    "sample_global_index": global_index,
+                    "candidate_source": "line_distance",
+                    "requires_bounce_result": True,
+                    "nearest_line": nearest_line,
+                    "line_distance_px": distance,
+                    "line_valley_depth_px": float(valley_depth),
+                    "distance_decreases_then_increases": True,
+                    **metrics,
+                }
+            )
+
+    return candidates
+
+
+def merge_candidate_features(candidates):
+    """Merge velocity and line-distance candidates landing on the same sample."""
+    merged = {}
+    for candidate in candidates:
+        key = candidate["sample_global_index"]
+        existing = merged.get(key)
+        candidate.setdefault("candidate_source", "velocity")
+        candidate.setdefault("requires_bounce_result", False)
+        if existing is None:
+            merged[key] = candidate
+            continue
+
+        sources = set(str(existing.get("candidate_source", "velocity")).split("+"))
+        sources.update(str(candidate.get("candidate_source", "velocity")).split("+"))
+        existing["candidate_source"] = "+".join(sorted(sources))
+        existing["requires_bounce_result"] = (
+            existing.get("requires_bounce_result", False)
+            and candidate.get("requires_bounce_result", False)
+        )
+
+        for key_name, value in candidate.items():
+            if key_name in existing:
+                if key_name in {"split_improvement", "line_valley_depth_px"}:
+                    existing[key_name] = max(float(existing[key_name]), float(value))
+                elif key_name == "line_distance_px":
+                    existing[key_name] = min(float(existing[key_name]), float(value))
+                continue
+            existing[key_name] = value
+
+    return list(merged.values())
+
+
 def fit_linear_motion(times, positions):
     """Least-squares fit p(t) = p0 + v*t; returns (p0, v) or None."""
     if len(times) < 2:
@@ -343,6 +458,11 @@ def calibration_line_coefficients(calibration):
     return coefficients
 
 
+def distance_to_line(points, slope, intercept):
+    points = np.asarray(points, dtype=np.float64)
+    return np.abs(slope * points[:, 0] - points[:, 1] + intercept) / np.sqrt(slope * slope + 1)
+
+
 def fit_segment_with_residual(times, positions):
     """fit_linear_motion plus the fit's summed squared residual, or None."""
     fit = fit_linear_motion(times, positions)
@@ -351,6 +471,42 @@ def fit_segment_with_residual(times, positions):
     p0, v = fit
     predicted = p0 + times[:, np.newaxis] * v
     return p0, v, float(np.sum((positions - predicted) ** 2))
+
+
+def split_fit_metrics_at_index(timestamps, positions, index, half_width, min_segment_points):
+    """How much better a two-segment motion fit is than one straight fit."""
+    count = len(timestamps)
+    lo = max(0, int(index) - half_width)
+    hi = min(count, int(index) + half_width + 1)
+    if hi - lo < min_segment_points * 2 - 1:
+        return None
+
+    single = fit_segment_with_residual(timestamps[lo:hi], positions[lo:hi])
+    if single is None or single[2] < 1e-9:
+        return None
+
+    best = None
+    for k in range(lo + min_segment_points - 1, hi - min_segment_points + 1):
+        fit_a = fit_segment_with_residual(timestamps[lo : k + 1], positions[lo : k + 1])
+        fit_b = fit_segment_with_residual(timestamps[k:hi], positions[k:hi])
+        if fit_a is None or fit_b is None:
+            continue
+        total = fit_a[2] + fit_b[2]
+        if best is None or total < best[0]:
+            best = (total, k, fit_a, fit_b)
+
+    if best is None:
+        return None
+
+    total, split_index, (_, v_a, ssr_a), (_, v_b, ssr_b) = best
+    improvement = max(0.0, 1.0 - total / single[2])
+    return {
+        "split_improvement": float(improvement),
+        "split_index": int(split_index),
+        "split_direction_change_deg": turn_angle_degrees(v_a, v_b),
+        "split_rms_in": float(np.sqrt(ssr_a / (split_index - lo + 1))),
+        "split_rms_out": float(np.sqrt(ssr_b / (hi - split_index))),
+    }
 
 
 def detect_bounce_legacy(trajectory, calibration, config=None, diagnostics_out=None):
@@ -558,10 +714,16 @@ def is_significant(candidate):
     # curvature (gravity) turns it only a few degrees per sample, even near
     # the arc's apex where the ball is slow. The |dv| floor rejects
     # direction flips from detector jitter on a slow or held ball.
-    return (
+    velocity_evidence = (
         candidate["dv_magnitude"] >= MIN_DV_PX_PER_SECOND
         and candidate["turn_degrees"] >= MIN_TURN_DEGREES
     )
+    line_evidence = (
+        candidate.get("distance_decreases_then_increases") is True
+        and candidate.get("line_distance_px", float("inf")) <= MAX_LINE_DISTANCE_PX
+        and candidate.get("split_improvement", 0.0) >= MIN_LINE_SPLIT_IMPROVEMENT
+    )
+    return velocity_evidence or line_evidence
 
 
 def score_candidate(candidate):
@@ -571,11 +733,19 @@ def score_candidate(candidate):
 
     # Ranking, not filtering: keep the old thresholds in is_significant(), but
     # prefer candidates with both a sharp turn and meaningful ball speed.
-    return float(
+    base_score = (
         0.55 * dv_score
         + 0.35 * turn_score
         + 0.10 * min(speed_score, 4.0)
     )
+    if "line_distance_px" not in candidate:
+        return float(base_score)
+
+    proximity_score = max(0.0, 1.0 - candidate["line_distance_px"] / MAX_LINE_DISTANCE_PX)
+    valley_score = min(candidate.get("line_valley_depth_px", 0.0) / 2.0, 2.0)
+    split_score = min(candidate.get("split_improvement", 0.0) / MIN_LINE_SPLIT_IMPROVEMENT, 3.0)
+    line_score = 1.40 * proximity_score + 0.55 * valley_score + 0.90 * split_score
+    return float(base_score + line_score)
 
 
 def pick_peaks(candidates, min_gap, top_k, threshold):
@@ -587,7 +757,7 @@ def pick_peaks(candidates, min_gap, top_k, threshold):
 
     for candidate in ranked:
         if threshold is not None and candidate["dv_magnitude"] < threshold:
-            break
+            continue
         # Significance depends on the candidate's own speed, so it is not
         # monotonic in |dv|: keep scanning rather than stopping.
         if threshold is None and not is_significant(candidate):
@@ -677,6 +847,11 @@ def detect_hits_from_positions(
     detector = bounce_detector or BOUNCE_DETECTOR
     tracks = split_into_tracks(frames, positions, max_gap, max_jump)
     candidates = compute_candidates(frames, timestamps, positions, tracks, smooth)
+    if calibration is not None and detector != "legacy_sign_flip":
+        candidates = merge_candidate_features(
+            candidates
+            + compute_line_distance_candidates(frames, timestamps, positions, tracks, smooth, calibration)
+        )
     candidates = [
         candidate
         for candidate in candidates
@@ -696,9 +871,12 @@ def detect_hits_from_positions(
     # without a calibration the legacy impact fit is the only option.
     two_stage = detector == "two_stage" and calibration is not None
 
+    localized_hits = []
     for hit in hits:
         # Audio-only rescues have no trajectory sample to anchor a fit on.
         if "sample_global_index" not in hit:
+            if hit.get("audio_assisted"):
+                localized_hits.append(hit)
             continue
         if two_stage:
             pivot = hit["sample_global_index"]
@@ -710,10 +888,23 @@ def detect_hits_from_positions(
                 calibration,
                 diagnostics_out=diagnostics,
             )
+            for key in (
+                "candidate_source",
+                "nearest_line",
+                "line_distance_px",
+                "line_valley_depth_px",
+                "distance_decreases_then_increases",
+                "split_improvement",
+                "split_direction_change_deg",
+            ):
+                if key in hit:
+                    diagnostics[key] = hit[key]
             hit.pop("track_index", None)
             hit.pop("sample_global_index", None)
             hit["method"] = "two_stage"
             hit["diagnostics"] = diagnostics
+            if result is None and hit.get("requires_bounce_result"):
+                continue
             if result is not None:
                 hit.update(
                     {
@@ -724,6 +915,7 @@ def detect_hits_from_positions(
                         "impact_frame": float(frames[lo + result.impact_index]),
                     }
                 )
+            localized_hits.append(hit)
             continue
 
         impact = estimate_impact(timestamps, positions, tracks, hit)
@@ -732,12 +924,13 @@ def detect_hits_from_positions(
         if impact is not None:
             impact["impact_frame"] = impact["impact_time"] * fps
             hit.update(impact)
+        localized_hits.append(hit)
 
     # Audio-assisted hits skip the impact-x gate: recall over precision, and
     # audio-only rescues have no position to gate on at all.
     hits = [
         hit
-        for hit in hits
+        for hit in localized_hits
         if hit.get("audio_assisted")
         or is_inside_x_range(hit.get("impact_x", hit["candidate_x"]), wall_x_range)
     ]

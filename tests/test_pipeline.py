@@ -74,6 +74,7 @@ def test_judge_hits_skips_line_call_for_racket_events(tmp_path):
     payload = json.loads((tmp_path / "detected_hits.json").read_text())
     assert payload["audio_available"] is True
     assert payload["hits"][0]["call"] is None
+    assert payload["target_zones"]["total_wall_hits"] == 0
 
 
 def test_judge_hits_wall_events_judged_as_before(tmp_path):
@@ -114,6 +115,13 @@ def test_judge_hits_wall_events_judged_as_before(tmp_path):
     assert entry["call"] == "IN"
     assert entry["judge_source"] == "detected_center"
     assert entry["event_type"] == "wall"
+    assert entry["wall_diagram"]["x"] == 0.45
+    assert entry["target_zone"]["zone"] == 2
+
+    payload = json.loads((tmp_path / "detected_hits.json").read_text())
+    assert payload["target_zones"]["total_wall_hits"] == 1
+    assert payload["target_zones"]["zones"][1]["count"] == 1
+    assert payload["target_zones"]["common_zones"][0]["zone"] == 2
 
 
 def test_job_restart_recovery(tmp_path, monkeypatch):

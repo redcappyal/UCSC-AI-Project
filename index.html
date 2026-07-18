@@ -225,6 +225,24 @@
   .tlReadout output{color:var(--text); font-weight:600}
   .playBtn svg{width:22px; height:22px}
 
+  .targetZones{border:1px solid var(--line); border-radius:8px; overflow:hidden; background:var(--surface)}
+  .targetHead{display:flex; justify-content:space-between; gap:12px; align-items:baseline;
+    padding:12px 14px; border-bottom:1px solid var(--line)}
+  .targetHead strong{font-size:18px}
+  .targetHead span{color:var(--dim); font-size:13px}
+  .targetGrid{display:grid; grid-template-columns:repeat(3, 1fr); border-bottom:1px solid var(--line)}
+  .targetCell{min-height:82px; padding:9px; border-right:1px solid rgba(255,255,255,.12);
+    border-bottom:1px solid rgba(255,255,255,.12); display:flex; flex-direction:column;
+    justify-content:space-between; background:rgba(245,197,24,.10)}
+  .targetCell:nth-child(3n){border-right:none}
+  .targetCell:nth-last-child(-n+3){border-bottom:none}
+  .targetZoneNum{font-size:13px; color:var(--dim); font-weight:700}
+  .targetPct{font-size:28px; font-weight:800; color:var(--text); font-variant-numeric:tabular-nums}
+  .targetMeta{display:grid; grid-template-columns:1fr 1fr; gap:10px; padding:12px 14px}
+  .targetMeta div{min-width:0}
+  .targetMeta strong{display:block; font-size:13px; color:var(--dim); margin-bottom:4px}
+  .targetMeta span{font-size:15px; line-height:1.35}
+
   /* The verdict box always occupies the same space: empty (blank), event
      classification (neutral), and IN/OUT states share one reserved height so
      showing or clearing a verdict never shifts the layout around it. */
@@ -438,6 +456,9 @@
       </div>
     </div>
     <p class="status" id="hitsStatus"></p>
+    <div class="row">
+      <button id="targetBtn" type="button">Target zones</button>
+    </div>
     <div class="sliderlabel"><span>Frame to judge</span><output id="judgeFrameOut"></output></div>
     <div class="row">
       <input type="number" id="judgeFrame" step="1">
@@ -488,6 +509,22 @@
     </div>
     <button id="labelDeleteBtn" type="button" disabled>Delete selected label</button>
     <p class="status" id="labelStatus"></p>
+  </section>
+
+  <!-- PHASE: target zones -->
+  <section class="hidden" id="p-target">
+    <div class="targetZones hidden" id="targetZones">
+      <div class="targetHead">
+        <strong>Target zones</strong>
+        <span id="targetTotal"></span>
+      </div>
+      <div class="targetGrid" id="targetGrid"></div>
+      <div class="targetMeta">
+        <div><strong>Most used</strong><span id="targetCommon"></span></div>
+        <div><strong>Unused</strong><span id="targetMissing"></span></div>
+      </div>
+    </div>
+    <p class="status" id="targetStatus"></p>
   </section>
 </main>
 
@@ -540,6 +577,8 @@ const S = {
   lines:{out:null, tin:null}, // committed: {seeds, maskCanvas, fit}
   run:null,                   // backend tracking result
   trackSeekId:0,
+  trackPlaying:false,
+  trackRaf:null,
   trackStripGen:0,            // invalidates in-flight timeline thumbnail renders
   trackView:{startF:0, endF:0, cursor:0, key:'', ovDone:false, timer:null}, // fine-window state for the call page's coarse-fine timeline
   videoFps:null,              // probed by the server at upload; null until known
@@ -558,18 +597,19 @@ const S = {
 /* ---------- phase / UI ---------- */
 const STEP_META = {
   load:   {label:'Squash Line Calling', instr:''},
-  frame:  {label:'1/6 · Pick frame', instr:'Drag the film strip under the playhead to a frame where both red lines are fully visible and unblocked.',
+  frame:  {label:'1/7 · Pick frame', instr:'Drag the film strip under the playhead to a frame where both red lines are fully visible and unblocked.',
            action:{btn:'useFrame', label:'Use frame'}},
-  tap_out:{label:'2/6 · Out line', instr:'', action:{btn:'confirmBtn', label:'Looks right'}},
-  tap_tin:{label:'3/6 · Tin', instr:'', action:{btn:'confirmBtn', label:'Looks right'}},
-  review: {label:'4/6 · Review', instr:'Check that each fitted edge hugs the real paint edge across the whole line.',
+  tap_out:{label:'2/7 · Out line', instr:'', action:{btn:'confirmBtn', label:'Looks right'}},
+  tap_tin:{label:'3/7 · Tin', instr:'', action:{btn:'confirmBtn', label:'Looks right'}},
+  review: {label:'4/7 · Review', instr:'Check that each fitted edge hugs the real paint edge across the whole line.',
            action:{btn:'chooseClipBtn', label:'Use lines'}},
-  clip:   {label:'5/6 · Clip', instr:'Drag the top strip to slide the clip along the video, then drag the handles to trim it tight around the shot.',
+  clip:   {label:'5/7 · Clip', instr:'Drag the top strip to slide the clip along the video, then drag the handles to trim it tight around the shot.',
            action:{btn:'runTrackBtn', label:'Track ball'}},
   analyze:{label:'Analyzing', instr:''},
-  track:  {label:'6/6 · Call', instr:'Tap a hit bar or enter a frame number, then judge it.',
+  track:  {label:'6/7 · Call', instr:'Tap a hit bar or enter a frame number, then judge it.',
            action:{btn:'judgeBtn', label:'Judge'}},
   label:  {label:'Label bounces', instr:'Drag the strip to the exact impact frame, then tap its bounce type. Tap a marker to revisit it — labels save automatically.'},
+  target: {label:'7/7 · Targets', instr:''},
 };
 
 /* Header action pill: proxies the current phase's primary button, which stays
@@ -596,7 +636,7 @@ function setPhase(p){
   resetZoom();
   stage.classList.toggle('hidden', p === 'load');
   document.body.classList.toggle('phase-load', p === 'load');
-  for(const id of ['p-load','p-frame','p-tap','p-review','p-clip','p-analyze','p-track','p-label']) $(id).classList.add('hidden');
+  for(const id of ['p-load','p-frame','p-tap','p-review','p-clip','p-analyze','p-track','p-label','p-target']) $(id).classList.add('hidden');
   $('analyzeOverlay').classList.toggle('hidden', p !== 'analyze');
   $('stepLabel').textContent = STEP_META[p].label;
   $('hdrBack').classList.toggle('hidden', p === 'load');
@@ -627,6 +667,7 @@ function setPhase(p){
   else { stopAnalyzePreview(); }
   if(p === 'track'){ $('p-track').classList.remove('hidden'); buildTrackView(); }
   if(p === 'label'){ $('p-label').classList.remove('hidden'); buildLabelView(); }
+  if(p === 'target'){ $('p-target').classList.remove('hidden'); buildTargetView(); }
   // The mode switcher only exists on the start screen; once a clip is
   // loaded into a path, Back is the only way out to switch modes.
   $('navPill').classList.toggle('hidden', p !== 'load');
@@ -755,6 +796,8 @@ $('hdrBack').onclick = () => {
     setPhase('clip');
   } else if(S.phase === 'label'){
     vid.pause(); S.base = null; $('fileIn').value = ''; setPhase('load');
+  } else if(S.phase === 'target'){
+    setPhase('track');
   }
 };
 
@@ -2358,8 +2401,62 @@ $('runTrackBtn').onclick = async () => {
   }
 };
 
+function formatZoneList(zones, maxItems = 6){
+  if(!zones || !zones.length) return 'None';
+  const shown = zones.slice(0, maxItems).map(zone => `${zone.zone}`);
+  const extra = zones.length - shown.length;
+  return extra > 0 ? `${shown.join(', ')} +${extra}` : shown.join(', ');
+}
+
+function targetZoneFill(percentage){
+  if(percentage <= 0) return 'rgba(255,255,255,.03)';
+  const alpha = Math.min(.78, .14 + percentage / 100 * 1.35);
+  return `rgba(245,197,24,${alpha.toFixed(3)})`;
+}
+
+function renderTargetZones(summary){
+  const panel = $('targetZones');
+  if(!summary || !summary.total_wall_hits || !summary.zones || !summary.zones.length){
+    panel.classList.add('hidden');
+    $('targetGrid').innerHTML = '';
+    return;
+  }
+
+  panel.classList.remove('hidden');
+  $('targetTotal').textContent = `${summary.total_wall_hits} wall hit${summary.total_wall_hits === 1 ? '' : 's'}`;
+  $('targetCommon').textContent = formatZoneList(summary.common_zones, 3);
+  $('targetMissing').textContent = formatZoneList(summary.missing_zones, 8);
+
+  const grid = $('targetGrid');
+  grid.innerHTML = '';
+  grid.style.gridTemplateColumns = `repeat(${summary.columns || 3}, 1fr)`;
+  for(const zone of summary.zones){
+    const cell = document.createElement('div');
+    cell.className = 'targetCell';
+    cell.style.background = targetZoneFill(zone.percentage || 0);
+    cell.innerHTML =
+      `<span class="targetZoneNum">${zone.zone}</span>` +
+      `<span class="targetPct">${Math.round(zone.percentage || 0)}%</span>`;
+    cell.title = `Zone ${zone.zone}: ${zone.count} hit${zone.count === 1 ? '' : 's'}`;
+    grid.appendChild(cell);
+  }
+}
+
+function buildTargetView(){
+  renderTargetZones(S.run && S.run.target_zones);
+  const total = S.run && S.run.target_zones ? S.run.target_zones.total_wall_hits : 0;
+  if(total){
+    $('targetStatus').textContent = 'Percentages are based on detected front-wall hits in this clip.';
+    $('targetStatus').className = 'status';
+  } else {
+    $('targetStatus').textContent = 'No target-zone data is available for this clip.';
+    $('targetStatus').className = 'status warn';
+  }
+}
+
 function buildTrackView(){
   if(!S.run) return;
+  transportStop();
   const hits = S.run.hits || [];
   const initialFrame = hits.length ? hits[0].frame : S.run.start_frame;
   $('judgeFrame').min = S.run.start_frame;
@@ -2368,7 +2465,10 @@ function buildTrackView(){
   $('judgeFrameOut').textContent = `${S.run.start_frame}–${S.run.end_frame}`;
   clearJudgeResult();
   buildHitTimeline(hits, initialFrame);
+  $('targetBtn').disabled = !(S.run.target_zones && S.run.target_zones.total_wall_hits);
 }
+
+$('targetBtn').onclick = () => setPhase('target');
 
 function frameToRunPct(frame){
   const span = Math.max(1, S.run.end_frame - S.run.start_frame);
@@ -2442,6 +2542,7 @@ function makeHitBar(hit, leftPct, mini){
   bar.title = `Frame ${hit.frame} · ${label}${audio}`;
   bar.addEventListener('pointerdown', e => e.stopPropagation());
   bar.addEventListener('click', () => {
+    transportStop();
     seekSourceFrameToCanvas(hit.frame);
     // Verdicts apply to front-wall hits only; other events show their
     // classification without requesting a line call.
@@ -2617,7 +2718,6 @@ $('hitTimeline').addEventListener('pointercancel', () => {
   trackScrubbing = false;
   scheduleTrackDetailRender(150);
 });
-
 function drawTrackFrame(){
   ctx.drawImage(vid, 0, 0, S.W, S.H);
   for(const k of ORDER){
@@ -2686,10 +2786,12 @@ async function seekSourceFrameToCanvas(frame, syncInput=true){
 }
 
 $('judgeFrame').addEventListener('change', () => {
+  transportStop();
   const frame = parseInt($('judgeFrame').value, 10);
   if(!Number.isNaN(frame)) seekSourceFrameToCanvas(frame);
 });
 $('judgeFrame').addEventListener('input', () => {
+  transportStop();
   const frame = parseInt($('judgeFrame').value, 10);
   if(!Number.isNaN(frame) && isTrackedFrame(frame)) seekSourceFrameToCanvas(frame, false);
 });

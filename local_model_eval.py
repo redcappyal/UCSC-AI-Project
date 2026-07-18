@@ -32,7 +32,7 @@ if load_dotenv is not None:
     load_dotenv(Path(__file__).with_name(".env"))
 
 
-DEFAULT_VIDEO_INPUT_PATH = Path(__file__).with_name("SquashAnalytics.mp4")
+DEFAULT_VIDEO_INPUT_PATH = Path(__file__).with_name("ModelTrainTest.mp4")
 DEFAULT_OUTPUT_VIDEO_PATH = Path(__file__).with_name("annotated_output_local.mp4")
 DEFAULT_CSV_OUTPUT_PATH = Path(__file__).with_name("ball_coordinates_local.csv")
 
@@ -74,7 +74,7 @@ def main():
 
     source_fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
     source_frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-    start_frame = args.start_frame if args.start_frame is not None else 0
+    start_frame = 2200
     end_frame = args.end_frame if args.end_frame is not None else source_frame_count - 1
     end_frame = min(end_frame, source_frame_count - 1)
 

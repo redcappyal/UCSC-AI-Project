@@ -24,8 +24,8 @@ from tracking_common import (
 
 API_URL = "https://serverless.roboflow.com"
 
-WORKSPACE = "squash-line-calling-model"
-WORKFLOW_ID = "squash-line-calling-vsquash-line-calling-1-rfdetr-medium-t1-logic"
+WORKSPACE = "matthews-workspace-vbemk"
+WORKFLOW_ID = "ai-squash-line-judge-3-vai-squash-line-judge-3-hifw5-2-yolo26s-t1-logic"
 IMAGE_INPUT = "image"
 
 VIDEO_INPUT_PATH = Path(__file__).with_name("SquashTestVid.mp4")

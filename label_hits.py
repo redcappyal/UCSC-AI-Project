@@ -17,36 +17,34 @@ def load_labels(labels_path):
 
     labels = set()
     with labels_path.open(newline="") as labels_file:
-        sample = labels_file.read(1024)
-        labels_file.seek(0)
+        reader = csv.reader(labels_file)
+        first_row = next(reader, None)
+        if not first_row:
+            return labels
 
-        try:
-            has_header = csv.Sniffer().has_header(sample)
-        except csv.Error:
-            has_header = False
+        frame_column_names = ("hit_frame", "source_frame", "frame")
+        normalized_first_row = [value.strip() for value in first_row]
+        frame_column_index = next(
+            (
+                index
+                for index, column in enumerate(normalized_first_row)
+                if column in frame_column_names
+            ),
+            None,
+        )
 
-        if has_header:
-            reader = csv.DictReader(labels_file)
-            frame_column = next(
-                (
-                    column
-                    for column in ("hit_frame", "source_frame", "frame")
-                    if column in (reader.fieldnames or [])
-                ),
-                None,
-            )
-            if frame_column is None:
-                return labels
-
-            for row in reader:
-                value = row.get(frame_column, "").strip()
-                if value:
-                    labels.add(int(value))
+        if frame_column_index is None:
+            rows = [first_row, *reader]
+            frame_column_index = 0
         else:
-            reader = csv.reader(labels_file)
-            for row in reader:
-                if row and row[0].strip():
-                    labels.add(int(row[0]))
+            rows = reader
+
+        for row in rows:
+            if len(row) <= frame_column_index:
+                continue
+            value = row[frame_column_index].strip()
+            if value:
+                labels.add(int(value))
 
     return labels
 

@@ -18,15 +18,38 @@ class Line:
     left: Point
     right: Point
 
+    @property
+    def dx(self):
+        return self.right.x - self.left.x
+
+    @property
+    def dy(self):
+        return self.right.y - self.left.y
+
+    @property
+    def length(self):
+        return (self.dx * self.dx + self.dy * self.dy) ** 0.5
+
     def y_at_x(self, x):
         if self.left.x == self.right.x:
             raise ValueError("Line endpoints must have different x coordinates.")
 
-        slope = (self.right.y - self.left.y) / (self.right.x - self.left.x)
+        slope = self.dy / self.dx
         return self.left.y + slope * (x - self.left.x)
 
     def contains_x(self, x):
         return min(self.left.x, self.right.x) <= x <= max(self.left.x, self.right.x)
+
+    def point_at(self, u):
+        return Point(self.left.x + self.dx * u, self.left.y + self.dy * u)
+
+    def signed_distance_below(self, point):
+        """Perpendicular signed distance: positive is below the left->right line."""
+        length = self.length
+        if length <= 0:
+            raise ValueError("Line endpoints must be distinct.")
+        cross = self.dx * (point.y - self.left.y) - self.dy * (point.x - self.left.x)
+        return cross / length
 
 
 def parse_point(value):
@@ -124,22 +147,80 @@ def load_ball_position(csv_path, frame):
 
 
 def judge_ball(ball, top_line, bottom_line):
-    top_y = top_line.y_at_x(ball.x)
-    bottom_y = bottom_line.y_at_x(ball.x)
+    try:
+        top_y = top_line.y_at_x(ball.x)
+        bottom_y = bottom_line.y_at_x(ball.x)
+    except ValueError:
+        top_y = bottom_y = None
 
-    if top_y >= bottom_y:
+    top_margin = top_line.signed_distance_below(ball)
+    bottom_margin = -bottom_line.signed_distance_below(ball)
+
+    top_mid = top_line.point_at(0.5)
+    bottom_mid = bottom_line.point_at(0.5)
+    if top_line.signed_distance_below(bottom_mid) <= 0 or bottom_line.signed_distance_below(top_mid) >= 0:
         raise ValueError(
-            "At the ball x-coordinate, the top line is not above the bottom line. "
+            "The calibrated top/bottom lines do not form a valid wall band. "
             "Check that the line coordinates were entered correctly."
         )
 
-    if ball.y <= top_y:
+    if top_margin <= 0:
         return "OUT", "above_or_on_top_line", top_y, bottom_y
 
-    if ball.y >= bottom_y:
+    if bottom_margin <= 0:
         return "OUT", "below_or_on_bottom_line", top_y, bottom_y
 
     return "IN", "between_lines", top_y, bottom_y
+
+
+def judge_margin_px(ball, top_line, bottom_line):
+    """Positive when IN, negative when OUT, measured perpendicular to tilted lines."""
+    top_margin = top_line.signed_distance_below(ball)
+    bottom_margin = -bottom_line.signed_distance_below(ball)
+    return min(top_margin, bottom_margin)
+
+
+def wall_diagram_coordinates(ball, top_line, bottom_line, frame_width=None):
+    """Map a point into the tilted quadrilateral between calibrated wall lines.
+
+    x is progress along the calibrated wall lines. y is 0 on the out line and
+    1 on the tin line, measured along the interpolated connector between them.
+    """
+    best = None
+    # Closed-form bilinear inversion is overkill here and fragile for nearly
+    # parallel lines. A dense 1-D search is stable and sub-pixel enough for UI.
+    for step in range(1001):
+        u = step / 1000
+        top = top_line.point_at(u)
+        bottom = bottom_line.point_at(u)
+        vx = bottom.x - top.x
+        vy = bottom.y - top.y
+        denom = vx * vx + vy * vy
+        if denom <= 1e-9:
+            continue
+        v = ((ball.x - top.x) * vx + (ball.y - top.y) * vy) / denom
+        projected_x = top.x + vx * v
+        projected_y = top.y + vy * v
+        error = (ball.x - projected_x) ** 2 + (ball.y - projected_y) ** 2
+        if best is None or error < best[0]:
+            best = (error, u, v)
+
+    if best is None:
+        wall_left, wall_right = calibration_wall_x_bounds(top_line, bottom_line, frame_width)
+        top_y = top_line.y_at_x(ball.x)
+        bottom_y = bottom_line.y_at_x(ball.x)
+        return {
+            "x": (ball.x - wall_left) / (wall_right - wall_left),
+            "y": (ball.y - top_y) / (bottom_y - top_y),
+            "x_span": [wall_left, wall_right],
+        }
+
+    _, u, v = best
+    return {
+        "x": u,
+        "y": v,
+        "x_span": [0.0, 1.0],
+    }
 
 
 def build_parser():

@@ -18,11 +18,13 @@ from pathlib import Path
 import cv2
 
 from audio_events import extract_audio_candidates, extract_repeating_audio_windows
+from bounce_gb_model_detector import detect_hits_with_gb_model
 from event_engine import detect_events_fused
 from classify_events import classify_events
 from detect_wall_hits import MAX_GAP_FRAMES, detect_hits_from_rows
 from inference_engine import get_tracking_model, infer_frame_predictions
-from judge_call import Point, judge_ball, load_calibration_lines
+from judge_call import Point, judge_ball, judge_margin_px, load_calibration_lines
+from judge_call import wall_diagram_coordinates
 from tracking_common import (
     CONFIDENCE_THRESHOLD,
     CSV_FIELDNAMES,
@@ -46,10 +48,11 @@ PROGRESS_UPDATE_FRAMES = 10
 PROGRESS_UPDATE_SECONDS = 0.5
 COARSE_INFERENCE_WIDTH = 640
 REFINE_WINDOW_MIN_RADIUS = 12
-# Which event engine labels detected events. "fusion" = audio repetition x
-# derivative peaks x parabolic arcs + squash sequence grammar (event_engine);
-# "votes" = the prior detect + classify_events pipeline, kept for comparison.
-EVENT_ENGINE = "fusion"
+# Which event engine labels detected events. "gb_model" = trained
+# GradientBoostingClassifier; "fusion" = audio repetition x derivative peaks x
+# parabolic arcs + squash sequence grammar (event_engine); "votes" = the prior
+# detect + classify_events pipeline, kept for comparison.
+EVENT_ENGINE = "gb_model"
 AUDIO_WINDOW_PAD_FRAMES = 4
 # Audio windows with no ball detections get one re-track at this width so
 # the event has a position to judge (the normal refine pass skips stride 1).
@@ -58,6 +61,8 @@ AUDIO_RESCUE_PAD_FRAMES = 8
 DISPLAY_FRAME_SEARCH_RADIUS = 4
 TIN_WIDTH_FEET = 21.0
 FEET_PER_SECOND_TO_MPH = 0.6818181818
+TARGET_ZONE_COLUMNS = 3
+TARGET_ZONE_ROWS = 4
 
 
 def persist_job(job):
@@ -352,6 +357,73 @@ def calibrated_velocity(hit, pixels_per_foot):
     }
 
 
+def clamp(value, low=0.0, high=1.0):
+    return max(low, min(high, float(value)))
+
+
+def is_front_wall_hit(hit):
+    event_type = hit.get("event_type")
+    return event_type in (None, "wall", "unknown")
+
+
+def target_zone_for_diagram(diagram, columns=TARGET_ZONE_COLUMNS, rows=TARGET_ZONE_ROWS):
+    x = clamp(diagram["x"])
+    y = clamp(diagram["y"])
+    column = min(columns - 1, int(x * columns))
+    row = min(rows - 1, int(y * rows))
+    return {
+        "zone": row * columns + column + 1,
+        "row": row,
+        "column": column,
+        "x": float(diagram["x"]),
+        "y": float(diagram["y"]),
+    }
+
+
+def build_target_zone_summary(hits, columns=TARGET_ZONE_COLUMNS, rows=TARGET_ZONE_ROWS):
+    zones = [
+        {
+            "zone": row * columns + column + 1,
+            "row": row,
+            "column": column,
+            "count": 0,
+            "percentage": 0.0,
+        }
+        for row in range(rows)
+        for column in range(columns)
+    ]
+    by_zone = {zone["zone"]: zone for zone in zones}
+    target_hits = [
+        hit
+        for hit in hits
+        if is_front_wall_hit(hit) and hit.get("target_zone") is not None
+    ]
+    for hit in target_hits:
+        zone = by_zone.get(int(hit["target_zone"]["zone"]))
+        if zone is not None:
+            zone["count"] += 1
+
+    total = len(target_hits)
+    if total:
+        for zone in zones:
+            zone["percentage"] = zone["count"] / total * 100.0
+
+    common = [
+        dict(zone)
+        for zone in sorted(zones, key=lambda item: (-item["count"], item["zone"]))
+        if zone["count"] > 0
+    ][:3]
+    missing = [dict(zone) for zone in zones if zone["count"] == 0]
+    return {
+        "rows": rows,
+        "columns": columns,
+        "total_wall_hits": total,
+        "zones": zones,
+        "common_zones": common,
+        "missing_zones": missing,
+    }
+
+
 def judge_hits(run_dir, results, detected, audio_available=None):
     top_line = bottom_line = None
     pixels_per_foot = None
@@ -401,9 +473,9 @@ def judge_hits(run_dir, results, detected, audio_available=None):
                 reason = f"No ball detection recorded for frame {frame}."
             else:
                 try:
-                    call, reason, top_y, bottom_y = judge_ball(point, top_line, bottom_line)
+                    call, reason, _, _ = judge_ball(point, top_line, bottom_line)
                     # Positive: IN by this many pixels; negative: OUT by |margin|.
-                    margin_px = min(point.y - top_y, bottom_y - point.y)
+                    margin_px = judge_margin_px(point, top_line, bottom_line)
                 except ValueError as error:
                     call, reason, judge_source = "UNKNOWN", str(error), None
 
@@ -450,9 +522,28 @@ def judge_hits(run_dir, results, detected, audio_available=None):
                 "time": hit.get("impact_time"),
                 "mismatch_px": hit.get("impact_mismatch_px"),
             }
+        if top_line is not None and is_front_wall_hit(entry):
+            zone_point = None
+            if "impact_x" in hit:
+                zone_point = Point(hit["impact_x"], hit["impact_y"])
+            elif display_row is not None:
+                zone_point = ball_point_from_row(display_row)
+            if zone_point is not None:
+                diagram = wall_diagram_coordinates(
+                    zone_point,
+                    top_line,
+                    bottom_line,
+                )
+                entry["wall_diagram"] = {
+                    "x": diagram["x"],
+                    "y": diagram["y"],
+                    "x_span": diagram["x_span"],
+                    "y_reference": "0 is the out-line lower edge; 1 is the tin top edge",
+                }
+                entry["target_zone"] = target_zone_for_diagram(diagram)
         hits.append(entry)
 
-    payload = {"hits": hits}
+    payload = {"hits": hits, "target_zones": build_target_zone_summary(hits)}
     if audio_available is not None:
         payload["audio_available"] = audio_available
     (Path(run_dir) / "detected_hits.json").write_text(
@@ -629,8 +720,8 @@ def run_tracking_job(run_id):
             hits = []
             hits_error = None
             try:
-                update_job(run_id, stage="judging", message="Judging wall hits...")
                 if engine == "fusion":
+                    update_job(run_id, stage="judging", message="Judging wall hits...")
                     classified = detect_events_fused(
                         sorted_rows(results),
                         audio_windows=audio_windows,
@@ -640,7 +731,32 @@ def run_tracking_job(run_id):
                         max_gap=max(MAX_GAP_FRAMES, frame_stride),
                     )
                     audio_available = audio_windows is not None
+                elif engine == "gb_model":
+                    update_job(run_id, stage="judging", message="Analyzing audio...")
+                    audio_candidates = extract_audio_candidates(
+                        video_path, start_frame, end_frame, source_fps
+                    )
+                    update_job(
+                        run_id,
+                        stage="judging",
+                        message="Judging wall hits with bounce_gb_better_features.pkl...",
+                    )
+                    detected = detect_hits_with_gb_model(
+                        sorted_rows(results),
+                        wall_x_range=wall_x_range,
+                        calibration=calibration,
+                        apply_spatial_filter=False,
+                    )
+                    classified = classify_events(
+                        detected,
+                        results,
+                        audio_candidates,
+                        source_fps,
+                        config=job.get("classify"),
+                    )
+                    audio_available = audio_candidates is not None
                 else:
+                    update_job(run_id, stage="judging", message="Judging wall hits...")
                     detected = detect_hits_from_rows(
                         sorted_rows(results),
                         max_gap=max(MAX_GAP_FRAMES, frame_stride),
@@ -662,8 +778,10 @@ def run_tracking_job(run_id):
                     classified,
                     audio_available=audio_available,
                 )
+                target_zones = build_target_zone_summary(hits)
             except Exception as error:
                 hits_error = str(error)
+                target_zones = build_target_zone_summary(hits)
 
             job = get_job(run_id) or {}
             total_frames = int(job.get("total_frames", processed_frames or 1))
@@ -674,6 +792,7 @@ def run_tracking_job(run_id):
                 processed_frames=total_frames,
                 rows=len(results),
                 hits=hits,
+                target_zones=target_zones,
                 hits_error=hits_error,
                 message="Tracking complete.",
             )
