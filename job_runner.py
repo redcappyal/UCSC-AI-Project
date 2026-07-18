@@ -17,6 +17,7 @@ from pathlib import Path
 
 import cv2
 
+import court_model
 from audio_events import extract_audio_candidates, extract_repeating_audio_windows
 from bounce_gb_model_detector import detect_hits_with_gb_model
 from event_engine import detect_events_fused
@@ -427,10 +428,12 @@ def build_target_zone_summary(hits, columns=TARGET_ZONE_COLUMNS, rows=TARGET_ZON
 def judge_hits(run_dir, results, detected, audio_available=None):
     top_line = bottom_line = None
     pixels_per_foot = None
+    floor_map = None
     calibration_path = Path(run_dir) / "calibration.json"
     if calibration_path.exists():
         try:
             calibration = json.loads(calibration_path.read_text(encoding="utf-8"))
+            floor_map = court_model.load_floor_calibration(calibration)
             top_line, bottom_line = load_calibration_lines(calibration)
             pixels_per_foot = velocity_scale_from_tin_line(bottom_line)
         except (ValueError, json.JSONDecodeError):
@@ -541,15 +544,48 @@ def judge_hits(run_dir, results, detected, audio_available=None):
                     "y_reference": "0 is the out-line lower edge; 1 is the tin top edge",
                 }
                 entry["target_zone"] = target_zone_for_diagram(diagram)
+        if floor_map is not None and entry.get("event_type") == "floor":
+            bounce_point = None
+            if "impact_x" in hit:
+                bounce_point = (hit["impact_x"], hit["impact_y"])
+            elif display_row is not None:
+                detected_point = ball_point_from_row(display_row)
+                if detected_point is not None:
+                    bounce_point = (detected_point.x, detected_point.y)
+            if bounce_point is not None:
+                try:
+                    x_ft, y_ft = floor_map.image_to_court(*bounce_point)
+                except ValueError:
+                    pass
+                else:
+                    entry["court_position_ft"] = {
+                        "x": round(x_ft, 2),
+                        "y": round(y_ft, 2),
+                    }
+                    entry["floor_zone"] = court_model.floor_zone_for_point(x_ft, y_ft)
         hits.append(entry)
 
     payload = {"hits": hits, "target_zones": build_target_zone_summary(hits)}
+    if floor_map is not None:
+        payload["floor_zones"] = court_model.build_floor_zone_summary(hits)
     if audio_available is not None:
         payload["audio_available"] = audio_available
     (Path(run_dir) / "detected_hits.json").write_text(
         json.dumps(payload, indent=2), encoding="utf-8"
     )
     return hits
+
+
+def floor_zones_from_run(run_dir):
+    """Read the floor-bounce summary judge_hits just wrote (None when the run
+    had no floor calibration)."""
+    try:
+        payload = json.loads(
+            (Path(run_dir) / "detected_hits.json").read_text(encoding="utf-8")
+        )
+    except (OSError, json.JSONDecodeError):
+        return None
+    return payload.get("floor_zones")
 
 
 def sorted_rows(results):
@@ -779,12 +815,17 @@ def run_tracking_job(run_id):
                     audio_available=audio_available,
                 )
                 target_zones = build_target_zone_summary(hits)
+                floor_zones = floor_zones_from_run(run_dir)
             except Exception as error:
                 hits_error = str(error)
                 target_zones = build_target_zone_summary(hits)
+                floor_zones = None
 
             job = get_job(run_id) or {}
             total_frames = int(job.get("total_frames", processed_frames or 1))
+            extra_fields = {}
+            if floor_zones is not None:
+                extra_fields["floor_zones"] = floor_zones
             update_job(
                 run_id,
                 status="complete",
@@ -795,6 +836,7 @@ def run_tracking_job(run_id):
                 target_zones=target_zones,
                 hits_error=hits_error,
                 message="Tracking complete.",
+                **extra_fields,
             )
         except Exception as error:
             update_job(
