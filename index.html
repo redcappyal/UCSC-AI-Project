@@ -21,6 +21,10 @@
     --out:#35e0ff;           /* fitted out-line edge */
     --tin:#b4ff3a;           /* fitted tin edge */
     --in:#2ecc5e; --outcall:#e03a2f;   /* IN/OUT verdict colors only */
+    /* Opaque neon timeline-marker hues — kept vivid to sit crisply over the
+       video thumbnails, next to the clean white playhead. Single source of
+       truth for both the strip bars and the labeling-legend dots. */
+    --mk-racket:#22d3ee; --mk-floor:#ffb020; --mk-side:#c77dff; --mk-unknown:#c7c7cc;
   }
   :root[data-theme="light"]{ color-scheme:light;
     --bg:#f5f5f7; --surface:#e9e9ee; --line:#e0e0e5; --dim:#6e6e76; --text:#000;
@@ -84,6 +88,14 @@
     font-size:20px; font-weight:600; color:#fff; background:none; border:none;
     text-shadow:0 1px 3px rgba(0,0,0,.9), 0 0 8px rgba(0,0,0,.6)}
 
+  /* Analyzing overlay: darkens the frame currently under analysis and pulses a label over its center. */
+  #analyzeOverlay{position:absolute; inset:0; z-index:6; display:flex; align-items:center;
+    justify-content:center; background:rgba(0,0,0,.55); pointer-events:none}
+  #analyzeOverlay .analyzePulse{font-size:22px; font-weight:700; letter-spacing:.14em;
+    text-transform:uppercase; color:#fff; text-shadow:0 1px 8px rgba(0,0,0,.85);
+    animation:analyzePulse 1.4s ease-in-out infinite}
+  @keyframes analyzePulse{0%,100%{opacity:.35} 50%{opacity:1}}
+
   main{flex:0 0 auto; overflow:hidden;
     padding:12px 14px calc(70px + env(safe-area-inset-bottom))}
   body.phase-load main{flex:1; display:flex; flex-direction:column; justify-content:center}
@@ -126,12 +138,13 @@
   .clipOverview canvas, .clipEditor canvas, .hitTimeline canvas{
     position:absolute; inset:0; width:100%; height:100%; display:block}
   #overviewSelection{position:absolute; top:0; bottom:0; background:rgba(255,255,255,.35); pointer-events:none}
-  #overviewViewport, #trackViewport{position:absolute; top:0; bottom:0; border:2px solid var(--dim);
-    border-radius:4px; box-sizing:border-box; pointer-events:none}
-  #trackOverviewCursor{position:absolute; top:0; bottom:0; width:2px; margin-left:-1px; background:#f5f5f5;
+  #overviewViewport, #trackViewport, #frameViewport, #labelViewport{position:absolute; top:0; bottom:0;
+    border:2px solid var(--dim); border-radius:4px; box-sizing:border-box; pointer-events:none}
+  #trackOverviewCursor, #frameOverviewCursor, #labelOverviewCursor{position:absolute; top:0; bottom:0;
+    width:2px; margin-left:-1px; background:#f5f5f5;
     box-shadow:0 0 0 1px rgba(0,0,0,.45); pointer-events:none}
   .clipEditor{position:relative; height:96px; border-radius:8px; overflow:hidden;
-    background:var(--strip-bg); border:1px solid var(--line); touch-action:none}
+    background:var(--strip-bg); border:1px solid var(--line); touch-action:none; cursor:grab}
   .clipShade{position:absolute; top:0; bottom:0; background:rgba(0,0,0,.62); pointer-events:none}
   #shadeLeft{left:0} #shadeRight{right:0}
   #clipSelection{position:absolute; top:0; bottom:0; border:3px solid var(--accent-bg);
@@ -140,8 +153,8 @@
     cursor:ew-resize; display:flex; align-items:center; justify-content:center}
   .clipHandle::after{content:''; width:2px; height:26px; border-radius:1px; background:rgba(0,0,0,.55)}
   #clipStartHandle{border-radius:6px 0 0 6px} #clipEndHandle{border-radius:0 6px 6px 0}
-  #clipCursor{position:absolute; top:0; bottom:0; width:3px; background:#f5f5f5;
-    box-shadow:0 0 0 1px rgba(0,0,0,.45); pointer-events:none}
+  #clipCursor{position:absolute; top:0; bottom:0; width:3px; left:50%; margin-left:-1.5px;
+    background:#f5f5f5; box-shadow:0 0 0 1px rgba(0,0,0,.45); pointer-events:none}
   .clipHandle.offview{opacity:.35}
   .nudgeRow{display:flex; gap:8px; align-items:stretch}
   .nudgeLabel{flex:0 0 78px; font-size:13px; color:var(--dim);
@@ -161,21 +174,27 @@
     font-size:13px; color:var(--dim); white-space:nowrap; user-select:none; pointer-events:none}
 
   .hitTimeline{position:relative; height:88px; border-radius:8px; overflow:hidden;
-    background:var(--strip-bg); border:1px solid var(--line); touch-action:none; cursor:pointer}
+    background:var(--strip-bg); border:1px solid var(--line); touch-action:none; cursor:grab}
   #hitBars, #trackOverviewBars{position:absolute; inset:0}
   .hitBar{position:absolute; top:0; bottom:0; width:36px; margin-left:-18px; cursor:pointer;
     display:flex; justify-content:center}
   .hitBar.mini{width:18px; margin-left:-9px}
   .hitBar.mini::before{width:4px}
-  .hitBar::before{content:''; width:7px; height:100%; border-radius:3px;
-    box-shadow:0 0 0 1px rgba(0,0,0,.5)}
-  .hitBar.in::before{background:var(--in)}
-  .hitBar.out::before{background:var(--outcall)}
-  .hitBar.unknown::before{background:#999}
-  .hitBar.racket::before{background:#5b7fa6; width:4px; opacity:.55}
-  .hitBar.floor::before{background:#b58a3c; width:4px; opacity:.55}
-  .hitBar.side::before{background:#8a6fb8; width:4px; opacity:.55}
-  .hitBar.selected::before{box-shadow:0 0 0 2px var(--text); opacity:1}
+  /* Markers are opaque neon bars with a matching soft glow and a thin dark
+     hairline for contrast over bright thumbnails — same crisp finish as the
+     white playhead, just colored. --mk carries each type's hue. */
+  .hitBar::before{content:''; width:6px; height:100%; border-radius:3px;
+    background:var(--mk,var(--mk-unknown));
+    box-shadow:0 0 0 1px rgba(0,0,0,.45),
+      0 0 8px 0 color-mix(in srgb, var(--mk,var(--mk-unknown)) 60%, transparent)}
+  .hitBar.in::before{--mk:var(--in)}
+  .hitBar.out::before{--mk:var(--outcall)}
+  .hitBar.unknown::before{--mk:var(--mk-unknown)}
+  .hitBar.racket::before{--mk:var(--mk-racket)}
+  .hitBar.floor::before{--mk:var(--mk-floor)}
+  .hitBar.side::before{--mk:var(--mk-side)}
+  .hitBar.selected::before{box-shadow:0 0 0 2px var(--text),
+    0 0 12px 1px color-mix(in srgb, var(--mk,#fff) 85%, transparent)}
 
   /* Floating liquid-glass mode switcher */
   #navPill{position:fixed; left:50%; bottom:calc(12px + env(safe-area-inset-bottom));
@@ -194,12 +213,17 @@
   /* Bounce labeling */
   .labelGrid{display:grid; grid-template-columns:1fr 1fr; gap:10px}
   .labelGrid .dot{width:10px; height:10px; border-radius:50%; margin-right:9px; flex:0 0 auto}
-  .dot.wall{background:var(--in)} .dot.racket{background:#5b7fa6}
-  .dot.floor{background:#b58a3c} .dot.side{background:#8a6fb8}
-  #labelCursor{position:absolute; top:0; bottom:0; width:3px; margin-left:-1px; background:#f5f5f5;
+  .dot.wall{background:var(--in)} .dot.racket{background:var(--mk-racket)}
+  .dot.floor{background:var(--mk-floor)} .dot.side{background:var(--mk-side)}
+  /* Center-fixed playheads: the playhead never moves — the film strip slides
+     underneath it (video-editor style). */
+  #labelCursor, #trackCursor, #frameCursor{position:absolute; top:0; bottom:0; width:3px; left:50%;
+    margin-left:-1.5px; background:#f5f5f5;
     box-shadow:0 0 0 1px rgba(0,0,0,.45); pointer-events:none}
-  #trackCursor{position:absolute; top:0; bottom:0; width:3px; margin-left:-1px; background:#f5f5f5;
-    box-shadow:0 0 0 1px rgba(0,0,0,.45); pointer-events:none}
+  .tlReadout{text-align:center; font-size:14px; color:var(--dim);
+    font-variant-numeric:tabular-nums; padding:2px 0}
+  .tlReadout output{color:var(--text); font-weight:600}
+  .playBtn svg{width:22px; height:22px}
 
   /* The verdict box always occupies the same space: empty (blank), event
      classification (neutral), and IN/OUT states share one reserved height so
@@ -255,6 +279,7 @@
 
 <div id="stage" class="hidden">
   <canvas id="view"></canvas>
+  <div id="analyzeOverlay" class="hidden"><span class="analyzePulse">Analyzing…</span></div>
   <div id="zoomCtrl" class="hidden">
     <button class="small" id="zoomOutBtn" type="button">−</button>
     <button class="small" id="zoomResetBtn" type="button">1×</button>
@@ -274,8 +299,20 @@
 
   <!-- PHASE: frame -->
   <section class="hidden" id="p-frame">
-    <input type="range" id="scrub" min="0" max="1" step="0.01" value="0">
+    <div class="clipOverview" id="frameOverview">
+      <canvas id="frameOverviewStrip"></canvas>
+      <div id="frameViewport"></div>
+      <div id="frameOverviewCursor"></div>
+    </div>
+    <div class="hitTimeline" id="frameTimeline">
+      <canvas id="frameStrip"></canvas>
+      <div id="frameCursor"></div>
+    </div>
+    <div class="tlReadout"><output id="frameReadout">–</output></div>
     <div class="nudgeRow">
+      <div class="stepper">
+        <button type="button" id="framePlayBtn" class="playBtn" aria-label="Play or pause"></button>
+      </div>
       <div class="stepper">
         <button type="button" id="bwd1s" aria-label="Back one second">&minus;</button>
         <span class="stepUnit">second</span>
@@ -323,6 +360,7 @@
       <div class="clipHandle" id="clipEndHandle"></div>
       <div id="clipCursor"></div>
     </div>
+    <div class="tlReadout"><output id="clipReadout">–</output></div>
     <div class="nudgeRow">
       <span class="nudgeLabel">Start<output id="clipStartOut">0.00s</output><output class="frameOut" id="clipStartFrameOut">Frame 0</output></span>
       <div class="stepper">
@@ -353,15 +391,21 @@
       <span>Selected frames</span>
       <output id="clipFrameRangeOut">0-0 (1 frame)</output>
     </div>
-    <div class="progressbox hidden" id="trackProgressBox">
-      <div class="stat"><span id="progressLabel">Uploading</span><span id="progressPct">0%</span></div>
+    <div class="nudgeRow">
+      <div class="stepper">
+        <button type="button" id="clipPlayBtn" class="playBtn" aria-label="Play or pause preview"></button>
+      </div>
+    </div>
+    <button class="primary proxied" id="runTrackBtn">Track ball</button>
+    <p class="status" id="trackStatus"></p>
+  </section>
+
+  <!-- PHASE: analyze (full-screen progress while the model tracks the clip) -->
+  <section class="hidden" id="p-analyze">
+    <div class="progressbox" id="trackProgressBox">
+      <div class="stat"><span id="progressLabel">Analyzing</span><span id="progressPct">0%</span></div>
       <div class="progressbar" id="trackProgress"><span></span></div>
     </div>
-    <div class="row">
-      <button id="clipPlayBtn" type="button">Play preview</button>
-      <button class="primary proxied" id="runTrackBtn">Track ball</button>
-    </div>
-    <p class="status" id="trackStatus"></p>
   </section>
 
   <!-- PHASE: track + judge -->
@@ -377,6 +421,22 @@
       <div id="hitBars"></div>
       <div id="trackCursor"></div>
     </div>
+    <div class="tlReadout"><output id="trackReadout">–</output></div>
+    <div class="nudgeRow">
+      <div class="stepper">
+        <button type="button" id="trackPlayBtn" class="playBtn" aria-label="Play or pause"></button>
+      </div>
+      <div class="stepper">
+        <button type="button" id="tBwd1s" aria-label="Back one second">&minus;</button>
+        <span class="stepUnit">second</span>
+        <button type="button" id="tFwd1s" aria-label="Forward one second">+</button>
+      </div>
+      <div class="stepper">
+        <button type="button" id="tBwd1f" aria-label="Back one frame">&minus;</button>
+        <span class="stepUnit">frame</span>
+        <button type="button" id="tFwd1f" aria-label="Forward one frame">+</button>
+      </div>
+    </div>
     <p class="status" id="hitsStatus"></p>
     <div class="sliderlabel"><span>Frame to judge</span><output id="judgeFrameOut"></output></div>
     <div class="row">
@@ -388,17 +448,37 @@
 
   <!-- MODE: bounce labeling (ground truth for the event engine) -->
   <section class="hidden" id="p-label">
+    <div class="clipOverview" id="labelOverview">
+      <canvas id="labelOverviewStrip"></canvas>
+      <div id="labelOverviewMarks"></div>
+      <div id="labelViewport"></div>
+      <div id="labelOverviewCursor"></div>
+    </div>
     <div class="hitTimeline" id="labelTimeline">
       <canvas id="labelStrip"></canvas>
       <div id="labelMarks"></div>
       <div id="labelCursor"></div>
     </div>
-    <div class="sliderlabel"><span>Frame</span><output id="labelFrameOut">–</output></div>
-    <div class="row">
-      <button class="small" id="lStepB5" type="button">−5</button>
-      <button class="small" id="lStepB1" type="button">−1</button>
-      <button class="small" id="lStepF1" type="button">+1</button>
-      <button class="small" id="lStepF5" type="button">+5</button>
+    <div class="tlReadout"><output id="labelReadout">–</output></div>
+    <div class="nudgeRow">
+      <div class="stepper">
+        <button type="button" id="labelPlayBtn" class="playBtn" aria-label="Play or pause"></button>
+      </div>
+      <div class="stepper">
+        <button type="button" id="lBwd1s" aria-label="Back one second">&minus;</button>
+        <span class="stepUnit">second</span>
+        <button type="button" id="lFwd1s" aria-label="Forward one second">+</button>
+      </div>
+      <div class="stepper">
+        <button type="button" id="lBwd1f" aria-label="Back one frame">&minus;</button>
+        <span class="stepUnit">frame</span>
+        <button type="button" id="lFwd1f" aria-label="Forward one frame">+</button>
+      </div>
+      <div class="stepper">
+        <button type="button" id="lZoomOut" aria-label="Zoom out">&minus;</button>
+        <span class="stepUnit">zoom</span>
+        <button type="button" id="lZoomIn" aria-label="Zoom in">+</button>
+      </div>
     </div>
     <div class="labelGrid">
       <button data-label-type="wall" type="button"><i class="dot wall"></i>Front wall</button>
@@ -463,18 +543,22 @@ const S = {
   trackStripGen:0,            // invalidates in-flight timeline thumbnail renders
   trackView:{startF:0, endF:0, cursor:0, key:'', ovDone:false, timer:null}, // fine-window state for the call page's coarse-fine timeline
   videoFps:null,              // probed by the server at upload; null until known
-  clip:{start:0, end:0, cursor:0, dragging:null, playing:false, raf:null, frameStride:1, inferenceWidth:960,
-    viewStart:0, viewEnd:1,   // detail-strip visible window (seconds)
+  clip:{start:0, end:0, cursor:0, dragging:null, frameStride:1, inferenceWidth:960,
+    viewStart:0, viewEnd:1, viewSpan:0,   // detail window derived from cursor ± viewSpan/2
+    dragX:0, dragT:0,
     overviewThumbs:false, overviewDragging:false,
     detailKey:'', detailToken:0, detailTimer:null,
     pendingSeek:null, seeking:false},
+  // Standardized frame-picker timeline (same coarse/fine strips as the clip page).
+  frameView:{span:4, cursor:0, gen:0, key:'', timer:null, ovDone:false,
+    dragging:false, ovDragging:false, dragX:0, dragT:0},
   view:{scale:1, tx:0, ty:0}, // zoom/pan applied to the canvas while tapping
 };
 
 /* ---------- phase / UI ---------- */
 const STEP_META = {
   load:   {label:'Squash Line Calling', instr:''},
-  frame:  {label:'1/6 · Pick frame', instr:'Scrub to a frame where both red lines are fully visible and unblocked.',
+  frame:  {label:'1/6 · Pick frame', instr:'Drag the film strip under the playhead to a frame where both red lines are fully visible and unblocked.',
            action:{btn:'useFrame', label:'Use frame'}},
   tap_out:{label:'2/6 · Out line', instr:'', action:{btn:'confirmBtn', label:'Looks right'}},
   tap_tin:{label:'3/6 · Tin', instr:'', action:{btn:'confirmBtn', label:'Looks right'}},
@@ -482,9 +566,10 @@ const STEP_META = {
            action:{btn:'chooseClipBtn', label:'Use lines'}},
   clip:   {label:'5/6 · Clip', instr:'Drag the top strip to slide the clip along the video, then drag the handles to trim it tight around the shot.',
            action:{btn:'runTrackBtn', label:'Track ball'}},
+  analyze:{label:'Analyzing', instr:''},
   track:  {label:'6/6 · Call', instr:'Tap a hit bar or enter a frame number, then judge it.',
            action:{btn:'judgeBtn', label:'Judge'}},
-  label:  {label:'Label bounces', instr:'Step to the exact impact frame, then tap its bounce type. Tap a marker to revisit it — labels save automatically.'},
+  label:  {label:'Label bounces', instr:'Drag the strip to the exact impact frame, then tap its bounce type. Tap a marker to revisit it — labels save automatically.'},
 };
 
 /* Header action pill: proxies the current phase's primary button, which stays
@@ -506,12 +591,13 @@ function syncHeaderAction(action){
 }
 
 function setPhase(p){
-  if(S.phase === 'clip' && p !== 'clip') stopClipPlayback();
+  transportStop();
   S.phase = p;
   resetZoom();
   stage.classList.toggle('hidden', p === 'load');
   document.body.classList.toggle('phase-load', p === 'load');
-  for(const id of ['p-load','p-frame','p-tap','p-review','p-clip','p-track','p-label']) $(id).classList.add('hidden');
+  for(const id of ['p-load','p-frame','p-tap','p-review','p-clip','p-analyze','p-track','p-label']) $(id).classList.add('hidden');
+  $('analyzeOverlay').classList.toggle('hidden', p !== 'analyze');
   $('stepLabel').textContent = STEP_META[p].label;
   $('hdrBack').classList.toggle('hidden', p === 'load');
   syncHeaderAction(STEP_META[p].action);
@@ -526,7 +612,7 @@ function setPhase(p){
   }
 
   if(p === 'load'){ $('p-load').classList.remove('hidden'); }
-  if(p === 'frame'){ $('p-frame').classList.remove('hidden'); }
+  if(p === 'frame'){ $('p-frame').classList.remove('hidden'); setupFrameTimeline(); }
   if(p === 'tap_out' || p === 'tap_tin'){
     $('p-tap').classList.remove('hidden');
     $('confirmBtn').disabled = !(S.work && S.work.fit);
@@ -537,6 +623,8 @@ function setPhase(p){
   }
   if(p === 'review'){ $('p-review').classList.remove('hidden'); buildReview(); }
   if(p === 'clip'){ $('p-clip').classList.remove('hidden'); setupClipControls(); }
+  if(p === 'analyze'){ $('p-analyze').classList.remove('hidden'); startAnalyzePreview(); }
+  else { stopAnalyzePreview(); }
   if(p === 'track'){ $('p-track').classList.remove('hidden'); buildTrackView(); }
   if(p === 'label'){ $('p-label').classList.remove('hidden'); buildLabelView(); }
   // The mode switcher only exists on the start screen; once a clip is
@@ -568,6 +656,9 @@ $('fileIn').addEventListener('change', e => {
   labelState.runId = null;
   S.clip.overviewThumbs = false;
   S.clip.detailKey = '';
+  S.frameView.ovDone = false;
+  S.frameView.key = '';
+  S.frameView.cursor = 0;
   $('loadStatus').textContent = `Loading ${f.name}…`;
   $('loadStatus').className = 'status';
   if(S.loadTimer) clearTimeout(S.loadTimer);
@@ -577,6 +668,7 @@ $('fileIn').addEventListener('change', e => {
       $('loadStatus').className = 'status warn';
     }
   }, 4000);
+  clearThumbCache();   // cache keys are absolute video times; a new file invalidates them
   vid.src = URL.createObjectURL(f);
   vid.load();
 });
@@ -591,8 +683,6 @@ vid.addEventListener('loadedmetadata', () => {
   $('loadStatus').textContent = `Loaded ${S.videoName}.`;
   $('loadStatus').className = 'status ok';
   canvas.width = S.W; canvas.height = S.H;
-  $('scrub').max = vid.duration.toFixed(2);
-  vid.currentTime = 0.01;
   // The clip routes into whichever mode was chosen on the start screen.
   setPhase(S.mode === 'label' ? 'label' : 'frame');
 });
@@ -603,21 +693,19 @@ vid.addEventListener('error', () => {
   $('loadStatus').textContent = `The browser could not load that video.${detail} Try an H.264 .mp4 export.`;
   $('loadStatus').className = 'status warn';
 });
-vid.addEventListener('seeked', () => {
-  if(S.phase === 'frame') requestAnimationFrame(() => ctx.drawImage(vid, 0, 0, S.W, S.H));
-});
-$('scrub').addEventListener('input', e => { vid.currentTime = +e.target.value; });
-const nudge = dt => { vid.currentTime = Math.min(Math.max(vid.currentTime + dt, 0), vid.duration || 0); $('scrub').value = vid.currentTime; };
+const nudge = dt => setFrameCursor(S.frameView.cursor + dt);
 $('bwd1s').onclick = () => nudge(-1);
 $('fwd1s').onclick = () => nudge(1);
 $('bwd1f').onclick = () => nudge(-1/videoFps());
 $('fwd1f').onclick = () => nudge(1/videoFps());
 
-$('useFrame').onclick = () => {
-  vid.pause();
+$('useFrame').onclick = async () => {
+  transportStop();
+  S.frameView.gen++;               // abort any in-flight strip render
+  await seekVideo(S.frameView.cursor);   // strips may have the decoder elsewhere
   ctx.drawImage(vid, 0, 0, S.W, S.H);
   S.base = ctx.getImageData(0, 0, S.W, S.H);
-  S.frameTime = vid.currentTime;
+  S.frameTime = S.frameView.cursor;
   setPhase('tap_out');
 };
 function showError(message){
@@ -661,6 +749,8 @@ $('hdrBack').onclick = () => {
     S.work = null; S.lines.tin = null; setPhase('tap_tin');
   } else if(S.phase === 'clip'){
     setPhase('review');
+  } else if(S.phase === 'analyze'){
+    setPhase('clip');   // abandon the in-flight run and return to the clip editor
   } else if(S.phase === 'track'){
     setPhase('clip');
   } else if(S.phase === 'label'){
@@ -771,7 +861,8 @@ function endPointer(e){
     const r = canvas.getBoundingClientRect();
     const x = Math.min(S.W - 1, Math.max(0, Math.round((p.x - r.left) * S.W / r.width)));
     const y = Math.min(S.H - 1, Math.max(0, Math.round((p.y - r.top) * S.H / r.height)));
-    buildWork(curKey(), x, y);
+    // Tapping an existing seed marker removes it; otherwise the tap adds one.
+    if(!removeSeedAt(curKey(), x, y)) buildWork(curKey(), x, y);
   }
 }
 canvas.addEventListener('pointerup', endPointer);
@@ -791,6 +882,31 @@ function updateFillTolOutput(){
 function rebuildWorkFromSeeds(key, seeds){
   S.work = null;
   for(const [x, y] of seeds) buildWork(key, x, y);
+}
+
+// If (x,y) falls on an existing seed marker for this key, drop that seed and
+// refit from the rest. Returns true if a seed was removed (so the caller
+// skips adding a new one). Uses the same radius the marker is drawn with.
+function removeSeedAt(key, x, y){
+  if(!S.work || S.work.key !== key || !S.work.seeds.length) return false;
+  const r = Math.max(8, S.W / 120);
+  let hit = -1, best = r * r;
+  S.work.seeds.forEach(([sx, sy], i) => {
+    const d = (sx - x) * (sx - x) + (sy - y) * (sy - y);
+    if(d <= best){ best = d; hit = i; }
+  });
+  if(hit < 0) return false;
+  const seeds = S.work.seeds.slice();
+  seeds.splice(hit, 1);
+  if(seeds.length){
+    rebuildWorkFromSeeds(key, seeds);
+  } else {
+    S.work = null;
+    $('confirmBtn').disabled = true;
+    updateTapStatus();
+    render();
+  }
+  return true;
 }
 
 $('fillTol').addEventListener('input', e => {
@@ -1111,7 +1227,7 @@ function drawFitLine(fit, color){
 
 function render(){
   if(!S.base) return;
-  if(S.phase === 'track') return;
+  if(S.phase === 'track' || S.phase === 'analyze') return;
   ctx.putImageData(S.base, 0, 0);
   for(const k of ORDER){
     const L = S.lines[k];
@@ -1212,7 +1328,6 @@ function clipDuration(){
 
 const MIN_CLIP = 0.5;             // seconds; smallest selectable clip
 const MIN_VIEW_SPAN = 2;          // seconds; smallest detail-strip window
-const EDGE_RECENTER_FRAC = 0.08;  // recenter when a handle lands this close to a view edge
 
 function minClip(){
   return Math.min(MIN_CLIP, clipDuration());
@@ -1238,25 +1353,23 @@ function overviewPctToTime(pct){
   return Math.min(clipDuration(), Math.max(0, pct * clipDuration()));
 }
 
-// Fit the detail window around the selection (3x padding, clamped). Returns
-// true when the window moved enough that the thumbnails need re-rendering.
+// Choose the detail zoom from the selection length (3x padding, clamped).
+// The window itself always centers on the playhead — syncClipView derives it
+// from the cursor, so it may extend past the media edges near the ends.
 function recenterView(){
   const duration = clipDuration();
   const selSpan = Math.max(0.001, S.clip.end - S.clip.start);
-  let span = Math.min(duration, Math.max(MIN_VIEW_SPAN, selSpan * 3));
-  let vs = 0;
-  if(span >= 0.85 * duration){
-    span = duration;
-  } else {
-    vs = (S.clip.start + S.clip.end) / 2 - span / 2;
-    vs = Math.max(0, Math.min(vs, duration - span));
-  }
-  $('clipOverview').classList.toggle('hidden', span >= duration - 1e-6);
-  const changed = Math.abs(vs - S.clip.viewStart) > span * 0.01
-    || Math.abs(vs + span - S.clip.viewEnd) > span * 0.01;
-  S.clip.viewStart = vs;
-  S.clip.viewEnd = vs + span;
+  const span = Math.min(Math.max(MIN_VIEW_SPAN, selSpan * 3), Math.max(duration, MIN_VIEW_SPAN));
+  const changed = Math.abs(span - S.clip.viewSpan) > span * 0.01;
+  S.clip.viewSpan = span;
+  syncClipView();
   return changed;
+}
+
+function syncClipView(){
+  const span = S.clip.viewSpan || MIN_VIEW_SPAN;
+  S.clip.viewStart = S.clip.cursor - span / 2;
+  S.clip.viewEnd = S.clip.cursor + span / 2;
 }
 
 function drawClipPreview(time){
@@ -1268,55 +1381,114 @@ function drawClipPreview(time){
   }
 }
 
-function updateClipPlayButton(){
-  $('clipPlayBtn').textContent = S.clip.playing ? 'Pause preview' : 'Play preview';
-}
+const clipPlaying = () => transport.phase === 'clip';
 
 function stopClipPlayback(){
-  if(S.clip.raf) cancelAnimationFrame(S.clip.raf);
-  S.clip.raf = null;
-  S.clip.playing = false;
-  vid.pause();
-  updateClipPlayButton();
+  if(!clipPlaying()) return;
+  transportStop();
+  scheduleDetailRender(150);   // refresh thumbs for wherever playback stopped
 }
 
 async function startClipPlayback(){
   if(S.phase !== 'clip' || S.clip.end <= S.clip.start) return;
-  if(vid.currentTime < S.clip.start || vid.currentTime >= S.clip.end){
-    await seekVideo(S.clip.start);
-  }
-  S.clip.cursor = vid.currentTime;
-  updateClipTimeline();
-  S.clip.playing = true;
-  updateClipPlayButton();
-  await vid.play();
-  tickClipPlayback();
-}
-
-function tickClipPlayback(){
-  if(!S.clip.playing || S.phase !== 'clip') return;
-  if(vid.currentTime >= S.clip.end){
-    vid.currentTime = S.clip.start;
-  }
-  S.clip.cursor = Math.min(Math.max(vid.currentTime, S.clip.start), S.clip.end);
-  updateClipTimeline();
-  drawClipPreview(S.clip.cursor);
-  S.clip.raf = requestAnimationFrame(tickClipPlayback);
+  await transportStart('clip', {
+    start:S.clip.start, end:S.clip.end, from:S.clip.cursor, loop:true,
+    tick: t => {
+      S.clip.cursor = Math.min(Math.max(t, S.clip.start), S.clip.end);
+      updateClipTimeline();
+      drawDetailPlaceholderNow();
+      drawClipPreview(S.clip.cursor);
+    },
+  });
 }
 
 async function seekVideo(time){
-  return new Promise(resolve => {
-    const target = Math.min(Math.max(time, 0), clipDuration());
-    if(Math.abs(vid.currentTime - target) < 0.001){
-      requestAnimationFrame(resolve);
-      return;
+  const target = Math.min(Math.max(time, 0), clipDuration());
+  if(Math.abs(vid.currentTime - target) >= 0.001){
+    await new Promise(resolve => {
+      vid.addEventListener('seeked', resolve, {once:true});
+      vid.currentTime = target;
+    });
+  }
+  // WebKit fires 'seeked' before the new frame is presented, so an immediate
+  // capture can grab a black/stale frame. Wait for an actually-presented frame
+  // where the API exists (timeout fallback: rVFC can stall on paused video).
+  await new Promise(resolve => {
+    if(vid.requestVideoFrameCallback){
+      let settled = false;
+      const finish = () => { if(!settled){ settled = true; resolve(); } };
+      vid.requestVideoFrameCallback(finish);
+      setTimeout(finish, 250);
+    } else {
+      requestAnimationFrame(() => requestAnimationFrame(resolve));
     }
-    const done = () => {
-      vid.removeEventListener('seeked', done);
-      resolve();
-    };
-    vid.addEventListener('seeked', done, {once:true});
-    vid.currentTime = target;
+  });
+}
+
+/* ---------- decoded-frame thumbnail cache ----------
+   Seeking the shared <video> decoder is the slow part of every strip render.
+   Moving the playhead slides the timeline window, so successive renders overlap
+   heavily and keep re-requesting frames we just decoded — that redundant
+   re-seeking is what makes thumbnails pop in one at a time. Cache small,
+   downscaled frames keyed by quantized video time and reuse them instead of
+   re-seeking; only genuinely new times touch the decoder. */
+const THUMB_BUCKET = 0.05;                // seconds per cache slot (~1-2 frames)
+const THUMB_CACHE_MAX = 256;              // ~256 small bitmaps, bounded memory
+const THUMB_W = 160;                      // cached thumbnail width (px)
+const thumbCache = new Map();             // bucket key -> ImageBitmap (insertion order = LRU)
+const thumbKey = t => Math.round(t / THUMB_BUCKET);
+
+function clearThumbCache(){
+  for(const b of thumbCache.values()) if(b && b.close) b.close();
+  thumbCache.clear();
+}
+
+// Every decoder user (strip thumbnails, preview seeks) funnels through one
+// queue: two concurrent seekVideo calls on the shared <video> resolve each
+// other's 'seeked' at the wrong time, and a capture taken mid-seek is black —
+// which the thumbnail cache would then keep forever.
+let decoderQueue = Promise.resolve();
+function withDecoder(fn){
+  const run = decoderQueue.then(fn, fn);
+  decoderQueue = run.then(() => {}, () => {});
+  return run;
+}
+
+// Synchronous cache lookup (with LRU touch) — lets strips repaint from
+// already-decoded frames without touching the decoder.
+function peekThumb(t){
+  const key = thumbKey(t);
+  const hit = thumbCache.get(key);
+  if(hit){ thumbCache.delete(key); thumbCache.set(key, hit); }   // re-insert: mark most-recently used
+  return hit || null;
+}
+
+// Return a small decoded frame near video time `t`, seeking only on a miss.
+async function frameBitmap(t){
+  const hit = peekThumb(t);
+  if(hit) return hit;
+  return withDecoder(async () => {
+    const key = thumbKey(t);
+    const again = thumbCache.get(key);   // may have been filled while queued
+    if(again) return again;
+    await seekVideo(t);
+    if(vid.seeking || vid.readyState < 2) return null;   // decoder not settled — don't cache junk
+    const h = vid.videoWidth && vid.videoHeight
+      ? Math.max(1, Math.round(THUMB_W * vid.videoHeight / vid.videoWidth)) : 90;
+    let bmp;
+    try{
+      bmp = await createImageBitmap(vid, {resizeWidth:THUMB_W, resizeHeight:h, resizeQuality:'low'});
+    }catch(_){
+      return null;   // decoder not ready / capture failed — skip this slot
+    }
+    thumbCache.set(key, bmp);
+    if(thumbCache.size > THUMB_CACHE_MAX){
+      const oldest = thumbCache.keys().next().value;
+      const b = thumbCache.get(oldest);
+      thumbCache.delete(oldest);
+      if(b && b.close) b.close();
+    }
+    return bmp;
   });
 }
 
@@ -1330,20 +1502,29 @@ async function requestPreviewFrame(time){
     while(S.clip.pendingSeek !== null){
       const next = S.clip.pendingSeek;
       S.clip.pendingSeek = null;
-      await seekVideo(next);
-      drawClipPreview(next);
+      await withDecoder(async () => {
+        await seekVideo(next);
+        drawClipPreview(next);
+      });
     }
   } finally {
     S.clip.seeking = false;
   }
 }
 
-const stripBg = () => getComputedStyle(document.documentElement)
-  .getPropertyValue('--strip-bg').trim() || '#000';
-const tickColor = () => getComputedStyle(document.documentElement)
-  .getPropertyValue('--tick').trim() || 'rgba(255,255,255,.12)';
+/* ---------- shared timeline engine (center-fixed playhead) ----------
+   Every timeline follows the CLIP 5/6 pattern: a coarse overview strip plus a
+   fine film strip whose playhead is pinned to the center — dragging slides the
+   footage underneath it, so the window may extend past the media edges. */
+function fmtClock(t){
+  t = Math.max(0, t || 0);
+  const m = Math.floor(t / 60);
+  return `${m}:${(t - m * 60).toFixed(1).padStart(4, '0')}`;
+}
 
-async function renderStripCanvas(canvasEl, boxEl, t0, t1, opts = {}){
+// Paint thumbnails for the visible window [vs,ve] into a strip canvas. The
+// window may extend past the media range [t0,t1]; those slots stay background.
+async function paintStripWindow(canvasEl, boxEl, vs, ve, t0, t1, opts = {}){
   const box = boxEl.getBoundingClientRect();
   if(box.width < 4) return false;
   const dpr = window.devicePixelRatio || 1;
@@ -1356,88 +1537,239 @@ async function renderStripCanvas(canvasEl, boxEl, t0, t1, opts = {}){
   if(opts.background) opts.background(cc, box.width, box.height);
 
   const count = Math.max(5, Math.min(12, Math.floor(box.width / 86)));
-  const thumbW = box.width / count;
-  const wasPlayingPreview = S.clip.playing;
+  if(opts.shouldAbort && opts.shouldAbort()) return false;   // don't pause a fresh transport
   vid.pause();
 
   for(let i = 0; i < count; i++){
+    const slotStart = vs + i / count * (ve - vs);
+    const slotEnd = vs + (i + 1) / count * (ve - vs);
+    const ms = Math.max(slotStart, t0), me = Math.min(slotEnd, t1);
+    if(me - ms <= 1e-9) continue;              // fully outside the media: leave background
     if(opts.shouldAbort && opts.shouldAbort()) return false;
-    const t = t0 + (i + 0.5) / count * (t1 - t0);
-    await seekVideo(t);
+    const bmp = await frameBitmap((ms + me) / 2);   // cached; only misses hit the decoder
     if(opts.shouldAbort && opts.shouldAbort()) return false;
-    cc.drawImage(vid, i * thumbW, 0, thumbW, box.height);
+    // Draw only the in-media slice of the slot so the media edge lands at its
+    // exact time position, not at the nearest slot boundary.
+    const x0 = (ms - vs) / (ve - vs) * box.width;
+    const x1 = (me - vs) / (ve - vs) * box.width;
+    if(bmp){
+      const sx = (ms - slotStart) / (slotEnd - slotStart) * bmp.width;
+      const sw = Math.max(1, (me - ms) / (slotEnd - slotStart) * bmp.width);
+      cc.drawImage(bmp, sx, 0, sw, bmp.height, x0, 0, x1 - x0, box.height);
+    }
     cc.strokeStyle = tickColor();
-    cc.strokeRect(i * thumbW, 0, thumbW, box.height);
+    cc.strokeRect(x0, 0, x1 - x0, box.height);
   }
+  return true;
+}
 
+// Blurry-but-instant context: stretch the matching slice of an overview strip
+// into a detail canvas while the real thumbnails render.
+function paintWindowPlaceholder(cc, w, h, ov, ovT0, ovT1, vs, ve){
+  if(!ov || !ov.width) return;
+  const ms = Math.max(vs, ovT0), me = Math.min(ve, ovT1);
+  if(me - ms <= 0) return;
+  const scale = ov.width / Math.max(1e-6, ovT1 - ovT0);
+  cc.drawImage(ov, (ms - ovT0) * scale, 0, Math.max(1, (me - ms) * scale), ov.height,
+    (ms - vs) / (ve - vs) * w, 0, (me - ms) / (ve - vs) * w, h);
+}
+
+/* ---------- time-anchored tile strips ----------
+   Detail-strip thumbnails are tiles keyed to absolute video time, so panning
+   translates already-decoded tiles instead of stretching them; the blurry
+   overview placeholder shows only where a tile hasn't decoded yet. The tile
+   grid depends only on the zoom span (power-of-two ladder), so tiles reload
+   only when the zoom actually changes. */
+function stripTileDur(span, widthPx){
+  const count = Math.max(5, Math.min(12, Math.floor(widthPx / 86)));
+  return Math.max(0.1, Math.pow(2, Math.round(Math.log2(span / count))));
+}
+
+// Synchronously repaint a detail strip from cached tiles: background, then the
+// blurry placeholder, then every already-decoded tile (clipped to the media
+// range [t0,t1] so the media edge lands at its exact time position). Cheap
+// enough to run on every pan move / playback tick. Returns the sample times
+// of tiles still missing from the cache.
+function drawStripTiles(canvasEl, boxEl, vs, ve, t0, t1, placeholder){
+  const box = boxEl.getBoundingClientRect();
+  if(box.width < 4) return [];
+  const dpr = window.devicePixelRatio || 1;
+  const bw = Math.max(1, Math.round(box.width * dpr));
+  const bh = Math.max(1, Math.round(box.height * dpr));
+  if(canvasEl.width !== bw) canvasEl.width = bw;
+  if(canvasEl.height !== bh) canvasEl.height = bh;
+  const cc = canvasEl.getContext('2d');
+  cc.setTransform(dpr, 0, 0, dpr, 0, 0);
+  cc.fillStyle = stripBg();
+  cc.fillRect(0, 0, box.width, box.height);
+  if(placeholder) placeholder(cc, box.width, box.height);
+  const span = Math.max(1e-6, ve - vs);
+  const tileDur = stripTileDur(span, box.width);
+  const missing = [];
+  const first = Math.floor(Math.max(vs, t0) / tileDur);
+  const last = Math.floor((Math.min(ve, t1) - 1e-9) / tileDur);
+  for(let i = first; i <= last; i++){
+    const ts = i * tileDur;
+    const ms = Math.max(ts, t0), me = Math.min(ts + tileDur, t1);
+    if(me - ms <= 1e-9) continue;
+    const sample = (ms + me) / 2;
+    const bmp = peekThumb(sample);
+    if(!bmp){ missing.push(sample); continue; }
+    const x0 = (ms - vs) / span * box.width;
+    const x1 = (me - vs) / span * box.width;
+    const sx = (ms - ts) / tileDur * bmp.width;
+    const sw = Math.max(1, (me - ms) / tileDur * bmp.width);
+    cc.drawImage(bmp, sx, 0, sw, bmp.height, x0, 0, x1 - x0, box.height);
+    cc.strokeStyle = tickColor();
+    cc.strokeRect(x0, 0, x1 - x0, box.height);
+  }
+  return missing;
+}
+
+// Decode missing tiles one at a time (serialized through the decoder queue),
+// repainting via `redraw` as each lands so new tiles appear without moving
+// the ones already on screen. Returns false if `active` cut the pass short.
+async function fillStripTiles(missing, active, redraw){
+  for(const t of missing){
+    if(!active()) return false;
+    if(!peekThumb(t)) await frameBitmap(t);
+    if(!active()) return false;
+    redraw();
+  }
+  return true;
+}
+
+/* ---------- shared transport (one play/pause per timeline phase) ---------- */
+const transport = {phase:null, raf:null};
+const PLAY_ICON = '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg>';
+const PAUSE_ICON = '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M7 5h3.6v14H7zM13.4 5H17v14h-3.6z"/></svg>';
+const PLAY_BTNS = {frame:'framePlayBtn', clip:'clipPlayBtn', track:'trackPlayBtn', label:'labelPlayBtn'};
+
+function updatePlayButtons(){
+  for(const [phase, id] of Object.entries(PLAY_BTNS))
+    $(id).innerHTML = transport.phase === phase ? PAUSE_ICON : PLAY_ICON;
+}
+
+function transportStop(){
+  if(transport.raf) cancelAnimationFrame(transport.raf);
+  transport.raf = null;
+  transport.phase = null;
+  vid.pause();
+  updatePlayButtons();
+}
+
+// spec: {start, end, from, loop, tick(t), done()} — times in video seconds.
+// Playback resumes from spec.from (usually the playhead, since thumbnail
+// renders leave the decoder elsewhere); past the end it restarts at start.
+async function transportStart(phase, spec){
+  transportStop();
+  transport.phase = phase;
+  updatePlayButtons();
+  try{
+    let from = Number.isFinite(spec.from) ? spec.from : vid.currentTime;
+    if(from < spec.start || from >= spec.end - 0.02) from = spec.start;
+    if(Math.abs(vid.currentTime - from) > 0.02) await seekVideo(from);
+    if(transport.phase !== phase) return;
+    await vid.play();
+  }catch(_){
+    if(transport.phase === phase) transportStop();
+    return;
+  }
+  const step = () => {
+    if(transport.phase !== phase || S.phase !== phase) return;
+    let t = vid.currentTime;
+    if(t >= spec.end){
+      if(spec.loop){
+        vid.currentTime = spec.start;
+        t = spec.start;
+      } else {
+        spec.tick(spec.end);
+        transportStop();
+        if(spec.done) spec.done();
+        return;
+      }
+    }
+    spec.tick(t);
+    transport.raf = requestAnimationFrame(step);
+  };
+  transport.raf = requestAnimationFrame(step);
+}
+
+const stripBg = () => getComputedStyle(document.documentElement)
+  .getPropertyValue('--strip-bg').trim() || '#000';
+const tickColor = () => getComputedStyle(document.documentElement)
+  .getPropertyValue('--tick').trim() || 'rgba(255,255,255,.12)';
+
+async function renderStripCanvas(canvasEl, boxEl, t0, t1, opts = {}){
+  if(clipPlaying()) return false;   // renders wait for playback; the scheduler retries
+  const ok = await paintStripWindow(canvasEl, boxEl, t0, t1, 0, clipDuration(), opts);
+  if(!ok) return false;
+  if(clipPlaying()) return true;    // playback started mid-render; leave the decoder alone
   await seekVideo(S.clip.cursor);
   drawClipPreview(S.clip.cursor);
-  if(wasPlayingPreview) startClipPlayback();
   return true;
 }
 
 async function renderOverviewStrip(){
   if(S.clip.overviewThumbs) return;
-  const ok = await renderStripCanvas($('overviewStrip'), $('clipOverview'), 0, clipDuration());
+  const ok = await renderStripCanvas($('overviewStrip'), $('clipOverview'), 0, clipDuration(),
+    {shouldAbort: () => S.phase !== 'clip' || clipPlaying()});
   if(ok) S.clip.overviewThumbs = true;
 }
 
 // Stretch the matching slice of the overview strip into the detail canvas —
 // blurry but instant context while the real thumbnails render.
 function paintDetailPlaceholder(cc, w, h){
-  const ov = $('overviewStrip');
-  if(!S.clip.overviewThumbs || !ov.width) return;
-  const dur = clipDuration();
-  const sx = S.clip.viewStart / dur * ov.width;
-  const sw = Math.max(1, viewSpan() / dur * ov.width);
-  cc.drawImage(ov, sx, 0, sw, ov.height, 0, 0, w, h);
+  if(!S.clip.overviewThumbs) return;
+  paintWindowPlaceholder(cc, w, h, $('overviewStrip'), 0, clipDuration(),
+    S.clip.viewStart, S.clip.viewEnd);
 }
 
 function drawDetailPlaceholderNow(){
-  const box = $('clipEditor').getBoundingClientRect();
-  if(box.width < 4) return;
-  const strip = $('filmstrip');
-  const dpr = window.devicePixelRatio || 1;
-  const bw = Math.max(1, Math.round(box.width * dpr));
-  const bh = Math.max(1, Math.round(box.height * dpr));
-  if(strip.width !== bw) strip.width = bw;
-  if(strip.height !== bh) strip.height = bh;
-  const cc = strip.getContext('2d');
-  cc.setTransform(dpr, 0, 0, dpr, 0, 0);
-  cc.fillStyle = stripBg();
-  cc.fillRect(0, 0, box.width, box.height);
-  paintDetailPlaceholder(cc, box.width, box.height);
+  drawStripTiles($('filmstrip'), $('clipEditor'),
+    S.clip.viewStart, S.clip.viewEnd, 0, clipDuration(), paintDetailPlaceholder);
 }
 
 async function renderDetailStrip(){
-  const editor = $('clipEditor');
-  const box = editor.getBoundingClientRect();
-  if(box.width < 4) return;
+  const box = $('clipEditor').getBoundingClientRect();
+  if(box.width < 4 || clipPlaying()) return;   // renders wait for playback; the scheduler retries
   const key = `${S.clip.viewStart.toFixed(3)}:${S.clip.viewEnd.toFixed(3)}:${Math.round(box.width)}`;
-  if(S.clip.detailKey === key) return;
   const token = ++S.clip.detailToken;
-  const shouldAbort = () => token !== S.clip.detailToken || !!S.clip.dragging
-    || S.clip.overviewDragging || S.clip.seeking || S.phase !== 'clip';
-  const ok = await renderStripCanvas($('filmstrip'), editor, S.clip.viewStart, S.clip.viewEnd,
-    {background: paintDetailPlaceholder, shouldAbort});
+  const missing = drawStripTiles($('filmstrip'), $('clipEditor'),
+    S.clip.viewStart, S.clip.viewEnd, 0, clipDuration(), paintDetailPlaceholder);
+  if(!missing.length){ S.clip.detailKey = key; return; }
+  const active = () => token === S.clip.detailToken && !S.clip.dragging
+    && !S.clip.overviewDragging && S.phase === 'clip' && !clipPlaying();
+  const done = await fillStripTiles(missing, active, drawDetailPlaceholderNow);
   if(token !== S.clip.detailToken) return;
-  if(ok) S.clip.detailKey = key;
-  else if(S.phase === 'clip') scheduleDetailRender();
+  if(done){
+    S.clip.detailKey = key;
+    requestPreviewFrame(S.clip.cursor);   // the fill left the decoder on a thumbnail
+  } else if(S.phase === 'clip') scheduleDetailRender();
 }
 
 function scheduleDetailRender(delayMs = 250){
   clearTimeout(S.clip.detailTimer);
   S.clip.detailTimer = setTimeout(() => {
     if(S.phase !== 'clip') return;
-    if(S.clip.dragging || S.clip.overviewDragging){ scheduleDetailRender(delayMs); return; }
+    if(S.clip.dragging || S.clip.overviewDragging || clipPlaying()){
+      scheduleDetailRender(delayMs);   // wait for input/playback to settle
+      return;
+    }
+    // Playback can abort the initial pass before the overview thumbnails
+    // land; rebuild both strips in that case, not just the fine window.
+    if(!S.clip.overviewThumbs){
+      renderOverviewStrip().then(() => { updateClipTimeline(); renderDetailStrip(); });
+      return;
+    }
     renderDetailStrip();
   }, delayMs);
 }
 
 function updateClipTimeline(){
+  syncClipView();
   const startPct = timeToDetailPct(S.clip.start);
   const endPct = timeToDetailPct(S.clip.end);
-  const cursorPct = timeToDetailPct(S.clip.cursor);
   $('shadeLeft').style.width = `${startPct}%`;
   $('shadeRight').style.left = `${endPct}%`;
   $('shadeRight').style.width = `${100 - endPct}%`;
@@ -1448,7 +1780,8 @@ function updateClipTimeline(){
   const outOfView = t => t < S.clip.viewStart - 1e-6 || t > S.clip.viewEnd + 1e-6;
   $('clipStartHandle').classList.toggle('offview', outOfView(S.clip.start));
   $('clipEndHandle').classList.toggle('offview', outOfView(S.clip.end));
-  $('clipCursor').style.left = `${cursorPct}%`;
+  $('clipReadout').textContent =
+    `${fmtClock(S.clip.cursor)} / ${fmtClock(clipDuration())} · frame ${timeToFrame(S.clip.cursor)}`;
 
   const oStart = timeToOverviewPct(S.clip.start);
   const oEnd = timeToOverviewPct(S.clip.end);
@@ -1461,8 +1794,14 @@ function updateClipTimeline(){
 
 async function setClipCursor(time){
   stopClipPlayback();
-  S.clip.cursor = Math.min(Math.max(time, 0), clipDuration());
+  const t = Math.min(Math.max(time, 0), clipDuration());
+  const moved = Math.abs(t - S.clip.cursor) > 1e-6;
+  S.clip.cursor = t;
   updateClipTimeline();
+  if(moved){                     // the window travels with the playhead
+    drawDetailPlaceholderNow();
+    scheduleDetailRender();
+  }
   await requestPreviewFrame(S.clip.cursor);
 }
 
@@ -1477,7 +1816,7 @@ function setupClipControls(){
 
   recenterView();
   updateClipTimeline();
-  updateClipPlayButton();
+  updatePlayButtons();
   (async () => {
     await setClipCursor(S.clip.cursor);
     await renderOverviewStrip();
@@ -1515,14 +1854,11 @@ function nudgeClipEdge(which, delta){
     t = Math.min(clipDuration(), Math.max(S.clip.end + delta, S.clip.start + minClip()));
     S.clip.end = t;
   }
-  S.clip.cursor = t;
-  if(t < S.clip.viewStart || t > S.clip.viewEnd){
-    if(recenterView()){
-      drawDetailPlaceholderNow();
-      scheduleDetailRender();
-    }
-  }
+  S.clip.cursor = t;             // the playhead centers on the edge being nudged
+  recenterView();
   updateClipTimeline();
+  drawDetailPlaceholderNow();
+  scheduleDetailRender();
   requestPreviewFrame(t);
 }
 
@@ -1547,9 +1883,11 @@ $('clipEditor').addEventListener('pointerdown', e => {
   const endDist = Math.abs(x - handleX(S.clip.end));
   S.clip.dragging = startDist <= HANDLE_HIT_RADIUS && startDist <= endDist ? 'start'
     : endDist <= HANDLE_HIT_RADIUS ? 'end'
-    : 'cursor';
+    : 'pan';
+  S.clip.dragX = e.clientX;
+  S.clip.dragT = S.clip.cursor;
   $('clipEditor').setPointerCapture(e.pointerId);
-  moveClipPointer(e);
+  if(S.clip.dragging !== 'pan') moveClipPointer(e);
 });
 
 $('clipEditor').addEventListener('pointermove', e => {
@@ -1558,12 +1896,12 @@ $('clipEditor').addEventListener('pointermove', e => {
 
 function moveClipPointer(e){
   const r = $('clipEditor').getBoundingClientRect();
-  const time = detailPctToTime((e.clientX - r.left) / r.width);
   if(S.clip.dragging === 'start' || S.clip.dragging === 'end'){
     // Trimming a handle previews the frame at the handle so you can see what
     // you're cutting to, but the playhead stays put — it only moves when the
-    // timeline itself is scrubbed. On release, endClipDrag snaps the preview
+    // timeline itself is dragged. On release, endClipDrag snaps the preview
     // back to the playhead's frame.
+    const time = detailPctToTime((e.clientX - r.left) / r.width);
     let edge;
     if(S.clip.dragging === 'start'){
       edge = S.clip.start = Math.max(0, Math.min(time, S.clip.end - minClip()));
@@ -1573,31 +1911,12 @@ function moveClipPointer(e){
     updateClipTimeline();
     requestPreviewFrame(edge);
   } else {
-    S.clip.cursor = Math.min(Math.max(time, 0), clipDuration());
+    // Pan: the footage follows the finger while the playhead stays centered.
+    const dt = (e.clientX - S.clip.dragX) / r.width * viewSpan();
+    S.clip.cursor = Math.min(Math.max(S.clip.dragT - dt, 0), clipDuration());
     updateClipTimeline();
+    drawDetailPlaceholderNow();
     requestPreviewFrame(S.clip.cursor);
-  }
-}
-
-// After a handle is released near a view edge, or once the selection has
-// drifted out of the band around recenterView's 3x target (in either
-// direction), refit the window and re-render thumbnails. Widening pushes the
-// handles at the view edges, so nearEdge covers it; shrinking moves them away
-// from the edges, so it needs the SEL_FRAC_MIN check to zoom back in.
-const SEL_FRAC_MIN = 0.22;        // shrink past this and the window tightens
-const SEL_FRAC_MAX = 0.9;         // grow past this and the window coarsens
-function maybeRecenterAfterEdit(){
-  const span = viewSpan();
-  const startFrac = (S.clip.start - S.clip.viewStart) / span;
-  const endFrac = (S.clip.end - S.clip.viewStart) / span;
-  const selFrac = (S.clip.end - S.clip.start) / span;
-  const nearEdge = startFrac < EDGE_RECENTER_FRAC || endFrac > 1 - EDGE_RECENTER_FRAC;
-  if(nearEdge || selFrac > SEL_FRAC_MAX || selFrac < SEL_FRAC_MIN){
-    if(recenterView()){
-      drawDetailPlaceholderNow();
-      scheduleDetailRender();
-    }
-    updateClipTimeline();
   }
 }
 
@@ -1606,9 +1925,12 @@ function endClipDrag(e){
   S.clip.dragging = null;
   try{ $('clipEditor').releasePointerCapture(e.pointerId); }catch(_){ }
   if(wasHandle){
-    setClipCursor(S.clip.cursor);
-    maybeRecenterAfterEdit();
+    recenterView();              // refit the zoom to the new selection length
+    updateClipTimeline();
+    drawDetailPlaceholderNow();
+    requestPreviewFrame(S.clip.cursor);   // snap the preview back to the playhead
   }
+  scheduleDetailRender(150);
 }
 $('clipEditor').addEventListener('pointerup', endClipDrag);
 $('clipEditor').addEventListener('pointercancel', endClipDrag);
@@ -1623,19 +1945,15 @@ function moveOverviewPointer(e){
   const dur = clipDuration();
   const selLen = Math.min(dur, Math.max(minClip(), S.clip.end - S.clip.start));
   const newStart = Math.max(0, Math.min(t - selLen / 2, dur - selLen));
-  const shift = newStart - S.clip.start;
   const cursorRel = Math.min(Math.max(S.clip.cursor - S.clip.start, 0), selLen);
   S.clip.start = newStart;
   S.clip.end = newStart + selLen;
+  // The detail window pans in lockstep automatically: it derives from the
+  // cursor, which slides with the selection.
   S.clip.cursor = newStart + cursorRel;
 
-  const span = viewSpan();
-  const vs = Math.max(0, Math.min(S.clip.viewStart + shift, dur - span));
-  S.clip.viewStart = vs;
-  S.clip.viewEnd = vs + span;
-
-  drawDetailPlaceholderNow();
   updateClipTimeline();
+  drawDetailPlaceholderNow();
   requestPreviewFrame(S.clip.cursor);
 }
 
@@ -1657,28 +1975,243 @@ function endOverviewDrag(e){
 $('clipOverview').addEventListener('pointerup', endOverviewDrag);
 $('clipOverview').addEventListener('pointercancel', endOverviewDrag);
 
-let clipResizeTimer = null;
+let stripResizeTimer = null;
 window.addEventListener('resize', () => {
-  if(S.phase !== 'clip') return;
-  clearTimeout(clipResizeTimer);
-  clipResizeTimer = setTimeout(async () => {
-    if(S.phase !== 'clip') return;
-    S.clip.overviewThumbs = false;
-    S.clip.detailKey = '';
-    await renderOverviewStrip();
-    updateClipTimeline();
-    scheduleDetailRender(0);
+  clearTimeout(stripResizeTimer);
+  stripResizeTimer = setTimeout(async () => {
+    if(S.phase === 'clip'){
+      S.clip.overviewThumbs = false;
+      S.clip.detailKey = '';
+      await renderOverviewStrip();
+      updateClipTimeline();
+      scheduleDetailRender(0);
+    } else if(S.phase === 'frame'){
+      S.frameView.ovDone = false;
+      S.frameView.key = '';
+      await renderFrameOverview();
+      updateFrameTimelineUI();
+      scheduleFrameDetail(0);
+    } else if(S.phase === 'track' && S.run){
+      S.trackView.ovDone = false;
+      S.trackView.key = '';
+      renderTrackStrips(S.trackView.cursor);
+    } else if(S.phase === 'label' && labelRun()){
+      labelState.ovDone = false;
+      labelState.key = '';
+      renderLabelStrips();
+    }
   }, 300);
 });
 
-$('clipPlayBtn').onclick = () => {
-  if(S.clip.playing) stopClipPlayback();
-  else startClipPlayback().catch(() => {
-    stopClipPlayback();
-    $('trackStatus').textContent = 'Preview playback could not start. Tap Play again after the preview frame loads.';
-    $('trackStatus').className = 'status warn';
+/* ---------- frame-picker timeline (standardized coarse/fine strips) ---------- */
+function frameWindow(){
+  const span = S.frameView.span;
+  return {vs:S.frameView.cursor - span / 2, ve:S.frameView.cursor + span / 2};
+}
+
+function updateFrameTimelineUI(){
+  const {vs, ve} = frameWindow();
+  $('frameViewport').style.left = `${timeToOverviewPct(vs)}%`;
+  $('frameViewport').style.width =
+    `${Math.max(0, timeToOverviewPct(ve) - timeToOverviewPct(vs))}%`;
+  $('frameOverviewCursor').style.left = `${timeToOverviewPct(S.frameView.cursor)}%`;
+  $('frameReadout').textContent =
+    `${fmtClock(S.frameView.cursor)} / ${fmtClock(clipDuration())} · frame ${timeToFrame(S.frameView.cursor)}`;
+}
+
+function paintFrameDetailPlaceholder(cc, w, h){
+  if(!S.frameView.ovDone) return;
+  const {vs, ve} = frameWindow();
+  paintWindowPlaceholder(cc, w, h, $('frameOverviewStrip'), 0, clipDuration(), vs, ve);
+}
+
+function drawFrameDetailPlaceholderNow(){
+  const {vs, ve} = frameWindow();
+  drawStripTiles($('frameStrip'), $('frameTimeline'), vs, ve, 0, clipDuration(),
+    paintFrameDetailPlaceholder);
+}
+
+async function renderFrameOverview(){
+  if(S.frameView.ovDone) return;
+  const ok = await paintStripWindow($('frameOverviewStrip'), $('frameOverview'),
+    0, clipDuration(), 0, clipDuration(),
+    {shouldAbort: () => S.phase !== 'frame' || transport.phase === 'frame'});
+  if(ok) S.frameView.ovDone = true;
+}
+
+async function renderFrameDetail(){
+  const box = $('frameTimeline').getBoundingClientRect();
+  if(box.width < 4 || transport.phase === 'frame') return;
+  const {vs, ve} = frameWindow();
+  const key = `${vs.toFixed(3)}:${ve.toFixed(3)}:${Math.round(box.width)}`;
+  const gen = ++S.frameView.gen;
+  const missing = drawStripTiles($('frameStrip'), $('frameTimeline'), vs, ve, 0, clipDuration(),
+    paintFrameDetailPlaceholder);
+  if(!missing.length){ S.frameView.key = key; return; }
+  const active = () => gen === S.frameView.gen && !S.frameView.dragging
+    && !S.frameView.ovDragging && S.phase === 'frame' && transport.phase !== 'frame';
+  const done = await fillStripTiles(missing, active, drawFrameDetailPlaceholderNow);
+  if(gen !== S.frameView.gen) return;
+  if(done){
+    S.frameView.key = key;
+    requestPreviewFrame(S.frameView.cursor);   // the fill left the decoder on a thumbnail
+  } else if(S.phase === 'frame'){
+    scheduleFrameDetail();
+  }
+}
+
+function scheduleFrameDetail(delayMs = 250){
+  clearTimeout(S.frameView.timer);
+  S.frameView.timer = setTimeout(() => {
+    if(S.phase !== 'frame') return;
+    if(S.frameView.dragging || S.frameView.ovDragging || transport.phase === 'frame'){
+      scheduleFrameDetail(delayMs);
+      return;
+    }
+    if(!S.frameView.ovDone){
+      renderFrameOverview().then(() => { updateFrameTimelineUI(); renderFrameDetail(); });
+      return;
+    }
+    renderFrameDetail();
+  }, delayMs);
+}
+
+function setFrameCursor(time){
+  if(transport.phase === 'frame') transportStop();
+  const t = Math.min(clipDuration(), Math.max(0, time));
+  const moved = Math.abs(t - S.frameView.cursor) > 1e-6;
+  S.frameView.cursor = t;
+  updateFrameTimelineUI();
+  if(moved){                     // the window travels with the playhead
+    drawFrameDetailPlaceholderNow();
+    scheduleFrameDetail();
+  }
+  requestPreviewFrame(t);
+}
+
+function setupFrameTimeline(){
+  S.frameView.span = Math.min(4, Math.max(MIN_CLIP, clipDuration()));
+  updateFrameTimelineUI();
+  drawFrameDetailPlaceholderNow();
+  requestPreviewFrame(S.frameView.cursor);
+  (async () => {
+    await renderFrameOverview();
+    updateFrameTimelineUI();
+    renderFrameDetail();
+  })();
+}
+
+function startFramePlayback(){
+  if(S.phase !== 'frame' || !Number.isFinite(vid.duration)) return;
+  transportStart('frame', {
+    start:0, end:clipDuration(), from:S.frameView.cursor, loop:false,
+    tick: t => {
+      S.frameView.cursor = t;
+      updateFrameTimelineUI();
+      drawFrameDetailPlaceholderNow();
+      ctx.drawImage(vid, 0, 0, S.W, S.H);
+    },
+    done: () => scheduleFrameDetail(0),
   });
-};
+}
+
+$('framePlayBtn').onclick = () => togglePlayback('frame');
+
+$('frameTimeline').addEventListener('pointerdown', e => {
+  if(S.phase !== 'frame') return;
+  transportStop();
+  S.frameView.dragging = true;
+  S.frameView.dragX = e.clientX;
+  S.frameView.dragT = S.frameView.cursor;
+  try{ $('frameTimeline').setPointerCapture(e.pointerId); }catch(_){ }
+});
+$('frameTimeline').addEventListener('pointermove', e => {
+  if(!S.frameView.dragging) return;
+  const r = $('frameTimeline').getBoundingClientRect();
+  // Pan: the footage follows the finger while the playhead stays centered.
+  const dt = (e.clientX - S.frameView.dragX) / r.width * S.frameView.span;
+  setFrameCursor(S.frameView.dragT - dt);
+});
+function endFrameDrag(e){
+  if(!S.frameView.dragging) return;
+  S.frameView.dragging = false;
+  try{ $('frameTimeline').releasePointerCapture(e.pointerId); }catch(_){ }
+  scheduleFrameDetail(150);
+}
+$('frameTimeline').addEventListener('pointerup', endFrameDrag);
+$('frameTimeline').addEventListener('pointercancel', endFrameDrag);
+
+function scrubFrameOverview(e){
+  const r = $('frameOverview').getBoundingClientRect();
+  setFrameCursor(overviewPctToTime((e.clientX - r.left) / r.width));
+}
+$('frameOverview').addEventListener('pointerdown', e => {
+  if(S.phase !== 'frame') return;
+  transportStop();
+  S.frameView.ovDragging = true;
+  try{ $('frameOverview').setPointerCapture(e.pointerId); }catch(_){ }
+  scrubFrameOverview(e);
+});
+$('frameOverview').addEventListener('pointermove', e => {
+  if(S.frameView.ovDragging) scrubFrameOverview(e);
+});
+function endFrameOvDrag(e){
+  if(!S.frameView.ovDragging) return;
+  S.frameView.ovDragging = false;
+  try{ $('frameOverview').releasePointerCapture(e.pointerId); }catch(_){ }
+  scheduleFrameDetail(150);
+}
+$('frameOverview').addEventListener('pointerup', endFrameOvDrag);
+$('frameOverview').addEventListener('pointercancel', endFrameOvDrag);
+
+$('clipPlayBtn').onclick = () => togglePlayback('clip');
+
+/* ---------- analyze phase preview ----------
+   Seeks the source video to the frame the model is currently analyzing and
+   paints it onto the stage canvas, under the darkened "Analyzing…" overlay. */
+const analyzeState = {active:false, seeking:false, pending:null};
+
+function startAnalyzePreview(){
+  analyzeState.active = true;
+  analyzeState.pending = null;
+  analyzeState.seeking = false;
+  vid.pause();
+  // Show the clip's first frame immediately, before the first status poll lands.
+  analyzeSeekTo(S.clip.start);
+}
+
+function stopAnalyzePreview(){
+  analyzeState.active = false;
+  analyzeState.pending = null;
+}
+
+function analyzeSeekTo(time){
+  if(!analyzeState.active) return;
+  const dur = Number.isFinite(vid.duration) ? vid.duration : time;
+  analyzeState.pending = Math.max(0, Math.min(time, dur));
+  if(analyzeState.seeking) return;      // a seek is in flight; it will pick up the latest pending
+  analyzeState.seeking = true;
+  const step = () => {
+    if(!analyzeState.active || analyzeState.pending == null){ analyzeState.seeking = false; return; }
+    const target = analyzeState.pending;
+    analyzeState.pending = null;
+    const onSeeked = () => {
+      vid.removeEventListener('seeked', onSeeked);
+      if(analyzeState.active) ctx.drawImage(vid, 0, 0, S.W, S.H);
+      step();                           // drain any newer target requested mid-seek
+    };
+    vid.addEventListener('seeked', onSeeked);
+    vid.currentTime = target;
+  };
+  step();
+}
+
+/* Frame the model is analyzing → its time in the source video. */
+function analyzeFrameTime(processedFrames){
+  const fps = S.videoFps || 30;
+  const stride = S.clip.frameStride || 1;
+  return S.clip.start + (Math.max(0, processedFrames || 0) * stride) / fps;
+}
 
 function setTrackProgress(label, pct, indeterminate=false){
   $('trackProgressBox').classList.remove('hidden');
@@ -1764,6 +2297,7 @@ async function waitForTracking(runId){
       : 'Tracking failed';
     setTrackProgress(label, data.progress || 0);
     $('trackStatus').textContent = data.message || label;
+    if(data.status === 'running') analyzeSeekTo(analyzeFrameTime(data.processed_frames));
 
     if(data.status === 'complete') return data;
     if(data.status === 'failed') throw new Error(data.error || 'Tracking failed.');
@@ -1789,9 +2323,11 @@ $('runTrackBtn').onclick = async () => {
   $('runTrackBtn').disabled = true;
   $('trackStatus').textContent = 'Preparing clip request…';
   $('trackStatus').className = 'status';
+  setPhase('analyze');   // take over the whole screen while the model runs
 
   try{
     const videoId = await ensureVideoUploaded();
+    if(S.phase !== 'analyze') return;   // user tapped Back during upload
 
     const form = new FormData();
     form.append('video_id', videoId);
@@ -1802,14 +2338,17 @@ $('runTrackBtn').onclick = async () => {
     form.append('inference_width', S.clip.inferenceWidth.toString());
 
     const started = await postFormRequest('/api/track', form);
+    if(S.phase !== 'analyze') return;
     setTrackProgress('Analyzing frame 0/' + started.total_frames, 0);
     $('trackStatus').textContent = 'Running local model on the selected clip…';
     const data = await waitForTracking(started.run_id);
+    if(S.phase !== 'analyze') return;   // user left mid-analysis; don't yank them forward
     S.run = data;
     $('trackStatus').textContent = `Tracked ${data.rows} frame rows.`;
     $('trackStatus').className = 'status ok';
     setPhase('track');
   } catch(error){
+    if(S.phase === 'analyze') setPhase('clip');   // return to the clip editor to show the error
     showError(error.message);
     $('trackStatus').textContent = '';
     $('trackStatus').className = 'status';
@@ -1837,12 +2376,13 @@ function frameToRunPct(frame){
 }
 
 /* Coarse-fine timeline (same pattern as the clip page): the overview strip
-   spans the whole tracked clip; the detail strip shows a ~1s fine window so
-   scrubbing is frame-precise. Jumps outside the window recenter it. */
+   spans the whole tracked clip; the detail strip shows a ~1s fine window that
+   always centers on the playhead, so it may extend past the clip edges. */
+const runFps = () => (S.run && S.run.fps) || 60;
+
 function trackWindowFrames(){
   const total = S.run.end_frame - S.run.start_frame;
-  const fps = S.run && S.run.fps ? S.run.fps : 60;
-  return Math.min(total, Math.max(20, Math.round(fps)));
+  return Math.min(total, Math.max(20, Math.round(runFps())));
 }
 
 function frameToViewPct(frame){
@@ -1850,15 +2390,19 @@ function frameToViewPct(frame){
   return Math.min(100, Math.max(0, (frame - S.trackView.startF) / span * 100));
 }
 
+function updateTrackReadout(frame){
+  const fps = runFps();
+  $('trackReadout').textContent =
+    `${fmtClock(frame / fps)} / ${fmtClock((S.run.end_frame + 1) / fps)} · frame ${frame}`;
+}
+
 function setTrackView(centerF, render = true){
   const win = trackWindowFrames();
-  const total = S.run.end_frame - S.run.start_frame;
-  let s = Math.round(centerF - win / 2);
-  s = Math.max(S.run.start_frame, Math.min(s, S.run.end_frame - win));
+  const s = Math.round(centerF - win / 2);
   const changed = s !== S.trackView.startF || s + win !== S.trackView.endF;
   S.trackView.startF = s;
   S.trackView.endF = s + win;
-  $('trackOverview').classList.toggle('hidden', win >= total);
+  $('trackOverview').classList.remove('hidden');
   layoutTrackBars();
   $('trackViewport').style.left = `${frameToRunPct(S.trackView.startF)}%`;
   $('trackViewport').style.width = `${Math.max(0, frameToRunPct(S.trackView.endF) - frameToRunPct(S.trackView.startF))}%`;
@@ -1871,13 +2415,14 @@ function setTrackView(centerF, render = true){
 function updateTrackCursor(frame){
   if(!S.run) return;
   S.trackView.cursor = frame;
-  if(frame < S.trackView.startF || frame > S.trackView.endF) setTrackView(frame);
-  $('trackCursor').style.left = `${frameToViewPct(frame)}%`;
+  setTrackView(frame);          // the window always centers on the playhead
   $('trackOverviewCursor').style.left = `${frameToRunPct(frame)}%`;
+  updateTrackReadout(frame);
   // Insurance: if the fine strip is still showing the placeholder once input
   // settles, make sure a real render lands (an aborted pass can otherwise die
   // without rescheduling). Key-guarded, so extra calls are no-ops.
-  if(S.trackView.ovDone && S.trackView.key === '' && !trackScrubbing && !trackOvScrubbing)
+  if(S.trackView.ovDone && S.trackView.key === '' && !trackScrubbing && !trackOvScrubbing
+    && transport.phase !== 'track')
     scheduleTrackDetailRender(300);
 }
 
@@ -1941,73 +2486,52 @@ function buildHitTimeline(hits, initialFrame){
 }
 
 async function renderTrackStripInto(canvasEl, boxEl, t0, t1, gen, background){
-  const box = boxEl.getBoundingClientRect();
-  if(box.width < 4) return false;
-  const dpr = window.devicePixelRatio || 1;
-  canvasEl.width = Math.max(1, Math.round(box.width * dpr));
-  canvasEl.height = Math.max(1, Math.round(box.height * dpr));
-  const cc = canvasEl.getContext('2d');
-  cc.setTransform(dpr, 0, 0, dpr, 0, 0);
-  cc.fillStyle = stripBg();
-  cc.fillRect(0, 0, box.width, box.height);
-  if(background) background(cc, box.width, box.height);
-
-  const count = Math.max(5, Math.min(12, Math.floor(box.width / 86)));
-  const thumbW = box.width / count;
-  vid.pause();
-
-  for(let i = 0; i < count; i++){
-    const t = t0 + (i + 0.5) / count * (t1 - t0);
-    await seekVideo(t);
-    if(gen !== S.trackStripGen || S.phase !== 'track' || trackScrubbing || trackOvScrubbing) return false;
-    cc.drawImage(vid, i * thumbW, 0, thumbW, box.height);
-    cc.strokeStyle = tickColor();
-    cc.strokeRect(i * thumbW, 0, thumbW, box.height);
-  }
-  return true;
+  const fps = runFps();
+  return paintStripWindow(canvasEl, boxEl, t0, t1,
+    S.run.start_frame / fps, (S.run.end_frame + 1) / fps, {
+      background,
+      shouldAbort: () => gen !== S.trackStripGen || S.phase !== 'track'
+        || trackScrubbing || trackOvScrubbing || transport.phase === 'track',
+    });
 }
 
 // Stretch the matching slice of the overview strip into the detail strip —
 // blurry but instant context while the real thumbnails render.
 function paintTrackDetailPlaceholder(cc, w, h){
   const ov = $('trackOverviewStrip');
-  if(!S.trackView.ovDone || !ov.width || $('trackOverview').classList.contains('hidden')) return;
-  const total = Math.max(1, S.run.end_frame - S.run.start_frame);
-  const sx = (S.trackView.startF - S.run.start_frame) / total * ov.width;
-  const sw = Math.max(1, (S.trackView.endF - S.trackView.startF) / total * ov.width);
-  cc.drawImage(ov, sx, 0, sw, ov.height, 0, 0, w, h);
+  if(!S.trackView.ovDone || !ov.width) return;
+  const fps = runFps();
+  paintWindowPlaceholder(cc, w, h, ov, S.run.start_frame / fps, (S.run.end_frame + 1) / fps,
+    S.trackView.startF / fps, S.trackView.endF / fps);
 }
 
 function drawTrackDetailPlaceholderNow(){
-  const box = $('hitTimeline').getBoundingClientRect();
-  if(box.width < 4) return;
-  const strip = $('trackStrip');
-  const dpr = window.devicePixelRatio || 1;
-  const bw = Math.max(1, Math.round(box.width * dpr));
-  const bh = Math.max(1, Math.round(box.height * dpr));
-  if(strip.width !== bw) strip.width = bw;
-  if(strip.height !== bh) strip.height = bh;
-  const cc = strip.getContext('2d');
-  cc.setTransform(dpr, 0, 0, dpr, 0, 0);
-  cc.fillStyle = stripBg();
-  cc.fillRect(0, 0, box.width, box.height);
-  paintTrackDetailPlaceholder(cc, box.width, box.height);
-  S.trackView.key = '';
+  if(!S.run) return;
+  const fps = runFps();
+  drawStripTiles($('trackStrip'), $('hitTimeline'),
+    S.trackView.startF / fps, S.trackView.endF / fps,
+    S.run.start_frame / fps, (S.run.end_frame + 1) / fps, paintTrackDetailPlaceholder);
 }
 
 async function renderTrackDetail(genArg){
+  if(!S.run) return;
   const box = $('hitTimeline').getBoundingClientRect();
-  if(box.width < 4) return;
+  if(box.width < 4 || transport.phase === 'track') return;
   const key = `${S.trackView.startF}:${S.trackView.endF}:${Math.round(box.width)}`;
-  if(S.trackView.key === key) return;
   const gen = genArg !== undefined ? genArg : ++S.trackStripGen;
-  const fps = S.run && S.run.fps ? S.run.fps : 60;
-  const ok = await renderTrackStripInto($('trackStrip'), $('hitTimeline'),
-    S.trackView.startF / fps, S.trackView.endF / fps, gen, paintTrackDetailPlaceholder);
-  if(ok){
+  const fps = runFps();
+  const missing = drawStripTiles($('trackStrip'), $('hitTimeline'),
+    S.trackView.startF / fps, S.trackView.endF / fps,
+    S.run.start_frame / fps, (S.run.end_frame + 1) / fps, paintTrackDetailPlaceholder);
+  if(!missing.length){ S.trackView.key = key; return; }
+  const active = () => gen === S.trackStripGen && S.phase === 'track'
+    && !trackScrubbing && !trackOvScrubbing && transport.phase !== 'track';
+  const done = await fillStripTiles(missing, active, drawTrackDetailPlaceholderNow);
+  if(gen !== S.trackStripGen) return;
+  if(done){
     S.trackView.key = key;
     seekSourceFrameToCanvas(S.trackView.cursor, false);
-  } else if(S.phase === 'track' && gen === S.trackStripGen){
+  } else if(S.phase === 'track'){
     scheduleTrackDetailRender();
   }
 }
@@ -2016,53 +2540,42 @@ function scheduleTrackDetailRender(delayMs = 250){
   clearTimeout(S.trackView.timer);
   S.trackView.timer = setTimeout(() => {
     if(S.phase !== 'track') return;
-    if(trackScrubbing || trackOvScrubbing){ scheduleTrackDetailRender(delayMs); return; }
+    if(trackScrubbing || trackOvScrubbing || transport.phase === 'track'){
+      scheduleTrackDetailRender(delayMs);
+      return;
+    }
     // A scrub can abort the initial pass before the overview thumbnails land;
     // rebuild both strips in that case, not just the fine window.
-    if(!S.trackView.ovDone && !$('trackOverview').classList.contains('hidden'))
-      renderTrackStrips(S.trackView.cursor);
-    else
-      renderTrackDetail();
+    if(!S.trackView.ovDone) renderTrackStrips(S.trackView.cursor);
+    else renderTrackDetail();
   }, delayMs);
 }
 
 async function renderTrackStrips(initialFrame){
   const gen = ++S.trackStripGen;
-  const fps = S.run && S.run.fps ? S.run.fps : 60;
-  if($('trackOverview').classList.contains('hidden')){
-    S.trackView.ovDone = true;   // no overview needed — the fine window covers the clip
-  } else {
-    const ok = await renderTrackStripInto($('trackOverviewStrip'), $('trackOverview'),
-      S.run.start_frame / fps, S.run.end_frame / fps, gen);
-    if(!ok) return;
-    S.trackView.ovDone = true;
-  }
+  const fps = runFps();
+  const ok = await renderTrackStripInto($('trackOverviewStrip'), $('trackOverview'),
+    S.run.start_frame / fps, (S.run.end_frame + 1) / fps, gen);
+  if(!ok) return;
+  S.trackView.ovDone = true;
   await renderTrackDetail(gen);
   if(gen === S.trackStripGen) seekSourceFrameToCanvas(initialFrame);
 }
 
 let trackScrubbing = false;
 let trackOvScrubbing = false;
-function scrubTrackPointer(e){
-  if(!S.run) return;
-  const r = $('hitTimeline').getBoundingClientRect();
-  const pct = Math.min(1, Math.max(0, (e.clientX - r.left) / r.width));
-  const frame = Math.round(S.trackView.startF + pct * (S.trackView.endF - S.trackView.startF));
-  seekSourceFrameToCanvas(frame);
-}
+const trackDrag = {x:0, f:0};
 
-// The coarse strip scrubs across the whole clip and drags the fine window with it.
+// The coarse strip still jumps straight to where you point.
 function scrubTrackOverview(e){
   if(!S.run) return;
   const r = $('trackOverview').getBoundingClientRect();
   const pct = Math.min(1, Math.max(0, (e.clientX - r.left) / r.width));
-  const frame = Math.round(S.run.start_frame + pct * (S.run.end_frame - S.run.start_frame));
-  setTrackView(frame, false);
-  drawTrackDetailPlaceholderNow();
-  seekSourceFrameToCanvas(frame);
+  seekSourceFrameToCanvas(Math.round(S.run.start_frame + pct * (S.run.end_frame - S.run.start_frame)));
 }
 $('trackOverview').addEventListener('pointerdown', e => {
   if(S.phase !== 'track') return;
+  transportStop();
   try{ $('trackOverview').setPointerCapture(e.pointerId); }catch(_){ }
   trackOvScrubbing = true;
   scrubTrackOverview(e);
@@ -2078,14 +2591,22 @@ function endTrackOvScrub(e){
 }
 $('trackOverview').addEventListener('pointerup', endTrackOvScrub);
 $('trackOverview').addEventListener('pointercancel', endTrackOvScrub);
+
+// The fine strip pans: the footage follows the finger while the playhead
+// stays centered.
 $('hitTimeline').addEventListener('pointerdown', e => {
   if(S.phase !== 'track') return;
+  transportStop();
   try{ $('hitTimeline').setPointerCapture(e.pointerId); }catch(_){ }
   trackScrubbing = true;
-  scrubTrackPointer(e);
+  trackDrag.x = e.clientX;
+  trackDrag.f = S.trackView.cursor;
 });
 $('hitTimeline').addEventListener('pointermove', e => {
-  if(trackScrubbing) scrubTrackPointer(e);
+  if(!trackScrubbing) return;
+  const r = $('hitTimeline').getBoundingClientRect();
+  const df = (e.clientX - trackDrag.x) / r.width * (S.trackView.endF - S.trackView.startF);
+  seekSourceFrameToCanvas(Math.round(trackDrag.f - df));
 });
 $('hitTimeline').addEventListener('pointerup', e => {
   trackScrubbing = false;
@@ -2096,6 +2617,45 @@ $('hitTimeline').addEventListener('pointercancel', () => {
   trackScrubbing = false;
   scheduleTrackDetailRender(150);
 });
+
+function drawTrackFrame(){
+  ctx.drawImage(vid, 0, 0, S.W, S.H);
+  for(const k of ORDER){
+    const L = S.lines[k];
+    if(L) drawFitLine(L.fit, CFG[k].hex);
+  }
+}
+
+function startTrackPlayback(){
+  if(S.phase !== 'track' || !S.run) return;
+  const fps = runFps();
+  transportStart('track', {
+    start:S.run.start_frame / fps, end:(S.run.end_frame + 1) / fps,
+    from:(S.trackView.cursor + 0.5) / fps, loop:false,
+    tick: t => {
+      const frame = clampTrackedFrame(Math.floor(t * fps));
+      S.trackView.cursor = frame;
+      setTrackView(frame, false);
+      drawTrackDetailPlaceholderNow();
+      $('trackOverviewCursor').style.left = `${frameToRunPct(frame)}%`;
+      updateTrackReadout(frame);
+      $('judgeFrame').value = frame;
+      drawTrackFrame();
+    },
+    done: () => seekSourceFrameToCanvas(S.trackView.cursor),
+  });
+}
+
+const stepTrackFrames = n => {
+  if(!S.run) return;
+  transportStop();
+  seekSourceFrameToCanvas(S.trackView.cursor + n);
+};
+$('trackPlayBtn').onclick = () => togglePlayback('track');
+$('tBwd1s').onclick = () => stepTrackFrames(-Math.round(runFps()));
+$('tFwd1s').onclick = () => stepTrackFrames(Math.round(runFps()));
+$('tBwd1f').onclick = () => stepTrackFrames(-1);
+$('tFwd1f').onclick = () => stepTrackFrames(1);
 
 function clampTrackedFrame(frame){
   if(!S.run) return;
@@ -2200,7 +2760,24 @@ const LABEL_BAR_CLASS = { wall:'in', racket:'racket', floor:'floor', side_wall:'
 const LABEL_NAMES = { wall:'Front wall', racket:'Racket', floor:'Floor', side_wall:'Side wall' };
 const LABEL_REPLACE_RADIUS = 2;  // tapping a type near an existing label retypes it
 
-const labelState = { runId:null, events:[], selected:-1, frame:null, saveTimer:null, stripGen:0 };
+const labelState = { runId:null, events:[], selected:-1, frame:null, saveTimer:null,
+  stripGen:0, span:4, key:'', timer:null, ovDone:false, dragX:0, dragT:0 };
+
+function labelFps(){
+  const lr = labelRun();
+  return lr && Number.isFinite(lr.fps) && lr.fps > 0 ? lr.fps : 60;
+}
+
+function labelRange(){          // media time range of the label run (seconds)
+  const lr = labelRun(), fps = labelFps();
+  return {t0: lr.start_frame / fps, t1: (lr.end_frame + 1) / fps};
+}
+
+function labelWindow(){         // detail window centered on the playhead frame
+  const fps = labelFps();
+  const c = (labelState.frame + 0.5) / fps;
+  return {vs: c - labelState.span / 2, ve: c + labelState.span / 2};
+}
 
 /* Labels always live in the label-only run for the loaded video (its id
    is derived from the video hash server-side, so every labeling session
@@ -2229,6 +2806,7 @@ async function buildLabelView(){
   let lr = labelRun();
   if(!lr){
     $('labelTimeline').classList.add('hidden');
+    $('labelOverview').classList.add('hidden');
     labelControlsEnabled(false);
     if(!S.videoFile){
       $('labelStatus').textContent = 'Load a clip first — then label its impact frames (no tracking needed).';
@@ -2245,12 +2823,17 @@ async function buildLabelView(){
     lr = labelRun();
   }
   $('labelTimeline').classList.remove('hidden');
+  $('labelOverview').classList.remove('hidden');
   labelControlsEnabled(true);
   if(labelState.runId !== lr.run_id){
     labelState.runId = lr.run_id;
     labelState.events = [];
     labelState.selected = -1;
     labelState.frame = null;
+    labelState.ovDone = false;
+    labelState.key = '';
+    const total = (lr.end_frame - lr.start_frame + 1) / labelFps();
+    labelState.span = Math.min(4, Math.max(0.5, total));
     try{
       const response = await fetch(`/api/runs/${lr.run_id}/ground_truth.json`);
       if(response.ok) labelState.events = (await response.json()).events || [];
@@ -2263,10 +2846,9 @@ async function buildLabelView(){
       ? labelState.events[labelState.events.length - 1].frame
       : lr.start_frame;
   }
-  renderLabelMarks();
   updateLabelStatus();
   setLabelFrame(labelState.frame);
-  renderLabelStrip();
+  renderLabelStrips();
 }
 
 function labelPct(frame){
@@ -2293,67 +2875,138 @@ async function labelSeek(frame){
   }
 }
 
-async function renderLabelStrip(){
-  const gen = ++labelState.stripGen;
+const labelStripAbort = gen => () => gen !== labelState.stripGen || S.phase !== 'label'
+  || labelScrubbing || labelOvScrubbing || transport.phase === 'label';
+
+function paintLabelDetailPlaceholder(cc, w, h){
+  const ov = $('labelOverviewStrip');
+  if(!labelState.ovDone || !ov.width) return;
+  const {t0, t1} = labelRange();
+  const {vs, ve} = labelWindow();
+  paintWindowPlaceholder(cc, w, h, ov, t0, t1, vs, ve);
+}
+
+function drawLabelDetailPlaceholderNow(){
+  if(!labelRun()) return;
+  const {t0, t1} = labelRange();
+  const {vs, ve} = labelWindow();
+  drawStripTiles($('labelStrip'), $('labelTimeline'), vs, ve, t0, t1,
+    paintLabelDetailPlaceholder);
+}
+
+async function renderLabelDetail(genArg){
   const lr = labelRun();
   if(!lr) return;
-  const strip = $('labelStrip');
   const box = $('labelTimeline').getBoundingClientRect();
-  const dpr = window.devicePixelRatio || 1;
-  strip.width = Math.max(1, Math.round(box.width * dpr));
-  strip.height = Math.max(1, Math.round(box.height * dpr));
-  const cc = strip.getContext('2d');
-  cc.setTransform(dpr, 0, 0, dpr, 0, 0);
-  cc.fillStyle = stripBg();
-  cc.fillRect(0, 0, box.width, box.height);
-
-  const fps = Number.isFinite(lr.fps) && lr.fps > 0 ? lr.fps : 60;
-  const startT = lr.start_frame / fps;
-  const endT = lr.end_frame / fps;
-  const count = Math.max(5, Math.min(12, Math.floor(box.width / 86)));
-  const thumbW = box.width / count;
-  vid.pause();
-
-  for(let i = 0; i < count; i++){
-    const t = startT + (i + 0.5) / count * (endT - startT);
-    await seekVideo(t);
-    if(gen !== labelState.stripGen || S.phase !== 'label') return;
-    cc.drawImage(vid, i * thumbW, 0, thumbW, box.height);
-    cc.strokeStyle = 'rgba(255,255,255,.12)';
-    cc.strokeRect(i * thumbW, 0, thumbW, box.height);
+  if(box.width < 4 || transport.phase === 'label') return;
+  const {t0, t1} = labelRange();
+  const {vs, ve} = labelWindow();
+  const key = `${vs.toFixed(3)}:${ve.toFixed(3)}:${Math.round(box.width)}`;
+  const gen = genArg !== undefined ? genArg : ++labelState.stripGen;
+  const missing = drawStripTiles($('labelStrip'), $('labelTimeline'), vs, ve, t0, t1,
+    paintLabelDetailPlaceholder);
+  if(!missing.length){ labelState.key = key; return; }
+  const abort = labelStripAbort(gen);
+  const done = await fillStripTiles(missing, () => !abort(), drawLabelDetailPlaceholderNow);
+  if(gen !== labelState.stripGen) return;
+  if(done){
+    labelState.key = key;
+    labelSeek(labelState.frame);   // the fill left the decoder on a thumbnail
+  } else if(S.phase === 'label'){
+    scheduleLabelDetailRender();
   }
-  labelSeek(labelState.frame);
+}
+
+function scheduleLabelDetailRender(delayMs = 250){
+  clearTimeout(labelState.timer);
+  labelState.timer = setTimeout(() => {
+    if(S.phase !== 'label') return;
+    if(labelScrubbing || labelOvScrubbing || transport.phase === 'label'){
+      scheduleLabelDetailRender(delayMs);
+      return;
+    }
+    if(!labelState.ovDone) renderLabelStrips();
+    else renderLabelDetail();
+  }, delayMs);
+}
+
+async function renderLabelStrips(){
+  const lr = labelRun();
+  if(!lr) return;
+  const gen = ++labelState.stripGen;
+  const {t0, t1} = labelRange();
+  if(!labelState.ovDone){
+    const ok = await paintStripWindow($('labelOverviewStrip'), $('labelOverview'), t0, t1, t0, t1,
+      {shouldAbort:labelStripAbort(gen)});
+    if(!ok) return;
+    labelState.ovDone = true;
+    updateLabelTimelineUI();
+  }
+  await renderLabelDetail(gen);
+}
+
+function updateLabelTimelineUI(){
+  const lr = labelRun();
+  if(!lr) return;
+  const fps = labelFps();
+  const {t0, t1} = labelRange();
+  const {vs, ve} = labelWindow();
+  const ovPct = t => Math.min(100, Math.max(0, (t - t0) / Math.max(1e-6, t1 - t0) * 100));
+  $('labelViewport').style.left = `${ovPct(vs)}%`;
+  $('labelViewport').style.width = `${Math.max(0, ovPct(ve) - ovPct(vs))}%`;
+  $('labelOverviewCursor').style.left = `${labelPct(labelState.frame)}%`;
+  $('labelReadout').textContent =
+    `${fmtClock(labelState.frame / fps)} / ${fmtClock(t1)} · frame ${labelState.frame}`;
+  renderLabelMarks();
 }
 
 function setLabelFrame(frame, seek = true){
   const lr = labelRun();
   if(!lr) return;
+  if(transport.phase === 'label') transportStop();
   frame = Math.min(lr.end_frame, Math.max(lr.start_frame, Math.round(frame)));
+  const moved = frame !== labelState.frame;
   labelState.frame = frame;
-  $('labelFrameOut').textContent = String(frame);
-  $('labelCursor').style.left = `${labelPct(frame)}%`;
+  updateLabelTimelineUI();
+  if(moved){                     // the window travels with the playhead
+    drawLabelDetailPlaceholderNow();
+    scheduleLabelDetailRender();
+  }
   if(seek) labelSeek(frame);
 }
 
+function makeLabelBar(event, index, leftPct, mini){
+  const bar = document.createElement('div');
+  bar.className = `hitBar ${LABEL_BAR_CLASS[event.type] || 'unknown'}${mini ? ' mini' : ''}`
+    + (index === labelState.selected ? ' selected' : '');
+  bar.style.left = `${leftPct}%`;
+  bar.title = `Frame ${event.frame} · ${LABEL_NAMES[event.type] || event.type}`;
+  bar.addEventListener('pointerdown', e => e.stopPropagation());
+  bar.addEventListener('click', e => {
+    e.stopPropagation();
+    labelState.selected = index;
+    setLabelFrame(event.frame);   // re-renders marks with the new selection
+    updateLabelStatus();
+    $('labelDeleteBtn').disabled = false;
+  });
+  return bar;
+}
+
+// Marks live on both strips: window-mapped on the fine strip, run-mapped
+// minis on the overview.
 function renderLabelMarks(){
-  const marks = $('labelMarks');
-  marks.innerHTML = '';
+  const lr = labelRun();
+  if(!lr) return;
+  const fps = labelFps();
+  const {vs, ve} = labelWindow();
+  const det = $('labelMarks'), ov = $('labelOverviewMarks');
+  det.innerHTML = '';
+  ov.innerHTML = '';
   labelState.events.forEach((event, index) => {
-    const bar = document.createElement('div');
-    bar.className = `hitBar ${LABEL_BAR_CLASS[event.type] || 'unknown'}`
-      + (index === labelState.selected ? ' selected' : '');
-    bar.style.left = `${labelPct(event.frame)}%`;
-    bar.title = `Frame ${event.frame} · ${LABEL_NAMES[event.type] || event.type}`;
-    bar.addEventListener('pointerdown', e => e.stopPropagation());
-    bar.addEventListener('click', e => {
-      e.stopPropagation();
-      labelState.selected = index;
-      setLabelFrame(event.frame);
-      renderLabelMarks();
-      updateLabelStatus();
-      $('labelDeleteBtn').disabled = false;
-    });
-    marks.appendChild(bar);
+    ov.appendChild(makeLabelBar(event, index, labelPct(event.frame), true));
+    const t = (event.frame + 0.5) / fps;
+    if(t >= vs && t <= ve)
+      det.appendChild(makeLabelBar(event, index, (t - vs) / (ve - vs) * 100, false));
   });
 }
 
@@ -2410,32 +3063,152 @@ $('labelDeleteBtn').onclick = () => {
   renderLabelMarks();
   scheduleLabelSave();
 };
-$('lStepB5').onclick = () => setLabelFrame(labelState.frame - 5);
-$('lStepB1').onclick = () => setLabelFrame(labelState.frame - 1);
-$('lStepF1').onclick = () => setLabelFrame(labelState.frame + 1);
-$('lStepF5').onclick = () => setLabelFrame(labelState.frame + 5);
+$('lBwd1s').onclick = () => setLabelFrame(labelState.frame - Math.round(labelFps()));
+$('lFwd1s').onclick = () => setLabelFrame(labelState.frame + Math.round(labelFps()));
+$('lBwd1f').onclick = () => setLabelFrame(labelState.frame - 1);
+$('lFwd1f').onclick = () => setLabelFrame(labelState.frame + 1);
 
-let labelScrubbing = false;
-function scrubLabelPointer(e){
+/* Zoom: scale the fine window around the centered playhead. */
+function setLabelZoom(factor){
   const lr = labelRun();
   if(!lr) return;
+  const fps = labelFps();
+  const total = (lr.end_frame - lr.start_frame + 1) / fps;
+  const minSpan = Math.max(0.25, 8 / fps);   // never fewer than ~8 frames across
+  const span = Math.min(Math.max(labelState.span * factor, minSpan), Math.max(total, minSpan));
+  if(Math.abs(span - labelState.span) < 1e-9) return;
+  labelState.span = span;
+  updateLabelTimelineUI();
+  drawLabelDetailPlaceholderNow();
+  scheduleLabelDetailRender();
+}
+$('lZoomIn').onclick = () => setLabelZoom(1 / 1.6);
+$('lZoomOut').onclick = () => setLabelZoom(1.6);
+
+function startLabelPlayback(){
+  const lr = labelRun();
+  if(S.phase !== 'label' || !lr) return;
+  const fps = labelFps();
+  transportStart('label', {
+    start:lr.start_frame / fps, end:(lr.end_frame + 1) / fps,
+    from:(labelState.frame + 0.5) / fps, loop:false,
+    tick: t => {
+      labelState.frame = Math.min(lr.end_frame, Math.max(lr.start_frame, Math.floor(t * fps)));
+      updateLabelTimelineUI();
+      drawLabelDetailPlaceholderNow();
+      ctx.drawImage(vid, 0, 0, S.W, S.H);
+      for(const k of ORDER){
+        const L = S.lines[k];
+        if(L) drawFitLine(L.fit, CFG[k].hex);
+      }
+    },
+    done: () => { setLabelFrame(labelState.frame); scheduleLabelDetailRender(0); },
+  });
+}
+$('labelPlayBtn').onclick = () => togglePlayback('label');
+
+// The fine strip pans: the footage follows the finger while the playhead
+// stays centered.
+let labelScrubbing = false;
+let labelOvScrubbing = false;
+$('labelTimeline').addEventListener('pointerdown', e => {
+  if(S.phase !== 'label' || !labelRun()) return;
+  transportStop();
+  try{ $('labelTimeline').setPointerCapture(e.pointerId); }catch(_){ }
+  labelScrubbing = true;
+  labelState.dragX = e.clientX;
+  labelState.dragT = labelState.frame;
+});
+$('labelTimeline').addEventListener('pointermove', e => {
+  if(!labelScrubbing) return;
   const r = $('labelTimeline').getBoundingClientRect();
+  const df = (e.clientX - labelState.dragX) / r.width * labelState.span * labelFps();
+  setLabelFrame(labelState.dragT - df);
+});
+function endLabelDrag(e){
+  if(!labelScrubbing) return;
+  labelScrubbing = false;
+  try{ $('labelTimeline').releasePointerCapture(e.pointerId); }catch(_){ }
+  scheduleLabelDetailRender(150);
+}
+$('labelTimeline').addEventListener('pointerup', endLabelDrag);
+$('labelTimeline').addEventListener('pointercancel', endLabelDrag);
+
+// The coarse strip still jumps straight to where you point.
+function scrubLabelOverview(e){
+  const lr = labelRun();
+  if(!lr) return;
+  const r = $('labelOverview').getBoundingClientRect();
   const pct = Math.min(1, Math.max(0, (e.clientX - r.left) / r.width));
   setLabelFrame(lr.start_frame + pct * (lr.end_frame - lr.start_frame));
 }
-$('labelTimeline').addEventListener('pointerdown', e => {
-  if(S.phase !== 'label') return;
-  $('labelTimeline').setPointerCapture(e.pointerId);
-  labelScrubbing = true;
-  scrubLabelPointer(e);
+$('labelOverview').addEventListener('pointerdown', e => {
+  if(S.phase !== 'label' || !labelRun()) return;
+  transportStop();
+  try{ $('labelOverview').setPointerCapture(e.pointerId); }catch(_){ }
+  labelOvScrubbing = true;
+  scrubLabelOverview(e);
 });
-$('labelTimeline').addEventListener('pointermove', e => { if(labelScrubbing) scrubLabelPointer(e); });
-$('labelTimeline').addEventListener('pointerup', e => {
-  labelScrubbing = false;
-  $('labelTimeline').releasePointerCapture(e.pointerId);
+$('labelOverview').addEventListener('pointermove', e => {
+  if(labelOvScrubbing) scrubLabelOverview(e);
 });
-$('labelTimeline').addEventListener('pointercancel', () => { labelScrubbing = false; });
+function endLabelOvDrag(e){
+  if(!labelOvScrubbing) return;
+  labelOvScrubbing = false;
+  try{ $('labelOverview').releasePointerCapture(e.pointerId); }catch(_){ }
+  scheduleLabelDetailRender(150);
+}
+$('labelOverview').addEventListener('pointerup', endLabelOvDrag);
+$('labelOverview').addEventListener('pointercancel', endLabelOvDrag);
 
+/* ---------- shared play/pause + keyboard shortcuts ----------
+   Space = play/pause · ←/→ = one frame · shift+←/→ = one second. */
+function togglePlayback(phase){
+  if(transport.phase === phase){
+    transportStop();
+    if(phase === 'frame'){ setFrameCursor(S.frameView.cursor); scheduleFrameDetail(0); }
+    else if(phase === 'clip'){ setClipCursor(S.clip.cursor); scheduleDetailRender(0); }
+    else if(phase === 'track'){ seekSourceFrameToCanvas(S.trackView.cursor); scheduleTrackDetailRender(0); }
+    else if(phase === 'label'){ setLabelFrame(labelState.frame); scheduleLabelDetailRender(0); }
+    return;
+  }
+  if(phase === 'frame') startFramePlayback();
+  else if(phase === 'clip') startClipPlayback().catch(() => transportStop());
+  else if(phase === 'track') startTrackPlayback();
+  else if(phase === 'label') startLabelPlayback();
+}
+
+function stepTimeline(phase, dir, bySecond){
+  if(phase === 'frame'){
+    nudge(dir * (bySecond ? 1 : 1 / videoFps()));
+  } else if(phase === 'clip'){
+    setClipCursor(S.clip.cursor + dir * (bySecond ? 1 : 1 / videoFps()));
+  } else if(phase === 'track'){
+    if(!S.run) return;
+    transportStop();
+    seekSourceFrameToCanvas(S.trackView.cursor + dir * (bySecond ? Math.round(runFps()) : 1));
+  } else if(phase === 'label'){
+    if(!labelRun()) return;
+    setLabelFrame(labelState.frame + dir * (bySecond ? Math.round(labelFps()) : 1));
+  }
+}
+
+const KEY_PHASES = new Set(['frame', 'clip', 'track', 'label']);
+document.addEventListener('keydown', e => {
+  if(!KEY_PHASES.has(S.phase)) return;
+  const tag = e.target && e.target.tagName;
+  if(tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+  if(e.metaKey || e.ctrlKey || e.altKey) return;
+  if(e.code === 'Space'){
+    e.preventDefault();
+    togglePlayback(S.phase);
+  } else if(e.key === 'ArrowLeft' || e.key === 'ArrowRight'){
+    e.preventDefault();
+    stepTimeline(S.phase, e.key === 'ArrowRight' ? 1 : -1, e.shiftKey);
+  }
+});
+
+updatePlayButtons();
 setPhase('load');
 checkBackend();
 </script>
