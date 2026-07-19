@@ -26,3 +26,7 @@ venv/
 !*.py
 !*.html
 !.gitignore
+# The distilled eval set is the durable, git-tracked artifact (see
+# build_eval_set.py) — ui_runs stays ignored, its distillation doesn't.
+!eval_set/*.jsonl
+!eval_set/*.json

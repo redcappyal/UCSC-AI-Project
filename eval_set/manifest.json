@@ -1,0 +1,26 @@
+{
+  "calls": {
+    "IN": 1,
+    "OUT": 0
+  },
+  "case_count": 19,
+  "cases_without_calibration": 0,
+  "cases_without_video_sha": 19,
+  "correction_cases": 2,
+  "duplicates_dropped": 0,
+  "ground_truth_cases": 17,
+  "gt_missed_at_build": 13,
+  "latest_correction_at": "2026-07-20T17:19:54Z",
+  "runs_with_corrections": 1,
+  "runs_with_ground_truth": 2,
+  "schema_version": "bounce-eval-v2",
+  "skipped_legacy_entries": 0,
+  "types": {
+    "floor": 0,
+    "none": 1,
+    "racket": 0,
+    "side_wall": 0,
+    "wall": 1
+  },
+  "unreadable_runs": []
+}
