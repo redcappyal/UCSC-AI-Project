@@ -258,6 +258,26 @@
      (handlers + disabled state) but render only as the header action pill */
   .proxied{display:none !important}
 
+  /* floor calibration wizard */
+  .floorRow{display:flex; gap:14px; align-items:flex-start}
+  #floorDiagram{width:118px; flex:none; background:var(--surface); border:1px solid var(--line);
+    border-radius:8px; padding:4px}
+  #floorDiagram .courtLine{stroke:var(--dim); stroke-width:.45; fill:none}
+  #floorDiagram .mark{fill:var(--dim); opacity:.5}
+  #floorDiagram .mark.done{fill:#3ddc84; opacity:1}
+  #floorDiagram .mark.warned{fill:#f5c518; opacity:1}
+  #floorDiagram .mark.active{fill:var(--accent-bg); opacity:1; animation:floorPulse 1.1s ease-in-out infinite}
+  @keyframes floorPulse{0%,100%{r:1.1} 50%{r:1.9}}
+  .floorSide{flex:1; min-width:0; display:flex; flex-direction:column; gap:10px}
+  #floorPrompt{font-size:15px; line-height:1.4; margin:0}
+  #floorPrompt b{color:var(--text)}
+
+  /* floor bounce map on the targets page */
+  .floorMap{border:1px solid var(--line); border-radius:8px; overflow:hidden; background:var(--surface)}
+  #floorMapSvg{display:block; width:100%; max-height:340px}
+  #floorMapSvg .courtLine{stroke:var(--dim); stroke-width:.28; fill:none}
+  #floorMapSvg .bounceDot{fill:#f5c518; stroke:rgba(0,0,0,.5); stroke-width:.14}
+
   /* video kept renderable but invisible (display:none breaks canvas capture on some iOS versions) */
   #vid{position:absolute; width:2px; height:2px; opacity:0; pointer-events:none; left:-10px; top:-10px}
 </style>
@@ -343,6 +363,7 @@
       </div>
     </div>
     <button class="primary proxied" id="useFrame">Use this frame</button>
+    <button class="small hidden" id="applyProfileBtn" type="button"></button>
   </section>
 
   <!-- PHASE: tap out / tap tin -->
@@ -360,6 +381,26 @@
   <section class="hidden" id="p-review">
     <button class="primary proxied" id="chooseClipBtn">Use these lines</button>
     <p class="status" id="reviewWarn"></p>
+  </section>
+
+  <!-- PHASE: floor calibration (full-court homography) -->
+  <section class="hidden" id="p-tap-floor">
+    <div class="floorRow">
+      <svg id="floorDiagram" viewBox="-1.5 -1.5 24 35" aria-hidden="true"></svg>
+      <div class="floorSide">
+        <p id="floorPrompt"></p>
+        <div class="row">
+          <button class="small" id="floorSkipLandmarkBtn" type="button">Skip landmark</button>
+          <button class="small" id="floorClearBtn" type="button" disabled>Start over</button>
+        </div>
+      </div>
+    </div>
+    <button class="primary proxied" id="floorDoneBtn" disabled>Use floor map</button>
+    <div class="row">
+      <button class="small" id="floorSkipAllBtn" type="button">Skip floor calibration</button>
+      <button class="small" id="floorSaveProfileBtn" type="button" disabled>Save as profile</button>
+    </div>
+    <p class="status" id="floorStatus"></p>
   </section>
 
   <!-- PHASE: clip -->
@@ -524,6 +565,17 @@
         <div><strong>Unused</strong><span id="targetMissing"></span></div>
       </div>
     </div>
+    <div class="targetZones hidden" id="floorMapPanel">
+      <div class="targetHead">
+        <strong>Floor bounces</strong>
+        <span id="floorMapTotal"></span>
+      </div>
+      <div class="floorMap"><svg id="floorMapSvg" viewBox="-1.5 -1.5 24 35"></svg></div>
+      <div class="targetMeta">
+        <div><strong>Most bounced zones</strong><span id="floorCommon"></span></div>
+        <div><strong>Untouched zones</strong><span id="floorMissing"></span></div>
+      </div>
+    </div>
     <p class="status" id="targetStatus"></p>
   </section>
 </main>
@@ -575,6 +627,8 @@ const S = {
   base:null,                  // ImageData of the locked frame
   work:null,                  // {key, seeds:[[x,y],...], mask, maskCanvas, fit, msg, msgKind}
   lines:{out:null, tin:null}, // committed: {seeds, maskCanvas, fit}
+  floor:null,                 // floor-homography wizard state (see newFloorState)
+  profile:null,               // {id, name, created_utc} when a saved profile is in play
   run:null,                   // backend tracking result
   trackSeekId:0,
   trackPlaying:false,
@@ -597,19 +651,20 @@ const S = {
 /* ---------- phase / UI ---------- */
 const STEP_META = {
   load:   {label:'Squash Line Calling', instr:''},
-  frame:  {label:'1/7 · Pick frame', instr:'Drag the film strip under the playhead to a frame where both red lines are fully visible and unblocked.',
+  frame:  {label:'1/8 · Pick frame', instr:'Drag the film strip under the playhead to a frame where both red lines are fully visible and unblocked.',
            action:{btn:'useFrame', label:'Use frame'}},
-  tap_out:{label:'2/7 · Out line', instr:'', action:{btn:'confirmBtn', label:'Looks right'}},
-  tap_tin:{label:'3/7 · Tin', instr:'', action:{btn:'confirmBtn', label:'Looks right'}},
-  review: {label:'4/7 · Review', instr:'Check that each fitted edge hugs the real paint edge across the whole line.',
+  tap_out:{label:'2/8 · Out line', instr:'', action:{btn:'confirmBtn', label:'Looks right'}},
+  tap_tin:{label:'3/8 · Tin', instr:'', action:{btn:'confirmBtn', label:'Looks right'}},
+  review: {label:'4/8 · Review', instr:'Check that each fitted edge hugs the real paint edge across the whole line.',
            action:{btn:'chooseClipBtn', label:'Use lines'}},
-  clip:   {label:'5/7 · Clip', instr:'Drag the top strip to slide the clip along the video, then drag the handles to trim it tight around the shot.',
+  tap_floor:{label:'5/8 · Floor map', instr:'', action:{btn:'floorDoneBtn', label:'Use floor map'}},
+  clip:   {label:'6/8 · Clip', instr:'Drag the top strip to slide the clip along the video, then drag the handles to trim it tight around the shot.',
            action:{btn:'runTrackBtn', label:'Track ball'}},
   analyze:{label:'Analyzing', instr:''},
-  track:  {label:'6/7 · Call', instr:'Tap a hit bar or enter a frame number, then judge it.',
+  track:  {label:'7/8 · Call', instr:'Tap a hit bar or enter a frame number, then judge it.',
            action:{btn:'judgeBtn', label:'Judge'}},
   label:  {label:'Label bounces', instr:'Drag the strip to the exact impact frame, then tap its bounce type. Tap a marker to revisit it — labels save automatically.'},
-  target: {label:'7/7 · Targets', instr:''},
+  target: {label:'8/8 · Targets', instr:''},
 };
 
 /* Header action pill: proxies the current phase's primary button, which stays
@@ -636,7 +691,7 @@ function setPhase(p){
   resetZoom();
   stage.classList.toggle('hidden', p === 'load');
   document.body.classList.toggle('phase-load', p === 'load');
-  for(const id of ['p-load','p-frame','p-tap','p-review','p-clip','p-analyze','p-track','p-label','p-target']) $(id).classList.add('hidden');
+  for(const id of ['p-load','p-frame','p-tap','p-review','p-tap-floor','p-clip','p-analyze','p-track','p-label','p-target']) $(id).classList.add('hidden');
   $('analyzeOverlay').classList.toggle('hidden', p !== 'analyze');
   $('stepLabel').textContent = STEP_META[p].label;
   $('hdrBack').classList.toggle('hidden', p === 'load');
@@ -652,16 +707,19 @@ function setPhase(p){
   }
 
   if(p === 'load'){ $('p-load').classList.remove('hidden'); }
-  if(p === 'frame'){ $('p-frame').classList.remove('hidden'); setupFrameTimeline(); }
+  if(p === 'frame'){ $('p-frame').classList.remove('hidden'); setupFrameTimeline(); updateProfileButton(); }
   if(p === 'tap_out' || p === 'tap_tin'){
     $('p-tap').classList.remove('hidden');
     $('confirmBtn').disabled = !(S.work && S.work.fit);
     $('zoomCtrl').classList.remove('hidden');
     updateTapStatus();
+  } else if(p === 'tap_floor'){
+    $('zoomCtrl').classList.remove('hidden');
   } else {
     $('zoomCtrl').classList.add('hidden');
   }
   if(p === 'review'){ $('p-review').classList.remove('hidden'); buildReview(); }
+  if(p === 'tap_floor'){ $('p-tap-floor').classList.remove('hidden'); buildFloorView(); }
   if(p === 'clip'){ $('p-clip').classList.remove('hidden'); setupClipControls(); }
   if(p === 'analyze'){ $('p-analyze').classList.remove('hidden'); startAnalyzePreview(); }
   else { stopAnalyzePreview(); }
@@ -693,6 +751,8 @@ $('fileIn').addEventListener('change', e => {
   S.videoFile = f;
   S.videoName = f.name;
   S.videoFps = null;
+  S.floor = null;             // floor landmarks belong to the previous video's frame
+  S.profile = null;
   S.labelRun = null;          // a new video means a new label run
   labelState.runId = null;
   S.clip.overviewThumbs = false;
@@ -788,8 +848,10 @@ $('hdrBack').onclick = () => {
     S.work = null; S.lines.out = null; setPhase('tap_out');
   } else if(S.phase === 'review'){
     S.work = null; S.lines.tin = null; setPhase('tap_tin');
-  } else if(S.phase === 'clip'){
+  } else if(S.phase === 'tap_floor'){
     setPhase('review');
+  } else if(S.phase === 'clip'){
+    setPhase(COURT ? 'tap_floor' : 'review');
   } else if(S.phase === 'analyze'){
     setPhase('clip');   // abandon the in-flight run and return to the clip editor
   } else if(S.phase === 'track'){
@@ -849,7 +911,7 @@ const pointers = new Map();
 let pinch = null;
 
 canvas.addEventListener('pointerdown', e => {
-  if(S.phase !== 'tap_out' && S.phase !== 'tap_tin') return;
+  if(S.phase !== 'tap_out' && S.phase !== 'tap_tin' && S.phase !== 'tap_floor') return;
   e.preventDefault();
   canvas.setPointerCapture(e.pointerId);
   pointers.set(e.pointerId, { x:e.clientX, y:e.clientY, startX:e.clientX, startY:e.clientY, moved:false, multi:false });
@@ -900,12 +962,17 @@ function endPointer(e){
   pointers.delete(e.pointerId);
   if(pointers.size < 2) pinch = null;
   if(!p) return;
-  if((S.phase === 'tap_out' || S.phase === 'tap_tin') && !p.moved && !p.multi && pointers.size === 0){
+  const tapPhase = S.phase === 'tap_out' || S.phase === 'tap_tin' || S.phase === 'tap_floor';
+  if(tapPhase && !p.moved && !p.multi && pointers.size === 0){
     const r = canvas.getBoundingClientRect();
     const x = Math.min(S.W - 1, Math.max(0, Math.round((p.x - r.left) * S.W / r.width)));
     const y = Math.min(S.H - 1, Math.max(0, Math.round((p.y - r.top) * S.H / r.height)));
-    // Tapping an existing seed marker removes it; otherwise the tap adds one.
-    if(!removeSeedAt(curKey(), x, y)) buildWork(curKey(), x, y);
+    if(S.phase === 'tap_floor'){
+      floorTap(x, y);
+    } else {
+      // Tapping an existing seed marker removes it; otherwise the tap adds one.
+      if(!removeSeedAt(curKey(), x, y)) buildWork(curKey(), x, y);
+    }
   }
 }
 canvas.addEventListener('pointerup', endPointer);
@@ -1275,10 +1342,11 @@ function render(){
   for(const k of ORDER){
     const L = S.lines[k];
     if(L){
-      ctx.save(); ctx.globalAlpha = 0.5; ctx.drawImage(L.maskCanvas, 0, 0); ctx.restore();
+      if(L.maskCanvas){ ctx.save(); ctx.globalAlpha = 0.5; ctx.drawImage(L.maskCanvas, 0, 0); ctx.restore(); }
       drawFitLine(L.fit, CFG[k].hex);
     }
   }
+  drawFloorOverlay();
   if(S.work){
     ctx.drawImage(S.work.maskCanvas, 0, 0);
     if(S.work.fit) drawFitLine(S.work.fit, CFG[S.work.key].hex);
@@ -1339,19 +1407,529 @@ function buildJson(){
       edge_pixels_used: f.n
     };
   };
-  return {
-    schema: 'squash-calibration-v1',
+  const json = {
+    schema: 'squash-calibration-v2',
     coordinate_system: 'image pixels, origin top-left, y increases DOWNWARD',
     video_file: S.videoName,
     frame_width: S.W,
     frame_height: S.H,
     frame_time_s: +S.frameTime.toFixed(3),
     created_utc: new Date().toISOString(),
-    lines: [line('out'), line('tin')]
+    lines: [line('out'), line('tin')],
+    court_units: 'feet',
+    court_convention: COURT ? COURT.convention
+      : 'origin front-left floor corner viewed from back-wall camera; x right 0-21; y toward back wall 0-32',
+    distortion: null,
+  };
+  if(S.floor && S.floor.H){
+    json.planes = { floor: {
+      landmarks: S.floor.landmarks
+        .filter(l => l.refined_px || l.skipped)
+        .map(l => ({
+          id: l.id,
+          court_ft: l.court_ft,
+          tap_px: l.tap_px ? l.tap_px.map(v => +v.toFixed(2)) : null,
+          refined_px: l.refined_px ? l.refined_px.map(v => +v.toFixed(2)) : null,
+          method: l.method,
+          residual_px: l.residual_px == null ? null : +l.residual_px.toFixed(2),
+          skipped: !!l.skipped,
+        })),
+      homography_image_from_court: S.floor.H,
+      fit_rms_px: +S.floor.rms.toFixed(2),
+      max_residual_px: +S.floor.maxResidual.toFixed(2),
+      fitted_by: 'client-js-dlt',
+    }};
+  }
+  if(S.profile) json.profile = S.profile;
+  return json;
+}
+
+/* ---------- floor calibration (full-court floor homography) ----------
+   The wizard fits H (court feet -> image px) client-side for instant overlay
+   feedback; the server re-fits from the stored landmark points and is
+   authoritative (see court_model.py, the shared contract). */
+let COURT = null;
+fetch('/api/court-model', {cache:'no-store'})
+  .then(r => r.ok ? r.json() : null)
+  .then(m => { COURT = m && m.ok ? m : null; })
+  .catch(() => { COURT = null; });
+
+const FLOOR_MIN_COLS = 14;   // local snap windows hold far fewer columns than full-width lines
+const FLOOR_RMS_WARN = 3;    // px
+
+function newFloorState(){
+  return {
+    landmarks: COURT.landmarks.map(l => ({
+      id: l.id, court_ft: l.court_ft, label: l.label, optional: !!l.optional,
+      tap_px: null, refined_px: null, method: null, residual_px: null, skipped: false,
+    })),
+    activeIdx: 0, H: null, Hinv: null, rms: null, maxResidual: null,
   };
 }
 
-$('chooseClipBtn').onclick = () => setPhase('clip');
+/* --- 3x3 helpers + normalized DLT --- */
+function matMul3(a, b){
+  const r = [[0,0,0],[0,0,0],[0,0,0]];
+  for(let i = 0; i < 3; i++)
+    for(let j = 0; j < 3; j++)
+      r[i][j] = a[i][0]*b[0][j] + a[i][1]*b[1][j] + a[i][2]*b[2][j];
+  return r;
+}
+function applyH(H, p){
+  const w = H[2][0]*p[0] + H[2][1]*p[1] + H[2][2];
+  return [
+    (H[0][0]*p[0] + H[0][1]*p[1] + H[0][2]) / w,
+    (H[1][0]*p[0] + H[1][1]*p[1] + H[1][2]) / w,
+  ];
+}
+function invertH(H){
+  const [a,b,c] = H[0], [d,e,f] = H[1], [g,h,i] = H[2];
+  const A = e*i - f*h, B = c*h - b*i, C = b*f - c*e;
+  const det = a*A + d*B + g*C;
+  if(!Number.isFinite(det) || Math.abs(det) < 1e-12) return null;
+  return [
+    [A/det, B/det, C/det],
+    [(f*g - d*i)/det, (a*i - c*g)/det, (c*d - a*f)/det],
+    [(d*h - e*g)/det, (b*g - a*h)/det, (a*e - b*d)/det],
+  ];
+}
+function solveLinearSystem(A, b){    // Gauss-Jordan with partial pivoting
+  const n = b.length;
+  const M = A.map((row, i) => row.concat([b[i]]));
+  for(let col = 0; col < n; col++){
+    let piv = col;
+    for(let r = col + 1; r < n; r++) if(Math.abs(M[r][col]) > Math.abs(M[piv][col])) piv = r;
+    if(Math.abs(M[piv][col]) < 1e-12) return null;
+    [M[col], M[piv]] = [M[piv], M[col]];
+    for(let r = 0; r < n; r++){
+      if(r === col) continue;
+      const f = M[r][col] / M[col][col];
+      for(let c = col; c <= n; c++) M[r][c] -= f * M[col][c];
+    }
+  }
+  return M.map((row, i) => row[n] / row[i]);
+}
+function normalizeTransform(pts){
+  let cx = 0, cy = 0;
+  for(const p of pts){ cx += p[0]; cy += p[1]; }
+  cx /= pts.length; cy /= pts.length;
+  let mean = 0;
+  for(const p of pts) mean += Math.hypot(p[0] - cx, p[1] - cy);
+  mean /= pts.length;
+  const s = mean > 0 ? Math.SQRT2 / mean : 1;
+  return { s, cx, cy };
+}
+function fitHomographyDLT(srcPts, dstPts){
+  /* Solves H (src -> dst) with h33 = 1 via least squares; Hartley
+     normalization keeps that constraint well-conditioned for our geometry. */
+  if(srcPts.length < 4) return null;
+  const N = normalizeTransform(srcPts), M = normalizeTransform(dstPts);
+  const A = [], b = [];
+  for(let i = 0; i < srcPts.length; i++){
+    const sx = (srcPts[i][0] - N.cx) * N.s, sy = (srcPts[i][1] - N.cy) * N.s;
+    const dx = (dstPts[i][0] - M.cx) * M.s, dy = (dstPts[i][1] - M.cy) * M.s;
+    A.push([sx, sy, 1, 0, 0, 0, -dx*sx, -dx*sy]); b.push(dx);
+    A.push([0, 0, 0, sx, sy, 1, -dy*sx, -dy*sy]); b.push(dy);
+  }
+  const n = 8;
+  const ATA = Array.from({length:n}, () => new Array(n).fill(0));
+  const ATb = new Array(n).fill(0);
+  for(let r = 0; r < A.length; r++){
+    for(let i = 0; i < n; i++){
+      ATb[i] += A[r][i] * b[r];
+      for(let j = i; j < n; j++) ATA[i][j] += A[r][i] * A[r][j];
+    }
+  }
+  for(let i = 0; i < n; i++) for(let j = 0; j < i; j++) ATA[i][j] = ATA[j][i];
+  const h = solveLinearSystem(ATA, ATb);
+  if(!h) return null;
+  const Hn = [[h[0],h[1],h[2]],[h[3],h[4],h[5]],[h[6],h[7],1]];
+  const Nt = [[N.s,0,-N.s*N.cx],[0,N.s,-N.s*N.cy],[0,0,1]];
+  const Mi = [[1/M.s,0,M.cx],[0,1/M.s,M.cy],[0,0,1]];
+  const H = matMul3(Mi, matMul3(Hn, Nt));
+  const k = H[2][2];
+  if(!Number.isFinite(k) || Math.abs(k) < 1e-12) return null;
+  for(let i = 0; i < 3; i++) for(let j = 0; j < 3; j++) H[i][j] /= k;
+  return H;
+}
+
+/* --- tap snapping: flood-fill the paint near the tap, fit the one or two
+   local line segments, intersect them for a sub-pixel landmark --- */
+function localMaskAround(sx, sy, tol){
+  const R = Math.max(60, Math.round(Math.min(S.W, S.H) / 10));
+  const x0 = Math.max(0, sx - R), x1 = Math.min(S.W - 1, sx + R);
+  const y0 = Math.max(0, sy - R), y1 = Math.min(S.H - 1, sy + R);
+  const windowArea = (x1 - x0 + 1) * (y1 - y0 + 1);
+  const probes = [[0, 0]];
+  for(const r of [3, 6, 9, 13])
+    for(let a = 0; a < 360; a += 45)
+      probes.push([Math.round(r * Math.cos(a * Math.PI / 180)), Math.round(r * Math.sin(a * Math.PI / 180))]);
+  for(const [dx, dy] of probes){
+    const x = sx + dx, y = sy + dy;
+    if(x < 0 || y < 0 || x >= S.W || y >= S.H) continue;
+    const f = floodFill(S.base, S.W, S.H, x, y, tol);
+    if(f.overflow || f.count < 30) continue;
+    // Thin painted lines fill only a sliver of the snap window. A seed on an
+    // anti-aliased boundary pixel can leak across the floor without tripping
+    // the global cap — reject dense fills and keep probing for clean paint.
+    let windowCount = 0;
+    for(let yy = y0; yy <= y1; yy++){
+      const row = yy * S.W;
+      for(let xx = x0; xx <= x1; xx++) if(f.mask[row + xx]) windowCount++;
+    }
+    if(windowCount >= 40 && windowCount <= windowArea * 0.15){
+      return { mask: f.mask, x0, x1, y0, y1 };
+    }
+  }
+  return null;
+}
+/* Angle-agnostic line finder: RANSAC over raw mask pixels, refined by total
+   least squares (PCA). Court lines arrive at any image angle under
+   perspective, so no horizontal/vertical assumption survives contact with a
+   wide back-wall camera. Blobs are rejected by requiring elongation. */
+const SNAP_INLIER_PX = 2.5;
+function ransacPixelLine(pts){
+  const n = pts.length;
+  if(n < FLOOR_MIN_COLS * 3) return null;
+  let seed = 0x51F0B33;
+  const rand = () => ((seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff);
+  let best = null, bestCount = 0;
+  for(let it = 0; it < 180; it++){
+    const a = pts[(rand() * n) | 0], b = pts[(rand() * n) | 0];
+    const dx = b[0] - a[0], dy = b[1] - a[1];
+    const len = Math.hypot(dx, dy);
+    if(len < 10) continue;
+    const ux = dx / len, uy = dy / len;
+    let cnt = 0;
+    for(let k = 0; k < n; k++){
+      if(Math.abs((pts[k][0] - a[0]) * uy - (pts[k][1] - a[1]) * ux) <= SNAP_INLIER_PX) cnt++;
+    }
+    if(cnt > bestCount){ bestCount = cnt; best = { a, ux, uy }; }
+  }
+  if(!best || bestCount < FLOOR_MIN_COLS * 3) return null;
+  const inl = pts.filter(p =>
+    Math.abs((p[0] - best.a[0]) * best.uy - (p[1] - best.a[1]) * best.ux) <= SNAP_INLIER_PX);
+  let mx = 0, my = 0;
+  for(const p of inl){ mx += p[0]; my += p[1]; }
+  mx /= inl.length; my /= inl.length;
+  let sxx = 0, sxy = 0, syy = 0;
+  for(const p of inl){
+    const ex = p[0] - mx, ey = p[1] - my;
+    sxx += ex*ex; sxy += ex*ey; syy += ey*ey;
+  }
+  const tr = sxx + syy, det = sxx*syy - sxy*sxy;
+  const disc = Math.sqrt(Math.max(0, tr*tr/4 - det));
+  const lMax = tr/2 + disc, lMin = tr/2 - disc;
+  if(lMax < 9 * Math.max(lMin, 1)) return null;   // blob, not a line
+  const ang = 0.5 * Math.atan2(2*sxy, sxx - syy);
+  return { px: mx, py: my, ux: Math.cos(ang), uy: Math.sin(ang), count: inl.length };
+}
+function snapLandmark(sx, sy){
+  const win = localMaskAround(sx, sy, S.fillTol);
+  if(!win) return { refined:[sx, sy], method:'tap' };
+  const { mask, x0, x1, y0, y1 } = win;
+  let pts = [];
+  for(let y = y0; y <= y1; y++){
+    const row = y * S.W;
+    for(let x = x0; x <= x1; x++) if(mask[row + x]) pts.push([x, y]);
+  }
+  if(pts.length > 6000){
+    const stride = Math.ceil(pts.length / 6000);
+    pts = pts.filter((_, i) => i % stride === 0);
+  }
+  const line1 = ransacPixelLine(pts);
+  if(!line1) return { refined:[sx, sy], method:'tap' };
+  const rest = pts.filter(p =>
+    Math.abs((p[0] - line1.px) * line1.uy - (p[1] - line1.py) * line1.ux) > SNAP_INLIER_PX + 1);
+  let line2 = ransacPixelLine(rest);
+  if(line2 && Math.abs(line1.ux * line2.uy - line1.uy * line2.ux) < 0.25) line2 = null;  // near-parallel
+  if(line2){
+    const det = line2.ux * line1.uy - line1.ux * line2.uy;
+    if(Math.abs(det) > 1e-9){
+      const t = (line2.ux * (line2.py - line1.py) - line2.uy * (line2.px - line1.px)) / det;
+      const xStar = line1.px + t * line1.ux, yStar = line1.py + t * line1.uy;
+      if(Math.hypot(xStar - sx, yStar - sy) <= Math.max(30, (x1 - x0) * 0.4)){
+        return { refined:[xStar, yStar], method:'line_intersection' };
+      }
+    }
+  }
+  const t = (sx - line1.px) * line1.ux + (sy - line1.py) * line1.uy;
+  const proj = [line1.px + t * line1.ux, line1.py + t * line1.uy];
+  if(Math.hypot(proj[0] - sx, proj[1] - sy) <= Math.max(30, (x1 - x0) * 0.4)){
+    return { refined: proj, method:'line_projection' };
+  }
+  return { refined:[sx, sy], method:'tap' };
+}
+
+/* --- wizard state machine --- */
+function nextIncompleteIdx(){
+  if(!S.floor) return -1;
+  const idx = S.floor.landmarks.findIndex(l => !l.refined_px && !l.skipped);
+  return idx;
+}
+function refitFloor(){
+  const F = S.floor;
+  if(!F) return;
+  const src = [], dst = [], used = [];
+  for(const l of F.landmarks){
+    l.residual_px = null;
+    if(l.skipped || !l.refined_px) continue;
+    src.push(l.court_ft); dst.push(l.refined_px); used.push(l);
+  }
+  F.H = F.Hinv = null; F.rms = F.maxResidual = null;
+  if(src.length >= 4){
+    const H = fitHomographyDLT(src, dst);
+    const Hinv = H && invertH(H);
+    if(H && Hinv){
+      F.H = H; F.Hinv = Hinv;
+      let se = 0, mx = 0;
+      for(const l of used){
+        const p = applyH(H, l.court_ft);
+        const e = Math.hypot(p[0] - l.refined_px[0], p[1] - l.refined_px[1]);
+        l.residual_px = e; se += e * e; mx = Math.max(mx, e);
+      }
+      F.rms = Math.sqrt(se / used.length);
+      F.maxResidual = mx;
+    }
+  }
+  updateFloorUI();
+  render();
+}
+function floorTap(x, y){
+  const F = S.floor;
+  if(!F) return;
+  const thr = Math.max(20, S.W / 60);
+  let target = -1, bestD = Infinity;
+  F.landmarks.forEach((l, i) => {
+    if(!l.refined_px) return;
+    const d = Math.hypot(l.refined_px[0] - x, l.refined_px[1] - y);
+    if(d <= thr && d < bestD){ bestD = d; target = i; }
+  });
+  const idx = target >= 0 ? target : F.activeIdx;
+  if(idx < 0) return;
+  const l = F.landmarks[idx];
+  const snap = snapLandmark(Math.round(x), Math.round(y));
+  l.tap_px = [x, y];
+  l.refined_px = snap.refined;
+  l.method = snap.method;
+  l.skipped = false;
+  F.activeIdx = nextIncompleteIdx();
+  refitFloor();
+}
+function landmarkStateClass(l, isActive){
+  if(isActive) return 'active';
+  if(l.skipped) return '';
+  if(!l.refined_px) return '';
+  if(l.residual_px != null && l.residual_px > FLOOR_RMS_WARN + 1) return 'warned';
+  return 'done';
+}
+function courtWireframeSvg(cls){
+  if(!COURT) return '';
+  return COURT.wireframe.map(([[ax, ay], [bx, by]]) =>
+    `<line class="${cls}" x1="${ax}" y1="${ay}" x2="${bx}" y2="${by}"/>`).join('');
+}
+function buildFloorDiagram(){
+  const F = S.floor;
+  const svg = $('floorDiagram');
+  if(!COURT || !F){ svg.innerHTML = ''; return; }
+  svg.innerHTML = courtWireframeSvg('courtLine') + F.landmarks.map((l, i) =>
+    `<circle class="mark ${landmarkStateClass(l, i === F.activeIdx)}" cx="${l.court_ft[0]}" cy="${l.court_ft[1]}" r="1.1"/>`
+  ).join('');
+}
+function updateFloorUI(){
+  const F = S.floor;
+  const prompt = $('floorPrompt'), status = $('floorStatus');
+  if(!COURT || !F){
+    prompt.innerHTML = 'Court model unavailable — skip floor calibration.';
+    $('floorDoneBtn').disabled = true;
+    $('floorSkipLandmarkBtn').disabled = true;
+    $('floorClearBtn').disabled = true;
+    $('floorSaveProfileBtn').disabled = true;
+    buildFloorDiagram();
+    return;
+  }
+  const placed = F.landmarks.filter(l => l.refined_px && !l.skipped).length;
+  const active = F.activeIdx >= 0 ? F.landmarks[F.activeIdx] : null;
+  if(active){
+    prompt.innerHTML = `Tap: <b>${active.label}</b>.` +
+      (active.optional ? ' <span class="dim">(optional)</span>' : '') +
+      ' Pinch to zoom for a precise tap — the app snaps it to the painted lines.';
+  } else {
+    prompt.innerHTML = 'All landmarks placed. Check the overlay hugs the painted lines; tap any marker to redo it.';
+  }
+  $('floorSkipLandmarkBtn').disabled = !active;
+  $('floorClearBtn').disabled = !F.landmarks.some(l => l.refined_px || l.skipped);
+  $('floorDoneBtn').disabled = !F.H;
+  $('floorSaveProfileBtn').disabled = !F.H;
+  if(F.H){
+    const quality = F.rms <= FLOOR_RMS_WARN ? 'ok' : 'warn';
+    status.textContent = `Floor fit: ${placed} landmarks · RMS ${F.rms.toFixed(1)} px · worst ${F.maxResidual.toFixed(1)} px` +
+      (quality === 'warn' ? ' — check the overlay; tap an off marker to redo it.' : '');
+    status.className = 'status ' + quality;
+  } else if(placed){
+    status.textContent = `${placed} of 4+ landmarks placed — keep going to fit the court map.`;
+    status.className = 'status';
+  } else {
+    status.textContent = 'The overlay appears after 4 landmarks.';
+    status.className = 'status';
+  }
+  buildFloorDiagram();
+}
+function buildFloorView(){
+  if(COURT && !S.floor) S.floor = newFloorState();
+  if(S.floor && S.floor.activeIdx !== -1) S.floor.activeIdx = nextIncompleteIdx();
+  updateFloorUI();
+}
+$('floorSkipLandmarkBtn').onclick = () => {
+  const F = S.floor;
+  if(!F || F.activeIdx < 0) return;
+  const l = F.landmarks[F.activeIdx];
+  l.skipped = true; l.tap_px = l.refined_px = null; l.method = null;
+  F.activeIdx = nextIncompleteIdx();
+  refitFloor();
+};
+$('floorClearBtn').onclick = () => {
+  if(!COURT) return;
+  S.floor = newFloorState();
+  updateFloorUI();
+  render();
+};
+$('floorSkipAllBtn').onclick = () => { S.floor = null; setPhase('clip'); };
+$('floorDoneBtn').onclick = () => {
+  if(!S.floor || !S.floor.H) return;
+  setPhase('clip');
+};
+
+function drawFloorOverlay(){
+  const F = S.floor;
+  if(!F || S.phase !== 'tap_floor') return;
+  ctx.save();
+  if(F.H && COURT){
+    ctx.strokeStyle = 'rgba(255,214,10,.9)';
+    ctx.lineWidth = Math.max(2, S.W / 900);
+    for(const [a, b] of COURT.wireframe){
+      ctx.beginPath();
+      // subdivide so the drawn curve stays correct once lens undistortion lands
+      for(let t = 0; t <= 16; t++){
+        const p = applyH(F.H, [a[0] + (b[0]-a[0]) * t/16, a[1] + (b[1]-a[1]) * t/16]);
+        if(t === 0) ctx.moveTo(p[0], p[1]); else ctx.lineTo(p[0], p[1]);
+      }
+      ctx.stroke();
+    }
+  }
+  const r = Math.max(7, S.W / 160);
+  for(const l of F.landmarks){
+    if(!l.refined_px) continue;
+    const e = l.residual_px;
+    ctx.fillStyle = e == null ? '#9aa0a6'
+      : e <= 2 ? '#3ddc84' : e <= 4 ? '#f5c518' : '#ff5252';
+    ctx.strokeStyle = 'rgba(0,0,0,.55)';
+    ctx.lineWidth = Math.max(1.5, S.W / 1400);
+    ctx.beginPath();
+    ctx.arc(l.refined_px[0], l.refined_px[1], r, 0, Math.PI * 2);
+    ctx.fill(); ctx.stroke();
+  }
+  ctx.restore();
+}
+
+/* --- calibration profiles (localStorage; server-side store is a later slice).
+   A fixed camera mount means the same lines + floor map apply to every clip
+   with the same frame size, so a saved profile skips re-tapping. --- */
+const PROFILE_KEY = 'slc-cal-profiles';
+function loadProfiles(){
+  try{
+    const v = JSON.parse(localStorage.getItem(PROFILE_KEY) || '[]');
+    return Array.isArray(v) ? v : [];
+  } catch(_){ return []; }
+}
+function matchingProfile(){
+  const all = loadProfiles().filter(p => p.frame_width === S.W && p.frame_height === S.H);
+  return all.length ? all[all.length - 1] : null;
+}
+function updateProfileButton(){
+  const btn = $('applyProfileBtn');
+  const match = matchingProfile();
+  btn.classList.toggle('hidden', !match);
+  if(match) btn.textContent = `Use this frame with saved profile “${match.profile.name}”`;
+  btn.onclick = match ? () => applyProfile(match) : null;
+}
+function fitFromStoredLine(stored){
+  const span = stored.x_span_px || [0, S.W - 1];
+  return {
+    m: stored.slope, b: stored.intercept,
+    xMin: span[0], xMax: span[1],
+    rms: stored.fit_rms_px || 0,
+    n: stored.edge_pixels_used || 0,
+    total: stored.edge_pixels_used || 0, trimmed: 0,
+  };
+}
+function applyProfile(saved){
+  const cal = saved.calibration || {};
+  const byName = {};
+  for(const l of cal.lines || []) byName[l.name] = l;
+  const out = byName[CFG.out.edgeName], tin = byName[CFG.tin.edgeName];
+  if(!out || !tin){ showError('That saved profile is missing its line fits.'); return; }
+
+  vid.pause();
+  ctx.drawImage(vid, 0, 0, S.W, S.H);
+  S.base = ctx.getImageData(0, 0, S.W, S.H);
+  S.frameTime = vid.currentTime;
+
+  S.profile = saved.profile;
+  S.lines.out = { seeds: [], maskCanvas: null, fit: fitFromStoredLine(out) };
+  S.lines.tin = { seeds: [], maskCanvas: null, fit: fitFromStoredLine(tin) };
+
+  S.floor = null;
+  const floorPlane = cal.planes && cal.planes.floor;
+  if(COURT && floorPlane && Array.isArray(floorPlane.landmarks)){
+    S.floor = newFloorState();
+    const byId = {};
+    for(const l of floorPlane.landmarks) byId[l.id] = l;
+    for(const l of S.floor.landmarks){
+      const stored = byId[l.id];
+      if(!stored) continue;
+      l.tap_px = stored.tap_px || null;
+      l.refined_px = stored.refined_px || null;
+      l.method = stored.method || null;
+      l.skipped = !!stored.skipped;
+    }
+    S.floor.activeIdx = nextIncompleteIdx();
+    refitFloor();                      // recompute H from the stored points
+    if(!S.floor.H) S.floor = null;     // corrupt/partial profile: fall back to no floor map
+  }
+
+  setPhase('review');                  // visual confirmation against the current frame
+  const w = $('reviewWarn');
+  const note = `Applied profile “${saved.profile.name}” — check the lines still hug the paint` +
+    (S.floor ? ' (floor map restored too)' : '') + '. If the camera moved, go Back and re-tap.';
+  w.textContent = note + (w.textContent ? ' ' + w.textContent : '');
+  w.className = 'status warn';
+}
+$('floorSaveProfileBtn').onclick = () => {
+  if(!S.floor || !S.floor.H || !S.lines.out || !S.lines.tin) return;
+  const name = (window.prompt('Profile name (e.g. “Court 3 rear mount”)',
+    S.profile ? S.profile.name : '') || '').trim();
+  if(!name) return;
+  S.profile = {
+    id: (crypto.randomUUID ? crypto.randomUUID() : String(Date.now())),
+    name,
+    created_utc: new Date().toISOString(),
+  };
+  const profiles = loadProfiles().filter(p => !(p.profile && p.profile.name === name));
+  profiles.push({
+    profile: S.profile,
+    frame_width: S.W,
+    frame_height: S.H,
+    calibration: buildJson(),
+  });
+  while(profiles.length > 10) profiles.shift();
+  try{ localStorage.setItem(PROFILE_KEY, JSON.stringify(profiles)); }
+  catch(_){ showError('Could not save the profile (storage full or blocked).'); return; }
+  $('floorStatus').textContent = `Saved profile “${name}” — apply it from the frame step on the next clip.`;
+  $('floorStatus').className = 'status ok';
+};
+
+$('chooseClipBtn').onclick = () => setPhase(COURT ? 'tap_floor' : 'clip');
 
 function fmtTime(value){
   return `${(+value).toFixed(2)}s`;
@@ -2442,11 +3020,36 @@ function renderTargetZones(summary){
   }
 }
 
+function renderFloorMap(){
+  const panel = $('floorMapPanel');
+  const summary = S.run && S.run.floor_zones;
+  const bounces = ((S.run && S.run.hits) || []).filter(h => h.court_position_ft);
+  if(!summary || !summary.total_floor_bounces || !bounces.length || !COURT){
+    panel.classList.add('hidden');
+    return false;
+  }
+  panel.classList.remove('hidden');
+  const n = summary.total_floor_bounces;
+  $('floorMapTotal').textContent = `${n} floor bounce${n === 1 ? '' : 's'}`;
+  $('floorCommon').textContent = formatZoneList(summary.common_zones, 3);
+  $('floorMissing').textContent = formatZoneList(summary.missing_zones, 8);
+  $('floorMapSvg').innerHTML = courtWireframeSvg('courtLine') + bounces.map(h =>
+    `<circle class="bounceDot" cx="${h.court_position_ft.x}" cy="${h.court_position_ft.y}" r="0.55">` +
+    `<title>Frame ${h.frame}: ${h.court_position_ft.x.toFixed(1)} ft across, ${h.court_position_ft.y.toFixed(1)} ft from front wall</title></circle>`
+  ).join('');
+  return true;
+}
+
 function buildTargetView(){
   renderTargetZones(S.run && S.run.target_zones);
+  const hasFloor = renderFloorMap();
   const total = S.run && S.run.target_zones ? S.run.target_zones.total_wall_hits : 0;
   if(total){
-    $('targetStatus').textContent = 'Percentages are based on detected front-wall hits in this clip.';
+    $('targetStatus').textContent = 'Percentages are based on detected front-wall hits in this clip.' +
+      (hasFloor ? ' The court map shows where floor bounces landed (front wall at the top).' : '');
+    $('targetStatus').className = 'status';
+  } else if(hasFloor){
+    $('targetStatus').textContent = 'No front-wall hits, but floor bounces are mapped below (front wall at the top).';
     $('targetStatus').className = 'status';
   } else {
     $('targetStatus').textContent = 'No target-zone data is available for this clip.';
@@ -2465,7 +3068,10 @@ function buildTrackView(){
   $('judgeFrameOut').textContent = `${S.run.start_frame}–${S.run.end_frame}`;
   clearJudgeResult();
   buildHitTimeline(hits, initialFrame);
-  $('targetBtn').disabled = !(S.run.target_zones && S.run.target_zones.total_wall_hits);
+  $('targetBtn').disabled = !(
+    (S.run.target_zones && S.run.target_zones.total_wall_hits) ||
+    (S.run.floor_zones && S.run.floor_zones.total_floor_bounces)
+  );
 }
 
 $('targetBtn').onclick = () => setPhase('target');

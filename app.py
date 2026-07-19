@@ -9,6 +9,7 @@ import cv2
 from flask import Flask, jsonify, request, send_file, send_from_directory
 from werkzeug.utils import secure_filename
 
+import court_model
 from judge_call import (
     Point,
     judge_ball,
@@ -102,6 +103,8 @@ def public_job(job):
         "rows",
         "hits",
         "target_zones",
+        "floor_zones",
+        "calibration_warning",
         "hits_error",
         "annotated_video_url",
         "csv_url",
@@ -232,6 +235,33 @@ def upload_video():
     return jsonify(payload)
 
 
+@app.get("/api/court-model")
+def get_court_model():
+    """Court dimensions, landmarks, and wireframe for the calibration wizard."""
+    return jsonify({"ok": True, **court_model.court_model_public()})
+
+
+def validate_floor_calibration(calibration):
+    """Return a warning string (and strip the floor plane) if it cannot be used.
+
+    Floor mapping is additive: a bad floor plane must never fail the run or
+    regress front-wall judging, so we drop it and surface a warning instead.
+    """
+    planes = calibration.get("planes")
+    if not isinstance(planes, dict) or "floor" not in planes:
+        return None
+
+    try:
+        floor_map = court_model.load_floor_calibration(calibration)
+    except Exception:
+        floor_map = None
+    if floor_map is not None:
+        return None
+
+    planes.pop("floor", None)
+    return "Floor calibration was invalid and has been ignored for this run."
+
+
 @app.post("/api/track")
 def track_clip():
     video_file = request.files.get("video_file")
@@ -290,11 +320,18 @@ def track_clip():
     if end_frame < start_frame:
         return error_response("Selected clip is outside the video duration.")
 
+    calibration_warning = validate_floor_calibration(calibration)
+    if calibration_warning:
+        app.logger.warning("run %s: %s", run_id, calibration_warning)
+
     calibration_path = run_dir / "calibration.json"
     calibration_path.write_text(json.dumps(calibration, indent=2), encoding="utf-8")
 
     selected_frames = end_frame - start_frame + 1
     total_frames = (selected_frames + frame_stride - 1) // frame_stride
+    extra_job_fields = {}
+    if calibration_warning:
+        extra_job_fields["calibration_warning"] = calibration_warning
     create_job(
         run_id,
         run_dir,
@@ -309,6 +346,7 @@ def track_clip():
         processed_frames=0,
         total_frames=total_frames,
         csv_url=f"/api/runs/{run_id}/ball_coordinates.csv",
+        **extra_job_fields,
     )
     start_tracking_job(run_id)
 
