@@ -23,7 +23,9 @@ is not good enough on two axes at once:
 Reconstruct the ball's flight in metric court coordinates and make contact detection and
 classification 3D-geometric. Physics first; ML assists (corrections-v2 flywheel tunes
 weights). Assumption per product direction: **the calibrated fixed back-wall camera is the
-norm**; uncalibrated clips gracefully keep today's 2D behavior.
+norm**; uncalibrated clips gracefully keep today's 2D behavior. Capture norm: iPhone
+ultrawide (0.5×) on the fixed back-wall mount, 4K @ 60 fps, Apple's built-in distortion
+correction applied.
 
 The fusion architecture (audio evidence + skip-state Viterbi + squash grammar) is kept
 unchanged; only the trajectory event source and the emission evidence are upgraded.
@@ -62,8 +64,9 @@ for 2D mode).
   single LM polish converts algebraic residual to true pixel reprojection error.
 - **Segmentation:** greedy maximal arcs (same shape as today): grow while reprojection RMS
   ≤ threshold (3D analogue of `arc_rms_px`, tuned on golden run); min ~5 points per arc
-  (~150 ms @30 fps). Depth reversals (wall hits) violently break the ballistic fit — this
-  is what recovers the recall the 2D arcs miss.
+  (~83 ms at the 60 fps capture norm; tuning must still tolerate 30 fps clips, where the
+  same minimum spans ~150 ms). Depth reversals (wall hits) violently break the ballistic
+  fit — this is what recovers the recall the 2D arcs miss.
 - **Sub-frame impact refinement:** at each arc boundary, extrapolate arc A forward and
   arc B backward; time of closest approach gives sub-frame impact time + 3D impact point +
   3D in/out velocities. Generalizes and eventually replaces `detect_bounce_two_stage`.
