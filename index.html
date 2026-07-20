@@ -126,7 +126,8 @@
   .sliderlabel{display:flex; justify-content:space-between; font-size:14px; color:var(--dim)}
   .sliderlabel output{color:var(--text); font-weight:600; font-variant-numeric:tabular-nums}
 
-  .stat{display:flex; justify-content:space-between; font-size:14px; color:var(--dim)}
+  .stat{display:flex; justify-content:space-between; font-size:14px; color:var(--dim);
+    font-variant-numeric:tabular-nums}
   .progressbox{padding:10px 12px; border-radius:10px; border:1px solid var(--line)}
   .progressbar{height:10px; border-radius:999px; background:var(--line); overflow:hidden; margin-top:8px}
   .progressbar span{display:block; height:100%; width:0%; background:var(--accent-bg); transition:width .18s ease}
@@ -174,12 +175,12 @@
     font-size:13px; color:var(--dim); white-space:nowrap; user-select:none; pointer-events:none}
 
   /* Debug-only bounce-engine toggle on the clip page. */
-  .debugEngineRow{display:flex; align-items:center; gap:10px; padding:2px 0 4px}
-  .debugEngineRow .nudgeLabel{flex:0 0 auto}
-  .debugTag{font-size:11px; color:var(--dim); text-transform:uppercase; letter-spacing:.06em}
-  .engineSeg{flex:1 1 auto; display:flex; border:1px solid var(--line); border-radius:8px; overflow:hidden}
-  .engineSeg button{flex:1 1 0; min-height:36px; padding:0 6px; border:none; background:transparent;
-    color:var(--dim); font-size:13px}
+  .debugEngineRow{display:flex; align-items:center; justify-content:flex-end; gap:8px; padding:0 0 6px}
+  .debugEngineRow .nudgeLabel{flex:0 0 auto; font-size:11px; color:var(--dim);
+    text-transform:uppercase; letter-spacing:.06em}
+  .engineSeg{flex:0 0 auto; display:flex; border:1px solid var(--line); border-radius:999px; overflow:hidden}
+  .engineSeg button{flex:0 0 auto; width:auto; min-height:34px; padding:0 12px; border:none;
+    border-radius:0; background:transparent; color:var(--dim); font-size:11px}
   .engineSeg button + button{border-left:1px solid var(--line)}
   .engineSeg button.on{background:var(--line); color:var(--text); font-weight:600}
 
@@ -219,11 +220,6 @@
     border:0; background:transparent; color:var(--dim); font-size:13px}
   #navPill button.active{background:var(--accent-bg); color:var(--accent-text)}
   #navPill svg{width:17px; height:17px; flex:0 0 auto}
-  #targetDebugBtn{position:fixed; right:12px; bottom:calc(76px + env(safe-area-inset-bottom)); z-index:42;
-    min-height:38px; padding:0 12px; border-radius:999px; font-size:12px;
-    background:rgba(245,197,24,.92); color:#1b1a13; border:1px solid rgba(255,255,255,.36);
-    box-shadow:0 10px 24px rgba(0,0,0,.34)}
-
   /* Bounce labeling */
   .labelGrid{display:grid; grid-template-columns:1fr 1fr; gap:10px}
   .labelGrid .dot{width:10px; height:10px; border-radius:50%; margin-right:9px; flex:0 0 auto}
@@ -296,9 +292,9 @@
   /* The verdict box always occupies the same space: empty (blank), event
      classification (neutral), and IN/OUT states share one reserved height so
      showing or clearing a verdict never shifts the layout around it. */
-  .verdict{border-radius:14px; padding:14px; text-align:center; font-size:13px; line-height:1.4;
-    min-height:118px; display:flex; flex-direction:column; justify-content:center}
-  .verdict strong{display:block; font-size:38px; letter-spacing:.04em}
+  .verdict{border-radius:14px; padding:10px 14px; text-align:center; font-size:13px; line-height:1.4;
+    min-height:78px; display:flex; flex-direction:column; justify-content:center}
+  .verdict strong{display:block; font-size:28px; letter-spacing:.04em}
   .verdict.in{background:var(--in); color:#03230c}
   .verdict.out{background:var(--outcall); color:#fff}
   .verdict.neutral{background:var(--surface); border:1px solid var(--line); color:var(--text)}
@@ -306,10 +302,13 @@
   /* One-tap call corrections: a human verdict on each judged call, recorded
      per frame. Tapping the model's call confirms it; tapping another call (or
      "not a hit") corrects it; tapping the highlighted one undoes. */
-  .correctionPanel{display:flex; flex-direction:column; gap:8px}
-  .correctionRow{display:flex; gap:8px; align-items:center}
-  .correctionRow .corrLabel{font-size:13px; color:var(--dim); white-space:nowrap}
-  .correctionRow button{width:auto; flex:1; min-height:44px; padding:6px 10px; font-size:13px}
+  .correctionPanel{display:flex; flex-direction:column; gap:6px}
+  .correctionRow{display:flex; flex-wrap:wrap; gap:6px; align-items:center}
+  .correctionRow .corrLabel{font-size:12px; color:var(--dim); white-space:nowrap; flex:0 0 auto}
+  /* compact chips (vs the app's full-size pills): natural width + wrap, so
+     five type options fit two lines on a phone without ballooning the page */
+  .correctionRow button{width:auto; flex:0 1 auto; min-height:34px; padding:5px 14px;
+    font-size:12px; white-space:nowrap; border:1px solid var(--line); background:transparent}
   .correctionRow button.active{background:var(--accent-bg); color:var(--accent-text); font-weight:700}
 
   /* phase primary buttons stay in the DOM as the behavioral source of truth
@@ -336,6 +335,15 @@
   #floorMapSvg .courtLine{stroke:var(--dim); stroke-width:.28; fill:none}
   #floorMapSvg .bounceDot{fill:#f5c518; stroke:rgba(0,0,0,.5); stroke-width:.14}
 
+  /* Reduced motion (DESIGN.md §10): opacity pulses and the indeterminate
+     progress sweep stay (essential "working" feedback); positional/decorative
+     motion stops. */
+  @media (prefers-reduced-motion: reduce){
+    #floorDiagram .mark.active{animation:none}
+    #themeBtn .sun, #themeBtn .sun-beams, #themeBtn .moonmask > circle{transition:none}
+    .progressbar span{transition:none}
+  }
+
   /* video kept renderable but invisible (display:none breaks canvas capture on some iOS versions) */
   #vid{position:absolute; width:2px; height:2px; opacity:0; pointer-events:none; left:-10px; top:-10px}
 </style>
@@ -350,7 +358,7 @@
 <header>
   <button class="hidden" id="hdrBack" type="button" aria-label="Back">&#8249;</button>
   <div id="stepLabel">Squash Line Calling</div>
-  <button class="small" id="themeBtn" type="button">
+  <button class="small" id="themeBtn" type="button" aria-label="Toggle light or dark theme">
     <svg class="sun-and-moon" width="24" height="24" viewBox="0 0 24 24" aria-hidden="true">
       <mask class="moonmask" id="moonMask">
         <rect width="100%" height="100%" fill="#fff"/>
@@ -377,9 +385,9 @@
   <canvas id="view"></canvas>
   <div id="analyzeOverlay" class="hidden"><span class="analyzePulse">Analyzing…</span></div>
   <div id="zoomCtrl" class="hidden">
-    <button class="small" id="zoomOutBtn" type="button">−</button>
-    <button class="small" id="zoomResetBtn" type="button">1×</button>
-    <button class="small" id="zoomInBtn" type="button">+</button>
+    <button class="small" id="zoomOutBtn" type="button" aria-label="Zoom out">−</button>
+    <button class="small" id="zoomResetBtn" type="button" aria-label="Reset zoom">1×</button>
+    <button class="small" id="zoomInBtn" type="button" aria-label="Zoom in">+</button>
   </div>
 </div>
 
@@ -463,6 +471,13 @@
 
   <!-- PHASE: clip -->
   <section class="hidden" id="p-clip">
+    <div class="debugEngineRow">
+      <span class="nudgeLabel">Engine</span>
+      <div class="engineSeg" id="engineSeg">
+        <button type="button" data-engine="fusion">Geometry</button>
+        <button type="button" data-engine="gb_model" class="on">Model</button>
+      </div>
+    </div>
     <div class="clipOverview" id="clipOverview">
       <canvas id="overviewStrip"></canvas>
       <div id="overviewSelection"></div>
@@ -513,13 +528,6 @@
         <button type="button" id="clipPlayBtn" class="playBtn" aria-label="Play or pause preview"></button>
       </div>
     </div>
-    <div class="debugEngineRow">
-      <span class="nudgeLabel">Bounce engine<span class="debugTag">debug</span></span>
-      <div class="engineSeg" id="engineSeg">
-        <button type="button" data-engine="fusion">Geometry</button>
-        <button type="button" data-engine="gb_model" class="on">Model</button>
-      </div>
-    </div>
     <button class="primary proxied" id="runTrackBtn">Track ball</button>
     <p class="status" id="trackStatus"></p>
   </section>
@@ -562,12 +570,10 @@
       </div>
     </div>
     <p class="status" id="hitsStatus"></p>
-    <div class="row">
-      <button id="targetBtn" type="button">Target zones</button>
-    </div>
     <div class="sliderlabel"><span>Frame to judge</span><output id="judgeFrameOut"></output></div>
     <div class="row">
       <input type="number" id="judgeFrame" step="1">
+      <button id="targetBtn" type="button">Target zones</button>
       <button class="primary proxied" id="judgeBtn">Judge frame</button>
     </div>
     <div class="verdict blank" id="judgeResult"><div>No line call yet</div></div>
@@ -695,7 +701,6 @@
   </button>
 </nav>
 
-<button id="targetDebugBtn" type="button">Debug targets</button>
 
 <video id="vid" playsinline muted preload="metadata"></video>
 
@@ -3144,27 +3149,6 @@ function placeTargetCell(cell, placement){
   cell.classList.toggle('mirror', !!placement.mirror);
 }
 
-function randomTargetSummary(){
-  const zoneIds = [1, 2, 3, 4, 5];
-  const rawCounts = zoneIds.map(() => Math.floor(Math.random() * 18));
-  if(!rawCounts.some(Boolean)) rawCounts[0] = 1;
-  const total = rawCounts.reduce((sum, count) => sum + count, 0);
-  const zones = rawCounts.map((count, index) => ({
-    zone: zoneIds[index],
-    count,
-    percentage: total ? count / total * 100 : 0,
-  }));
-  return {
-    layout: 'front_wall_5_target',
-    rows: 3,
-    columns: 3,
-    total_wall_hits: total,
-    zones,
-    common_zones: zones.filter(zone => zone.count > 0).sort((a, b) => b.count - a.count).slice(0, 4),
-    missing_zones: zones.filter(zone => zone.count === 0),
-  };
-}
-
 function renderTargetZones(summary){
   const panel = $('targetZones');
   if(!summary || !summary.total_wall_hits || !summary.zones || !summary.zones.length){
@@ -3255,10 +3239,6 @@ function buildTrackView(){
 
 $('targetBtn').onclick = () => {
   S.debugTargetZones = null;
-  setPhase('target');
-};
-$('targetDebugBtn').onclick = () => {
-  S.debugTargetZones = randomTargetSummary();
   setPhase('target');
 };
 
