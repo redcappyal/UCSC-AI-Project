@@ -1307,6 +1307,34 @@ function ransacLine(xs, ys){
   return bestCount >= MIN_COLS ? best : null;
 }
 
+/* The front-wall out line's paint meets the sidewall out-lines at the
+   corners, and the sidewall's top edge leaves each corner gradually — its
+   first several columns sit within RANSAC_THR of the true line, survive as
+   inliers, and stretch the fitted span slightly past the corner. On the real
+   line end-column residuals are zero-mean noise; on such a bent tail they are
+   one-signed and grow toward the end. Fit, then peel end columns whose
+   residuals exceed the (rms-scaled) threshold and refit until stable. The
+   tin has no connected tails, so its span is untouched. */
+function fitTrimmed(kx, ky){
+  let f = lsq(kx, ky);
+  if(!f) return null;
+  let lo = 0, hi = kx.length - 1;
+  for(let pass = 0; pass < 5; pass++){
+    const eps = Math.max(1, 1.25 * f.rms);
+    const res = i => Math.abs(ky[i] - (f.m*kx[i] + f.b));
+    const lo0 = lo, hi0 = hi;
+    while(hi - lo + 1 > MIN_COLS && res(lo) > eps) lo++;
+    while(hi - lo + 1 > MIN_COLS && res(hi) > eps) hi--;
+    if(lo === lo0 && hi === hi0) break;
+    const f2 = lsq(kx.slice(lo, hi + 1), ky.slice(lo, hi + 1));
+    if(!f2) break;
+    f = f2;
+  }
+  f.xMin = kx[lo];
+  f.xMax = kx[hi];
+  return f;
+}
+
 function robustFit(xs, ys){
   let f = null;
   const cand = ransacLine(xs, ys);
@@ -1332,8 +1360,8 @@ function robustFit(xs, ys){
       const minRun = Math.max(25, runs[0].length * 0.2);
       const idx = runs.filter(r => r.length >= minRun).flat().sort((a, b) => a - b);
       const kx = idx.map(i => xs[i]), ky = idx.map(i => ys[i]);
-      const f2 = lsq(kx, ky);
-      if(f2){ f = f2; f.xMin = kx[0]; f.xMax = kx[kx.length - 1]; }
+      const f2 = fitTrimmed(kx, ky);
+      if(f2) f = f2;
     }
   }
   if(!f){                                        // fallback: global fit + one rejection pass
@@ -1345,12 +1373,8 @@ function robustFit(xs, ys){
       if(Math.abs(ys[i] - (f.m*xs[i] + f.b)) <= thr){ kx.push(xs[i]); ky.push(ys[i]); }
     }
     if(kx.length >= MIN_COLS && kx.length < xs.length){
-      const f2 = lsq(kx, ky);
-      if(f2){
-        f = f2;
-        f.xMin = Math.min(...kx);
-        f.xMax = Math.max(...kx);
-      }
+      const f2 = fitTrimmed(kx, ky);
+      if(f2) f = f2;
     }
   }
   if(!Number.isFinite(f.xMin) || !Number.isFinite(f.xMax)){
