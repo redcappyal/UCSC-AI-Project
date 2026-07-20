@@ -19,6 +19,7 @@ import cv2
 
 import court_model
 from audio_events import extract_audio_candidates, extract_repeating_audio_windows
+from bounce_gb_model_detector import DEFAULT_MODEL_PATH as BOUNCE_GB_MODEL_PATH
 from bounce_gb_model_detector import detect_hits_with_gb_model
 from event_engine import detect_events_fused
 from classify_events import classify_events
@@ -787,13 +788,14 @@ def run_tracking_job(run_id):
                     update_job(
                         run_id,
                         stage="judging",
-                        message="Judging wall hits with bounce_gb_better_features.pkl...",
+                        message=f"Judging wall hits with {BOUNCE_GB_MODEL_PATH.name}...",
                     )
                     detected = detect_hits_with_gb_model(
                         sorted_rows(results),
                         wall_x_range=wall_x_range,
                         calibration=calibration,
-                        apply_spatial_filter=False,
+                        apply_spatial_filter=True,
+                        spatial_filter_mode="sidewall",
                     )
                     classified = classify_events(
                         detected,

@@ -33,3 +33,4 @@ venv/
 # build_eval_set.py) — ui_runs stays ignored, its distillation doesn't.
 !eval_set/*.jsonl
 !eval_set/*.json
+!bounce_gb_model.pkl

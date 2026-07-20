@@ -65,15 +65,12 @@ CONTEXT_FRAMES = 4
 NEGATIVE_EXCLUSION_FRAMES = 8
 POSITIVE_WINDOW_FRAMES = 1
 AUDIO_PEAK_WINDOW_FRAMES = 5
-DEFAULT_HIT_THRESHOLD = 0.40
+DEFAULT_HIT_THRESHOLD = 0.25
 MODEL_FEATURE_COLUMNS = [
     "velocity_change_px_s",
     "speed_after_px_s",
-    "speed_ratio_after_before",
     "x_span_context",
     "vy_after_px_s",
-    "vx_sign_change",
-    "vy_sign_change",
     "area_span_context",
     "local_velocity_change_px_s",
     "min_nearest_wall_line_distance_context",
@@ -575,29 +572,6 @@ def build_features_for_frame(
     features["vx_after_px_s"] = finite_or_zero(vx_after)
     features["vy_after_px_s"] = finite_or_zero(vy_after)
     features["speed_after_px_s"] = finite_or_zero(speed_after)
-    features["speed_ratio_after_before"] = (
-        speed_after / speed_before
-        if math.isfinite(speed_after) and math.isfinite(speed_before) and speed_before > 1e-9
-        else 0.0
-    )
-    features["vx_sign_change"] = (
-        1.0
-        if math.isfinite(vx_before)
-        and math.isfinite(vx_after)
-        and abs(vx_before) > 1e-9
-        and abs(vx_after) > 1e-9
-        and vx_before * vx_after < 0
-        else 0.0
-    )
-    features["vy_sign_change"] = (
-        1.0
-        if math.isfinite(vy_before)
-        and math.isfinite(vy_after)
-        and abs(vy_before) > 1e-9
-        and abs(vy_after) > 1e-9
-        and vy_before * vy_after < 0
-        else 0.0
-    )
     features["local_vx_px_s"] = finite_or_zero(vx_local)
     features["local_vy_px_s"] = finite_or_zero(vy_local)
     features["local_speed_px_s"] = finite_or_zero(speed_local)
@@ -763,6 +737,12 @@ def metrics_from_confusion(cm):
     precision = tp / (tp + fp) if tp + fp else 0.0
     recall = tp / (tp + fn) if tp + fn else 0.0
     f1 = 2 * precision * recall / (precision + recall) if precision + recall else 0.0
+    beta_squared = 4.0
+    f2 = (
+        (1 + beta_squared) * precision * recall / (beta_squared * precision + recall)
+        if precision + recall
+        else 0.0
+    )
     accuracy = (tp + tn) / max(1, tn + fp + fn + tp)
     return {
         "tn": int(tn),
@@ -772,6 +752,7 @@ def metrics_from_confusion(cm):
         "precision": float(precision),
         "recall": float(recall),
         "f1": float(f1),
+        "f2": float(f2),
         "accuracy": float(accuracy),
     }
 
@@ -875,9 +856,8 @@ def parse_int_grid(value):
     values = []
     for part in str(value).split(","):
         part = part.strip()
-        if not part:
-            continue
-        values.append(int(part))
+        if part:
+            values.append(int(part))
     if not values:
         raise argparse.ArgumentTypeError("grid must contain at least one integer")
     return values
@@ -887,28 +867,38 @@ def parse_float_grid(value):
     values = []
     for part in str(value).split(","):
         part = part.strip()
-        if not part:
-            continue
-        values.append(float(part))
+        if part:
+            values.append(float(part))
     if not values:
         raise argparse.ArgumentTypeError("grid must contain at least one number")
     return values
 
 
-def metric_sort_key(result):
+def fbeta_score(precision, recall, beta):
+    if precision + recall <= 0:
+        return 0.0
+    beta_squared = beta * beta
+    return (1 + beta_squared) * precision * recall / (beta_squared * precision + recall)
+
+
+def metric_sort_key(result, min_precision=0.30, beta=2.0):
     metrics = result["result"]["metrics"]
-    # Recall matters most for this project; F1 and precision break ties.
+    selection_score = fbeta_score(metrics["precision"], metrics["recall"], beta)
+    precision_floor_met = metrics["precision"] >= min_precision
     return (
+        1 if precision_floor_met else 0,
+        selection_score,
         metrics["recall"],
-        metrics["f1"],
         metrics["precision"],
+        metrics["f1"],
         metrics["accuracy"],
     )
 
 
-def print_best_result(best):
+def print_best_result(best, min_precision=0.30, beta=2.0):
     metrics = best["result"]["metrics"]
     params = best["params"]
+    selection_score = fbeta_score(metrics["precision"], metrics["recall"], beta)
     print("\nBest hyperparameters:")
     print(f"  context_frames: {params['context']}")
     print(f"  positive_window_frames: {params['positive_window']}")
@@ -922,6 +912,9 @@ def print_best_result(best):
     print(f"  precision: {metrics['precision']:.3f}")
     print(f"  recall: {metrics['recall']:.3f}")
     print(f"  f1: {metrics['f1']:.3f}")
+    print(f"  f2: {metrics['f2']:.3f}")
+    print(f"  selection_f_beta(beta={beta:g}): {selection_score:.3f}")
+    print(f"  precision_floor_met: {metrics['precision'] >= min_precision}")
     print(f"  accuracy: {metrics['accuracy']:.3f}")
     print(
         "  confusion_matrix: "
@@ -944,8 +937,8 @@ def parse_args():
         "--hyperparameter-matrix",
         action="store_true",
         help=(
-            "Train every combination from --context-grid, --positive-window-grid, "
-            "and --negative-exclusion-grid, then save the best model."
+            "Train every combination from the comma-separated grid flags, "
+            "then save the best model by precision floor plus recall-weighted F-beta."
         ),
     )
     parser.add_argument("--context-grid", type=parse_int_grid, default=None)
@@ -979,6 +972,24 @@ def parse_args():
         type=float,
         default=DEFAULT_HIT_THRESHOLD,
         help="Classify a frame as a hit when predict_proba(hit) is at least this value.",
+    )
+    parser.add_argument(
+        "--selection-beta",
+        type=float,
+        default=2.0,
+        help=(
+            "F-beta beta used to rank hyperparameter-matrix results. "
+            "Values above 1 prioritize recall over precision."
+        ),
+    )
+    parser.add_argument(
+        "--min-selection-precision",
+        type=float,
+        default=0.30,
+        help=(
+            "Prefer matrix results with at least this precision. "
+            "If none meet it, fall back to the best F-beta result overall."
+        ),
     )
     parser.add_argument(
         "--no-class-balance",
@@ -1105,9 +1116,9 @@ def main():
         args.ball_csv = DEFAULT_EXISTING_BALL_CSV_PATH
 
     if args.hyperparameter_matrix:
-        context_values = args.context_grid or [3, 4, 5]
-        positive_window_values = args.positive_window_grid or [1, 2, 3]
-        negative_exclusion_values = args.negative_exclusion_grid or [6, 8, 10]
+        context_values = args.context_grid or [args.context]
+        positive_window_values = args.positive_window_grid or [max(0, args.positive_window)]
+        negative_exclusion_values = args.negative_exclusion_grid or [max(0, args.negative_exclusion)]
         gb_n_estimators_values = args.gb_n_estimators_grid or [args.gb_n_estimators]
         gb_learning_rate_values = args.gb_learning_rate_grid or [args.gb_learning_rate]
         gb_max_depth_values = args.gb_max_depth_grid or [args.gb_max_depth]
@@ -1193,6 +1204,7 @@ def main():
                 },
                 "positives": data_plan["positives"],
                 "negatives": data_plan["negatives"],
+                "positive_labels": data_plan["positive_labels"],
                 "training_frames": data_plan["training_frames"],
                 "required_frames": data_plan["required_frames"],
             }
@@ -1212,7 +1224,13 @@ def main():
             f"{len(config_plans)} run(s).",
             flush=True,
         )
+
     first_plan = config_plans[0]
+    print(
+        f"First config positive label window: +/-{first_plan['params']['positive_window']} frame(s), "
+        f"creating {len(first_plan['positive_labels'])} positive training frame(s).",
+        flush=True,
+    )
     print(
         f"First config sampled frames: {len(first_plan['positives'])} positive and "
         f"{len(first_plan['negatives'])} negative.",
@@ -1269,6 +1287,7 @@ def main():
             f"matching radius +/-{args.audio_window_frames} frame(s).",
             flush=True,
         )
+
     best = None
     all_results = []
     feature_cache = {}
@@ -1302,7 +1321,7 @@ def main():
                 max(0, args.audio_window_frames),
             )
             feature_cache[feature_key] = features
-        else:
+        elif args.hyperparameter_matrix:
             print(
                 "Reusing feature table for "
                 f"context={params['context']}, "
@@ -1310,6 +1329,7 @@ def main():
                 f"negative_exclusion={params['negative_exclusion']}.",
                 flush=True,
             )
+
         result = train_model(
             features,
             args.model_output,
@@ -1327,14 +1347,31 @@ def main():
         )
         entry = {"params": params, "features": features, "result": result}
         all_results.append(entry)
-        if best is None or metric_sort_key(entry) > metric_sort_key(best):
+        if best is None or metric_sort_key(
+            entry,
+            min_precision=args.min_selection_precision,
+            beta=args.selection_beta,
+        ) > metric_sort_key(
+            best,
+            min_precision=args.min_selection_precision,
+            beta=args.selection_beta,
+        ):
             best = entry
 
     if args.hyperparameter_matrix:
-        print("\nHyperparameter matrix summary:")
+        print(
+            "\nHyperparameter matrix summary "
+            f"(selection: require precision >= {args.min_selection_precision:.3f} when possible, "
+            f"then maximize F-beta with beta={args.selection_beta:g}):"
+        )
         for entry in all_results:
             params = entry["params"]
             metrics = entry["result"]["metrics"]
+            selection_score = fbeta_score(
+                metrics["precision"],
+                metrics["recall"],
+                args.selection_beta,
+            )
             print(
                 f"  context={params['context']}, "
                 f"positive_window={params['positive_window']}, "
@@ -1347,11 +1384,33 @@ def main():
                 f"precision={metrics['precision']:.3f}, "
                 f"recall={metrics['recall']:.3f}, "
                 f"f1={metrics['f1']:.3f}, "
+                f"f2={metrics['f2']:.3f}, "
+                f"selection={selection_score:.3f}, "
+                f"precision_ok={metrics['precision'] >= args.min_selection_precision}, "
                 f"accuracy={metrics['accuracy']:.3f}, "
                 f"fp={metrics['fp']}, fn={metrics['fn']}"
             )
-        print_best_result(best)
+        print_best_result(
+            best,
+            min_precision=args.min_selection_precision,
+            beta=args.selection_beta,
+        )
         best["result"]["artifact"]["hyperparameters"] = dict(best["params"])
+        best["result"]["artifact"]["selection"] = {
+            "metric": "fbeta_with_precision_floor",
+            "beta": float(args.selection_beta),
+            "min_precision": float(args.min_selection_precision),
+            "score": float(
+                fbeta_score(
+                    best["result"]["metrics"]["precision"],
+                    best["result"]["metrics"]["recall"],
+                    args.selection_beta,
+                )
+            ),
+            "precision_floor_met": bool(
+                best["result"]["metrics"]["precision"] >= args.min_selection_precision
+            ),
+        }
         joblib.dump(best["result"]["artifact"], args.model_output)
         print(f"\nSaved best model artifact to {args.model_output}")
         features = best["features"]
