@@ -33,3 +33,5 @@ venv/
 # build_eval_set.py) — ui_runs stays ignored, its distillation doesn't.
 !eval_set/*.jsonl
 !eval_set/*.json
+# Design specs are durable project docs
+!docs/**/*.md
