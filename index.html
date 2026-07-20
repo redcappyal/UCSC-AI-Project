@@ -293,6 +293,14 @@
   .verdict.out{background:var(--outcall); color:#fff}
   .verdict.neutral{background:var(--surface); border:1px solid var(--line); color:var(--text)}
   .verdict.blank{background:transparent; border:1px dashed var(--line); color:var(--dim)}
+  /* One-tap call corrections: a human verdict on each judged call, recorded
+     per frame. Tapping the model's call confirms it; tapping another call (or
+     "not a hit") corrects it; tapping the highlighted one undoes. */
+  .correctionPanel{display:flex; flex-direction:column; gap:8px}
+  .correctionRow{display:flex; gap:8px; align-items:center}
+  .correctionRow .corrLabel{font-size:13px; color:var(--dim); white-space:nowrap}
+  .correctionRow button{width:auto; flex:1; min-height:44px; padding:6px 10px; font-size:13px}
+  .correctionRow button.active{background:var(--accent-bg); color:var(--accent-text); font-weight:700}
 
   /* phase primary buttons stay in the DOM as the behavioral source of truth
      (handlers + disabled state) but render only as the header action pill */
@@ -546,6 +554,27 @@
       <button class="primary proxied" id="judgeBtn">Judge frame</button>
     </div>
     <div class="verdict blank" id="judgeResult"><div>No line call yet</div></div>
+    <div class="correctionPanel hidden" id="corrPanel">
+      <div class="correctionRow">
+        <span class="corrLabel">Type:</span>
+        <button type="button" id="corrTypeWall">Front wall</button>
+        <button type="button" id="corrTypeSide">Side wall</button>
+        <button type="button" id="corrTypeFloor">Floor</button>
+        <button type="button" id="corrTypeRacket">Racket</button>
+        <button type="button" id="corrTypeNone">Not a hit</button>
+      </div>
+      <div class="correctionRow hidden" id="corrCallRow">
+        <span class="corrLabel">Call:</span>
+        <button type="button" id="corrIn">In</button>
+        <button type="button" id="corrOut">Out</button>
+      </div>
+      <div class="correctionRow hidden" id="corrFrameRow">
+        <span class="corrLabel">Bounce frame:</span>
+        <button type="button" id="corrFrameThis">This frame</button>
+        <button type="button" id="corrFrameOther">Different frame…</button>
+      </div>
+      <p class="status hidden" id="corrStatus"></p>
+    </div>
   </section>
 
   <!-- MODE: bounce labeling (ground truth for the event engine) -->
@@ -685,6 +714,9 @@ const S = {
   floor:null,                 // floor-homography wizard state (see newFloorState)
   profile:null,               // {id, name, created_utc} when a saved profile is in play
   run:null,                   // backend tracking result
+  corrections:{},             // frame -> saved v2 correction entry for the run
+  corrTarget:null,            // {frame, predicted, draft, pickingFrame} — the hit being corrected
+  ballByFrame:null,           // Map(frame -> {x,y}) from ball_coordinates.csv (video px)
   trackSeekId:0,
   trackPlaying:false,
   trackRaf:null,
@@ -3020,6 +3052,8 @@ $('runTrackBtn').onclick = async () => {
     const data = await waitForTracking(started.run_id);
     if(S.phase !== 'analyze') return;   // user left mid-analysis; don't yank them forward
     S.run = data;
+    loadCorrections(data.run_id);
+    loadBallPositions(data.run_id);
     $('trackStatus').textContent = `Tracked ${data.rows} frame rows.`;
     $('trackStatus').className = 'status ok';
     setPhase('track');
@@ -3514,6 +3548,7 @@ async function seekSourceFrameToCanvas(frame, syncInput=true){
     if(L) drawFitLine(L.fit, CFG[k].hex);
   }
   updateTrackCursor(frame);
+  drawCorrectionDot();
   if(syncInput) $('judgeFrame').value = frame;
 }
 
@@ -3541,6 +3576,7 @@ const EVENT_LABELS = { racket:'Racket hit', floor:'Floor bounce', side_wall:'Sid
 function clearJudgeResult(){
   $('judgeResult').className = 'verdict blank';
   $('judgeResult').innerHTML = '<div>No line call yet</div>';
+  hideCorrPanel();
 }
 
 function renderEventCard(hit){
@@ -3548,9 +3584,20 @@ function renderEventCard(hit){
   $('judgeResult').innerHTML =
     `<strong>${EVENT_LABELS[hit.event_type] || hit.event_type}</strong>` +
     `<div>Frame ${hit.frame} · line calls apply to front-wall hits only</div>`;
+  // Non-wall hits carry no judge context; seed the dot from the impact fit
+  // when the pipeline produced one, else the nearest detected ball center.
+  const ball = hit.impact ? {x:hit.impact.x, y:hit.impact.y} : ballAtFrame(hit.frame);
+  setCorrTarget(hit.frame, { type:hit.event_type, call:null, source:null,
+                             margin_px:null, ball });
 }
 
 function renderJudgeResult(data){
+  const hit = hitAtFrame(data.frame);
+  setCorrTarget(data.frame, {
+    type: (hit && hit.event_type) || 'wall',
+    call: data.call, source: data.source,
+    margin_px: data.margin_px, ball: data.ball,
+  });
   const callClass = data.call === 'IN' ? 'in' : data.call === 'OUT' ? 'out' : 'neutral';
   const sourceText = data.source === 'impact_estimate' ? 'estimated impact point' : 'detected ball center';
   $('judgeResult').className = `verdict ${callClass}`;
@@ -3588,6 +3635,296 @@ $('judgeBtn').onclick = () => {
   seekSourceFrameToCanvas(frame);
   judgeFrameRequest(frame);
 };
+
+/* ---------- bounce corrections (the data flywheel's front door) ----------
+   Every judged hit gets a correction panel: hit type (supervises the event
+   engine + false positives), ball position via draggable dot (RF-DETR
+   retraining data), and bounce timing (supervises impact estimation).
+   IN/OUT stays, but only for front-wall hits — it's derived geometry. */
+const CORRECTION_TYPE_BTNS = {
+  wall:'corrTypeWall', side_wall:'corrTypeSide', floor:'corrTypeFloor',
+  racket:'corrTypeRacket', none:'corrTypeNone',
+};
+const CORRECTION_CALL_BTNS = { IN:'corrIn', OUT:'corrOut' };
+const CORR_ALL_BTNS = [...Object.values(CORRECTION_TYPE_BTNS),
+  ...Object.values(CORRECTION_CALL_BTNS), 'corrFrameThis', 'corrFrameOther'];
+
+async function loadCorrections(runId){
+  S.corrections = {};
+  try{
+    const response = await fetch(`/api/runs/${runId}/corrections`);
+    if(!response.ok) return;
+    const data = await response.json();
+    for(const c of data.corrections || []) S.corrections[c.frame] = c;
+  }catch(_){ /* offline or malformed file — start empty */ }
+}
+
+async function loadBallPositions(runId){
+  S.ballByFrame = null;
+  try{
+    const response = await fetch(`/api/runs/${runId}/ball_coordinates.csv`);
+    if(!response.ok) return;
+    const lines = (await response.text()).trim().split('\n');
+    const cols = lines[0].split(',');
+    const fi = cols.indexOf('source_frame'), di = cols.indexOf('detected');
+    const xi = cols.indexOf('x_center'), yi = cols.indexOf('y_center');
+    if(fi < 0 || di < 0 || xi < 0 || yi < 0) return;
+    const map = new Map();
+    for(const line of lines.slice(1)){
+      const row = line.split(',');
+      if(row[di].trim().toLowerCase() !== 'true') continue;
+      map.set(parseInt(row[fi], 10), {x:+row[xi], y:+row[yi]});
+    }
+    S.ballByFrame = map;
+  }catch(_){ /* dot seeding degrades to null; drag still works from a tap */ }
+}
+
+function ballAtFrame(frame){
+  if(!S.ballByFrame) return null;
+  const exact = S.ballByFrame.get(frame);
+  if(exact) return {...exact};
+  const radius = 2 * ((S.run && S.run.frame_stride) || 1);
+  let best = null, bestDist = Infinity;
+  for(const [f, p] of S.ballByFrame){
+    const d = Math.abs(f - frame);
+    if(d <= radius && d < bestDist){ best = p; bestDist = d; }
+  }
+  return best ? {...best} : null;
+}
+
+function hitAtFrame(frame){
+  return ((S.run && S.run.hits) || []).find(h => h.frame === frame) || null;
+}
+
+function setCorrTarget(frame, predicted){
+  const saved = (S.corrections || {})[frame];
+  const draft = saved
+    ? JSON.parse(JSON.stringify(saved.corrected))
+    : { type: predicted.type || 'wall',
+        call: predicted.call === 'IN' || predicted.call === 'OUT' ? predicted.call : null,
+        ball: predicted.ball ? {...predicted.ball} : null,
+        frame_is_bounce: true, frame: null };
+  if(draft.type === 'wall' && !draft.call) draft.call = 'IN';
+  S.corrTarget = { frame, predicted, draft, pickingFrame:false };
+  renderCorrPanel();
+  redrawTrackCanvas();
+}
+
+function hideCorrPanel(){
+  $('corrPanel').classList.add('hidden');
+  $('corrStatus').classList.add('hidden');
+  if(S.corrTarget){ S.corrTarget = null; redrawTrackCanvas(); }
+}
+
+function renderCorrPanel(){
+  const target = S.corrTarget;
+  if(!target){ hideCorrPanel(); return; }
+  const saved = (S.corrections || {})[target.frame];
+  const draft = target.draft;
+  for(const [type, id] of Object.entries(CORRECTION_TYPE_BTNS))
+    $(id).classList.toggle('active', !!saved && draft.type === type);
+  for(const [call, id] of Object.entries(CORRECTION_CALL_BTNS))
+    $(id).classList.toggle('active', !!saved && draft.call === call);
+  $('corrCallRow').classList.toggle('hidden', draft.type !== 'wall');
+  $('corrFrameRow').classList.toggle('hidden', draft.type === 'none');
+  $('corrFrameThis').classList.toggle('active', !!saved && draft.frame_is_bounce === true);
+  $('corrFrameOther').classList.toggle('active', !!saved && draft.frame_is_bounce === false);
+  $('corrFrameOther').textContent = target.pickingFrame ? 'Use this frame'
+    : draft.frame_is_bounce === false && draft.frame != null
+      ? `Frame ${draft.frame}` : 'Different frame…';
+  $('corrPanel').classList.remove('hidden');
+  const statusText = target.pickingFrame
+    ? 'Scrub to the true bounce frame, then tap Use this frame.'
+    : saved ? savedStatusText(saved) : '';
+  $('corrStatus').textContent = statusText;
+  $('corrStatus').classList.toggle('hidden', !statusText);
+}
+
+function savedStatusText(saved){
+  const c = saved.corrected;
+  if(c.type === 'none') return 'Recorded as not a hit — saved to this run’s eval set.';
+  const typeName = { wall:'Front wall', side_wall:'Side wall', floor:'Floor', racket:'Racket' }[c.type] || c.type;
+  const call = c.call ? ` ${c.call}` : '';
+  const at = c.ball ? ` at (${c.ball.x.toFixed(0)}, ${c.ball.y.toFixed(0)})` : '';
+  const when = c.frame_is_bounce === false && c.frame != null ? `, frame ${c.frame}` : '';
+  return `Recorded: ${typeName}${call}${at}${when} — saved to this run’s eval set.`;
+}
+
+async function sendCorrection(corrected){
+  const target = S.corrTarget;
+  if(!target || !S.run) return;
+  for(const id of CORR_ALL_BTNS) $(id).disabled = true;
+  try{
+    const response = await fetch(`/api/runs/${S.run.run_id}/corrections`, {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({ frame: target.frame, corrected,
+                            predicted: target.predicted }),
+    });
+    const result = await response.json();
+    if(!result.ok) throw new Error(result.error || 'Saving the correction failed.');
+    if(corrected === null){
+      delete S.corrections[target.frame];
+      // Reset the draft to the model's view so the panel reads as untouched.
+      setCorrTarget(target.frame, target.predicted);
+      return;
+    }
+    S.corrections[target.frame] = result.correction;
+    target.draft = JSON.parse(JSON.stringify(result.correction.corrected));
+  }catch(error){
+    showError(error.message);
+  }finally{
+    for(const id of CORR_ALL_BTNS) $(id).disabled = false;
+    if(S.corrTarget) renderCorrPanel();
+    redrawTrackCanvas();
+  }
+}
+
+function postDraft(){
+  const target = S.corrTarget;
+  if(!target) return;
+  const d = target.draft;
+  const corrected = d.type === 'none'
+    ? { type:'none', call:null, ball:null, frame_is_bounce:null, frame:null }
+    : { type:d.type, call:d.type === 'wall' ? d.call : null,
+        ball:d.ball, frame_is_bounce:d.frame_is_bounce,
+        frame:d.frame_is_bounce ? null : d.frame };
+  if(corrected.type !== 'none' && !corrected.ball){
+    showError('No ball position for this frame — drag the dot onto the ball first.');
+    return;
+  }
+  sendCorrection(corrected);
+}
+
+function pickTypeCorrection(type){
+  const target = S.corrTarget;
+  if(!target) return;
+  const saved = (S.corrections || {})[target.frame];
+  if(saved && saved.corrected.type === type){ sendCorrection(null); return; }  // tap again = undo
+  const draft = target.draft;
+  draft.type = type;
+  if(type === 'wall' && !draft.call)
+    draft.call = target.predicted.call === 'OUT' ? 'OUT' : 'IN';
+  if(type !== 'wall') draft.call = null;
+  if(type === 'none'){ draft.ball = null; draft.frame_is_bounce = null; draft.frame = null; }
+  else {
+    if(!draft.ball) draft.ball = target.predicted.ball ? {...target.predicted.ball}
+                                                       : ballAtFrame(target.frame);
+    if(typeof draft.frame_is_bounce !== 'boolean'){ draft.frame_is_bounce = true; draft.frame = null; }
+  }
+  target.pickingFrame = false;
+  postDraft();
+}
+
+for(const [type, id] of Object.entries(CORRECTION_TYPE_BTNS))
+  $(id).onclick = () => pickTypeCorrection(type);
+for(const [call, id] of Object.entries(CORRECTION_CALL_BTNS))
+  $(id).onclick = () => {
+    if(!S.corrTarget) return;
+    S.corrTarget.draft.call = call;
+    S.corrTarget.pickingFrame = false;
+    postDraft();
+  };
+$('corrFrameThis').onclick = () => {
+  if(!S.corrTarget) return;
+  S.corrTarget.draft.frame_is_bounce = true;
+  S.corrTarget.draft.frame = null;
+  S.corrTarget.pickingFrame = false;
+  postDraft();
+};
+$('corrFrameOther').onclick = () => {
+  const target = S.corrTarget;
+  if(!target) return;
+  if(!target.pickingFrame){
+    target.pickingFrame = true;      // scrub freely; the panel stays up
+    renderCorrPanel();
+    return;
+  }
+  target.pickingFrame = false;
+  target.draft.frame_is_bounce = false;
+  target.draft.frame = S.trackView.cursor;
+  postDraft();
+};
+
+/* ---------- ball dot overlay: tap/drag to correct the position ---------- */
+const CORR_DOT_GRAB_PX = 30;   // video-px hit radius for starting a drag
+
+function corrDotFrame(){
+  const target = S.corrTarget;
+  if(!target || !target.draft.ball || target.draft.type === 'none') return null;
+  return target.draft.frame_is_bounce === false && target.draft.frame != null
+    ? target.draft.frame : target.frame;
+}
+
+function drawCorrectionDot(){
+  const target = S.corrTarget;
+  const frame = corrDotFrame();
+  if(frame === null || S.trackView.cursor !== frame && !target.pickingFrame) return;
+  const b = target.draft.ball;
+  const r = Math.max(6, S.W / 160);
+  ctx.beginPath();
+  ctx.arc(b.x, b.y, r, 0, Math.PI * 2);
+  ctx.fillStyle = 'rgba(255, 200, 40, 0.35)';
+  ctx.fill();
+  ctx.lineWidth = Math.max(2, r / 4);
+  ctx.strokeStyle = '#ffc828';
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.arc(b.x, b.y, Math.max(2, r / 5), 0, Math.PI * 2);
+  ctx.fillStyle = '#ffc828';
+  ctx.fill();
+}
+
+function redrawTrackCanvas(){
+  if(S.phase !== 'track' || !S.run) return;
+  canvas.width = S.W;
+  canvas.height = S.H;
+  ctx.drawImage(vid, 0, 0, S.W, S.H);
+  for(const k of ORDER){
+    const L = S.lines[k];
+    if(L) drawFitLine(L.fit, CFG[k].hex);
+  }
+  drawCorrectionDot();
+}
+
+let corrDotDrag = null;   // {pointerId} while dragging the dot
+
+function canvasPointToVideo(e){
+  const r = canvas.getBoundingClientRect();
+  return {
+    x: Math.min(S.W - 1, Math.max(0, (e.clientX - r.left) * S.W / r.width)),
+    y: Math.min(S.H - 1, Math.max(0, (e.clientY - r.top) * S.H / r.height)),
+  };
+}
+
+canvas.addEventListener('pointerdown', e => {
+  if(S.phase !== 'track' || !S.corrTarget) return;
+  const b = S.corrTarget.draft.ball;
+  const frame = corrDotFrame();
+  const p = canvasPointToVideo(e);
+  const grabbable = b && frame !== null && S.trackView.cursor === frame;
+  if(grabbable && Math.hypot(p.x - b.x, p.y - b.y) <= CORR_DOT_GRAB_PX){
+    e.preventDefault();
+    try{ canvas.setPointerCapture(e.pointerId); }catch(_){ /* synthetic events */ }
+    corrDotDrag = { pointerId: e.pointerId };
+    S.corrTarget.draft.ball = { x: Math.round(p.x * 10) / 10, y: Math.round(p.y * 10) / 10 };
+    redrawTrackCanvas();
+  }
+});
+canvas.addEventListener('pointermove', e => {
+  if(!corrDotDrag || e.pointerId !== corrDotDrag.pointerId || !S.corrTarget) return;
+  e.preventDefault();
+  const p = canvasPointToVideo(e);
+  S.corrTarget.draft.ball = { x: Math.round(p.x * 10) / 10, y: Math.round(p.y * 10) / 10 };
+  redrawTrackCanvas();
+});
+function endCorrDotDrag(e){
+  if(!corrDotDrag || e.pointerId !== corrDotDrag.pointerId) return;
+  corrDotDrag = null;
+  if(S.corrTarget) postDraft();
+}
+canvas.addEventListener('pointerup', endCorrDotDrag);
+canvas.addEventListener('pointercancel', endCorrDotDrag);
 
 /* ---------- bounce labeling (event-engine ground truth) ---------- */
 const LABEL_BAR_CLASS = { wall:'in', racket:'racket', floor:'floor', side_wall:'side' };

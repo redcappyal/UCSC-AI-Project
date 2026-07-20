@@ -470,6 +470,183 @@ def save_ground_truth(run_id):
     return jsonify({"ok": True, "count": len(cleaned)})
 
 
+CORRECTION_SCHEMA_VERSION = "corrections-v2"
+CORRECTION_TYPES = GROUND_TRUTH_TYPES | {"none"}
+CORRECTION_CALLS = {"IN", "OUT"}
+
+
+def parse_ball_point(value):
+    """-> {x, y} floats, or raise ValueError. None passes through."""
+    if value is None:
+        return None
+    try:
+        return {"x": float(value["x"]), "y": float(value["y"])}
+    except (KeyError, TypeError, ValueError):
+        raise ValueError("ball must be {x, y} numbers")
+
+
+def parse_corrected(data):
+    """Validate the human half of a correction -> dict, or raise ValueError.
+
+    type drives which other fields are legal: call is wall-only, and a
+    'none' (detector false positive) carries no position or timing —
+    there is no bounce to locate."""
+    hit_type = str(data.get("type", "")).lower()
+    if hit_type not in CORRECTION_TYPES:
+        raise ValueError(
+            "corrected.type must be one of " + ", ".join(sorted(CORRECTION_TYPES))
+        )
+
+    call = data.get("call")
+    if hit_type == "wall":
+        call = None if call is None else str(call).upper()
+        if call not in CORRECTION_CALLS:
+            raise ValueError("corrected.call must be IN or OUT for wall hits.")
+    elif call is not None:
+        raise ValueError("corrected.call applies to front-wall corrections only.")
+
+    if hit_type == "none":
+        if data.get("ball") is not None:
+            raise ValueError("a 'none' correction cannot carry a ball position.")
+        return {"type": hit_type, "call": None, "ball": None,
+                "frame_is_bounce": None, "frame": None}
+
+    ball = parse_ball_point(data.get("ball"))
+    if ball is None:
+        raise ValueError("corrected.ball {x, y} is required unless type is none.")
+    frame_is_bounce = data.get("frame_is_bounce")
+    if not isinstance(frame_is_bounce, bool):
+        raise ValueError("corrected.frame_is_bounce must be true or false.")
+    corrected_frame = data.get("frame")
+    if frame_is_bounce:
+        if corrected_frame is not None:
+            raise ValueError("corrected.frame is only valid when "
+                             "frame_is_bounce is false.")
+    else:
+        try:
+            corrected_frame = int(corrected_frame)
+        except (TypeError, ValueError):
+            raise ValueError("corrected.frame (int) is required when "
+                             "frame_is_bounce is false.")
+    return {"type": hit_type, "call": call, "ball": ball,
+            "frame_is_bounce": frame_is_bounce, "frame": corrected_frame}
+
+
+def parse_predicted(data):
+    """Normalize the label-time model snapshot -> dict, or raise ValueError.
+    Every field is nullable; this input is programmatic, so malformed
+    values are client bugs and rejected rather than coerced to null."""
+    if data is None:
+        data = {}
+    if not isinstance(data, dict):
+        raise ValueError("predicted must be an object.")
+    hit_type = data.get("type")
+    if hit_type is not None:
+        hit_type = str(hit_type).lower()
+        if hit_type not in CORRECTION_TYPES - {"none"}:
+            raise ValueError("predicted.type must be a detector hit type.")
+    call = data.get("call")
+    if call is not None:
+        call = str(call).upper()
+        if call not in CORRECTION_CALLS | {"UNKNOWN"}:
+            raise ValueError("predicted.call must be IN, OUT, or UNKNOWN.")
+    margin = data.get("margin_px")
+    if margin is not None:
+        try:
+            margin = float(margin)
+        except (TypeError, ValueError):
+            raise ValueError("predicted.margin_px must be a number.")
+    source = data.get("source")
+    return {"type": hit_type, "call": call,
+            "source": None if source is None else str(source),
+            "margin_px": margin, "ball": parse_ball_point(data.get("ball"))}
+
+
+def correction_agreement(corrected, predicted):
+    """Server-derived agreement flags; null where comparison is undefined."""
+    return {
+        "type": (None if predicted["type"] is None
+                 else predicted["type"] == corrected["type"]),
+        "call": (predicted["call"] == corrected["call"]
+                 if corrected["type"] == "wall" and corrected["call"]
+                 and predicted["call"] in CORRECTION_CALLS else None),
+        "frame": corrected["frame_is_bounce"],
+    }
+
+
+@app.get("/api/runs/<run_id>/corrections")
+def get_corrections(run_id):
+    """The UI's load path: an empty list (not a 404) when nothing is recorded
+    yet, so every fresh run doesn't log a console error."""
+    run_dir = RUNS_DIR / secure_filename(run_id)
+    if not run_dir.is_dir():
+        return error_response("Run was not found.", status=404)
+    try:
+        data = json.loads((run_dir / "corrections.json").read_text(encoding="utf-8"))
+        corrections = data.get("corrections", [])
+        schema_version = data.get("schema_version")
+    except (OSError, json.JSONDecodeError):
+        corrections = []
+        schema_version = None
+    return jsonify({"ok": True, "schema_version": schema_version,
+                    "corrections": corrections})
+
+
+@app.post("/api/runs/<run_id>/corrections")
+def save_correction(run_id):
+    """Record a human bounce correction: hit type, ball position, and bounce
+    timing (plus IN/OUT for wall hits). One correction per frame, latest
+    wins; corrected null removes the frame's entry (undo). corrections.json
+    is the raw feed for the eval set, so each entry keeps the model's
+    label-time snapshot alongside the human values."""
+    run_dir = RUNS_DIR / secure_filename(run_id)
+    if not run_dir.is_dir():
+        return error_response("Run was not found.", status=404)
+
+    data = request.get_json(silent=True) or {}
+    try:
+        frame = int(data["frame"])
+    except (KeyError, TypeError, ValueError):
+        return error_response("Correction needs an integer frame.")
+
+    corrected_data = data.get("corrected")
+    entry = None
+    if corrected_data is not None:
+        if not isinstance(corrected_data, dict):
+            return error_response("corrected must be an object or null to undo.")
+        try:
+            corrected = parse_corrected(corrected_data)
+            predicted = parse_predicted(data.get("predicted"))
+        except ValueError as error:
+            return error_response(str(error))
+        entry = {
+            "frame": frame,
+            "corrected": corrected,
+            "predicted": predicted,
+            "agrees": correction_agreement(corrected, predicted),
+            "recorded_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            "app_version": APP_VERSION,
+        }
+
+    corrections_path = run_dir / "corrections.json"
+    try:
+        existing = json.loads(corrections_path.read_text(encoding="utf-8"))
+        corrections = existing.get("corrections", [])
+    except (OSError, json.JSONDecodeError):
+        corrections = []
+    corrections = [c for c in corrections if c.get("frame") != frame]
+    if entry is not None:
+        corrections.append(entry)
+
+    corrections.sort(key=lambda c: c.get("frame", 0))
+    corrections_path.write_text(
+        json.dumps({"schema_version": CORRECTION_SCHEMA_VERSION,
+                    "corrections": corrections}, indent=2),
+        encoding="utf-8",
+    )
+    return jsonify({"ok": True, "count": len(corrections), "correction": entry})
+
+
 @app.post("/api/label_runs")
 def create_label_run():
     """A run directory for labeling only: video reference and frame range,
