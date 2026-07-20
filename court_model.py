@@ -438,3 +438,91 @@ def build_floor_zone_summary(hits, columns=FLOOR_ZONE_COLUMNS, rows=FLOOR_ZONE_R
         "common_zones": common,
         "missing_zones": missing,
     }
+
+
+# --- Full camera model (pose + focal) --------------------------------------
+
+G_FT_PER_S2 = 32.174
+
+OUT_LINE_HEIGHT_FT = 15.0
+TIN_TOP_HEIGHT_FT = 19.0 / 12.0
+
+
+@dataclass(frozen=True)
+class CameraModel:
+    """Calibrated pinhole camera in court coordinates (feet).
+
+    Operates in undistorted pixel space: `project` returns undistorted
+    pixels and `ray` expects them; callers undistort observations with
+    `undistort_point(p, self.distortion)` first.
+    """
+
+    focal_px: float
+    center_px: tuple
+    rotation: np.ndarray        # 3x3, world -> camera
+    camera_center_ft: np.ndarray  # (3,)
+    distortion: dict | None
+    fit_rms_px: float | None
+    point_count: int
+
+    def project(self, court_xyz):
+        camera_point = self.rotation @ (
+            np.asarray(court_xyz, dtype=float) - self.camera_center_ft
+        )
+        if camera_point[2] <= 1e-9:
+            raise ValueError("Point is at or behind the camera.")
+        cx, cy = self.center_px
+        return (
+            self.focal_px * camera_point[0] / camera_point[2] + cx,
+            self.focal_px * camera_point[1] / camera_point[2] + cy,
+        )
+
+    def ray(self, pixel):
+        cx, cy = self.center_px
+        direction_camera = np.array(
+            [(float(pixel[0]) - cx) / self.focal_px,
+             (float(pixel[1]) - cy) / self.focal_px,
+             1.0]
+        )
+        direction = self.rotation.T @ direction_camera
+        return (
+            self.camera_center_ft.copy(),
+            direction / np.linalg.norm(direction),
+        )
+
+    def depth_ft(self, court_xyz):
+        camera_point = self.rotation @ (
+            np.asarray(court_xyz, dtype=float) - self.camera_center_ft
+        )
+        return float(camera_point[2])
+
+    def projection_matrix(self):
+        cx, cy = self.center_px
+        intrinsics = np.array(
+            [[self.focal_px, 0.0, cx], [0.0, self.focal_px, cy], [0.0, 0.0, 1.0]]
+        )
+        translation = (-self.rotation @ self.camera_center_ft).reshape(3, 1)
+        return intrinsics @ np.hstack([self.rotation, translation])
+
+    def to_dict(self):
+        return {
+            "focal_px": float(self.focal_px),
+            "center_px": [float(self.center_px[0]), float(self.center_px[1])],
+            "rotation": self.rotation.tolist(),
+            "camera_center_ft": self.camera_center_ft.tolist(),
+            "distortion": self.distortion,
+            "fit_rms_px": self.fit_rms_px,
+            "point_count": self.point_count,
+        }
+
+    @classmethod
+    def from_dict(cls, data):
+        return cls(
+            focal_px=float(data["focal_px"]),
+            center_px=(float(data["center_px"][0]), float(data["center_px"][1])),
+            rotation=np.asarray(data["rotation"], dtype=float),
+            camera_center_ft=np.asarray(data["camera_center_ft"], dtype=float),
+            distortion=data.get("distortion"),
+            fit_rms_px=data.get("fit_rms_px"),
+            point_count=int(data.get("point_count") or 0),
+        )
