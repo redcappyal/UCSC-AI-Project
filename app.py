@@ -443,6 +443,36 @@ def run_file(run_id, filename):
     return send_from_directory(run_dir, filename, as_attachment=False)
 
 
+@app.get("/api/runs/<run_id>/source_video")
+def run_source_video(run_id):
+    """Stream a run's source clip so the UI can rehydrate after a page refresh.
+
+    The clip lives outside the run dir (uploads/by-hash or uploads/<run_id>),
+    so resolve it through the persisted job rather than run_file above.
+    send_file(conditional=True) honors Range requests, which <video> seeking
+    needs.
+    """
+    job = get_job(secure_filename(run_id))
+    if job is None:
+        return error_response("Run was not found.", status=404)
+
+    video_path = job.get("video_path")
+    if not video_path or not Path(video_path).exists():
+        return error_response("Source clip is no longer on the server.", status=404)
+
+    return send_file(Path(video_path), conditional=True)
+
+
+@app.get("/api/dev/index-mtime")
+def index_mtime():
+    """Dev live-reload probe: the UI polls this and reloads the tab on change."""
+    try:
+        mtime = (ROOT / "index.html").stat().st_mtime_ns
+    except OSError:
+        mtime = 0
+    return jsonify({"ok": True, "mtime": mtime, "debug": bool(app.debug)})
+
+
 GROUND_TRUTH_TYPES = {"wall", "racket", "floor", "side_wall"}
 
 

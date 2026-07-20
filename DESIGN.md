@@ -589,13 +589,15 @@ Each phase: header shows step label + proxied primary; `#instr` gives the one-li
 | `p-tap` | Tap out line & tin on frame | stage-driven; clear-selection small button | "Looks right" (disabled until 2 taps) |
 | `p-review` | Approve fitted lines (cyan/lime on stage) | minimal; evidence is the stage | "Use these lines" |
 | `p-tap-floor` | Floor calibration wizard | `.floorRow`: diagram (progress marks) + prompt/side actions · skip-all / save-profile | "Use floor map" |
-| `p-clip` | Trim rally clip | debug engine seg (right-aligned) · overview · trim editor (yellow handles) · frame summary · nudge steppers · preview transport | "Track ball" |
+| `p-clip` | Trim rally clip | debug engine seg (right-aligned) · overview · trim editor (yellow handles) · transport+readout row · start/end nudge steppers · frame summary | "Track ball" |
 | `p-analyze` | Honest processing | `.progressbox` stats + bar (+ stage ANALYZING pulse) | — (auto-advances) |
-| `p-track` | Review track, judge calls | overview w/ marker minis · hit timeline (neon bars, center playhead) · readout · transport · "Target zones" secondary · verdict box · correction chips (type / call / frame) | "Judge frame" |
+| `p-track` | Review track, judge calls | scrub hint lives in the header `#instr` line (detection failures replace it, `.warn`) · overview w/ marker minis · hit timeline (neon bars, center playhead) · readout · transport — **Review pane:** frame input + "Target zones" row · verdict box; **Challenge pane:** type dropdown (In/Out folded into the front-wall options) · Bounce / Not-bounce toggle (`.corrSeg`) · panes switched by a floating Review \| Challenge pill (`.callTabs`, same liquid-glass style as `#navPill`, fixed bottom-center) | "Judge frame" |
 | `p-label` | Human bounce labeling | overview · label timeline · transport+zoom · 2-col type grid (dot+label) · delete (destructive = plain secondary, disabled until selection) | — |
 | `p-target` | Stats: targets & bounces | Front-wall targets card (court chart + meta) · Floor bounces card (SVG map + meta) | — |
 
-Mode switch Judge ↔ Label lives only in the nav pill.
+Mode switch Judge ↔ Label lives only in the nav pill (home page). The call page's
+Review ↔ Challenge switch is a second instance of the same liquid-glass pill
+(`.callTabs` shares `#navPill`'s rules); only one pill is ever on screen at a time.
 
 ---
 

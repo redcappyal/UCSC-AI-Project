@@ -77,6 +77,7 @@
   :root[data-theme="light"] #themeBtn .moonmask > circle{transform:none}
   ::view-transition-old(root), ::view-transition-new(root){animation:none; mix-blend-mode:normal}
   #instr{flex:0 0 auto; padding:2px 14px 10px; font-size:15px; color:var(--dim)}
+  #instr.warn{color:var(--text); font-weight:700}
   #instr b.out{color:var(--out)} #instr b.tin{color:var(--tin)}
 
   #stage{position:relative; flex:1 1 0; min-height:0; display:flex; align-items:center;
@@ -207,8 +208,9 @@
   .hitBar.selected::before{box-shadow:0 0 0 2px var(--text),
     0 0 12px 1px color-mix(in srgb, var(--mk,#fff) 85%, transparent)}
 
-  /* Floating liquid-glass mode switcher */
-  #navPill{position:fixed; left:50%; bottom:calc(12px + env(safe-area-inset-bottom));
+  /* Floating liquid-glass mode switchers: Judge/Label on the home page and
+     Review/Challenge on the call page share one look. */
+  #navPill, .callTabs{position:fixed; left:50%; bottom:calc(12px + env(safe-area-inset-bottom));
     transform:translateX(-50%); z-index:40; display:flex; gap:4px; padding:5px;
     border-radius:999px;
     background:color-mix(in srgb, var(--surface) 62%, transparent);
@@ -216,10 +218,10 @@
     backdrop-filter:blur(20px) saturate(1.5);
     border:1px solid color-mix(in srgb, var(--text) 14%, transparent);
     box-shadow:0 12px 32px rgba(0,0,0,.4)}
-  #navPill button{width:auto; min-height:44px; padding:0 18px; gap:8px;
+  #navPill button, .callTabs button{width:auto; min-height:44px; padding:0 18px; gap:8px;
     border:0; background:transparent; color:var(--dim); font-size:13px}
-  #navPill button.active{background:var(--accent-bg); color:var(--accent-text)}
-  #navPill svg{width:17px; height:17px; flex:0 0 auto}
+  #navPill button.active, .callTabs button.active{background:var(--accent-bg); color:var(--accent-text)}
+  #navPill svg, .callTabs svg{width:17px; height:17px; flex:0 0 auto}
   /* Bounce labeling */
   .labelGrid{display:grid; grid-template-columns:1fr 1fr; gap:10px}
   .labelGrid .dot{width:10px; height:10px; border-radius:50%; margin-right:9px; flex:0 0 auto}
@@ -234,6 +236,13 @@
     font-variant-numeric:tabular-nums; padding:2px 0}
   .tlReadout output{color:var(--text); font-weight:600}
   .playBtn svg{width:22px; height:22px}
+  /* clip page: play + readout share one transport row under the trim editor,
+     so the transport isn't stranded in its own row at the bottom of the page */
+  .clipTransportRow{display:flex; align-items:center; justify-content:center; gap:2px}
+  .clipTransportRow .playBtn{flex:0 0 44px; width:44px; min-height:44px; padding:0;
+    border-radius:999px; background:transparent}
+  .clipTransportRow .playBtn:active{background:var(--line)}
+  .clipTransportRow .tlReadout{padding:0}
 
   .targetZones{border:1px solid var(--line); border-radius:8px; overflow:hidden; background:var(--surface)}
   .targetHead{display:flex; justify-content:space-between; gap:12px; align-items:baseline;
@@ -299,17 +308,24 @@
   .verdict.out{background:var(--outcall); color:#fff}
   .verdict.neutral{background:var(--surface); border:1px solid var(--line); color:var(--text)}
   .verdict.blank{background:transparent; border:1px dashed var(--line); color:var(--dim)}
-  /* One-tap call corrections: a human verdict on each judged call, recorded
-     per frame. Tapping the model's call confirms it; tapping another call (or
-     "not a hit") corrects it; tapping the highlighted one undoes. */
-  .correctionPanel{display:flex; flex-direction:column; gap:6px}
-  .correctionRow{display:flex; flex-wrap:wrap; gap:6px; align-items:center}
-  .correctionRow .corrLabel{font-size:12px; color:var(--dim); white-space:nowrap; flex:0 0 auto}
-  /* compact chips (vs the app's full-size pills): natural width + wrap, so
-     five type options fit two lines on a phone without ballooning the page */
-  .correctionRow button{width:auto; flex:0 1 auto; min-height:34px; padding:5px 14px;
-    font-size:12px; white-space:nowrap; border:1px solid var(--line); background:transparent}
-  .correctionRow button.active{background:var(--accent-bg); color:var(--accent-text); font-weight:700}
+  /* Review / Challenge panes on the call page: Review reads the model's call,
+     Challenge is the correction flywheel's front door. The switcher itself is
+     the floating .callTabs pill above. */
+  .callTabPane{display:flex; flex-direction:column; gap:10px}
+  /* Call corrections: a human verdict on each judged call, recorded per frame.
+     The type dropdown (In/Out folded into the front-wall options) supervises
+     the event engine; the Bounce / Not bounce toggle supervises impact timing. */
+  .correctionPanel{display:flex; flex-direction:column; gap:8px}
+  .correctionRow{display:flex; gap:8px; align-items:center}
+  .correctionRow .corrLabel{font-size:13px; color:var(--dim); white-space:nowrap; flex:0 0 auto}
+  .correctionRow select{flex:1; min-width:0; min-height:44px; padding:8px 12px;
+    background:var(--surface); color:var(--text); border:none; border-radius:12px;
+    font:inherit; font-size:15px; font-weight:600}
+  .corrSeg{flex:1; display:flex; gap:6px}
+  .corrSeg button{flex:1; width:auto; min-height:38px; padding:5px 12px; font-size:12px;
+    white-space:nowrap; border:1px solid var(--line); background:transparent}
+  .corrSeg button.active{background:var(--accent-bg); color:var(--accent-text);
+    border-color:transparent; font-weight:700}
 
   /* phase primary buttons stay in the DOM as the behavioral source of truth
      (handlers + disabled state) but render only as the header action pill */
@@ -492,7 +508,10 @@
       <div class="clipHandle" id="clipEndHandle"></div>
       <div id="clipCursor"></div>
     </div>
-    <div class="tlReadout"><output id="clipReadout">–</output></div>
+    <div class="clipTransportRow">
+      <button type="button" id="clipPlayBtn" class="playBtn" aria-label="Play or pause preview"></button>
+      <div class="tlReadout"><output id="clipReadout">–</output></div>
+    </div>
     <div class="nudgeRow">
       <span class="nudgeLabel">Start<output id="clipStartOut">0.00s</output><output class="frameOut" id="clipStartFrameOut">Frame 0</output></span>
       <div class="stepper">
@@ -522,11 +541,6 @@
     <div class="clipFrameSummary">
       <span>Selected frames</span>
       <output id="clipFrameRangeOut">0-0 (1 frame)</output>
-    </div>
-    <div class="nudgeRow">
-      <div class="stepper">
-        <button type="button" id="clipPlayBtn" class="playBtn" aria-label="Play or pause preview"></button>
-      </div>
     </div>
     <button class="primary proxied" id="runTrackBtn">Track ball</button>
     <p class="status" id="trackStatus"></p>
@@ -569,35 +583,53 @@
         <button type="button" id="tFwd1f" aria-label="Forward one frame">+</button>
       </div>
     </div>
-    <p class="status" id="hitsStatus"></p>
-    <div class="sliderlabel"><span>Frame to judge</span><output id="judgeFrameOut"></output></div>
-    <div class="row">
-      <input type="number" id="judgeFrame" step="1">
-      <button id="targetBtn" type="button">Target zones</button>
-      <button class="primary proxied" id="judgeBtn">Judge frame</button>
+    <div class="callTabPane" id="reviewTab">
+      <div class="sliderlabel"><span>Frame to judge</span><output id="judgeFrameOut"></output></div>
+      <div class="row">
+        <input type="number" id="judgeFrame" step="1">
+        <button id="targetBtn" type="button">Target zones</button>
+        <button class="primary proxied" id="judgeBtn">Judge frame</button>
+      </div>
+      <div class="verdict blank" id="judgeResult"><div>No line call yet</div></div>
     </div>
-    <div class="verdict blank" id="judgeResult"><div>No line call yet</div></div>
-    <div class="correctionPanel hidden" id="corrPanel">
-      <div class="correctionRow">
-        <span class="corrLabel">Type:</span>
-        <button type="button" id="corrTypeWall">Front wall</button>
-        <button type="button" id="corrTypeSide">Side wall</button>
-        <button type="button" id="corrTypeFloor">Floor</button>
-        <button type="button" id="corrTypeRacket">Racket</button>
-        <button type="button" id="corrTypeNone">Not a hit</button>
+    <div class="callTabPane hidden" id="challengeTab">
+      <p class="status" id="corrEmpty">Judge a hit first — then challenge its call here.</p>
+      <div class="correctionPanel hidden" id="corrPanel">
+        <div class="correctionRow">
+          <span class="corrLabel">Type:</span>
+          <select id="corrTypeSel">
+            <option value="wall_IN">Front wall — In</option>
+            <option value="wall_OUT">Front wall — Out</option>
+            <option value="side_wall">Side wall</option>
+            <option value="floor">Floor</option>
+            <option value="racket">Racket</option>
+            <option value="none">Not a hit</option>
+          </select>
+        </div>
+        <div class="correctionRow hidden" id="corrFrameRow">
+          <span class="corrLabel">Bounce frame:</span>
+          <div class="corrSeg">
+            <button type="button" id="corrFrameThis">Bounce</button>
+            <button type="button" id="corrFrameOther">Not bounce</button>
+          </div>
+        </div>
+        <p class="status hidden" id="corrStatus"></p>
       </div>
-      <div class="correctionRow hidden" id="corrCallRow">
-        <span class="corrLabel">Call:</span>
-        <button type="button" id="corrIn">In</button>
-        <button type="button" id="corrOut">Out</button>
-      </div>
-      <div class="correctionRow hidden" id="corrFrameRow">
-        <span class="corrLabel">Bounce frame:</span>
-        <button type="button" id="corrFrameThis">This frame</button>
-        <button type="button" id="corrFrameOther">Different frame…</button>
-      </div>
-      <p class="status hidden" id="corrStatus"></p>
     </div>
+    <nav class="callTabs">
+      <button type="button" id="tabReview" class="active">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M2 12s3.5-6.5 10-6.5S22 12 22 12s-3.5 6.5-10 6.5S2 12 2 12z"/><circle cx="12" cy="12" r="2.6" fill="currentColor" stroke="none"/>
+        </svg>
+        <span>Review</span>
+      </button>
+      <button type="button" id="tabChallenge">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M5 21V4"/><path d="M5 4h13l-2.5 4L18 12H5"/>
+        </svg>
+        <span>Challenge</span>
+      </button>
+    </nav>
   </section>
 
   <!-- MODE: bounce labeling (ground truth for the event engine) -->
@@ -771,7 +803,7 @@ const STEP_META = {
   clip:   {label:'6/8 · Clip', instr:'Drag the top strip to slide the clip along the video, then drag the handles to trim it tight around the shot.',
            action:{btn:'runTrackBtn', label:'Track ball'}},
   analyze:{label:'Analyzing', instr:''},
-  track:  {label:'7/8 · Call', instr:'Tap a hit bar or enter a frame number, then judge it.',
+  track:  {label:'7/8 · Call', instr:'Tap a bar to jump to the bounce frame, or drag anywhere on the strip to scrub.',
            action:{btn:'judgeBtn', label:'Judge'}},
   label:  {label:'Label bounces', instr:'Drag the strip to the exact impact frame, then tap its bounce type. Tap a marker to revisit it — labels save automatically.'},
   target: {label:'8/8 · Targets', instr:''},
@@ -807,6 +839,7 @@ function setPhase(p){
   $('hdrBack').classList.toggle('hidden', p === 'load');
   syncHeaderAction(STEP_META[p].action);
 
+  $('instr').classList.remove('warn');
   if(p === 'tap_out' || p === 'tap_tin'){
     const c = CFG[curKey()];
     $('instr').innerHTML = `Tap the red paint of the <b class="${c.key}">${c.label}</b>. If glare breaks the selection, tap the missed stretch to extend it. Pinch to zoom for a precise tap.`;
@@ -894,6 +927,15 @@ vid.addEventListener('loadedmetadata', () => {
   $('loadStatus').textContent = `Loaded ${S.videoName}.`;
   $('loadStatus').className = 'status ok';
   canvas.width = S.W; canvas.height = S.H;
+  if(S.restorePending && S.run){
+    // Session restore: skip calibration/clip and land back on the call page
+    // at the stashed frame (works for both server-streamed and re-picked clips).
+    const frame = clampTrackedFrame(S.restorePending.frame ?? S.run.start_frame);
+    S.restorePending = null;
+    setPhase('track');                 // buildTrackView reads S.run
+    seekSourceFrameToCanvas(frame);    // auto-judge repopulates the verdict
+    return;
+  }
   // The clip routes into whichever mode was chosen on the start screen.
   setPhase(S.mode === 'label' ? 'label' : 'frame');
 });
@@ -965,7 +1007,15 @@ $('hdrBack').onclick = () => {
   } else if(S.phase === 'analyze'){
     setPhase('clip');   // abandon the in-flight run and return to the clip editor
   } else if(S.phase === 'track'){
-    setPhase('clip');
+    if(S.restoredSession){
+      // A restored session has no calibration/clip state behind it — exit to
+      // the home page and forget the stash so the next boot starts clean.
+      S.restoredSession = false;
+      clearRestoreStash();
+      vid.pause(); S.base = null; $('fileIn').value = ''; setPhase('load');
+    } else {
+      setPhase('clip');
+    }
   } else if(S.phase === 'label'){
     vid.pause(); S.base = null; $('fileIn').value = ''; setPhase('load');
   } else if(S.phase === 'target'){
@@ -3083,6 +3133,8 @@ $('runTrackBtn').onclick = async () => {
     const data = await waitForTracking(started.run_id);
     if(S.phase !== 'analyze') return;   // user left mid-analysis; don't yank them forward
     S.run = data;
+    S.restoredSession = false;   // full local state exists behind this run
+    saveRestoreStash(data.hits && data.hits.length ? data.hits[0].frame : data.start_frame);
     loadCorrections(data.run_id);
     loadBallPositions(data.run_id);
     $('trackStatus').textContent = `Tracked ${data.rows} frame rows.`;
@@ -3339,19 +3391,20 @@ function layoutTrackBars(){
 function buildHitTimeline(hits, initialFrame){
   $('hitTimeline').classList.remove('hidden');
 
+  // The scrub hint lives in the header instruction line; detection problems
+  // replace it there rather than taking a row inside the panel.
   if(S.run.hits_error){
-    $('hitsStatus').textContent = `Wall-hit detection failed: ${S.run.hits_error}`;
-    $('hitsStatus').className = 'status warn';
-  } else if(hits.length){
-    $('hitsStatus').textContent = 'Tap a bar to jump to the bounce frame, or drag anywhere on the strip to scrub.';
-    $('hitsStatus').className = 'status';
-  } else {
-    $('hitsStatus').textContent = 'No wall hits detected in this clip. Drag on the strip to scrub frames manually.';
-    $('hitsStatus').className = 'status warn';
+    $('instr').textContent = `Wall-hit detection failed: ${S.run.hits_error}`;
+    $('instr').classList.add('warn');
+  } else if(!hits.length){
+    $('instr').textContent = 'No wall hits detected in this clip. Drag on the strip to scrub frames manually.';
+    $('instr').classList.add('warn');
   }
+  $('instr').classList.remove('hidden');
 
   S.trackView.key = '';
   S.trackView.ovDone = false;
+  S.judgedFrame = null;         // fresh run: nothing judged yet
   S.trackView.cursor = initialFrame;
   setTrackView(initialFrame, false);
   updateTrackCursor(initialFrame);
@@ -3556,6 +3609,7 @@ async function seekSourceFrameToCanvas(frame, syncInput=true){
   updateTrackCursor(frame);
   drawCorrectionDot();
   if(syncInput) $('judgeFrame').value = frame;
+  scheduleAutoJudge(frame);
 }
 
 $('judgeFrame').addEventListener('change', () => {
@@ -3586,6 +3640,8 @@ function clearJudgeResult(){
 }
 
 function renderEventCard(hit){
+  S.judgedFrame = hit.frame;
+  saveRestoreStash(hit.frame);
   $('judgeResult').className = 'verdict neutral';
   $('judgeResult').innerHTML =
     `<strong>${EVENT_LABELS[hit.event_type] || hit.event_type}</strong>` +
@@ -3613,8 +3669,28 @@ function renderJudgeResult(data){
     `${data.reason}${data.outside_line_span ? ' · outside calibrated line span' : ''}</div>`;
 }
 
-async function judgeFrameRequest(frame){
+/* Live verdict while scrubbing: once the playhead settles on a frame, judge it
+   so the verdict box always describes the frame on screen. Skipped while the
+   transport is playing, while picking a corrected bounce frame (that scrub
+   must not clobber the correction target), and for the already-judged frame. */
+let autoJudgeTimer = null;
+function scheduleAutoJudge(frame){
+  clearTimeout(autoJudgeTimer);
+  autoJudgeTimer = setTimeout(() => {
+    if(S.phase !== 'track' || !S.run || transport.phase === 'track') return;
+    if(S.trackView.cursor !== frame || S.judgedFrame === frame) return;
+    if(S.corrTarget && S.corrTarget.pickingFrame) return;
+    const hit = hitAtFrame(frame);
+    if(hit && EVENT_LABELS[hit.event_type] !== undefined) renderEventCard(hit);
+    else judgeFrameRequest(frame, true);
+  }, 300);
+}
+
+async function judgeFrameRequest(frame, quiet=false){
   if(!S.run || Number.isNaN(frame)) return;
+  S.judgedFrame = frame;
+  saveRestoreStash(frame);
+  if(!quiet) setCallTab('review');    // the verdict lands in the Review pane
   $('judgeBtn').disabled = true;
   clearJudgeResult();
 
@@ -3628,7 +3704,15 @@ async function judgeFrameRequest(frame){
     if(!data.ok) throw new Error(data.error || 'Judgement failed.');
     renderJudgeResult(data);
   } catch(error){
-    showError(error.message);
+    // Auto-judged frames fail routinely (no detected ball mid-flight); report
+    // that in the verdict box instead of raising the error banner every step.
+    if(quiet){
+      $('judgeResult').className = 'verdict neutral';
+      $('judgeResult').innerHTML =
+        `<strong>No call</strong><div>Frame ${frame} · ${error.message}</div>`;
+    } else {
+      showError(error.message);
+    }
   } finally {
     $('judgeBtn').disabled = false;
   }
@@ -3647,13 +3731,18 @@ $('judgeBtn').onclick = () => {
    engine + false positives), ball position via draggable dot (RF-DETR
    retraining data), and bounce timing (supervises impact estimation).
    IN/OUT stays, but only for front-wall hits — it's derived geometry. */
-const CORRECTION_TYPE_BTNS = {
-  wall:'corrTypeWall', side_wall:'corrTypeSide', floor:'corrTypeFloor',
-  racket:'corrTypeRacket', none:'corrTypeNone',
-};
-const CORRECTION_CALL_BTNS = { IN:'corrIn', OUT:'corrOut' };
-const CORR_ALL_BTNS = [...Object.values(CORRECTION_TYPE_BTNS),
-  ...Object.values(CORRECTION_CALL_BTNS), 'corrFrameThis', 'corrFrameOther'];
+const CORR_ALL_BTNS = ['corrTypeSel', 'corrFrameThis', 'corrFrameOther'];
+
+/* Review / Challenge tab switch. Judging always lands on Review; Challenge
+   holds the correction controls for the currently judged hit. */
+function setCallTab(tab){
+  $('tabReview').classList.toggle('active', tab === 'review');
+  $('tabChallenge').classList.toggle('active', tab === 'challenge');
+  $('reviewTab').classList.toggle('hidden', tab !== 'review');
+  $('challengeTab').classList.toggle('hidden', tab !== 'challenge');
+}
+$('tabReview').onclick = () => setCallTab('review');
+$('tabChallenge').onclick = () => setCallTab('challenge');
 
 async function loadCorrections(runId){
   S.corrections = {};
@@ -3719,6 +3808,7 @@ function setCorrTarget(frame, predicted){
 function hideCorrPanel(){
   $('corrPanel').classList.add('hidden');
   $('corrStatus').classList.add('hidden');
+  $('corrEmpty').classList.remove('hidden');
   if(S.corrTarget){ S.corrTarget = null; redrawTrackCanvas(); }
 }
 
@@ -3727,18 +3817,16 @@ function renderCorrPanel(){
   if(!target){ hideCorrPanel(); return; }
   const saved = (S.corrections || {})[target.frame];
   const draft = target.draft;
-  for(const [type, id] of Object.entries(CORRECTION_TYPE_BTNS))
-    $(id).classList.toggle('active', !!saved && draft.type === type);
-  for(const [call, id] of Object.entries(CORRECTION_CALL_BTNS))
-    $(id).classList.toggle('active', !!saved && draft.call === call);
-  $('corrCallRow').classList.toggle('hidden', draft.type !== 'wall');
+  $('corrTypeSel').value = draft.type === 'wall'
+    ? `wall_${draft.call === 'OUT' ? 'OUT' : 'IN'}` : draft.type;
   $('corrFrameRow').classList.toggle('hidden', draft.type === 'none');
   $('corrFrameThis').classList.toggle('active', !!saved && draft.frame_is_bounce === true);
   $('corrFrameOther').classList.toggle('active', !!saved && draft.frame_is_bounce === false);
   $('corrFrameOther').textContent = target.pickingFrame ? 'Use this frame'
     : draft.frame_is_bounce === false && draft.frame != null
-      ? `Frame ${draft.frame}` : 'Different frame…';
+      ? `Frame ${draft.frame}` : 'Not bounce';
   $('corrPanel').classList.remove('hidden');
+  $('corrEmpty').classList.add('hidden');
   const statusText = target.pickingFrame
     ? 'Scrub to the true bounce frame, then tap Use this frame.'
     : saved ? savedStatusText(saved) : '';
@@ -3802,17 +3890,19 @@ function postDraft(){
   sendCorrection(corrected);
 }
 
-function pickTypeCorrection(type){
+$('corrTypeSel').onchange = () => {
   const target = S.corrTarget;
-  if(!target) return;
-  const saved = (S.corrections || {})[target.frame];
-  if(saved && saved.corrected.type === type){ sendCorrection(null); return; }  // tap again = undo
+  if(!target){ return; }
+  const value = $('corrTypeSel').value;
   const draft = target.draft;
-  draft.type = type;
-  if(type === 'wall' && !draft.call)
-    draft.call = target.predicted.call === 'OUT' ? 'OUT' : 'IN';
-  if(type !== 'wall') draft.call = null;
-  if(type === 'none'){ draft.ball = null; draft.frame_is_bounce = null; draft.frame = null; }
+  if(value === 'wall_IN' || value === 'wall_OUT'){
+    draft.type = 'wall';
+    draft.call = value === 'wall_OUT' ? 'OUT' : 'IN';
+  } else {
+    draft.type = value;
+    draft.call = null;
+  }
+  if(draft.type === 'none'){ draft.ball = null; draft.frame_is_bounce = null; draft.frame = null; }
   else {
     if(!draft.ball) draft.ball = target.predicted.ball ? {...target.predicted.ball}
                                                        : ballAtFrame(target.frame);
@@ -3820,17 +3910,7 @@ function pickTypeCorrection(type){
   }
   target.pickingFrame = false;
   postDraft();
-}
-
-for(const [type, id] of Object.entries(CORRECTION_TYPE_BTNS))
-  $(id).onclick = () => pickTypeCorrection(type);
-for(const [call, id] of Object.entries(CORRECTION_CALL_BTNS))
-  $(id).onclick = () => {
-    if(!S.corrTarget) return;
-    S.corrTarget.draft.call = call;
-    S.corrTarget.pickingFrame = false;
-    postDraft();
-  };
+};
 $('corrFrameThis').onclick = () => {
   if(!S.corrTarget) return;
   S.corrTarget.draft.frame_is_bounce = true;
@@ -4385,9 +4465,121 @@ document.addEventListener('keydown', e => {
   }
 });
 
+/* ---------- dev session restore ----------
+   A refresh mid-testing stashes {run_id, frame} in localStorage; on boot we
+   rehydrate the run from the server's persisted job + run files and land back
+   on the call page at the same frame. Uses only existing UI (the load screen's
+   status line); the back chevron exits a restored session to the home page. */
+const RESTORE_KEY = 'slc-restore';
+
+function saveRestoreStash(frame){
+  if(!S.run || !S.run.run_id) return;
+  try{
+    localStorage.setItem(RESTORE_KEY, JSON.stringify({
+      run_id: S.run.run_id,
+      frame: Number.isFinite(frame) ? frame : S.trackView.cursor,
+      videoName: S.videoName || null,
+    }));
+  }catch(_){ /* storage unavailable — restore is a dev nicety */ }
+}
+function clearRestoreStash(){ try{ localStorage.removeItem(RESTORE_KEY); }catch(_){ } }
+
+// Rebuild the line overlays from the run's saved calibration (slope/intercept
+// per edge) — enough for drawFitLine; the tap-time seeds/masks aren't needed.
+function restoreLinesFromCalibration(cal){
+  for(const line of (cal && cal.lines) || []){
+    const key = line.name === CFG.out.edgeName ? 'out'
+      : line.name === CFG.tin.edgeName ? 'tin' : null;
+    if(!key || !Number.isFinite(line.slope)) continue;
+    const span = line.x_span_px || [];
+    S.lines[key] = { seeds:null, maskCanvas:null,
+      fit:{ m:line.slope, b:line.intercept, xMin:span[0], xMax:span[1] } };
+  }
+}
+
+async function tryRestoreSession(){
+  let stash = null;
+  try{ stash = JSON.parse(localStorage.getItem(RESTORE_KEY) || 'null'); }catch(_){ }
+  if(!stash || !stash.run_id || S.phase !== 'load') return;
+  $('loadStatus').textContent = 'Restoring last session…';
+  $('loadStatus').className = 'status';
+
+  let data = null;
+  try{
+    const response = await fetch(`/api/track/status/${encodeURIComponent(stash.run_id)}`, {cache:'no-store'});
+    if(response.ok){
+      const body = await response.json();
+      if(body.ok && body.status === 'complete') data = body;
+    }
+  }catch(_){ /* backend unreachable — treat like a missing run */ }
+  if(!data){
+    clearRestoreStash();
+    if(S.phase === 'load'){
+      $('loadStatus').textContent = 'Previous session could not be restored (run is gone). Load a clip to begin.';
+      $('loadStatus').className = 'status';
+    }
+    return;
+  }
+  if(S.phase !== 'load') return;   // user moved on while we fetched
+
+  S.run = data;
+  S.restoredSession = true;
+  S.restorePending = { frame: stash.frame };
+  S.videoName = stash.videoName || `run ${stash.run_id}`;
+  try{
+    const cal = await (await fetch(`/api/runs/${encodeURIComponent(stash.run_id)}/calibration.json`, {cache:'no-store'})).json();
+    restoreLinesFromCalibration(cal);
+  }catch(_){ /* no overlays; judging is server-side and still works */ }
+  loadCorrections(stash.run_id);
+  loadBallPositions(stash.run_id);
+
+  // Stream the clip back from the server; if it's gone, keep the run state
+  // and ask for a manual re-pick (loadedmetadata finishes the restore).
+  const videoUrl = `/api/runs/${encodeURIComponent(stash.run_id)}/source_video`;
+  let available = false;
+  try{ available = (await fetch(videoUrl, {method:'HEAD', cache:'no-store'})).ok; }catch(_){ }
+  if(S.phase !== 'load') return;
+  if(available){
+    clearThumbCache();
+    vid.src = videoUrl;
+    vid.load();
+  } else {
+    $('loadStatus').textContent =
+      `Restored run ${stash.run_id}, but its clip is not on the server — load ${stash.videoName || 'the same video'} to continue.`;
+    $('loadStatus').className = 'status warn';
+  }
+}
+
+addEventListener('pagehide', () => {
+  if(S.phase === 'track' && S.run) saveRestoreStash();
+});
+
+/* ---------- dev live reload (?dev=1, or Flask debug mode) ---------- */
+async function startDevReloadPoller(){
+  const probe = async () => {
+    const response = await fetch('/api/dev/index-mtime', {cache:'no-store'});
+    return response.ok ? response.json() : null;
+  };
+  let first = null;
+  try{ first = await probe(); }catch(_){ return; }
+  if(!first) return;
+  if(new URLSearchParams(location.search).get('dev') !== '1' && !first.debug) return;
+  let baseline = first.mtime;
+  setInterval(async () => {
+    let data = null;
+    try{ data = await probe(); }catch(_){ return; }
+    if(!data || data.mtime === baseline) return;
+    baseline = data.mtime;
+    if(S.phase === 'track' && S.run) saveRestoreStash();
+    location.reload();
+  }, 1000);
+}
+
 updatePlayButtons();
 setPhase('load');
 checkBackend();
+tryRestoreSession();
+startDevReloadPoller();
 </script>
 </body>
 </html>
