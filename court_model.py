@@ -15,6 +15,30 @@ from dataclasses import dataclass
 import numpy as np
 
 
+# WSF datum convention (Specifications for Squash Courts 2013/17; constants
+# table in docs/mount-spec.md §2.2). Court lines are 50 mm wide and are OUT;
+# every WSF dimension is datumed to a specific EDGE of a line, not its middle:
+# the short line is 4260 mm from the back wall to its NEAREST (back-wall-side)
+# edge, and service boxes are 1600 mm square INTERNAL (clear floor between the
+# inside faces of their lines, WSF 5.05.03). The ft constants below land on
+# those datum edges to within ~4 mm — inside WSF's ±10 mm construction
+# tolerance, so they are deliberately left as round feet:
+#
+#   SHORT_LINE_FROM_FRONT_FT  18.0 ft = 5486 mm ~ 9750-4260 = 5490 mm
+#       -> y=18.0 is the short line's BACK edge (the edge nearer the back wall)
+#   SERVICE_BOX_FT            5.25 ft = 1600.2 mm ~ 1600 mm internal side
+#       -> x=5.25 (left box) is the inner side line's INTERIOR (wall-side) edge
+#   SERVICE_BOX_BACK_FT       23.25 ft = 7086.6 mm ~ 5490+1600 = 7090 mm
+#       -> y=23.25 is the box back line's INTERIOR (front-facing) edge
+#   HALF_COURT_X_FT           10.5 ft = 3200.4 mm ~ 6400/2 = 3200 mm
+#       -> x=10.5 is the half-court line's CENTERLINE (the one landmark datum
+#          that is a line middle, not an edge — WSF centers it between walls)
+#
+# Landmark labels below must name the exact edge/corner to tap: a 50 mm line
+# spans ~0.164 ft, so "the short line" without an edge is a 5 cm ambiguity —
+# far above the fit's px-level residual targets. Do not change these constants
+# without checking every consumer of court coordinates (eval_line_calls.py,
+# judge_call.py, bounce detectors).
 COURT_WIDTH_FT = 21.0
 COURT_LENGTH_FT = 32.0
 SHORT_LINE_FROM_FRONT_FT = 18.0
@@ -31,56 +55,82 @@ FLOOR_LANDMARKS = [
     {
         "id": "short_line_left",
         "court_ft": [0.0, SHORT_LINE_FROM_FRONT_FT],
-        "label": "Where the short line meets the LEFT side wall",
+        "label": (
+            "Where the BACK edge of the short line (the edge nearer the back "
+            "wall) meets the LEFT side wall"
+        ),
         "optional": False,
         "snap_lines": ["h", "v"],
     },
     {
         "id": "short_line_right",
         "court_ft": [COURT_WIDTH_FT, SHORT_LINE_FROM_FRONT_FT],
-        "label": "Where the short line meets the RIGHT side wall",
+        "label": (
+            "Where the BACK edge of the short line (the edge nearer the back "
+            "wall) meets the RIGHT side wall"
+        ),
         "optional": False,
         "snap_lines": ["h", "v"],
     },
     {
         "id": "t_point",
         "court_ft": [HALF_COURT_X_FT, SHORT_LINE_FROM_FRONT_FT],
-        "label": "The T — where the short line meets the half-court line",
+        "label": (
+            "The T — where the MIDDLE of the half-court line's width meets "
+            "the BACK edge of the short line"
+        ),
         "optional": False,
         "snap_lines": ["h", "v"],
     },
     {
         "id": "left_box_inner_back",
         "court_ft": [SERVICE_BOX_FT, SERVICE_BOX_BACK_FT],
-        "label": "Back-inside corner of the LEFT service box",
+        "label": (
+            "Back-inside corner of the LEFT service box — the corner of the "
+            "unpainted floor INSIDE the box, where the inner edges of its "
+            "back and side lines meet"
+        ),
         "optional": False,
         "snap_lines": ["h", "v"],
     },
     {
         "id": "right_box_inner_back",
         "court_ft": [COURT_WIDTH_FT - SERVICE_BOX_FT, SERVICE_BOX_BACK_FT],
-        "label": "Back-inside corner of the RIGHT service box",
+        "label": (
+            "Back-inside corner of the RIGHT service box — the corner of the "
+            "unpainted floor INSIDE the box, where the inner edges of its "
+            "back and side lines meet"
+        ),
         "optional": False,
         "snap_lines": ["h", "v"],
     },
     {
         "id": "front_seam_left",
         "court_ft": [0.0, 0.0],
-        "label": "Front-LEFT corner where the front wall meets the floor",
+        "label": (
+            "Front-LEFT corner — the floor seam where front wall and LEFT "
+            "side wall meet (a wall junction, not a painted line)"
+        ),
         "optional": False,
         "snap_lines": ["h", "v"],
     },
     {
         "id": "front_seam_right",
         "court_ft": [COURT_WIDTH_FT, 0.0],
-        "label": "Front-RIGHT corner where the front wall meets the floor",
+        "label": (
+            "Front-RIGHT corner — the floor seam where front wall and RIGHT "
+            "side wall meet (a wall junction, not a painted line)"
+        ),
         "optional": False,
         "snap_lines": ["h", "v"],
     },
     {
         "id": "half_court_back",
         "court_ft": [HALF_COURT_X_FT, COURT_LENGTH_FT],
-        "label": "Where the half-court line meets the back wall (skip if hidden)",
+        "label": (
+            "Where the MIDDLE of the half-court line's width meets the back "
+            "wall (skip if hidden)"
+        ),
         "optional": True,
         "snap_lines": ["v", "h"],
     },
@@ -447,6 +497,11 @@ G_FT_PER_S2 = 32.174
 OUT_LINE_HEIGHT_FT = 15.0
 TIN_TOP_HEIGHT_FT = 19.0 / 12.0
 
+_WALL_LINE_HEIGHTS_FT = {
+    "out_line_lower_edge": OUT_LINE_HEIGHT_FT,
+    "tin_top_edge": TIN_TOP_HEIGHT_FT,
+}
+
 
 @dataclass(frozen=True)
 class CameraModel:
@@ -526,3 +581,95 @@ class CameraModel:
             fit_rms_px=data.get("fit_rms_px"),
             point_count=int(data.get("point_count") or 0),
         )
+
+
+def _camera_correspondences(calibration):
+    """Image px (raw/distorted) <-> court 3D points from a v2 calibration.
+
+    Floor landmarks sit at z=0. Front-wall line endpoints sit at
+    (0, 0, h) and (21, 0, h): line_from_calibration's contract stores them
+    left-then-right, and the wizard spans the wall, so the endpoints are the
+    side-wall junctions. If a calibration violates that, the pose fit's
+    residual gate (solve_camera_model) rejects it.
+    """
+    image_points, court_points = [], []
+    planes = calibration.get("planes") or {}
+    floor_plane = planes.get("floor") or {}
+    for landmark in floor_plane.get("landmarks", []):
+        if landmark.get("skipped"):
+            continue
+        pixel = landmark.get("refined_px") or landmark.get("tap_px")
+        court = landmark.get("court_ft")
+        if pixel is None or court is None:
+            continue
+        image_points.append([float(pixel[0]), float(pixel[1])])
+        court_points.append([float(court[0]), float(court[1]), 0.0])
+    for line in calibration.get("lines", []):
+        height = _WALL_LINE_HEIGHTS_FT.get(line.get("name"))
+        endpoints = line.get("endpoints") or []
+        if height is None or len(endpoints) != 2:
+            continue
+        for x_ft, endpoint in zip((0.0, COURT_WIDTH_FT), endpoints):
+            image_points.append([float(endpoint[0]), float(endpoint[1])])
+            court_points.append([x_ft, 0.0, height])
+    return (
+        np.asarray(image_points, dtype=float).reshape(-1, 2),
+        np.asarray(court_points, dtype=float).reshape(-1, 3),
+    )
+
+
+def _init_camera_from_floor(calibration, frame_size):
+    """Approximate (focal, R, C) from the floor homography, Zhang-style.
+
+    H maps court floor (x, y) -> undistorted image px, H ~ K [r1 r2 t].
+    With the principal point pinned at the image center, the orthonormality
+    of r1, r2 yields two closed-form estimates of the focal length.
+    """
+    floor_map = load_floor_calibration(calibration)
+    if floor_map is None:
+        return None
+    homography = invert_homography(floor_map.homography_court_from_image)
+    cx, cy = frame_size[0] / 2.0, frame_size[1] / 2.0
+
+    def reduced(column):
+        return (
+            column[0] - cx * column[2],
+            column[1] - cy * column[2],
+            column[2],
+        )
+
+    a1, b1, c1 = reduced(homography[:, 0])
+    a2, b2, c2 = reduced(homography[:, 1])
+    focal_sq = []
+    if abs(c1 * c2) > 1e-12:
+        value = -(a1 * a2 + b1 * b2) / (c1 * c2)
+        if value > 0:
+            focal_sq.append(value)
+    if abs(c2 * c2 - c1 * c1) > 1e-12:
+        value = ((a1 * a1 + b1 * b1) - (a2 * a2 + b2 * b2)) / (c2 * c2 - c1 * c1)
+        if value > 0:
+            focal_sq.append(value)
+    if not focal_sq:
+        return None
+    focal = float(np.sqrt(np.mean(focal_sq)))
+
+    intrinsics_inv = np.array(
+        [[1.0 / focal, 0.0, -cx / focal],
+         [0.0, 1.0 / focal, -cy / focal],
+         [0.0, 0.0, 1.0]]
+    )
+    r1 = intrinsics_inv @ homography[:, 0]
+    r2 = intrinsics_inv @ homography[:, 1]
+    translation = intrinsics_inv @ homography[:, 2]
+    scale = 2.0 / (np.linalg.norm(r1) + np.linalg.norm(r2))
+    r1, r2, translation = r1 * scale, r2 * scale, translation * scale
+    if translation[2] < 0:
+        # Court origin must be in front of the camera.
+        r1, r2, translation = -r1, -r2, -translation
+    r3 = np.cross(r1, r2)
+    u, _, vt = np.linalg.svd(np.column_stack([r1, r2, r3]))
+    rotation = u @ vt
+    if np.linalg.det(rotation) < 0:
+        rotation = u @ np.diag([1.0, 1.0, -1.0]) @ vt
+    camera_center = -rotation.T @ translation
+    return focal, rotation, camera_center

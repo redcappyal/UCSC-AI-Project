@@ -48,3 +48,49 @@ def test_projection_matrix_agrees_with_project():
     projected = camera.projection_matrix() @ point
     u, v = projected[0] / projected[2], projected[1] / projected[2]
     assert (u, v) == pytest.approx(camera.project(point[:3]))
+
+
+def _synthetic_calibration(camera, frame_size=(1920, 1080)):
+    """Project the real landmark/line geometry through a known camera."""
+    landmarks = []
+    for mark in court_model.FLOOR_LANDMARKS:
+        if mark["optional"]:
+            continue
+        x_ft, y_ft = mark["court_ft"]
+        u, v = camera.project((x_ft, y_ft, 0.0))
+        landmarks.append({"id": mark["id"], "court_ft": [x_ft, y_ft],
+                          "refined_px": [u, v]})
+    lines = []
+    for name, height in (("out_line_lower_edge", court_model.OUT_LINE_HEIGHT_FT),
+                         ("tin_top_edge", court_model.TIN_TOP_HEIGHT_FT)):
+        left = camera.project((0.0, 0.0, height))
+        right = camera.project((court_model.COURT_WIDTH_FT, 0.0, height))
+        lines.append({"name": name, "endpoints": [list(left), list(right)]})
+    return {
+        "schema": "squash-calibration-v2",
+        "frame_width": frame_size[0], "frame_height": frame_size[1],
+        "lines": lines,
+        "planes": {"floor": {"landmarks": landmarks}},
+    }
+
+
+def test_camera_correspondences_extracts_floor_and_wall():
+    camera = make_camera()
+    calibration = _synthetic_calibration(camera)
+    image_px, court_xyz = court_model._camera_correspondences(calibration)
+    assert len(image_px) == len(court_xyz) == 7 + 4  # 7 required landmarks + 4 line ends
+    heights = sorted(set(round(z, 4) for z in court_xyz[:, 2]))
+    assert heights == [0.0, round(court_model.TIN_TOP_HEIGHT_FT, 4),
+                       court_model.OUT_LINE_HEIGHT_FT]
+
+
+def test_init_camera_from_floor_recovers_pose():
+    camera = make_camera(focal_px=1500.0, position=(10.5, 29.0, 7.0),
+                         look_at=(10.5, 0.0, 4.0))
+    calibration = _synthetic_calibration(camera)
+    result = court_model._init_camera_from_floor(calibration, (1920, 1080))
+    assert result is not None
+    focal, rotation, center = result
+    assert focal == pytest.approx(1500.0, rel=0.05)
+    assert np.allclose(center, camera.camera_center_ft, atol=0.75)
+    assert np.allclose(rotation, camera.rotation, atol=0.05)
