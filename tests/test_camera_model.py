@@ -94,3 +94,47 @@ def test_init_camera_from_floor_recovers_pose():
     assert focal == pytest.approx(1500.0, rel=0.05)
     assert np.allclose(center, camera.camera_center_ft, atol=0.75)
     assert np.allclose(rotation, camera.rotation, atol=0.05)
+
+
+def test_solve_camera_model_recovers_noisy_pose():
+    rng = np.random.default_rng(7)
+    camera = make_camera(focal_px=1550.0, position=(10.5, 30.5, 7.0),
+                         look_at=(10.5, 0.0, 4.5))
+    calibration = _synthetic_calibration(camera)
+    for landmark in calibration["planes"]["floor"]["landmarks"]:
+        landmark["refined_px"] = list(
+            np.asarray(landmark["refined_px"]) + rng.normal(0, 0.5, 2))
+    for line in calibration["lines"]:
+        line["endpoints"] = [list(np.asarray(p) + rng.normal(0, 0.5, 2))
+                             for p in line["endpoints"]]
+    solved, info = court_model.solve_camera_model(calibration)
+    assert info["status"] == "ok"
+    assert solved is not None
+    assert solved.focal_px == pytest.approx(1550.0, rel=0.03)
+    assert np.allclose(solved.camera_center_ft, camera.camera_center_ft, atol=0.5)
+    assert solved.fit_rms_px < 2.0
+
+
+def test_solve_camera_model_rejects_bad_geometry():
+    camera = make_camera()
+    calibration = _synthetic_calibration(camera)
+    # Corrupt one wall line badly: endpoints not at the side walls.
+    calibration["lines"][0]["endpoints"][0][0] += 300.0
+    solved, info = court_model.solve_camera_model(calibration)
+    assert solved is None
+    assert info["status"] == "high_residual"
+
+
+def test_solve_camera_model_requires_wall_points():
+    camera = make_camera()
+    calibration = _synthetic_calibration(camera)
+    calibration["lines"] = []
+    solved, info = court_model.solve_camera_model(calibration)
+    assert solved is None
+    assert info["status"] == "insufficient_points"
+
+
+def test_solve_camera_model_requires_frame_size():
+    solved, info = court_model.solve_camera_model({"lines": [], "planes": {}})
+    assert solved is None
+    assert info["status"] == "no_frame_size"

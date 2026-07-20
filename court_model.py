@@ -673,3 +673,134 @@ def _init_camera_from_floor(calibration, frame_size):
         rotation = u @ np.diag([1.0, 1.0, -1.0]) @ vt
     camera_center = -rotation.T @ translation
     return focal, rotation, camera_center
+
+
+CAMERA_MAX_RMS_PX = 4.0  # gate at 1920-wide frames; scaled by frame_width/1920
+
+
+def _rotation_from_axis_angle(omega):
+    theta = np.linalg.norm(omega)
+    if theta < 1e-12:
+        return np.eye(3)
+    axis = omega / theta
+    skew = np.array(
+        [[0.0, -axis[2], axis[1]],
+         [axis[2], 0.0, -axis[0]],
+         [-axis[1], axis[0], 0.0]]
+    )
+    return np.eye(3) + np.sin(theta) * skew + (1.0 - np.cos(theta)) * (skew @ skew)
+
+
+def _camera_residuals(focal, rotation, center, center_px, court_xyz, image_und):
+    """Flat residual vector (2N,) of undistorted-pixel reprojection errors,
+    or None if any point falls at/behind the camera."""
+    cx, cy = center_px
+    residuals = np.empty(2 * len(court_xyz))
+    for index, (point, observed) in enumerate(zip(court_xyz, image_und)):
+        camera_point = rotation @ (point - center)
+        if camera_point[2] <= 1e-6:
+            return None
+        residuals[2 * index] = focal * camera_point[0] / camera_point[2] + cx - observed[0]
+        residuals[2 * index + 1] = focal * camera_point[1] / camera_point[2] + cy - observed[1]
+    return residuals
+
+
+def _refine_camera(focal, rotation, center, center_px, court_xyz, image_und,
+                   iterations=60):
+    """Levenberg-Marquardt over [focal, axis-angle(3), center(3)] with a
+    numeric Jacobian. Local rotation parameterization: each accepted step
+    right-multiplies the current rotation and resets omega to zero."""
+    damping = 1e-3
+    residuals = _camera_residuals(focal, rotation, center, center_px,
+                                  court_xyz, image_und)
+    if residuals is None:
+        return None
+    cost = float(residuals @ residuals)
+    for _ in range(iterations):
+        params = np.concatenate([[focal], np.zeros(3), center])
+        jacobian = np.empty((len(residuals), 7))
+        for column in range(7):
+            step = np.zeros(7)
+            step[column] = 1e-4 if column == 0 else 1e-6
+            plus = params + step
+            trial = _camera_residuals(
+                plus[0], rotation @ _rotation_from_axis_angle(plus[1:4]),
+                plus[4:7], center_px, court_xyz, image_und)
+            if trial is None:
+                return None
+            jacobian[:, column] = (trial - residuals) / step[column]
+        normal = jacobian.T @ jacobian
+        gradient = jacobian.T @ residuals
+        improved = False
+        for _ in range(8):
+            try:
+                delta = np.linalg.solve(
+                    normal + damping * np.diag(np.diag(normal)), -gradient)
+            except np.linalg.LinAlgError:
+                return None
+            trial_focal = focal + delta[0]
+            trial_rotation = rotation @ _rotation_from_axis_angle(delta[1:4])
+            trial_center = center + delta[4:7]
+            trial = _camera_residuals(trial_focal, trial_rotation, trial_center,
+                                      center_px, court_xyz, image_und)
+            if trial is not None and float(trial @ trial) < cost:
+                focal, rotation, center = trial_focal, trial_rotation, trial_center
+                residuals, cost = trial, float(trial @ trial)
+                damping = max(damping / 3.0, 1e-9)
+                improved = True
+                break
+            damping *= 4.0
+        if not improved:
+            break
+    return focal, rotation, center, residuals
+
+
+def solve_camera_model(calibration):
+    """Full pose + focal from a v2 calibration. Returns (CameraModel|None, info).
+
+    Mirrors load_floor_calibration's philosophy: never raises on bad input,
+    always explains itself through info["status"].
+    """
+    if not isinstance(calibration, dict):
+        return None, {"status": "no_frame_size"}
+    frame_width = calibration.get("frame_width")
+    frame_height = calibration.get("frame_height")
+    if not frame_width or not frame_height:
+        return None, {"status": "no_frame_size"}
+    center_px = (float(frame_width) / 2.0, float(frame_height) / 2.0)
+
+    try:
+        image_px, court_xyz = _camera_correspondences(calibration)
+        distortion = calibration.get("distortion") or None
+        floor_count = int(np.sum(court_xyz[:, 2] == 0.0)) if len(court_xyz) else 0
+        wall_count = len(court_xyz) - floor_count
+        if floor_count < 4 or wall_count < 2:
+            return None, {"status": "insufficient_points",
+                          "floor_points": floor_count, "wall_points": wall_count}
+        image_und = np.asarray(
+            [undistort_point(pixel, distortion) for pixel in image_px])
+        init = _init_camera_from_floor(calibration, (frame_width, frame_height))
+        if init is None:
+            return None, {"status": "init_failed"}
+        refined = _refine_camera(*init, center_px, court_xyz, image_und)
+        if refined is None:
+            return None, {"status": "refine_failed"}
+        focal, rotation, center, residuals = refined
+    except (ValueError, TypeError, KeyError, np.linalg.LinAlgError):
+        return None, {"status": "refine_failed"}
+
+    per_point = np.sqrt(residuals[0::2] ** 2 + residuals[1::2] ** 2)
+    rms = float(np.sqrt(np.mean(per_point ** 2)))
+    info = {"rms_px": rms, "max_px": float(per_point.max()),
+            "point_count": len(court_xyz)}
+    threshold = CAMERA_MAX_RMS_PX * float(frame_width) / 1920.0
+    if rms > threshold:
+        info["status"] = "high_residual"
+        return None, info
+    info["status"] = "ok"
+    camera = CameraModel(
+        focal_px=float(focal), center_px=center_px, rotation=rotation,
+        camera_center_ft=np.asarray(center, dtype=float),
+        distortion=distortion, fit_rms_px=rms, point_count=len(court_xyz),
+    )
+    return camera, info
