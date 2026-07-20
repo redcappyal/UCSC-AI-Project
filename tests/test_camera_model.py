@@ -138,3 +138,10 @@ def test_solve_camera_model_requires_frame_size():
     solved, info = court_model.solve_camera_model({"lines": [], "planes": {}})
     assert solved is None
     assert info["status"] == "no_frame_size"
+
+
+def test_solve_camera_model_malformed_frame_size():
+    solved, info = court_model.solve_camera_model(
+        {"frame_width": [1920], "frame_height": 1080, "lines": [], "planes": {}})
+    assert solved is None
+    assert info["status"] == "no_frame_size"

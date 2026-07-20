@@ -767,7 +767,12 @@ def solve_camera_model(calibration):
     frame_height = calibration.get("frame_height")
     if not frame_width or not frame_height:
         return None, {"status": "no_frame_size"}
-    center_px = (float(frame_width) / 2.0, float(frame_height) / 2.0)
+    try:
+        frame_width = float(frame_width)
+        frame_height = float(frame_height)
+    except (TypeError, ValueError):
+        return None, {"status": "no_frame_size"}
+    center_px = (frame_width / 2.0, frame_height / 2.0)
 
     try:
         image_px, court_xyz = _camera_correspondences(calibration)
