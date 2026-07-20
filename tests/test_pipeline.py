@@ -116,12 +116,24 @@ def test_judge_hits_wall_events_judged_as_before(tmp_path):
     assert entry["judge_source"] == "detected_center"
     assert entry["event_type"] == "wall"
     assert entry["wall_diagram"]["x"] == 0.45
-    assert entry["target_zone"]["zone"] == 2
+    assert entry["target_zone"]["zone"] == 4
 
     payload = json.loads((tmp_path / "detected_hits.json").read_text())
     assert payload["target_zones"]["total_wall_hits"] == 1
-    assert payload["target_zones"]["zones"][1]["count"] == 1
-    assert payload["target_zones"]["common_zones"][0]["zone"] == 2
+    assert payload["target_zones"]["layout"] == "front_wall_5_target"
+    assert payload["target_zones"]["zones"][3]["count"] == 1
+    assert payload["target_zones"]["common_zones"][0]["zone"] == 4
+
+
+def test_target_zone_layout_matches_front_wall_sketch():
+    from job_runner import target_zone_for_diagram
+
+    assert target_zone_for_diagram({"x": 0.08, "y": 0.10})["zone"] == 1
+    assert target_zone_for_diagram({"x": 0.92, "y": 0.50})["zone"] == 2
+    assert target_zone_for_diagram({"x": 0.08, "y": 0.76})["zone"] == 3
+    assert target_zone_for_diagram({"x": 0.92, "y": 0.95})["zone"] == 3
+    assert target_zone_for_diagram({"x": 0.50, "y": 0.30})["zone"] == 4
+    assert target_zone_for_diagram({"x": 0.50, "y": 0.80})["zone"] == 5
 
 
 def test_job_restart_recovery(tmp_path, monkeypatch):

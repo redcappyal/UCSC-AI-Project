@@ -62,8 +62,13 @@ AUDIO_RESCUE_PAD_FRAMES = 8
 DISPLAY_FRAME_SEARCH_RADIUS = 4
 TIN_WIDTH_FEET = 21.0
 FEET_PER_SECOND_TO_MPH = 0.6818181818
-TARGET_ZONE_COLUMNS = 3
-TARGET_ZONE_ROWS = 4
+TARGET_CENTER_LEFT = 0.21
+TARGET_CENTER_RIGHT = 0.79
+TARGET_SERVICE_Y = (4.57 - 1.78) / (4.57 - 0.48)
+TARGET_TIN_Y = 1.0
+TARGET_SIDE_ZONE_BOUNDS = (0.0, 0.324, TARGET_SERVICE_Y, TARGET_TIN_Y)
+TARGET_CENTER_ZONE_BOUNDS = (0.0, TARGET_SERVICE_Y, TARGET_TIN_Y)
+TARGET_ZONE_IDS = (1, 2, 3, 4, 5)
 
 
 def persist_job(job):
@@ -367,31 +372,37 @@ def is_front_wall_hit(hit):
     return event_type in (None, "wall", "unknown")
 
 
-def target_zone_for_diagram(diagram, columns=TARGET_ZONE_COLUMNS, rows=TARGET_ZONE_ROWS):
+def target_zone_for_diagram(diagram):
     x = clamp(diagram["x"])
     y = clamp(diagram["y"])
-    column = min(columns - 1, int(x * columns))
-    row = min(rows - 1, int(y * rows))
+
+    if TARGET_CENTER_LEFT <= x <= TARGET_CENTER_RIGHT:
+        zone = 4 if y < TARGET_CENTER_ZONE_BOUNDS[1] else 5
+        side = "center"
+    else:
+        zone = 3
+        for index in range(3):
+            if TARGET_SIDE_ZONE_BOUNDS[index] <= y < TARGET_SIDE_ZONE_BOUNDS[index + 1]:
+                zone = index + 1
+                break
+        side = "left" if x < TARGET_CENTER_LEFT else "right"
+
     return {
-        "zone": row * columns + column + 1,
-        "row": row,
-        "column": column,
+        "zone": zone,
+        "side": side,
         "x": float(diagram["x"]),
         "y": float(diagram["y"]),
     }
 
 
-def build_target_zone_summary(hits, columns=TARGET_ZONE_COLUMNS, rows=TARGET_ZONE_ROWS):
+def build_target_zone_summary(hits):
     zones = [
         {
-            "zone": row * columns + column + 1,
-            "row": row,
-            "column": column,
+            "zone": zone,
             "count": 0,
             "percentage": 0.0,
         }
-        for row in range(rows)
-        for column in range(columns)
+        for zone in TARGET_ZONE_IDS
     ]
     by_zone = {zone["zone"]: zone for zone in zones}
     target_hits = [
@@ -416,8 +427,9 @@ def build_target_zone_summary(hits, columns=TARGET_ZONE_COLUMNS, rows=TARGET_ZON
     ][:3]
     missing = [dict(zone) for zone in zones if zone["count"] == 0]
     return {
-        "rows": rows,
-        "columns": columns,
+        "layout": "front_wall_5_target",
+        "rows": 3,
+        "columns": 3,
         "total_wall_hits": total,
         "zones": zones,
         "common_zones": common,

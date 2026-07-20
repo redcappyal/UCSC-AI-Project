@@ -18,3 +18,11 @@ usage.db
 .venv/
 # Local virtualenv (this checkout uses venv/ not .venv/)
 venv/
+
+# Temporary project whitelist: only Python and HTML source files should appear
+# as new untracked files.
+*
+!*/
+!*.py
+!*.html
+!.gitignore

@@ -209,6 +209,10 @@
     border:0; background:transparent; color:var(--dim); font-size:13px}
   #navPill button.active{background:var(--accent-bg); color:var(--accent-text)}
   #navPill svg{width:17px; height:17px; flex:0 0 auto}
+  #targetDebugBtn{position:fixed; right:12px; bottom:calc(76px + env(safe-area-inset-bottom)); z-index:42;
+    min-height:38px; padding:0 12px; border-radius:999px; font-size:12px;
+    background:rgba(245,197,24,.92); color:#1b1a13; border:1px solid rgba(255,255,255,.36);
+    box-shadow:0 10px 24px rgba(0,0,0,.34)}
 
   /* Bounce labeling */
   .labelGrid{display:grid; grid-template-columns:1fr 1fr; gap:10px}
@@ -230,14 +234,50 @@
     padding:12px 14px; border-bottom:1px solid var(--line)}
   .targetHead strong{font-size:18px}
   .targetHead span{color:var(--dim); font-size:13px}
-  .targetGrid{display:grid; grid-template-columns:repeat(3, 1fr); border-bottom:1px solid var(--line)}
-  .targetCell{min-height:82px; padding:9px; border-right:1px solid rgba(255,255,255,.12);
-    border-bottom:1px solid rgba(255,255,255,.12); display:flex; flex-direction:column;
-    justify-content:space-between; background:rgba(245,197,24,.10)}
-  .targetCell:nth-child(3n){border-right:none}
-  .targetCell:nth-last-child(-n+3){border-bottom:none}
-  .targetZoneNum{font-size:13px; color:var(--dim); font-weight:700}
-  .targetPct{font-size:28px; font-weight:800; color:var(--text); font-variant-numeric:tabular-nums}
+  .targetCourt{--service-y:61.1%; --tin-y:89.5%; position:relative; margin:14px; min-height:500px;
+    overflow:hidden; border:1px solid color-mix(in srgb, var(--line) 78%, transparent); border-radius:8px;
+    background:
+      linear-gradient(115deg, rgba(38,55,72,.86), rgba(16,22,30,.94) 58%, rgba(10,13,18,.98)),
+      radial-gradient(circle at 50% 10%, rgba(255,255,255,.18), transparent 42%)}
+  .courtWall{position:absolute; left:8%; right:8%; top:6%; bottom:16%; z-index:2;
+    border:4px solid #e8eef2; border-radius:2px; overflow:hidden; box-shadow:
+      0 18px 42px rgba(0,0,0,.34), inset 0 0 0 1px rgba(0,0,0,.55);
+    background:
+      linear-gradient(to bottom, rgba(236,243,245,.98), rgba(210,225,226,.96) 62%, rgba(190,210,210,.98)),
+      repeating-linear-gradient(90deg, rgba(0,0,0,.035) 0 1px, transparent 1px 54px)}
+  .courtWall::before{content:""; position:absolute; inset:0; pointer-events:none; z-index:2;
+    background:linear-gradient(90deg, rgba(0,0,0,.18), transparent 16%, transparent 84%, rgba(0,0,0,.18))}
+  .courtSide{position:absolute; top:6%; bottom:16%; width:8%; z-index:1; opacity:.82;
+    background:linear-gradient(to bottom, rgba(222,235,238,.34), rgba(132,153,160,.20))}
+  .courtSide.left{left:0; clip-path:polygon(100% 0, 100% 100%, 0 88%, 0 12%)}
+  .courtSide.right{right:0; clip-path:polygon(0 0, 100% 12%, 100% 88%, 0 100%)}
+  .courtFloor{position:absolute; left:0; right:0; bottom:0; height:22%; z-index:0;
+    background:
+      linear-gradient(to bottom, rgba(196,145,74,.95), rgba(113,73,38,.98)),
+      repeating-linear-gradient(90deg, rgba(255,255,255,.08) 0 1px, transparent 1px 46px)}
+  .courtFloor::before{content:""; position:absolute; left:32%; right:32%; top:0; height:100%;
+    border-left:2px solid rgba(255,255,255,.46); border-right:2px solid rgba(255,255,255,.46);
+    transform:perspective(420px) rotateX(58deg); transform-origin:top center}
+  .targetGrid{position:absolute; inset:0; z-index:1}
+  .targetCell{min-height:0; padding:7px 9px; border:1px solid rgba(216,58,46,.78);
+    display:flex; flex-direction:column;
+    justify-content:space-between; background:rgba(245,197,24,.10); position:absolute;
+    box-shadow:inset 0 0 0 1px rgba(255,255,255,.18)}
+  .targetCell.mirror{opacity:.96}
+  .targetZoneNum{font-size:13px; color:#284354; font-weight:900}
+  .targetPct{font-size:26px; font-weight:900; color:#0e2c3f; font-variant-numeric:tabular-nums;
+    text-shadow:0 1px 0 rgba(255,255,255,.52)}
+  .courtLine{position:absolute; left:0; right:0; z-index:4; pointer-events:none}
+  .courtLine.out{top:0; border-top:5px solid #d83a2e; box-shadow:0 1px 0 rgba(255,255,255,.6)}
+  .courtLine.service{top:var(--service-y); border-top:4px solid #d83a2e}
+  .courtLine.tin{top:var(--tin-y); bottom:0; border-top:7px solid #d83a2e;
+    background:linear-gradient(to bottom, rgba(73,78,80,.92), rgba(34,38,40,.98))}
+  .courtText{position:absolute; z-index:5; pointer-events:none; padding:4px 8px; border-radius:4px;
+    background:rgba(255,255,255,.86); color:#263845; box-shadow:0 1px 4px rgba(0,0,0,.18);
+    font-size:12px; font-weight:900; line-height:1; text-transform:uppercase}
+  .courtText.out{top:9px; left:10px; color:#b92e26}
+  .courtText.service{top:calc(var(--service-y) + 9px); left:10px; color:#b92e26}
+  .courtText.tin{top:calc(var(--tin-y) + 12px); left:10px; color:#fff; background:rgba(40,44,46,.9)}
   .targetMeta{display:grid; grid-template-columns:1fr 1fr; gap:10px; padding:12px 14px}
   .targetMeta div{min-width:0}
   .targetMeta strong{display:block; font-size:13px; color:var(--dim); margin-bottom:4px}
@@ -556,10 +596,23 @@
   <section class="hidden" id="p-target">
     <div class="targetZones hidden" id="targetZones">
       <div class="targetHead">
-        <strong>Target zones</strong>
+        <strong>Front wall targets</strong>
         <span id="targetTotal"></span>
       </div>
-      <div class="targetGrid" id="targetGrid"></div>
+      <div class="targetCourt" aria-label="Squash front wall target zone chart">
+        <div class="courtSide left"></div>
+        <div class="courtSide right"></div>
+        <div class="courtFloor"></div>
+        <div class="courtWall">
+          <div class="targetGrid" id="targetGrid"></div>
+          <div class="courtLine out"></div>
+          <div class="courtLine service"></div>
+          <div class="courtLine tin"></div>
+          <span class="courtText out">Out line</span>
+          <span class="courtText service">Service line</span>
+          <span class="courtText tin">Tin</span>
+        </div>
+      </div>
       <div class="targetMeta">
         <div><strong>Most used</strong><span id="targetCommon"></span></div>
         <div><strong>Unused</strong><span id="targetMissing"></span></div>
@@ -595,6 +648,8 @@
     <span>Label</span>
   </button>
 </nav>
+
+<button id="targetDebugBtn" type="button">Debug targets</button>
 
 <video id="vid" playsinline muted preload="metadata"></video>
 
@@ -859,7 +914,7 @@ $('hdrBack').onclick = () => {
   } else if(S.phase === 'label'){
     vid.pause(); S.base = null; $('fileIn').value = ''; setPhase('load');
   } else if(S.phase === 'target'){
-    setPhase('track');
+    setPhase(S.run ? 'track' : 'load');
   }
 };
 
@@ -2992,6 +3047,64 @@ function targetZoneFill(percentage){
   return `rgba(245,197,24,${alpha.toFixed(3)})`;
 }
 
+const TARGET_LAYOUT = {
+  sideW: 21,
+  centerLeft: 21,
+  centerW: 58,
+  serviceY: 61.1,
+  tinY: 89.5,
+  sideBands: [
+    {zone:1, top:0, height:29},
+    {zone:2, top:29, height:32.1},
+    {zone:3, top:61.1, height:28.4},
+  ],
+};
+
+function targetCellPlacements(zone){
+  const z = Number(zone.zone);
+  if(z === 4){
+    return [{left:TARGET_LAYOUT.centerLeft, top:0, width:TARGET_LAYOUT.centerW, height:TARGET_LAYOUT.serviceY}];
+  }
+  if(z === 5){
+    return [{left:TARGET_LAYOUT.centerLeft, top:TARGET_LAYOUT.serviceY, width:TARGET_LAYOUT.centerW, height:TARGET_LAYOUT.tinY - TARGET_LAYOUT.serviceY}];
+  }
+  const band = TARGET_LAYOUT.sideBands.find(item => item.zone === z);
+  if(!band) return [];
+  return [
+    {left:0, top:band.top, width:TARGET_LAYOUT.sideW, height:band.height},
+    {left:TARGET_LAYOUT.centerLeft + TARGET_LAYOUT.centerW, top:band.top, width:TARGET_LAYOUT.sideW, height:band.height, mirror:true},
+  ];
+}
+
+function placeTargetCell(cell, placement){
+  cell.style.left = `${placement.left}%`;
+  cell.style.width = `${placement.width}%`;
+  cell.style.top = `${placement.top}%`;
+  cell.style.height = `${placement.height}%`;
+  cell.classList.toggle('mirror', !!placement.mirror);
+}
+
+function randomTargetSummary(){
+  const zoneIds = [1, 2, 3, 4, 5];
+  const rawCounts = zoneIds.map(() => Math.floor(Math.random() * 18));
+  if(!rawCounts.some(Boolean)) rawCounts[0] = 1;
+  const total = rawCounts.reduce((sum, count) => sum + count, 0);
+  const zones = rawCounts.map((count, index) => ({
+    zone: zoneIds[index],
+    count,
+    percentage: total ? count / total * 100 : 0,
+  }));
+  return {
+    layout: 'front_wall_5_target',
+    rows: 3,
+    columns: 3,
+    total_wall_hits: total,
+    zones,
+    common_zones: zones.filter(zone => zone.count > 0).sort((a, b) => b.count - a.count).slice(0, 4),
+    missing_zones: zones.filter(zone => zone.count === 0),
+  };
+}
+
 function renderTargetZones(summary){
   const panel = $('targetZones');
   if(!summary || !summary.total_wall_hits || !summary.zones || !summary.zones.length){
@@ -3007,16 +3120,19 @@ function renderTargetZones(summary){
 
   const grid = $('targetGrid');
   grid.innerHTML = '';
-  grid.style.gridTemplateColumns = `repeat(${summary.columns || 3}, 1fr)`;
   for(const zone of summary.zones){
-    const cell = document.createElement('div');
-    cell.className = 'targetCell';
-    cell.style.background = targetZoneFill(zone.percentage || 0);
-    cell.innerHTML =
-      `<span class="targetZoneNum">${zone.zone}</span>` +
-      `<span class="targetPct">${Math.round(zone.percentage || 0)}%</span>`;
-    cell.title = `Zone ${zone.zone}: ${zone.count} hit${zone.count === 1 ? '' : 's'}`;
-    grid.appendChild(cell);
+    const placements = targetCellPlacements(zone);
+    for(const placement of placements){
+      const cell = document.createElement('div');
+      cell.className = 'targetCell';
+      cell.style.background = targetZoneFill(zone.percentage || 0);
+      placeTargetCell(cell, placement);
+      cell.innerHTML =
+        `<span class="targetZoneNum">${zone.zone}</span>` +
+        `<span class="targetPct">${Math.round(zone.percentage || 0)}%</span>`;
+      cell.title = `Zone ${zone.zone}: ${zone.count} hit${zone.count === 1 ? '' : 's'}`;
+      grid.appendChild(cell);
+    }
   }
 }
 
@@ -3041,12 +3157,15 @@ function renderFloorMap(){
 }
 
 function buildTargetView(){
-  renderTargetZones(S.run && S.run.target_zones);
+  const summary = S.debugTargetZones || (S.run && S.run.target_zones);
+  renderTargetZones(summary);
   const hasFloor = renderFloorMap();
-  const total = S.run && S.run.target_zones ? S.run.target_zones.total_wall_hits : 0;
+  const total = summary ? summary.total_wall_hits : 0;
   if(total){
-    $('targetStatus').textContent = 'Percentages are based on detected front-wall hits in this clip.' +
-      (hasFloor ? ' The court map shows where floor bounces landed (front wall at the top).' : '');
+    $('targetStatus').textContent = S.debugTargetZones
+      ? 'Debug target data is random and temporary.'
+      : 'Percentages are based on detected front-wall hits in this clip.' +
+        (hasFloor ? ' The court map shows where floor bounces landed (front wall at the top).' : '');
     $('targetStatus').className = 'status';
   } else if(hasFloor){
     $('targetStatus').textContent = 'No front-wall hits, but floor bounces are mapped below (front wall at the top).';
@@ -3074,7 +3193,14 @@ function buildTrackView(){
   );
 }
 
-$('targetBtn').onclick = () => setPhase('target');
+$('targetBtn').onclick = () => {
+  S.debugTargetZones = null;
+  setPhase('target');
+};
+$('targetDebugBtn').onclick = () => {
+  S.debugTargetZones = randomTargetSummary();
+  setPhase('target');
+};
 
 function frameToRunPct(frame){
   const span = Math.max(1, S.run.end_frame - S.run.start_frame);
