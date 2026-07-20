@@ -173,6 +173,16 @@
   .stepUnit{flex:0 1 auto; text-align:center; padding:0 2px;
     font-size:13px; color:var(--dim); white-space:nowrap; user-select:none; pointer-events:none}
 
+  /* Debug-only bounce-engine toggle on the clip page. */
+  .debugEngineRow{display:flex; align-items:center; gap:10px; padding:2px 0 4px}
+  .debugEngineRow .nudgeLabel{flex:0 0 auto}
+  .debugTag{font-size:11px; color:var(--dim); text-transform:uppercase; letter-spacing:.06em}
+  .engineSeg{flex:1 1 auto; display:flex; border:1px solid var(--line); border-radius:8px; overflow:hidden}
+  .engineSeg button{flex:1 1 0; min-height:36px; padding:0 6px; border:none; background:transparent;
+    color:var(--dim); font-size:13px}
+  .engineSeg button + button{border-left:1px solid var(--line)}
+  .engineSeg button.on{background:var(--line); color:var(--text); font-weight:600}
+
   .hitTimeline{position:relative; height:88px; border-radius:8px; overflow:hidden;
     background:var(--strip-bg); border:1px solid var(--line); touch-action:none; cursor:grab}
   #hitBars, #trackOverviewBars{position:absolute; inset:0}
@@ -503,6 +513,13 @@
         <button type="button" id="clipPlayBtn" class="playBtn" aria-label="Play or pause preview"></button>
       </div>
     </div>
+    <div class="debugEngineRow">
+      <span class="nudgeLabel">Bounce engine<span class="debugTag">debug</span></span>
+      <div class="engineSeg" id="engineSeg">
+        <button type="button" data-engine="fusion">Geometry</button>
+        <button type="button" data-engine="gb_model" class="on">Model</button>
+      </div>
+    </div>
     <button class="primary proxied" id="runTrackBtn">Track ball</button>
     <p class="status" id="trackStatus"></p>
   </section>
@@ -724,6 +741,7 @@ const S = {
   trackView:{startF:0, endF:0, cursor:0, key:'', ovDone:false, timer:null}, // fine-window state for the call page's coarse-fine timeline
   videoFps:null,              // probed by the server at upload; null until known
   clip:{start:0, end:0, cursor:0, dragging:null, frameStride:1, inferenceWidth:960,
+    eventEngine:'gb_model',   // debug-only wall-hit engine override: votes | gb_model | fusion
     viewStart:0, viewEnd:1, viewSpan:0,   // detail window derived from cursor ± viewSpan/2
     dragX:0, dragT:0,
     overviewThumbs:false, overviewDragging:false,
@@ -3013,6 +3031,13 @@ async function waitForTracking(runId){
   }
 }
 
+for(const btn of $('engineSeg').querySelectorAll('button')){
+  btn.onclick = () => {
+    S.clip.eventEngine = btn.dataset.engine;
+    for(const b of $('engineSeg').querySelectorAll('button')) b.classList.toggle('on', b === btn);
+  };
+}
+
 $('runTrackBtn').onclick = async () => {
   if(!S.videoFile){
     $('trackStatus').textContent = 'Load the source video again before tracking.';
@@ -3044,6 +3069,7 @@ $('runTrackBtn').onclick = async () => {
     form.append('end_time', end.toString());
     form.append('frame_stride', S.clip.frameStride.toString());
     form.append('inference_width', S.clip.inferenceWidth.toString());
+    form.append('event_engine', S.clip.eventEngine);
 
     const started = await postFormRequest('/api/track', form);
     if(S.phase !== 'analyze') return;

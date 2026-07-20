@@ -295,6 +295,12 @@ def track_clip():
     if inference_width not in {0, 640, 960, 1280}:
         return error_response("Inference width must be 0, 640, 960, or 1280.")
 
+    # Debug-only override of the wall-hit event engine; empty falls back to the
+    # job_runner default.
+    event_engine = request.form.get("event_engine", "").strip()
+    if event_engine not in {"", "votes", "gb_model", "fusion"}:
+        return error_response("Event engine must be votes, gb_model, or fusion.")
+
     run_id = str(int(time.time() * 1000))
     run_dir = RUNS_DIR / run_id
     run_dir.mkdir(parents=True, exist_ok=True)
@@ -343,6 +349,7 @@ def track_clip():
         fps=info["fps"],
         frame_stride=frame_stride,
         inference_width=inference_width,
+        event_engine=event_engine or None,
         processed_frames=0,
         total_frames=total_frames,
         csv_url=f"/api/runs/{run_id}/ball_coordinates.csv",
