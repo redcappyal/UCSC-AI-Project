@@ -632,6 +632,23 @@ def _camera_correspondences(calibration):
         for x_ft, endpoint in zip((0.0, COURT_WIDTH_FT), endpoints):
             image_points.append([float(endpoint[0]), float(endpoint[1])])
             court_points.append([x_ft, 0.0, height])
+    # Wall-corner taps (planes.wall.corners, judge_call.load_wall_corners
+    # schema). Only the BOTTOM corners: they are the front-wall/floor seam at
+    # exactly (0,0,0) / (21,0,0). The top corners are the physical panel's
+    # top edge, whose height is venue-dependent — no known z, so no
+    # correspondence. Duplicating a front_seam floor landmark is fine: the
+    # taps are independent, so the fit averages their noise.
+    wall_plane = planes.get("wall") or {}
+    corner_x_ft = {"bottom_left": 0.0, "bottom_right": COURT_WIDTH_FT}
+    for corner in wall_plane.get("corners") or []:
+        if not isinstance(corner, dict):
+            continue
+        x_ft = corner_x_ft.get(corner.get("id"))
+        tap = corner.get("tap_px")
+        if x_ft is None or tap is None:
+            continue
+        image_points.append([float(tap[0]), float(tap[1])])
+        court_points.append([x_ft, 0.0, 0.0])
     return (
         np.asarray(image_points, dtype=float).reshape(-1, 2),
         np.asarray(court_points, dtype=float).reshape(-1, 3),

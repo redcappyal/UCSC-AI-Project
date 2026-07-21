@@ -188,3 +188,52 @@ def test_solve_camera_model_rejects_implausible_principal_point():
     solved, info = court_model.solve_camera_model(calibration)
     assert solved is None
     assert info["status"] == "implausible_geometry"
+
+
+def _add_wall_corners(camera, calibration, top_height_ft=16.0):
+    """Attach planes.wall.corners taps (judge_call schema, raw tap_px only)."""
+    corners = []
+    for corner_id, court in (
+        ("top_left", (0.0, 0.0, top_height_ft)),
+        ("top_right", (court_model.COURT_WIDTH_FT, 0.0, top_height_ft)),
+        ("bottom_right", (court_model.COURT_WIDTH_FT, 0.0, 0.0)),
+        ("bottom_left", (0.0, 0.0, 0.0)),
+    ):
+        corners.append({"id": corner_id, "tap_px": list(camera.project(court))})
+    calibration["planes"]["wall"] = {"corners": corners}
+    return calibration
+
+
+def test_camera_correspondences_include_bottom_wall_corners_only():
+    camera = make_camera()
+    calibration = _add_wall_corners(camera, _synthetic_calibration(camera))
+    image_px, court_xyz = court_model._camera_correspondences(calibration)
+    # 7 required landmarks + 4 line endpoints + 2 bottom corners; the top
+    # corners have no known height and must NOT appear.
+    assert len(court_xyz) == 13
+    seams = [xyz for xyz in court_xyz if xyz[1] == 0.0 and xyz[2] == 0.0]
+    assert len(seams) == 4  # 2 front_seam landmarks + 2 bottom wall corners
+
+
+def test_solve_camera_model_uses_wall_corner_taps():
+    rng = np.random.default_rng(11)
+    camera = make_camera(focal_px=1550.0)
+    calibration = _add_wall_corners(camera, _synthetic_calibration(camera))
+    for corner in calibration["planes"]["wall"]["corners"]:
+        corner["tap_px"] = list(np.asarray(corner["tap_px"]) + rng.normal(0, 0.5, 2))
+    solved, info = court_model.solve_camera_model(calibration)
+    assert info["status"] == "ok"
+    assert info["point_count"] == 13
+    assert solved.focal_px == pytest.approx(1550.0, rel=0.03)
+
+
+def test_camera_correspondences_ignore_malformed_wall_corners():
+    camera = make_camera()
+    calibration = _synthetic_calibration(camera)
+    calibration["planes"]["wall"] = {"corners": [
+        {"id": "bottom_left"},                      # no tap
+        {"id": "mystery", "tap_px": [10, 10]},      # unknown id
+        "not-a-dict",
+    ]}
+    image_px, court_xyz = court_model._camera_correspondences(calibration)
+    assert len(court_xyz) == 11  # unchanged: landmarks + line endpoints only
