@@ -677,6 +677,80 @@ def _init_camera_from_floor(calibration, frame_size):
 
 CAMERA_MAX_RMS_PX = 4.0  # gate at 1920-wide frames; scaled by frame_width/1920
 
+# Plausibility gates for solve_camera_model (see _init_camera_dlt / solve_camera_model).
+CAMERA_MIN_FOCAL_RATIO = 0.2
+CAMERA_MAX_FOCAL_RATIO = 5.0
+CAMERA_MAX_CENTER_PX_FRAC_OF_DIAGONAL = 0.25
+
+
+def _rq3(matrix):
+    """RQ decomposition of a 3x3 matrix: matrix == R @ Q, R upper triangular,
+    Q orthogonal. Pure-numpy via the flipud/QR trick (no scipy dependency)."""
+    reverse = np.eye(3)[::-1]
+    q0, r0 = np.linalg.qr((reverse @ matrix).T)
+    r = reverse @ r0.T @ reverse
+    q = reverse @ q0.T
+    return r, q
+
+
+def _init_camera_dlt(image_und, court_xyz):
+    """Full 11-DOF DLT camera calibration (pose + focal + principal point).
+
+    Unlike _init_camera_from_floor, this does not assume a centered principal
+    point -- it is the initializer of choice for real (possibly cropped or
+    reprocessed) footage where the principal point may sit well off-center.
+
+    Requires >= 6 correspondences with >= 2 off the floor plane (z > 0), else
+    returns None (insufficient constraints for the 11-DOF system). Returns
+    None on any degeneracy (LinAlgError, singular system, etc.) rather than
+    raising -- callers fall back to the homography-based initializer.
+    """
+    image_und = np.asarray(image_und, dtype=float)
+    court_xyz = np.asarray(court_xyz, dtype=float)
+    if len(image_und) < 6 or int(np.sum(court_xyz[:, 2] > 0.0)) < 2:
+        return None
+    try:
+        rows = []
+        for (u, v), (x, y, z) in zip(image_und, court_xyz):
+            rows.append([x, y, z, 1.0, 0.0, 0.0, 0.0, 0.0,
+                        -u * x, -u * y, -u * z, -u])
+            rows.append([0.0, 0.0, 0.0, 0.0, x, y, z, 1.0,
+                        -v * x, -v * y, -v * z, -v])
+        system = np.asarray(rows)
+        _, _, vt = np.linalg.svd(system)
+        projection = vt[-1].reshape(3, 4)
+
+        m = projection[:, :3]
+        p4 = projection[:, 3]
+        k_mat, rotation = _rq3(m)
+
+        diag_signs = np.sign(np.diag(k_mat))
+        diag_signs[diag_signs == 0] = 1.0
+        sign_fix = np.diag(diag_signs)
+        k_mat = k_mat @ sign_fix
+        rotation = sign_fix @ rotation
+
+        if abs(k_mat[2, 2]) <= 1e-9:
+            return None
+        k_mat = k_mat / k_mat[2, 2]
+
+        camera_center = -np.linalg.inv(m) @ p4
+        if not np.isfinite(camera_center).all():
+            return None
+
+        mean_point = court_xyz.mean(axis=0)
+        depth = (rotation @ (mean_point - camera_center))[2]
+        if depth < 0:
+            rotation = -rotation
+        if not np.isfinite(k_mat).all() or not np.isfinite(rotation).all():
+            return None
+
+        focal = float((k_mat[0, 0] + k_mat[1, 1]) / 2.0)
+        center_px = (float(k_mat[0, 2]), float(k_mat[1, 2]))
+        return focal, center_px, rotation, camera_center
+    except np.linalg.LinAlgError:
+        return None
+
 
 def _rotation_from_axis_angle(omega):
     theta = np.linalg.norm(omega)
@@ -706,26 +780,36 @@ def _camera_residuals(focal, rotation, center, center_px, court_xyz, image_und):
 
 
 def _refine_camera(focal, rotation, center, center_px, court_xyz, image_und,
-                   iterations=60):
-    """Levenberg-Marquardt over [focal, axis-angle(3), center(3)] with a
+                   iterations=60, refine_center_px=False):
+    """Levenberg-Marquardt over [focal, axis-angle(3), center(3)] (7 params),
+    or additionally [cx, cy] (9 params) when refine_center_px=True, with a
     numeric Jacobian. Local rotation parameterization: each accepted step
-    right-multiplies the current rotation and resets omega to zero."""
+    right-multiplies the current rotation and resets omega to zero.
+
+    Returns (focal, rotation, center, residuals) when refine_center_px is
+    False (unchanged legacy shape), or (focal, rotation, center, center_px,
+    residuals) when True. None on failure to converge to a valid geometry."""
     damping = 1e-3
     residuals = _camera_residuals(focal, rotation, center, center_px,
                                   court_xyz, image_und)
     if residuals is None:
         return None
     cost = float(residuals @ residuals)
+    n_params = 9 if refine_center_px else 7
     for _ in range(iterations):
-        params = np.concatenate([[focal], np.zeros(3), center])
-        jacobian = np.empty((len(residuals), 7))
-        for column in range(7):
-            step = np.zeros(7)
-            step[column] = 1e-4 if column == 0 else 1e-6
+        if refine_center_px:
+            params = np.concatenate([[focal], np.zeros(3), center, center_px])
+        else:
+            params = np.concatenate([[focal], np.zeros(3), center])
+        jacobian = np.empty((len(residuals), n_params))
+        for column in range(n_params):
+            step = np.zeros(n_params)
+            step[column] = 1e-4 if (column == 0 or column >= 7) else 1e-6
             plus = params + step
+            trial_center_px = (plus[7], plus[8]) if refine_center_px else center_px
             trial = _camera_residuals(
                 plus[0], rotation @ _rotation_from_axis_angle(plus[1:4]),
-                plus[4:7], center_px, court_xyz, image_und)
+                plus[4:7], trial_center_px, court_xyz, image_und)
             if trial is None:
                 return None
             jacobian[:, column] = (trial - residuals) / step[column]
@@ -741,10 +825,14 @@ def _refine_camera(focal, rotation, center, center_px, court_xyz, image_und,
             trial_focal = focal + delta[0]
             trial_rotation = rotation @ _rotation_from_axis_angle(delta[1:4])
             trial_center = center + delta[4:7]
+            trial_center_px = (
+                (center_px[0] + delta[7], center_px[1] + delta[8])
+                if refine_center_px else center_px)
             trial = _camera_residuals(trial_focal, trial_rotation, trial_center,
-                                      center_px, court_xyz, image_und)
+                                      trial_center_px, court_xyz, image_und)
             if trial is not None and float(trial @ trial) < cost:
                 focal, rotation, center = trial_focal, trial_rotation, trial_center
+                center_px = trial_center_px
                 residuals, cost = trial, float(trial @ trial)
                 damping = max(damping / 3.0, 1e-9)
                 improved = True
@@ -752,6 +840,8 @@ def _refine_camera(focal, rotation, center, center_px, court_xyz, image_und,
             damping *= 4.0
         if not improved:
             break
+    if refine_center_px:
+        return focal, rotation, center, center_px, residuals
     return focal, rotation, center, residuals
 
 
@@ -784,20 +874,60 @@ def solve_camera_model(calibration):
                           "floor_points": floor_count, "wall_points": wall_count}
         image_und = np.asarray(
             [undistort_point(pixel, distortion) for pixel in image_px])
-        init = _init_camera_from_floor(calibration, (frame_width, frame_height))
-        if init is None:
-            return None, {"status": "init_failed"}
-        refined = _refine_camera(*init, center_px, court_xyz, image_und)
+
+        dlt_init = _init_camera_dlt(image_und, court_xyz)
+        if dlt_init is not None:
+            init_focal, init_center_px, init_rotation, init_center = dlt_init
+            refined = _refine_camera(
+                init_focal, init_rotation, init_center, init_center_px,
+                court_xyz, image_und, refine_center_px=True)
+            init_kind = "dlt"
+        else:
+            init = _init_camera_from_floor(calibration, (frame_width, frame_height))
+            if init is None:
+                return None, {"status": "init_failed"}
+            refined = _refine_camera(*init, center_px, court_xyz, image_und)
+            init_kind = "homography"
         if refined is None:
             return None, {"status": "refine_failed"}
-        focal, rotation, center, residuals = refined
+        if init_kind == "dlt":
+            focal, rotation, center, center_px, residuals = refined
+        else:
+            focal, rotation, center, residuals = refined
     except (ValueError, TypeError, KeyError, np.linalg.LinAlgError):
         return None, {"status": "refine_failed"}
 
+    center_px = (float(center_px[0]), float(center_px[1]))
     per_point = np.sqrt(residuals[0::2] ** 2 + residuals[1::2] ** 2)
     rms = float(np.sqrt(np.mean(per_point ** 2)))
-    info = {"rms_px": rms, "max_px": float(per_point.max()),
-            "point_count": len(court_xyz)}
+    info = {
+        "rms_px": rms, "max_px": float(per_point.max()),
+        "point_count": len(court_xyz),
+        "center_px": [center_px[0], center_px[1]],
+        "init": init_kind,
+    }
+
+    frame_diagonal = float(np.hypot(frame_width, frame_height))
+    frame_center = (frame_width / 2.0, frame_height / 2.0)
+    center_px_offset = float(
+        np.hypot(center_px[0] - frame_center[0], center_px[1] - frame_center[1]))
+    if float(center[2]) <= 0.0:
+        info["status"] = "implausible_geometry"
+        info["reason"] = "camera_center_below_floor"
+        info["camera_center_ft"] = [float(value) for value in center]
+        return None, info
+    if not (CAMERA_MIN_FOCAL_RATIO * frame_width
+            <= focal <= CAMERA_MAX_FOCAL_RATIO * frame_width):
+        info["status"] = "implausible_geometry"
+        info["reason"] = "focal_out_of_range"
+        info["focal_px"] = float(focal)
+        return None, info
+    if center_px_offset > CAMERA_MAX_CENTER_PX_FRAC_OF_DIAGONAL * frame_diagonal:
+        info["status"] = "implausible_geometry"
+        info["reason"] = "principal_point_far_from_center"
+        info["center_px_offset"] = center_px_offset
+        return None, info
+
     threshold = CAMERA_MAX_RMS_PX * float(frame_width) / 1920.0
     if rms > threshold:
         info["status"] = "high_residual"

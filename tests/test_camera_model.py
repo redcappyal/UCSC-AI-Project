@@ -145,3 +145,44 @@ def test_solve_camera_model_malformed_frame_size():
         {"frame_width": [1920], "frame_height": 1080, "lines": [], "planes": {}})
     assert solved is None
     assert info["status"] == "no_frame_size"
+
+
+def test_solve_camera_model_recovers_off_center_principal_point():
+    rng = np.random.default_rng(11)
+    camera = make_camera(focal_px=1400.0, center=(931.0, 646.0),
+                         position=(10.5, 30.5, 7.0), look_at=(10.5, 0.0, 4.5))
+    calibration = _synthetic_calibration(camera)
+    for landmark in calibration["planes"]["floor"]["landmarks"]:
+        landmark["refined_px"] = list(
+            np.asarray(landmark["refined_px"]) + rng.normal(0, 0.5, 2))
+    for line in calibration["lines"]:
+        line["endpoints"] = [list(np.asarray(p) + rng.normal(0, 0.5, 2))
+                             for p in line["endpoints"]]
+    solved, info = court_model.solve_camera_model(calibration)
+    assert info["status"] == "ok"
+    assert solved is not None
+    assert solved.focal_px == pytest.approx(1400.0, rel=0.03)
+    assert solved.center_px[0] == pytest.approx(931.0, abs=8.0)
+    assert solved.center_px[1] == pytest.approx(646.0, abs=8.0)
+    assert np.allclose(solved.camera_center_ft, camera.camera_center_ft, atol=0.5)
+
+
+def test_solve_camera_model_reports_dlt_init_on_ok():
+    camera = make_camera(focal_px=1400.0, center=(931.0, 646.0),
+                         position=(10.5, 30.5, 7.0), look_at=(10.5, 0.0, 4.5))
+    calibration = _synthetic_calibration(camera)
+    solved, info = court_model.solve_camera_model(calibration)
+    assert info["status"] == "ok"
+    assert info["init"] == "dlt"
+    assert "center_px" in info
+
+
+def test_solve_camera_model_rejects_implausible_principal_point():
+    # Principal point far from the image center (>0.25 * diagonal for 1920x1080
+    # is > ~529.6 px from (960, 540); (100, 100) is ~1132 px away).
+    camera = make_camera(focal_px=1400.0, center=(100.0, 100.0),
+                         position=(10.5, 30.5, 7.0), look_at=(10.5, 0.0, 4.5))
+    calibration = _synthetic_calibration(camera)
+    solved, info = court_model.solve_camera_model(calibration)
+    assert solved is None
+    assert info["status"] == "implausible_geometry"
