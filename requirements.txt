@@ -4,6 +4,8 @@ inference-sdk
 inference
 numpy
 opencv-python
+pandas
 Pillow
 python-dotenv
 pytest
+scikit-learn

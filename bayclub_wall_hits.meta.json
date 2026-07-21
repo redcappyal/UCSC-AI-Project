@@ -1,0 +1,11 @@
+{
+  "fps": 60.0,
+  "frame_count": 18000,
+  "label_count": 95,
+  "labeled_at": "2026-07-21T22:34:15Z",
+  "labeled_max_frame": 17975,
+  "labeled_min_frame": 58,
+  "schema_version": "label-run-v1",
+  "video_path": "/Users/matthewsong/Downloads/Bay Club Squash 5min+audio.mp4",
+  "video_sha": "9da63c198fa61036c71c5e94238695508b569ea3accef0129fed282d4ba34272"
+}

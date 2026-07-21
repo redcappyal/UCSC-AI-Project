@@ -1,14 +1,57 @@
 import argparse
 import csv
+import hashlib
+import json
 import time
 from pathlib import Path
 
 import cv2
 
 
-DEFAULT_VIDEO_PATH = Path(__file__).with_name("ModelTrainTest.mp4")
+DEFAULT_VIDEO_PATH = Path(__file__).with_name("Bay Club Squash 5min+audio.mp4")
 DEFAULT_LABELS_PATH = Path(__file__).with_name("wall_hits.csv")
 WINDOW_NAME = "Squash Wall Hit Labeler"
+SIDECAR_SCHEMA = "label-run-v1"
+
+
+def video_sha256(video_path):
+    """Same identity the upload endpoint assigns: sha256 of the whole file.
+    Lets build_eval_set.py tie these labels to a tracking run of the same
+    video without depending on filenames, which drift."""
+    hasher = hashlib.sha256()
+    with Path(video_path).open("rb") as video_file:
+        for chunk in iter(lambda: video_file.read(1024 * 1024), b""):
+            hasher.update(chunk)
+    return hasher.hexdigest()
+
+
+def sidecar_path(labels_path):
+    return Path(labels_path).with_suffix(".meta.json")
+
+
+def save_sidecar(labels_path, video_path, video_sha, fps, frame_count, labels):
+    """A label CSV is only frame numbers; on its own it cannot say which video
+    those frames index into. The sidecar carries that identity so the labels
+    survive as evaluation data instead of dying as a loose column."""
+    sidecar_path(labels_path).write_text(
+        json.dumps(
+            {
+                "schema_version": SIDECAR_SCHEMA,
+                "video_path": str(Path(video_path).resolve()),
+                "video_sha": video_sha,
+                "fps": fps,
+                "frame_count": frame_count,
+                "label_count": len(labels),
+                "labeled_min_frame": min(labels) if labels else None,
+                "labeled_max_frame": max(labels) if labels else None,
+                "labeled_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            },
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
 
 
 def load_labels(labels_path):
@@ -231,6 +274,13 @@ def main():
     playing = False
     dirty = False
 
+    print(f"Hashing {args.video.name} for label identity...", flush=True)
+    video_sha = video_sha256(args.video)
+
+    def persist():
+        save_labels(args.labels, labels)
+        save_sidecar(args.labels, args.video, video_sha, fps, frame_count, labels)
+
     cv2.namedWindow(WINDOW_NAME, cv2.WINDOW_NORMAL)
     print("Controls:")
     print("  h: mark/unmark current frame as a wall hit")
@@ -280,7 +330,7 @@ def main():
                     print(f"Added hit label at frame {frame_index}")
                 dirty = True
             elif key_char == "s":
-                save_labels(args.labels, labels)
+                persist()
                 dirty = False
                 print(f"Saved {len(labels)} label(s) to {args.labels}")
             elif key_char == "g":
@@ -308,7 +358,7 @@ def main():
         cv2.destroyAllWindows()
 
     if dirty:
-        save_labels(args.labels, labels)
+        persist()
         print(f"Saved {len(labels)} label(s) to {args.labels}")
 
 

@@ -34,7 +34,6 @@ import numpy as np
 import pandas as pd
 from sklearn.ensemble import GradientBoostingClassifier
 from sklearn.metrics import classification_report, confusion_matrix
-from sklearn.model_selection import train_test_split
 from sklearn.utils.class_weight import compute_sample_weight
 
 from audio_events import detect_audio_candidates_from_file
@@ -757,6 +756,30 @@ def metrics_from_confusion(cm):
     }
 
 
+def chronological_split(features, test_size, embargo_frames):
+    """Split by time, not at random.
+
+    Feature rows are per-frame and their context windows overlap, so frame N
+    and N+1 are near-duplicates. A random split scatters those across train
+    and test and reports a test score the model never earned. Cutting on the
+    frame axis keeps every test row strictly after every train row, and the
+    embargo band drops the rows whose context windows straddle the cut — the
+    only place the two sides can still touch.
+    """
+    ordered = features.sort_values("frame").reset_index(drop=True)
+    cut_index = int(len(ordered) * (1.0 - test_size))
+    if cut_index <= 0 or cut_index >= len(ordered):
+        raise RuntimeError(
+            f"test_size={test_size} leaves one side of the split empty "
+            f"({len(ordered)} row(s))."
+        )
+
+    cut_frame = int(ordered.loc[cut_index, "frame"])
+    train = ordered[ordered["frame"] < cut_frame - embargo_frames]
+    test = ordered[ordered["frame"] >= cut_frame]
+    return train, test, cut_frame
+
+
 def train_model(
     features,
     model_output,
@@ -765,6 +788,7 @@ def train_model(
     class_balance,
     gb_params=None,
     save_model=True,
+    embargo_frames=0,
 ):
     y = features["is_wall_hit"].astype(int)
     missing_features = [column for column in MODEL_FEATURE_COLUMNS if column not in features.columns]
@@ -781,16 +805,27 @@ def train_model(
         f"with {len(x.columns)} feature column(s)...",
         flush=True,
     )
-    stratify = y if y.value_counts().min() >= 2 else None
-    x_train, x_test, y_train, y_test = train_test_split(
-        x,
-        y,
-        test_size=0.25,
-        random_state=random_seed,
-        stratify=stratify,
+    train_rows, test_rows, cut_frame = chronological_split(
+        features, test_size=0.25, embargo_frames=embargo_frames
     )
+    x_train = train_rows[MODEL_FEATURE_COLUMNS]
+    x_test = test_rows[MODEL_FEATURE_COLUMNS]
+    y_train = train_rows["is_wall_hit"].astype(int)
+    y_test = test_rows["is_wall_hit"].astype(int)
+
+    if y_train.nunique() < 2 or y_test.nunique() < 2:
+        raise RuntimeError(
+            "Chronological split left one side single-class "
+            f"(train positives {int(y_train.sum())}, test positives "
+            f"{int(y_test.sum())}). Label hits across more of the clip, or "
+            "train on several clips."
+        )
+
     print(
-        f"Train/test split: {len(x_train)} train row(s), {len(x_test)} test row(s).",
+        f"Chronological split at frame {cut_frame} "
+        f"(embargo {embargo_frames} frame(s)): "
+        f"{len(x_train)} train row(s) / {int(y_train.sum())} positive, "
+        f"{len(x_test)} test row(s) / {int(y_test.sum())} positive.",
         flush=True,
     )
 
@@ -1344,6 +1379,7 @@ def main():
                 "subsample": params["gb_subsample"],
             },
             save_model=not args.hyperparameter_matrix,
+            embargo_frames=params["context"],
         )
         entry = {"params": params, "features": features, "result": result}
         all_results.append(entry)

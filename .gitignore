@@ -34,3 +34,18 @@ venv/
 !eval_set/*.jsonl
 !eval_set/*.json
 !bounce_gb_model.pkl
+# CI config and the dependency manifests it installs from
+!.github/workflows/*.yml
+!requirements.txt
+!requirements-test.txt
+!README.md
+# Offline label sets from label_hits.py: the CSV plus the sidecar that says
+# which video its frame numbers index into. Small, and the eval set needs them.
+# Exact suffix, so scratch copies ("wall_hits copy.csv") stay ignored.
+!*wall_hits.csv
+!*wall_hits.meta.json
+
+# Virtualenvs, re-stated last: the `!*/` above re-includes every directory,
+# which silently un-ignored the rules near the top of this file.
+.venv/
+venv/

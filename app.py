@@ -43,7 +43,7 @@ from job_runner import (
     get_job,
     start_tracking_job,
 )
-from inference_engine import TRACKING_BACKEND
+from inference_engine import DEFAULT_MODEL_ID, TRACKING_BACKEND
 
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = 2 * 1024 * 1024 * 1024
@@ -58,6 +58,22 @@ FRONT_WALL_OUT_HEIGHT_FT = 4.57 * 3.280839895
 FRONT_WALL_TIN_HEIGHT_FT = 0.48 * 3.280839895
 FRONT_WALL_SERVICE_HEIGHT_FT = 1.78 * 3.280839895
 OPENAI_RESPONSES_URL = "https://api.openai.com/v1/responses"
+
+
+def model_provenance():
+    """What produced a run: model version, runtime, and app build.
+
+    Recorded per-run because these are all environment-dependent — the same
+    code on a teammate's laptop can pick a different device and a different
+    ROBOFLOW_MODEL_ID, and a result that can't name its model can't be
+    compared against another one.
+    """
+    return {
+        "model_id": os.getenv("ROBOFLOW_MODEL_ID", DEFAULT_MODEL_ID),
+        "tracking_backend": TRACKING_BACKEND,
+        "device": os.environ.get("DEFAULT_DEVICE", "cpu"),
+        "app_version": APP_VERSION,
+    }
 
 
 def error_response(message, status=400):
@@ -562,6 +578,10 @@ def track_clip():
         processed_frames=0,
         total_frames=total_frames,
         csv_url=f"/api/runs/{run_id}/ball_coordinates.csv",
+        # Provenance: which model and runtime produced this run. Without it a
+        # result can't be attributed to a model version, so an eval regression
+        # can't be traced to the change that caused it.
+        **model_provenance(),
         **extra_job_fields,
     )
     start_tracking_job(run_id)

@@ -60,11 +60,20 @@ def percentile(values, pct):
 def evaluate_cases(cases):
     corrections = [c for c in cases if c.get("kind") == "correction"]
     gt_events = [c for c in cases if c.get("kind") == "ground_truth_event"]
+    # Offline label_hits.py CSVs join the missed-bounce axis, but only where a
+    # tracking run actually produced detections for that video. Unscorable
+    # ones are counted separately so "never tracked" never masquerades as
+    # "detector missed it".
+    label_events = [c for c in cases if c.get("kind") == "label_csv_event"]
+    scorable_labels = [c for c in label_events if not c.get("no_detector_run")]
+    unscorable_labels = len(label_events) - len(scorable_labels)
 
     report = {
         "total_cases": len(cases),
         "correction_cases": len(corrections),
         "gt_cases": len(gt_events),
+        "label_cases": len(label_events),
+        "label_cases_unscorable": unscorable_labels,
         # axis 1: IN/OUT geometry vs the human call
         "judged": 0, "correct": 0, "accuracy": None,
         "confusion": {}, "mismatches": [], "unreplayable": [],
@@ -80,7 +89,8 @@ def evaluate_cases(cases):
         # axis 5: timing
         "timing": {"checked": 0, "frame_confirmed": 0, "offsets": []},
         # axis 6: missed bounces
-        "missed": {"checked": len(gt_events), "missed": [],
+        "missed": {"checked": len(gt_events) + len(scorable_labels),
+                   "missed": [],
                    "missed_by_type": {}, "matched_type_checked": 0,
                    "matched_type_correct": 0},
     }
@@ -172,7 +182,7 @@ def evaluate_cases(cases):
 
     # -- axis 6: missed bounces -----------------------------------------
     missed = report["missed"]
-    for case in gt_events:
+    for case in gt_events + scorable_labels:
         match = case.get("matched_detected")
         if match is None:
             missed["missed"].append((case["case_id"], case["human_type"]))
@@ -198,7 +208,11 @@ def load_eval_set(path):
 def print_report(report, verbose=False):
     print(f"Cases: {report['total_cases']} total "
           f"({report['correction_cases']} corrections, "
-          f"{report['gt_cases']} ground-truth events)")
+          f"{report['gt_cases']} ground-truth events, "
+          f"{report['label_cases']} label-CSV events)")
+    if report["label_cases_unscorable"]:
+        print(f"  {report['label_cases_unscorable']} label case(s) excluded — "
+              "their video has no tracking run yet")
 
     print("\n== IN/OUT vs human calls (judge on corrected ball) ==")
     if report["accuracy"] is not None:
