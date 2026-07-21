@@ -66,8 +66,10 @@ def fit_arc(times, pixels_und, camera, start=0, end=None):
         return None
     system = np.asarray(rows)
     try:
-        solution, *_ = np.linalg.lstsq(system, np.asarray(rhs), rcond=None)
+        solution, _, rank, _ = np.linalg.lstsq(system, np.asarray(rhs), rcond=None)
     except np.linalg.LinAlgError:
+        return None
+    if rank < 6:
         return None
     x0, v0 = solution[:3], solution[3:]
 

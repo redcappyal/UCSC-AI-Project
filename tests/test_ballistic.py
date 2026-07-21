@@ -1,5 +1,4 @@
 import numpy as np
-import pytest
 
 import ballistic
 from ballistic import BallisticArc, GRAVITY_VEC
@@ -55,3 +54,10 @@ def test_position_velocity_evaluation():
     expected_z = 3.0 * 0.5 + 0.5 * GRAVITY_VEC[2] * 0.25
     assert np.allclose(arc.position(1.5), [0.5, 1.0, expected_z])
     assert np.allclose(arc.velocity(1.5), [1.0, 2.0, 3.0 + GRAVITY_VEC[2] * 0.5])
+
+
+def test_fit_arc_degenerate_duplicate_times_returns_none():
+    camera = make_camera()
+    times = np.zeros(4)
+    pixels = _project_trajectory(camera, [10.0, 20.0, 5.0], [3.0, -40.0, 8.0], times)
+    assert ballistic.fit_arc(times, pixels, camera) is None
