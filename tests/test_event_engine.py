@@ -11,6 +11,7 @@ from audio_events import repeating_impact_windows
 from event_engine import (
     _emission_scores,
     _emission_scores_3d,
+    _positional_sigma_ft,
     decode_sequence,
     detect_events_fused,
     make_wall_region,
@@ -363,3 +364,19 @@ def test_3d_emissions_side_wall():
     event = _contact_event((0.3, 12.0, 5.0), (-30.0, -30.0, 2.0), (22.0, -26.0, 1.0))
     scores = _emission_scores_3d(event, False, camera, cfg)
     assert scores["side"] == max(scores.values())
+
+
+def test_positional_sigma_inflates_when_normal_along_ray():
+    from synthetic3d import make_camera
+    camera = make_camera()
+    cfg = merge_fusion_config({"plane_sigma_min_ft": 0.0})
+    point = (10.5, 0.5, 5.0)  # near the front wall, far from the back-wall camera
+    wall_sigma = _positional_sigma_ft(camera, point, np.array([0.0, 1.0, 0.0]), cfg)
+    floor_sigma = _positional_sigma_ft(camera, point, np.array([0.0, 0.0, 1.0]), cfg)
+    # The viewing ray runs nearly parallel to the wall normal, so the wall
+    # distance is poorly observed and its sigma must inflate well past the
+    # transverse (floor) sigma at the same point.
+    assert wall_sigma > 2.0 * floor_sigma
+    # Transverse scaling: a point closer to the camera has smaller sigma.
+    near_sigma = _positional_sigma_ft(camera, (10.5, 20.0, 5.0), np.array([0.0, 0.0, 1.0]), cfg)
+    assert floor_sigma > near_sigma
