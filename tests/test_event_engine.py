@@ -380,3 +380,18 @@ def test_positional_sigma_inflates_when_normal_along_ray():
     # Transverse scaling: a point closer to the camera has smaller sigma.
     near_sigma = _positional_sigma_ft(camera, (10.5, 20.0, 5.0), np.array([0.0, 0.0, 1.0]), cfg)
     assert floor_sigma > near_sigma
+
+
+def test_3d_wall_hit_carries_metric_impact():
+    from synthetic3d import make_camera
+    from tests_ballistic_helpers import make_bounce_rows
+    camera = make_camera()
+    rows, expected_frame = make_bounce_rows(camera)
+    hits = detect_events_fused(rows, camera=camera)
+    wall_hits = [h for h in hits if h["event_type"] == "wall"
+                 and abs(h["hit_frame"] - expected_frame) <= 3]
+    assert wall_hits
+    hit = wall_hits[0]
+    assert "impact_x" in hit and "impact_y" in hit
+    assert "impact_height_ft" in hit
+    assert 0.0 < hit["impact_height_ft"] < 15.0

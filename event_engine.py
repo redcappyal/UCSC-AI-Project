@@ -652,7 +652,26 @@ def detect_events_fused(
             for key in ("dv_magnitude", "speed_before", "speed_after", "turn_degrees"):
                 hit.pop(key)
 
-        if label == "wall" and calibration and event["index"] is not None:
+        if label == "floor" and event.get("contact_3d"):
+            point = event["contact_3d"]["point_ft"]
+            hit["court_position_ft"] = {"x": float(point[0]), "y": float(point[1])}
+
+        if label == "wall" and event.get("contact_3d") and camera is not None:
+            contact = event["contact_3d"]
+            point = np.asarray(contact["point_ft"], dtype=float)
+            wall_point = point.copy()
+            wall_point[1] = 0.0  # snap onto the front-wall plane for judging
+            try:
+                pixel = camera.project(wall_point)
+                from court_model import distort_point
+                hit["impact_x"], hit["impact_y"] = distort_point(
+                    pixel, camera.distortion)
+                hit["impact_time"] = contact["time"]
+                hit["impact_height_ft"] = float(point[2])
+            except ValueError:
+                pass  # fall through to the 2D impact fit below
+        if label == "wall" and calibration and event["index"] is not None \
+                and "impact_x" not in hit:
             lo = max(0, event["index"] - EVENT_WINDOW_HALF_WIDTH)
             hi = min(len(frames), event["index"] + EVENT_WINDOW_HALF_WIDTH + 1)
             diagnostics = {}

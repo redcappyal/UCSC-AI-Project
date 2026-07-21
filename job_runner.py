@@ -556,25 +556,31 @@ def judge_hits(run_dir, results, detected, audio_available=None, camera=None, ca
                     "y_reference": "0 is the out-line lower edge; 1 is the tin top edge",
                 }
                 entry["target_zone"] = target_zone_for_diagram(diagram)
-        if floor_map is not None and entry.get("event_type") == "floor":
-            bounce_point = None
-            if "impact_x" in hit:
-                bounce_point = (hit["impact_x"], hit["impact_y"])
-            elif display_row is not None:
-                detected_point = ball_point_from_row(display_row)
-                if detected_point is not None:
-                    bounce_point = (detected_point.x, detected_point.y)
-            if bounce_point is not None:
-                try:
-                    x_ft, y_ft = floor_map.image_to_court(*bounce_point)
-                except ValueError:
-                    pass
-                else:
-                    entry["court_position_ft"] = {
-                        "x": round(x_ft, 2),
-                        "y": round(y_ft, 2),
-                    }
-                    entry["floor_zone"] = court_model.floor_zone_for_point(x_ft, y_ft)
+        if entry.get("event_type") == "floor":
+            if hit.get("court_position_ft"):
+                entry["court_position_ft"] = hit["court_position_ft"]
+                x_ft = hit["court_position_ft"]["x"]
+                y_ft = hit["court_position_ft"]["y"]
+                entry["floor_zone"] = court_model.floor_zone_for_point(x_ft, y_ft)
+            elif floor_map is not None:
+                bounce_point = None
+                if "impact_x" in hit:
+                    bounce_point = (hit["impact_x"], hit["impact_y"])
+                elif display_row is not None:
+                    detected_point = ball_point_from_row(display_row)
+                    if detected_point is not None:
+                        bounce_point = (detected_point.x, detected_point.y)
+                if bounce_point is not None:
+                    try:
+                        x_ft, y_ft = floor_map.image_to_court(*bounce_point)
+                    except ValueError:
+                        pass
+                    else:
+                        entry["court_position_ft"] = {
+                            "x": round(x_ft, 2),
+                            "y": round(y_ft, 2),
+                        }
+                        entry["floor_zone"] = court_model.floor_zone_for_point(x_ft, y_ft)
         hits.append(entry)
 
     payload = {"hits": hits, "target_zones": build_target_zone_summary(hits)}
