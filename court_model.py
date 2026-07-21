@@ -15,12 +15,56 @@ from dataclasses import dataclass
 import numpy as np
 
 
+# WSF datum convention (Specifications for Squash Courts 2013/17; constants
+# table in docs/mount-spec.md §2.2). Court lines are 50 mm wide and are OUT;
+# every WSF dimension is datumed to a specific EDGE of a line, not its middle:
+# the short line is 4260 mm from the back wall to its NEAREST (back-wall-side)
+# edge, and service boxes are 1600 mm square INTERNAL (clear floor between the
+# inside faces of their lines, WSF 5.05.03). The ft constants below land on
+# those datum edges to within ~4 mm — inside WSF's ±10 mm construction
+# tolerance, so they are deliberately left as round feet:
+#
+#   SHORT_LINE_FROM_FRONT_FT  18.0 ft = 5486 mm ~ 9750-4260 = 5490 mm
+#       -> y=18.0 is the short line's BACK edge (the edge nearer the back wall)
+#   SERVICE_BOX_FT            5.25 ft = 1600.2 mm ~ 1600 mm internal side
+#       -> x=5.25 (left box) is the inner side line's INTERIOR (wall-side) edge
+#   SERVICE_BOX_BACK_FT       23.25 ft = 7086.6 mm ~ 5490+1600 = 7090 mm
+#       -> y=23.25 is the box back line's INTERIOR (front-facing) edge
+#   HALF_COURT_X_FT           10.5 ft = 3200.4 mm ~ 6400/2 = 3200 mm
+#       -> x=10.5 is the half-court line's CENTERLINE (the one landmark datum
+#          that is a line middle, not an edge — WSF centers it between walls)
+#
+# Landmark labels below must name the exact spot to tap: a 50 mm line spans
+# ~0.164 ft, so "the short line" without a datum is a 5 cm ambiguity — far
+# above the fit's px-level residual targets. Do not change these constants
+# without checking every consumer of court coordinates (eval_line_calls.py,
+# judge_call.py, bounce detectors).
 COURT_WIDTH_FT = 21.0
 COURT_LENGTH_FT = 32.0
 SHORT_LINE_FROM_FRONT_FT = 18.0
 SERVICE_BOX_FT = 5.25
 HALF_COURT_X_FT = COURT_WIDTH_FT / 2.0
 SERVICE_BOX_BACK_FT = SHORT_LINE_FROM_FRONT_FT + SERVICE_BOX_FT
+
+# Landmark datum: paint CENTERLINES, not WSF edges. The wizard's snap refiner
+# (flood-fill mask -> RANSAC+PCA over the stripe's full width) fits the middle
+# of each 50 mm painted line, so a landmark's court_ft must be the centerline
+# coordinate or every successful snap carries a systematic ~25 mm (half
+# line-width) bias — ~0.3 in, above the fit's px-level residual targets. The
+# constants above stay WSF edge datums (zone logic and judges consume them);
+# only the FLOOR_LANDMARKS below shift by LINE_HALF_WIDTH_FT, on the side of
+# the datum edge where the paint actually lies:
+#   short line   paint spans y in [18.0 - w, 18.0]   (line is OUT: behind it)
+#   box side     paint spans x in [5.25, 5.25 + w]   (outside the box interior)
+#   box back     paint spans y in [23.25, 23.25 + w] (outside the box interior)
+# Backward compatible: stored v2 calibrations embed their own court_ft per
+# landmark and load_floor_calibration reads those, so old fits are unchanged.
+LINE_WIDTH_FT = 50.0 / 304.8  # 50 mm WSF line width, ~0.164 ft
+LINE_HALF_WIDTH_FT = LINE_WIDTH_FT / 2.0
+SHORT_LINE_CENTER_Y_FT = SHORT_LINE_FROM_FRONT_FT - LINE_HALF_WIDTH_FT
+BOX_BACK_CENTER_Y_FT = SERVICE_BOX_BACK_FT + LINE_HALF_WIDTH_FT
+LEFT_BOX_INNER_CENTER_X_FT = SERVICE_BOX_FT + LINE_HALF_WIDTH_FT
+RIGHT_BOX_INNER_CENTER_X_FT = COURT_WIDTH_FT - SERVICE_BOX_FT - LINE_HALF_WIDTH_FT
 
 FLOOR_ZONE_COLUMNS = 3
 FLOOR_ZONE_ROWS = 4
@@ -30,57 +74,83 @@ FLOOR_ZONE_ROWS = 4
 FLOOR_LANDMARKS = [
     {
         "id": "short_line_left",
-        "court_ft": [0.0, SHORT_LINE_FROM_FRONT_FT],
-        "label": "Where the short line meets the LEFT side wall",
+        "court_ft": [0.0, SHORT_LINE_CENTER_Y_FT],
+        "label": (
+            "Where the MIDDLE of the short line's width meets the LEFT "
+            "side wall"
+        ),
         "optional": False,
         "snap_lines": ["h", "v"],
     },
     {
         "id": "short_line_right",
-        "court_ft": [COURT_WIDTH_FT, SHORT_LINE_FROM_FRONT_FT],
-        "label": "Where the short line meets the RIGHT side wall",
+        "court_ft": [COURT_WIDTH_FT, SHORT_LINE_CENTER_Y_FT],
+        "label": (
+            "Where the MIDDLE of the short line's width meets the RIGHT "
+            "side wall"
+        ),
         "optional": False,
         "snap_lines": ["h", "v"],
     },
     {
         "id": "t_point",
-        "court_ft": [HALF_COURT_X_FT, SHORT_LINE_FROM_FRONT_FT],
-        "label": "The T — where the short line meets the half-court line",
+        "court_ft": [HALF_COURT_X_FT, SHORT_LINE_CENTER_Y_FT],
+        "label": (
+            "The T — where the MIDDLE of the half-court line's width crosses "
+            "the MIDDLE of the short line's width"
+        ),
         "optional": False,
         "snap_lines": ["h", "v"],
     },
     {
         "id": "left_box_inner_back",
-        "court_ft": [SERVICE_BOX_FT, SERVICE_BOX_BACK_FT],
-        "label": "Back-inside corner of the LEFT service box",
+        "court_ft": [LEFT_BOX_INNER_CENTER_X_FT, BOX_BACK_CENTER_Y_FT],
+        "label": (
+            "Back-inside corner of the LEFT service box — the CENTER of the "
+            "painted corner, where the middle of its back line's width "
+            "crosses the middle of its inner side line's width"
+        ),
         "optional": False,
         "snap_lines": ["h", "v"],
     },
     {
         "id": "right_box_inner_back",
-        "court_ft": [COURT_WIDTH_FT - SERVICE_BOX_FT, SERVICE_BOX_BACK_FT],
-        "label": "Back-inside corner of the RIGHT service box",
+        "court_ft": [RIGHT_BOX_INNER_CENTER_X_FT, BOX_BACK_CENTER_Y_FT],
+        "label": (
+            "Back-inside corner of the RIGHT service box — the CENTER of the "
+            "painted corner, where the middle of its back line's width "
+            "crosses the middle of its inner side line's width"
+        ),
         "optional": False,
         "snap_lines": ["h", "v"],
     },
     {
         "id": "front_seam_left",
         "court_ft": [0.0, 0.0],
-        "label": "Front-LEFT corner where the front wall meets the floor",
+        "label": (
+            "Front-LEFT corner — the floor seam where front wall and LEFT "
+            "side wall meet (a wall junction, not a painted line)"
+        ),
         "optional": False,
         "snap_lines": ["h", "v"],
     },
     {
         "id": "front_seam_right",
         "court_ft": [COURT_WIDTH_FT, 0.0],
-        "label": "Front-RIGHT corner where the front wall meets the floor",
+        "label": (
+            "Front-RIGHT corner — the floor seam where front wall and RIGHT "
+            "side wall meet (a wall junction, not a painted line)"
+        ),
         "optional": False,
         "snap_lines": ["h", "v"],
     },
     {
         "id": "half_court_back",
         "court_ft": [HALF_COURT_X_FT, COURT_LENGTH_FT],
-        "label": "Where the half-court line meets the back wall (skip if hidden)",
+        "label": (
+            "Where the MIDDLE of the half-court line's width meets the back "
+            "wall (skip if hidden)"
+        ),
         "optional": True,
         "snap_lines": ["v", "h"],
     },
@@ -438,3 +508,481 @@ def build_floor_zone_summary(hits, columns=FLOOR_ZONE_COLUMNS, rows=FLOOR_ZONE_R
         "common_zones": common,
         "missing_zones": missing,
     }
+
+
+# --- Full camera model (pose + focal) --------------------------------------
+
+G_FT_PER_S2 = 32.174
+
+OUT_LINE_HEIGHT_FT = 15.0
+TIN_TOP_HEIGHT_FT = 19.0 / 12.0
+
+_WALL_LINE_HEIGHTS_FT = {
+    "out_line_lower_edge": OUT_LINE_HEIGHT_FT,
+    "tin_top_edge": TIN_TOP_HEIGHT_FT,
+}
+
+
+@dataclass(frozen=True)
+class CameraModel:
+    """Calibrated pinhole camera in court coordinates (feet).
+
+    Operates in undistorted pixel space: `project` returns undistorted
+    pixels and `ray` expects them; callers undistort observations with
+    `undistort_point(p, self.distortion)` first.
+    """
+
+    focal_px: float
+    center_px: tuple
+    rotation: np.ndarray        # 3x3, world -> camera
+    camera_center_ft: np.ndarray  # (3,)
+    distortion: dict | None
+    fit_rms_px: float | None
+    point_count: int
+
+    def project(self, court_xyz):
+        camera_point = self.rotation @ (
+            np.asarray(court_xyz, dtype=float) - self.camera_center_ft
+        )
+        if camera_point[2] <= 1e-9:
+            raise ValueError("Point is at or behind the camera.")
+        cx, cy = self.center_px
+        return (
+            self.focal_px * camera_point[0] / camera_point[2] + cx,
+            self.focal_px * camera_point[1] / camera_point[2] + cy,
+        )
+
+    def ray(self, pixel):
+        cx, cy = self.center_px
+        direction_camera = np.array(
+            [(float(pixel[0]) - cx) / self.focal_px,
+             (float(pixel[1]) - cy) / self.focal_px,
+             1.0]
+        )
+        direction = self.rotation.T @ direction_camera
+        return (
+            self.camera_center_ft.copy(),
+            direction / np.linalg.norm(direction),
+        )
+
+    def depth_ft(self, court_xyz):
+        camera_point = self.rotation @ (
+            np.asarray(court_xyz, dtype=float) - self.camera_center_ft
+        )
+        return float(camera_point[2])
+
+    def projection_matrix(self):
+        cx, cy = self.center_px
+        intrinsics = np.array(
+            [[self.focal_px, 0.0, cx], [0.0, self.focal_px, cy], [0.0, 0.0, 1.0]]
+        )
+        translation = (-self.rotation @ self.camera_center_ft).reshape(3, 1)
+        return intrinsics @ np.hstack([self.rotation, translation])
+
+    def to_dict(self):
+        return {
+            "focal_px": float(self.focal_px),
+            "center_px": [float(self.center_px[0]), float(self.center_px[1])],
+            "rotation": self.rotation.tolist(),
+            "camera_center_ft": self.camera_center_ft.tolist(),
+            "distortion": self.distortion,
+            "fit_rms_px": self.fit_rms_px,
+            "point_count": self.point_count,
+        }
+
+    @classmethod
+    def from_dict(cls, data):
+        return cls(
+            focal_px=float(data["focal_px"]),
+            center_px=(float(data["center_px"][0]), float(data["center_px"][1])),
+            rotation=np.asarray(data["rotation"], dtype=float),
+            camera_center_ft=np.asarray(data["camera_center_ft"], dtype=float),
+            distortion=data.get("distortion"),
+            fit_rms_px=data.get("fit_rms_px"),
+            point_count=int(data.get("point_count") or 0),
+        )
+
+
+def _camera_correspondences(calibration):
+    """Image px (raw/distorted) <-> court 3D points from a v2 calibration.
+
+    Floor landmarks sit at z=0. Front-wall line endpoints sit at
+    (0, 0, h) and (21, 0, h): line_from_calibration's contract stores them
+    left-then-right, and the wizard spans the wall, so the endpoints are the
+    side-wall junctions. If a calibration violates that, the pose fit's
+    residual gate (solve_camera_model) rejects it.
+    """
+    image_points, court_points = [], []
+    planes = calibration.get("planes") or {}
+    floor_plane = planes.get("floor") or {}
+    for landmark in floor_plane.get("landmarks", []):
+        if landmark.get("skipped"):
+            continue
+        pixel = landmark.get("refined_px") or landmark.get("tap_px")
+        court = landmark.get("court_ft")
+        if pixel is None or court is None:
+            continue
+        image_points.append([float(pixel[0]), float(pixel[1])])
+        court_points.append([float(court[0]), float(court[1]), 0.0])
+    for line in calibration.get("lines", []):
+        height = _WALL_LINE_HEIGHTS_FT.get(line.get("name"))
+        endpoints = line.get("endpoints") or []
+        if height is None or len(endpoints) != 2:
+            continue
+        for x_ft, endpoint in zip((0.0, COURT_WIDTH_FT), endpoints):
+            image_points.append([float(endpoint[0]), float(endpoint[1])])
+            court_points.append([x_ft, 0.0, height])
+    return (
+        np.asarray(image_points, dtype=float).reshape(-1, 2),
+        np.asarray(court_points, dtype=float).reshape(-1, 3),
+    )
+
+
+def _init_camera_from_floor(calibration, frame_size):
+    """Approximate (focal, R, C) from the floor homography, Zhang-style.
+
+    H maps court floor (x, y) -> undistorted image px, H ~ K [r1 r2 t].
+    With the principal point pinned at the image center, the orthonormality
+    of r1, r2 yields two closed-form estimates of the focal length.
+    """
+    floor_map = load_floor_calibration(calibration)
+    if floor_map is None:
+        return None
+    homography = invert_homography(floor_map.homography_court_from_image)
+    cx, cy = frame_size[0] / 2.0, frame_size[1] / 2.0
+
+    def reduced(column):
+        return (
+            column[0] - cx * column[2],
+            column[1] - cy * column[2],
+            column[2],
+        )
+
+    a1, b1, c1 = reduced(homography[:, 0])
+    a2, b2, c2 = reduced(homography[:, 1])
+    focal_sq = []
+    if abs(c1 * c2) > 1e-12:
+        value = -(a1 * a2 + b1 * b2) / (c1 * c2)
+        if value > 0:
+            focal_sq.append(value)
+    if abs(c2 * c2 - c1 * c1) > 1e-12:
+        value = ((a1 * a1 + b1 * b1) - (a2 * a2 + b2 * b2)) / (c2 * c2 - c1 * c1)
+        if value > 0:
+            focal_sq.append(value)
+    if not focal_sq:
+        return None
+    focal = float(np.sqrt(np.mean(focal_sq)))
+
+    intrinsics_inv = np.array(
+        [[1.0 / focal, 0.0, -cx / focal],
+         [0.0, 1.0 / focal, -cy / focal],
+         [0.0, 0.0, 1.0]]
+    )
+    r1 = intrinsics_inv @ homography[:, 0]
+    r2 = intrinsics_inv @ homography[:, 1]
+    translation = intrinsics_inv @ homography[:, 2]
+    scale = 2.0 / (np.linalg.norm(r1) + np.linalg.norm(r2))
+    r1, r2, translation = r1 * scale, r2 * scale, translation * scale
+    if translation[2] < 0:
+        # Court origin must be in front of the camera.
+        r1, r2, translation = -r1, -r2, -translation
+    r3 = np.cross(r1, r2)
+    u, _, vt = np.linalg.svd(np.column_stack([r1, r2, r3]))
+    rotation = u @ vt
+    if np.linalg.det(rotation) < 0:
+        rotation = u @ np.diag([1.0, 1.0, -1.0]) @ vt
+    camera_center = -rotation.T @ translation
+    return focal, rotation, camera_center
+
+
+CAMERA_MAX_RMS_PX = 4.0  # gate at 1920-wide frames; scaled by frame_width/1920
+
+# Plausibility gates for solve_camera_model (see _init_camera_dlt / solve_camera_model).
+CAMERA_MIN_FOCAL_RATIO = 0.2
+CAMERA_MAX_FOCAL_RATIO = 5.0
+CAMERA_MAX_CENTER_PX_FRAC_OF_DIAGONAL = 0.25
+
+
+def _rq3(matrix):
+    """RQ decomposition of a 3x3 matrix: matrix == R @ Q, R upper triangular,
+    Q orthogonal. Pure-numpy via the flipud/QR trick (no scipy dependency)."""
+    reverse = np.eye(3)[::-1]
+    q0, r0 = np.linalg.qr((reverse @ matrix).T)
+    r = reverse @ r0.T @ reverse
+    q = reverse @ q0.T
+    return r, q
+
+
+def _init_camera_dlt(image_und, court_xyz):
+    """Full 11-DOF DLT camera calibration (pose + focal + principal point).
+
+    Unlike _init_camera_from_floor, this does not assume a centered principal
+    point -- it is the initializer of choice for real (possibly cropped or
+    reprocessed) footage where the principal point may sit well off-center.
+
+    Requires >= 6 correspondences with >= 2 off the floor plane (z > 0), else
+    returns None (insufficient constraints for the 11-DOF system). Returns
+    None on any degeneracy (LinAlgError, singular system, etc.) rather than
+    raising -- callers fall back to the homography-based initializer.
+    """
+    image_und = np.asarray(image_und, dtype=float)
+    court_xyz = np.asarray(court_xyz, dtype=float)
+    if len(image_und) < 6 or int(np.sum(court_xyz[:, 2] > 0.0)) < 2:
+        return None
+    try:
+        rows = []
+        for (u, v), (x, y, z) in zip(image_und, court_xyz):
+            rows.append([x, y, z, 1.0, 0.0, 0.0, 0.0, 0.0,
+                        -u * x, -u * y, -u * z, -u])
+            rows.append([0.0, 0.0, 0.0, 0.0, x, y, z, 1.0,
+                        -v * x, -v * y, -v * z, -v])
+        system = np.asarray(rows)
+        _, _, vt = np.linalg.svd(system)
+        projection = vt[-1].reshape(3, 4)
+
+        m = projection[:, :3]
+        if np.linalg.det(m) < 0:
+            # The SVD null vector's overall sign is arbitrary (projective
+            # scale ambiguity). Pin it so det(M) > 0: with the RQ sign-fix
+            # below forcing K's diagonal positive (det(K) > 0), that makes
+            # det(rotation) come out +1 -- a proper rotation, not a mirror
+            # camera -- deterministically rather than depending on whichever
+            # sign the SVD happened to return.
+            projection = -projection
+            m = projection[:, :3]
+        p4 = projection[:, 3]
+        k_mat, rotation = _rq3(m)
+
+        diag_signs = np.sign(np.diag(k_mat))
+        diag_signs[diag_signs == 0] = 1.0
+        sign_fix = np.diag(diag_signs)
+        k_mat = k_mat @ sign_fix
+        rotation = sign_fix @ rotation
+
+        if abs(k_mat[2, 2]) <= 1e-9:
+            return None
+        k_mat = k_mat / k_mat[2, 2]
+
+        camera_center = -np.linalg.inv(m) @ p4
+        if not np.isfinite(camera_center).all():
+            return None
+
+        # Cheirality: rotation already has det=+1 from the sign pin above.
+        # Flipping rotation to fix a negative depth would also flip its
+        # determinant back to -1 (a mirror camera) -- the same single sign
+        # choice controls both. If proper rotation and positive depth can't
+        # both hold, the correspondences don't support a trustworthy pose.
+        mean_point = court_xyz.mean(axis=0)
+        depth = (rotation @ (mean_point - camera_center))[2]
+        if depth < 0:
+            return None
+        if not np.isfinite(k_mat).all() or not np.isfinite(rotation).all():
+            return None
+
+        focal = float((k_mat[0, 0] + k_mat[1, 1]) / 2.0)
+        center_px = (float(k_mat[0, 2]), float(k_mat[1, 2]))
+        return focal, center_px, rotation, camera_center
+    except np.linalg.LinAlgError:
+        return None
+
+
+def _rotation_from_axis_angle(omega):
+    theta = np.linalg.norm(omega)
+    if theta < 1e-12:
+        return np.eye(3)
+    axis = omega / theta
+    skew = np.array(
+        [[0.0, -axis[2], axis[1]],
+         [axis[2], 0.0, -axis[0]],
+         [-axis[1], axis[0], 0.0]]
+    )
+    return np.eye(3) + np.sin(theta) * skew + (1.0 - np.cos(theta)) * (skew @ skew)
+
+
+def _camera_residuals(focal, rotation, center, center_px, court_xyz, image_und):
+    """Flat residual vector (2N,) of undistorted-pixel reprojection errors,
+    or None if any point falls at/behind the camera."""
+    cx, cy = center_px
+    residuals = np.empty(2 * len(court_xyz))
+    for index, (point, observed) in enumerate(zip(court_xyz, image_und)):
+        camera_point = rotation @ (point - center)
+        if camera_point[2] <= 1e-6:
+            return None
+        residuals[2 * index] = focal * camera_point[0] / camera_point[2] + cx - observed[0]
+        residuals[2 * index + 1] = focal * camera_point[1] / camera_point[2] + cy - observed[1]
+    return residuals
+
+
+def _refine_camera(focal, rotation, center, center_px, court_xyz, image_und,
+                   iterations=60, refine_center_px=False):
+    """Levenberg-Marquardt over [focal, axis-angle(3), center(3)] (7 params),
+    or additionally [cx, cy] (9 params) when refine_center_px=True, with a
+    numeric Jacobian. Local rotation parameterization: each accepted step
+    right-multiplies the current rotation and resets omega to zero.
+
+    Returns (focal, rotation, center, residuals) when refine_center_px is
+    False (unchanged legacy shape), or (focal, rotation, center, center_px,
+    residuals) when True. None on failure to converge to a valid geometry."""
+    damping = 1e-3
+    residuals = _camera_residuals(focal, rotation, center, center_px,
+                                  court_xyz, image_und)
+    if residuals is None:
+        return None
+    cost = float(residuals @ residuals)
+    n_params = 9 if refine_center_px else 7
+    for _ in range(iterations):
+        if refine_center_px:
+            params = np.concatenate([[focal], np.zeros(3), center, center_px])
+        else:
+            params = np.concatenate([[focal], np.zeros(3), center])
+        jacobian = np.empty((len(residuals), n_params))
+        for column in range(n_params):
+            step = np.zeros(n_params)
+            step[column] = 1e-4 if (column == 0 or column >= 7) else 1e-6
+            plus = params + step
+            trial_center_px = (plus[7], plus[8]) if refine_center_px else center_px
+            trial = _camera_residuals(
+                plus[0], rotation @ _rotation_from_axis_angle(plus[1:4]),
+                plus[4:7], trial_center_px, court_xyz, image_und)
+            if trial is None:
+                return None
+            jacobian[:, column] = (trial - residuals) / step[column]
+        normal = jacobian.T @ jacobian
+        gradient = jacobian.T @ residuals
+        improved = False
+        for _ in range(8):
+            try:
+                delta = np.linalg.solve(
+                    normal + damping * np.diag(np.diag(normal)), -gradient)
+            except np.linalg.LinAlgError:
+                return None
+            trial_focal = focal + delta[0]
+            trial_rotation = rotation @ _rotation_from_axis_angle(delta[1:4])
+            trial_center = center + delta[4:7]
+            trial_center_px = (
+                (center_px[0] + delta[7], center_px[1] + delta[8])
+                if refine_center_px else center_px)
+            trial = _camera_residuals(trial_focal, trial_rotation, trial_center,
+                                      trial_center_px, court_xyz, image_und)
+            if trial is not None and float(trial @ trial) < cost:
+                focal, rotation, center = trial_focal, trial_rotation, trial_center
+                center_px = trial_center_px
+                residuals, cost = trial, float(trial @ trial)
+                damping = max(damping / 3.0, 1e-9)
+                improved = True
+                break
+            damping *= 4.0
+        if not improved:
+            break
+    if refine_center_px:
+        return focal, rotation, center, center_px, residuals
+    return focal, rotation, center, residuals
+
+
+def solve_camera_model(calibration):
+    """Full pose + focal from a v2 calibration. Returns (CameraModel|None, info).
+
+    Mirrors load_floor_calibration's philosophy: never raises on bad input,
+    always explains itself through info["status"].
+    """
+    if not isinstance(calibration, dict):
+        return None, {"status": "no_frame_size"}
+    frame_width = calibration.get("frame_width")
+    frame_height = calibration.get("frame_height")
+    if not frame_width or not frame_height:
+        return None, {"status": "no_frame_size"}
+    try:
+        frame_width = float(frame_width)
+        frame_height = float(frame_height)
+    except (TypeError, ValueError):
+        return None, {"status": "no_frame_size"}
+    center_px = (frame_width / 2.0, frame_height / 2.0)
+
+    try:
+        image_px, court_xyz = _camera_correspondences(calibration)
+        distortion = calibration.get("distortion") or None
+        floor_count = int(np.sum(court_xyz[:, 2] == 0.0)) if len(court_xyz) else 0
+        wall_count = len(court_xyz) - floor_count
+        if floor_count < 4 or wall_count < 2:
+            return None, {"status": "insufficient_points",
+                          "floor_points": floor_count, "wall_points": wall_count}
+        image_und = np.asarray(
+            [undistort_point(pixel, distortion) for pixel in image_px])
+
+        dlt_init = _init_camera_dlt(image_und, court_xyz)
+        if dlt_init is not None:
+            init_focal, init_center_px, init_rotation, init_center = dlt_init
+            refined = _refine_camera(
+                init_focal, init_rotation, init_center, init_center_px,
+                court_xyz, image_und, refine_center_px=True)
+            init_kind = "dlt"
+        else:
+            init = _init_camera_from_floor(calibration, (frame_width, frame_height))
+            if init is None:
+                return None, {"status": "init_failed"}
+            refined = _refine_camera(*init, center_px, court_xyz, image_und)
+            init_kind = "homography"
+        if refined is None:
+            return None, {"status": "refine_failed"}
+        if init_kind == "dlt":
+            focal, rotation, center, center_px, residuals = refined
+        else:
+            focal, rotation, center, residuals = refined
+    except (ValueError, TypeError, KeyError, np.linalg.LinAlgError):
+        return None, {"status": "refine_failed"}
+
+    center_px = (float(center_px[0]), float(center_px[1]))
+    per_point = np.sqrt(residuals[0::2] ** 2 + residuals[1::2] ** 2)
+    rms = float(np.sqrt(np.mean(per_point ** 2)))
+    median = float(np.median(per_point))
+    info = {
+        "rms_px": rms, "max_px": float(per_point.max()),
+        "median_px": median,
+        "det_rotation": float(np.linalg.det(rotation)),
+        "point_count": len(court_xyz),
+        "center_px": [center_px[0], center_px[1]],
+        "init": init_kind,
+    }
+
+    frame_diagonal = float(np.hypot(frame_width, frame_height))
+    frame_center = (frame_width / 2.0, frame_height / 2.0)
+    center_px_offset = float(
+        np.hypot(center_px[0] - frame_center[0], center_px[1] - frame_center[1]))
+    if info["det_rotation"] < 0:
+        # Belt-and-braces: _init_camera_dlt and _init_camera_from_floor both
+        # pin the rotation to a proper (det=+1) solution or return None, but
+        # a mirror camera should never reach here regardless of init path.
+        info["status"] = "implausible_geometry"
+        info["reason"] = "mirror_rotation"
+        return None, info
+    if float(center[2]) <= 0.0:
+        info["status"] = "implausible_geometry"
+        info["reason"] = "camera_center_below_floor"
+        info["camera_center_ft"] = [float(value) for value in center]
+        return None, info
+    if not (CAMERA_MIN_FOCAL_RATIO * frame_width
+            <= focal <= CAMERA_MAX_FOCAL_RATIO * frame_width):
+        info["status"] = "implausible_geometry"
+        info["reason"] = "focal_out_of_range"
+        info["focal_px"] = float(focal)
+        return None, info
+    if center_px_offset > CAMERA_MAX_CENTER_PX_FRAC_OF_DIAGONAL * frame_diagonal:
+        info["status"] = "implausible_geometry"
+        info["reason"] = "principal_point_far_from_center"
+        info["center_px_offset"] = center_px_offset
+        return None, info
+
+    # Robust to a minority of bad taps: gate on the median residual (one
+    # un-refined tap shouldn't reject an otherwise-good fit) while a 3x rms
+    # ceiling still catches globally-sloppy geometry.
+    threshold = CAMERA_MAX_RMS_PX * float(frame_width) / 1920.0
+    if not (median <= threshold and rms <= 3.0 * threshold):
+        info["status"] = "high_residual"
+        return None, info
+    info["status"] = "ok"
+    camera = CameraModel(
+        focal_px=float(focal), center_px=center_px, rotation=rotation,
+        camera_center_ft=np.asarray(center, dtype=float),
+        distortion=distortion, fit_rms_px=rms, point_count=len(court_xyz),
+    )
+    return camera, info

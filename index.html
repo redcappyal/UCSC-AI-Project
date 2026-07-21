@@ -493,6 +493,11 @@
         <button type="button" data-engine="fusion">Geometry</button>
         <button type="button" data-engine="gb_model" class="on">Model</button>
       </div>
+      <span class="nudgeLabel">3D</span>
+      <div class="engineSeg" id="fusion3dSeg">
+        <button type="button" data-fusion3d="" class="on">Off</button>
+        <button type="button" data-fusion3d="1">On</button>
+      </div>
     </div>
     <div class="clipOverview" id="clipOverview">
       <canvas id="overviewStrip"></canvas>
@@ -779,6 +784,7 @@ const S = {
   videoFps:null,              // probed by the server at upload; null until known
   clip:{start:0, end:0, cursor:0, dragging:null, frameStride:1, inferenceWidth:960,
     eventEngine:'gb_model',   // debug-only wall-hit engine override: votes | gb_model | fusion
+    fusion3d:false,           // experimental 3D contact detection (fusion engine + camera solve)
     viewStart:0, viewEnd:1, viewSpan:0,   // detail window derived from cursor ± viewSpan/2
     dragX:0, dragT:0,
     overviewThumbs:false, overviewDragging:false,
@@ -3117,6 +3123,13 @@ for(const btn of $('engineSeg').querySelectorAll('button')){
   };
 }
 
+for(const btn of $('fusion3dSeg').querySelectorAll('button')){
+  btn.onclick = () => {
+    S.clip.fusion3d = btn.dataset.fusion3d === '1';
+    for(const b of $('fusion3dSeg').querySelectorAll('button')) b.classList.toggle('on', b === btn);
+  };
+}
+
 $('runTrackBtn').onclick = async () => {
   if(!S.videoFile){
     $('trackStatus').textContent = 'Load the source video again before tracking.';
@@ -3149,6 +3162,7 @@ $('runTrackBtn').onclick = async () => {
     form.append('frame_stride', S.clip.frameStride.toString());
     form.append('inference_width', S.clip.inferenceWidth.toString());
     form.append('event_engine', S.clip.eventEngine);
+    form.append('fusion_3d', S.clip.fusion3d ? '1' : '');
 
     const started = await postFormRequest('/api/track', form);
     if(S.phase !== 'analyze') return;

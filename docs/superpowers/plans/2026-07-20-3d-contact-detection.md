@@ -1046,6 +1046,19 @@ def segment_track(times, pixels_und, camera, rms_px, min_points):
             start = end
             continue
         while end < count:
+            # Prediction-residual gate: test the candidate sample against the
+            # CURRENT arc's extrapolation before refitting. A refit absorbs
+            # the contaminated point and redistributes its error (aggregate
+            # and even own-residual checks dilute), so the arc would overrun
+            # the contact by a sample.
+            try:
+                u, v = camera.project(best.position(float(times[end])))
+            except ValueError:
+                break
+            du = u - float(pixels_und[end][0])
+            dv = v - float(pixels_und[end][1])
+            if (du * du + dv * dv) ** 0.5 > rms_px:
+                break
             grown = fit_arc(times, pixels_und, camera, start, end + 1)
             if grown is None or grown.rms_px > rms_px:
                 break

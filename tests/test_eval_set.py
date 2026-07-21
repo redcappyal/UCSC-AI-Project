@@ -267,6 +267,19 @@ def test_evaluate_missed_bounce_axis(tmp_path):
     assert missed["matched_type_correct"] == 1
 
 
+def test_ground_truth_skipped_without_detected_hits(tmp_path):
+    run_dir = tmp_path / "runs" / "labelonly"
+    run_dir.mkdir(parents=True)
+    (run_dir / "ground_truth.json").write_text(json.dumps({
+        "events": [{"frame": 10, "type": "floor"}],
+    }))
+    # NOTE: no detected_hits.json on purpose
+    cases, manifest = build_eval_set(tmp_path / "runs")
+    gt_cases = [c for c in cases if c["kind"] == "ground_truth_event"]
+    assert gt_cases == []
+    assert manifest["ground_truth_runs_skipped_no_detections"] == 1
+
+
 def test_evaluate_empty_set():
     report = evaluate_cases([])
     assert report["accuracy"] is None
