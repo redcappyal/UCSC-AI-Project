@@ -890,7 +890,7 @@ function setPhase(p){
     $('instr').innerHTML = `Tap the red paint of the <b class="${c.key}">${c.label}</b>. If glare breaks the selection, tap the missed stretch to extend it. Pinch to zoom for a precise tap.`;
     $('instr').classList.remove('hidden');
   } else if(p === 'tap_wall'){
-    $('instr').textContent = 'Tap the four front-wall corners clockwise, starting with the upper-left corner. Pinch to zoom if needed.';
+    $('instr').textContent = 'Tap the four front-wall reference corners clockwise: where the out line meets each side wall, then the wall/floor seam corners. Pinch to zoom if needed.';
     $('instr').classList.remove('hidden');
   } else {
     $('instr').textContent = STEP_META[p].instr;
@@ -1577,11 +1577,15 @@ function drawFitLine(fit, color){
   ctx.restore();
 }
 
+// Reference corners with exact court coordinates: the OUT LINE's junctions
+// with the side walls (15 ft) and the wall/floor seam corners (0 ft) — not
+// the physical panel's top edge, whose height varies by venue. All four feed
+// the camera pose solve (court_model._camera_correspondences).
 const WALL_CORNERS = [
-  {id:'top_left', label:'Upper left'},
-  {id:'top_right', label:'Upper right'},
-  {id:'bottom_right', label:'Lower right'},
-  {id:'bottom_left', label:'Lower left'},
+  {id:'top_left', label:'Out line · left', prompt:'Tap where the OUT LINE meets the LEFT side wall.'},
+  {id:'top_right', label:'Out line · right', prompt:'Tap where the OUT LINE meets the RIGHT side wall.'},
+  {id:'bottom_right', label:'Floor seam · right', prompt:'Tap the RIGHT corner where the front wall meets the floor.'},
+  {id:'bottom_left', label:'Floor seam · left', prompt:'Tap the LEFT corner where the front wall meets the floor.'},
 ];
 
 function newWallState(points = []){
@@ -1600,7 +1604,7 @@ function buildWallCornerView(){
   if(!S.wall) S.wall = newWallState();
   const n = S.wall.points.length;
   $('wallPrompt').textContent = n < WALL_CORNERS.length
-    ? `Tap ${WALL_CORNERS[n].label.toLowerCase()} front-wall corner.`
+    ? WALL_CORNERS[n].prompt
     : 'All four wall corners are set.';
   $('wallCornerList').innerHTML = WALL_CORNERS.map((corner, i) => {
     const cls = i < n ? 'done' : (i === n ? 'active' : '');
@@ -1611,7 +1615,7 @@ function buildWallCornerView(){
   $('wallUndoBtn').disabled = n === 0;
   $('wallStatus').textContent = n === WALL_CORNERS.length
     ? 'Wall bounds will be used for horizontal judge limits and target-zone mapping.'
-    : 'Click the visible corners of the front wall, not the tin or service boxes.';
+    : 'Tap the out-line junctions and floor-seam corners — not the tin, service boxes, or the panel top.';
   $('wallStatus').className = 'status' + (n === WALL_CORNERS.length ? ' ok' : '');
 }
 

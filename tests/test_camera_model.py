@@ -190,12 +190,13 @@ def test_solve_camera_model_rejects_implausible_principal_point():
     assert info["status"] == "implausible_geometry"
 
 
-def _add_wall_corners(camera, calibration, top_height_ft=16.0):
-    """Attach planes.wall.corners taps (judge_call schema, raw tap_px only)."""
+def _add_wall_corners(camera, calibration):
+    """Attach planes.wall.corners taps (judge_call schema, raw tap_px only):
+    top corners at the out-line/side-wall junctions, bottom at the floor seam."""
     corners = []
     for corner_id, court in (
-        ("top_left", (0.0, 0.0, top_height_ft)),
-        ("top_right", (court_model.COURT_WIDTH_FT, 0.0, top_height_ft)),
+        ("top_left", (0.0, 0.0, court_model.OUT_LINE_HEIGHT_FT)),
+        ("top_right", (court_model.COURT_WIDTH_FT, 0.0, court_model.OUT_LINE_HEIGHT_FT)),
         ("bottom_right", (court_model.COURT_WIDTH_FT, 0.0, 0.0)),
         ("bottom_left", (0.0, 0.0, 0.0)),
     ):
@@ -204,15 +205,17 @@ def _add_wall_corners(camera, calibration, top_height_ft=16.0):
     return calibration
 
 
-def test_camera_correspondences_include_bottom_wall_corners_only():
+def test_camera_correspondences_include_all_wall_corner_taps():
     camera = make_camera()
     calibration = _add_wall_corners(camera, _synthetic_calibration(camera))
     image_px, court_xyz = court_model._camera_correspondences(calibration)
-    # 7 required landmarks + 4 line endpoints + 2 bottom corners; the top
-    # corners have no known height and must NOT appear.
-    assert len(court_xyz) == 13
+    # 7 required landmarks + 4 line endpoints + 4 corner taps.
+    assert len(court_xyz) == 15
     seams = [xyz for xyz in court_xyz if xyz[1] == 0.0 and xyz[2] == 0.0]
     assert len(seams) == 4  # 2 front_seam landmarks + 2 bottom wall corners
+    out_line = [xyz for xyz in court_xyz
+                if xyz[2] == court_model.OUT_LINE_HEIGHT_FT]
+    assert len(out_line) == 4  # 2 out-line endpoints + 2 top wall corners
 
 
 def test_solve_camera_model_uses_wall_corner_taps():
@@ -223,7 +226,7 @@ def test_solve_camera_model_uses_wall_corner_taps():
         corner["tap_px"] = list(np.asarray(corner["tap_px"]) + rng.normal(0, 0.5, 2))
     solved, info = court_model.solve_camera_model(calibration)
     assert info["status"] == "ok"
-    assert info["point_count"] == 13
+    assert info["point_count"] == 15
     assert solved.focal_px == pytest.approx(1550.0, rel=0.03)
 
 

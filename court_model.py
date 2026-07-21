@@ -633,22 +633,28 @@ def _camera_correspondences(calibration):
             image_points.append([float(endpoint[0]), float(endpoint[1])])
             court_points.append([x_ft, 0.0, height])
     # Wall-corner taps (planes.wall.corners, judge_call.load_wall_corners
-    # schema). Only the BOTTOM corners: they are the front-wall/floor seam at
-    # exactly (0,0,0) / (21,0,0). The top corners are the physical panel's
-    # top edge, whose height is venue-dependent — no known z, so no
-    # correspondence. Duplicating a front_seam floor landmark is fine: the
-    # taps are independent, so the fit averages their noise.
+    # schema). The wizard targets reference corners with exact coordinates:
+    # top = the OUT LINE's junctions with the side walls (15 ft), bottom =
+    # the front-wall/floor seam corners. Duplicating a front_seam landmark
+    # or an out-line endpoint is fine: the taps are independent, so the fit
+    # averages their noise.
     wall_plane = planes.get("wall") or {}
-    corner_x_ft = {"bottom_left": 0.0, "bottom_right": COURT_WIDTH_FT}
+    corner_court_ft = {
+        "top_left": (0.0, OUT_LINE_HEIGHT_FT),
+        "top_right": (COURT_WIDTH_FT, OUT_LINE_HEIGHT_FT),
+        "bottom_left": (0.0, 0.0),
+        "bottom_right": (COURT_WIDTH_FT, 0.0),
+    }
     for corner in wall_plane.get("corners") or []:
         if not isinstance(corner, dict):
             continue
-        x_ft = corner_x_ft.get(corner.get("id"))
+        placement = corner_court_ft.get(corner.get("id"))
         tap = corner.get("tap_px")
-        if x_ft is None or tap is None:
+        if placement is None or tap is None:
             continue
+        x_ft, z_ft = placement
         image_points.append([float(tap[0]), float(tap[1])])
-        court_points.append([x_ft, 0.0, 0.0])
+        court_points.append([x_ft, 0.0, z_ft])
     return (
         np.asarray(image_points, dtype=float).reshape(-1, 2),
         np.asarray(court_points, dtype=float).reshape(-1, 3),
