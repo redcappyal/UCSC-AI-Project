@@ -130,3 +130,23 @@ def test_arc_boundary_events_shape():
     assert len(event["contact_3d"]["point_ft"]) == 3
     for key in ("v_in", "v_out", "speed_before", "dv_magnitude", "turn_degrees"):
         assert event[key] is not None
+
+
+def test_rerun_detection_smoke(tmp_path):
+    import json as jsonlib
+    from rerun_detection import replay_run
+    from tests_ballistic_helpers import make_bounce_rows
+    camera = make_camera()
+    rows, _ = make_bounce_rows(camera)
+    run_dir = tmp_path / "run1"
+    run_dir.mkdir()
+    with open(run_dir / "ball_coordinates.csv", "w", newline="") as handle:
+        import csv as csvlib
+        writer = csvlib.DictWriter(handle, fieldnames=list(rows[0].keys()))
+        writer.writeheader()
+        writer.writerows(rows)
+    (run_dir / "ground_truth.json").write_text(jsonlib.dumps(
+        {"events": [{"frame": 20, "type": "wall"}]}))
+    count, solved = replay_run(run_dir, tmp_path / "out" / "run1", use_3d=False)
+    assert (tmp_path / "out" / "run1" / "detected_hits.json").exists()
+    assert not solved
