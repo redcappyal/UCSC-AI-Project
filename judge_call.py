@@ -52,6 +52,45 @@ class Line:
         return cross / length
 
 
+@dataclass(frozen=True)
+class WallCorners:
+    top_left: Point
+    top_right: Point
+    bottom_right: Point
+    bottom_left: Point
+
+    def _edge_x_at_y(self, top, bottom, y):
+        if abs(bottom.y - top.y) <= 1e-9:
+            return (top.x + bottom.x) / 2
+        t = (y - top.y) / (bottom.y - top.y)
+        return top.x + t * (bottom.x - top.x)
+
+    def x_bounds_at_y(self, y):
+        left = self._edge_x_at_y(self.top_left, self.bottom_left, y)
+        right = self._edge_x_at_y(self.top_right, self.bottom_right, y)
+        return (min(left, right), max(left, right))
+
+    def contains_point(self, point):
+        left, right = self.x_bounds_at_y(point.y)
+        top_y = min(self.top_left.y, self.top_right.y)
+        bottom_y = max(self.bottom_left.y, self.bottom_right.y)
+        return left <= point.x <= right and top_y <= point.y <= bottom_y
+
+    def normalized_x(self, point):
+        left, right = self.x_bounds_at_y(point.y)
+        if right <= left:
+            return 0.5
+        return (point.x - left) / (right - left)
+
+    def outside_distance_px(self, point):
+        left, right = self.x_bounds_at_y(point.y)
+        top_y = min(self.top_left.y, self.top_right.y)
+        bottom_y = max(self.bottom_left.y, self.bottom_right.y)
+        dx = max(left - point.x, 0.0, point.x - right)
+        dy = max(top_y - point.y, 0.0, point.y - bottom_y)
+        return (dx * dx + dy * dy) ** 0.5
+
+
 def parse_point(value):
     try:
         x_text, y_text = value.split(",", 1)
@@ -97,6 +136,39 @@ def load_calibration_lines(calibration):
         raise ValueError("Calibration must include out_line_lower_edge and tin_top_edge.")
 
     return line_from_calibration(top), line_from_calibration(bottom)
+
+
+def load_wall_corners(calibration):
+    wall = ((calibration or {}).get("planes") or {}).get("wall") or {}
+    corners = wall.get("corners") or []
+    by_id = {
+        corner.get("id"): corner
+        for corner in corners
+        if isinstance(corner, dict) and corner.get("tap_px") is not None
+    }
+    required = ("top_left", "top_right", "bottom_right", "bottom_left")
+    if not all(corner_id in by_id for corner_id in required):
+        return None
+
+    def point(corner_id):
+        tap = by_id[corner_id]["tap_px"]
+        return Point(float(tap[0]), float(tap[1]))
+
+    try:
+        wall_corners = WallCorners(
+            top_left=point("top_left"),
+            top_right=point("top_right"),
+            bottom_right=point("bottom_right"),
+            bottom_left=point("bottom_left"),
+        )
+    except (TypeError, ValueError, IndexError):
+        return None
+
+    left_mid = (wall_corners.top_left.x + wall_corners.bottom_left.x) / 2
+    right_mid = (wall_corners.top_right.x + wall_corners.bottom_right.x) / 2
+    if right_mid <= left_mid:
+        return None
+    return wall_corners
 
 
 def line_x_bounds(line):
@@ -146,7 +218,7 @@ def load_ball_position(csv_path, frame):
     raise ValueError(f"Frame {frame} was not found in {csv_path}.")
 
 
-def judge_ball(ball, top_line, bottom_line):
+def judge_ball(ball, top_line, bottom_line, wall_corners=None):
     try:
         top_y = top_line.y_at_x(ball.x)
         bottom_y = bottom_line.y_at_x(ball.x)
@@ -164,6 +236,9 @@ def judge_ball(ball, top_line, bottom_line):
             "Check that the line coordinates were entered correctly."
         )
 
+    if wall_corners is not None and not wall_corners.contains_point(ball):
+        return "OUT", "outside_wall_bounds", top_y, bottom_y
+
     if top_margin <= 0:
         return "OUT", "above_or_on_top_line", top_y, bottom_y
 
@@ -173,14 +248,16 @@ def judge_ball(ball, top_line, bottom_line):
     return "IN", "between_lines", top_y, bottom_y
 
 
-def judge_margin_px(ball, top_line, bottom_line):
+def judge_margin_px(ball, top_line, bottom_line, wall_corners=None):
     """Positive when IN, negative when OUT, measured perpendicular to tilted lines."""
+    if wall_corners is not None and not wall_corners.contains_point(ball):
+        return -wall_corners.outside_distance_px(ball)
     top_margin = top_line.signed_distance_below(ball)
     bottom_margin = -bottom_line.signed_distance_below(ball)
     return min(top_margin, bottom_margin)
 
 
-def wall_diagram_coordinates(ball, top_line, bottom_line, frame_width=None):
+def wall_diagram_coordinates(ball, top_line, bottom_line, frame_width=None, wall_corners=None):
     """Map a point into the tilted quadrilateral between calibrated wall lines.
 
     x is progress along the calibrated wall lines. y is 0 on the out line and
@@ -206,20 +283,34 @@ def wall_diagram_coordinates(ball, top_line, bottom_line, frame_width=None):
             best = (error, u, v)
 
     if best is None:
-        wall_left, wall_right = calibration_wall_x_bounds(top_line, bottom_line, frame_width)
+        wall_left, wall_right = (
+            wall_corners.x_bounds_at_y(ball.y)
+            if wall_corners is not None
+            else calibration_wall_x_bounds(top_line, bottom_line, frame_width)
+        )
         top_y = top_line.y_at_x(ball.x)
         bottom_y = bottom_line.y_at_x(ball.x)
         return {
             "x": (ball.x - wall_left) / (wall_right - wall_left),
             "y": (ball.y - top_y) / (bottom_y - top_y),
             "x_span": [wall_left, wall_right],
+            "x_reference": "wall_corners" if wall_corners is not None else "line_span",
         }
 
     _, u, v = best
+    if wall_corners is not None:
+        wall_left, wall_right = wall_corners.x_bounds_at_y(ball.y)
+        return {
+            "x": wall_corners.normalized_x(ball),
+            "y": v,
+            "x_span": [wall_left, wall_right],
+            "x_reference": "wall_corners",
+        }
     return {
         "x": u,
         "y": v,
         "x_span": [0.0, 1.0],
+        "x_reference": "line_span",
     }
 
 

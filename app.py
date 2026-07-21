@@ -3,6 +3,8 @@ import json
 import os
 import threading
 import time
+import urllib.error
+import urllib.request
 from pathlib import Path
 
 import cv2
@@ -16,6 +18,7 @@ from judge_call import (
     judge_margin_px,
     load_ball_positions,
     load_calibration_lines,
+    load_wall_corners,
     wall_diagram_coordinates,
 )
 
@@ -26,7 +29,7 @@ except ImportError:
 
 
 ROOT = Path(__file__).resolve().parent
-APP_VERSION = "coarse2fine-gpu-2026-07-16-1"
+APP_VERSION = "wall-corner-calibration-2026-07-20-1"
 
 if load_dotenv is not None:
     load_dotenv(ROOT / ".env")
@@ -51,6 +54,10 @@ BALL_POSITIONS_CACHE = {}
 BALL_POSITIONS_LOCK = threading.Lock()
 RUN_HITS_CACHE = {}
 JUDGE_HIT_FRAME_TOLERANCE = 2
+FRONT_WALL_OUT_HEIGHT_FT = 4.57 * 3.280839895
+FRONT_WALL_TIN_HEIGHT_FT = 0.48 * 3.280839895
+FRONT_WALL_SERVICE_HEIGHT_FT = 1.78 * 3.280839895
+OPENAI_RESPONSES_URL = "https://api.openai.com/v1/responses"
 
 
 def error_response(message, status=400):
@@ -160,6 +167,208 @@ def find_hit_impact_near_frame(run_id, run_dir, frame):
         if distance <= JUDGE_HIT_FRAME_TOLERANCE and (best is None or distance < best[0]):
             best = (distance, impact)
     return best[1] if best else None
+
+
+def front_wall_hits_from_payload(payload):
+    hits = payload.get("hits", [])
+    return [
+        hit for hit in hits
+        if hit.get("target_zone") is not None
+        and hit.get("wall_diagram") is not None
+        and hit.get("event_type") in (None, "wall", "unknown")
+    ]
+
+
+def average(values):
+    values = [float(value) for value in values if value is not None]
+    return sum(values) / len(values) if values else None
+
+
+def rounded(value, digits=1):
+    return None if value is None else round(float(value), digits)
+
+
+def wall_height_from_diagram_y(y):
+    y = max(0.0, min(1.0, float(y)))
+    return FRONT_WALL_OUT_HEIGHT_FT - y * (FRONT_WALL_OUT_HEIGHT_FT - FRONT_WALL_TIN_HEIGHT_FT)
+
+
+def zone_lookup(zones):
+    return {int(zone["zone"]): zone for zone in zones or [] if "zone" in zone}
+
+
+def build_coaching_analytics(payload):
+    target_summary = payload.get("target_zones") or {}
+    floor_summary = payload.get("floor_zones") or {}
+    front_wall_hits = front_wall_hits_from_payload(payload)
+    target_zones = zone_lookup(target_summary.get("zones"))
+
+    heights_ft = [
+        wall_height_from_diagram_y(hit["wall_diagram"]["y"])
+        for hit in front_wall_hits
+        if hit.get("wall_diagram") and hit["wall_diagram"].get("y") is not None
+    ]
+    speed_before_mph = [
+        hit.get("velocity", {}).get("speed_before", {}).get("mph")
+        for hit in front_wall_hits
+        if hit.get("velocity")
+    ]
+    speed_after_mph = [
+        hit.get("velocity", {}).get("speed_after", {}).get("mph")
+        for hit in front_wall_hits
+        if hit.get("velocity")
+    ]
+    speed_change_mph = [
+        hit.get("velocity", {}).get("velocity_change", {}).get("mph")
+        for hit in front_wall_hits
+        if hit.get("velocity")
+    ]
+
+    total_wall_hits = int(target_summary.get("total_wall_hits") or len(front_wall_hits))
+    center_hits = sum(int(target_zones.get(zone, {}).get("count", 0)) for zone in (4, 5))
+    side_hits = sum(int(target_zones.get(zone, {}).get("count", 0)) for zone in (1, 2, 3))
+    low_hits = sum(int(target_zones.get(zone, {}).get("count", 0)) for zone in (3, 5))
+    high_hits = sum(int(target_zones.get(zone, {}).get("count", 0)) for zone in (1, 4))
+    calls = [hit.get("call") for hit in front_wall_hits]
+
+    return {
+        "total_wall_hits": total_wall_hits,
+        "total_floor_bounces": int(floor_summary.get("total_floor_bounces") or 0),
+        "common_target_zones": target_summary.get("common_zones") or [],
+        "missing_target_zones": target_summary.get("missing_zones") or [],
+        "common_floor_zones": floor_summary.get("common_zones") or [],
+        "missing_floor_zones": floor_summary.get("missing_zones") or [],
+        "target_zone_percentages": [
+            {
+                "zone": int(zone.get("zone")),
+                "count": int(zone.get("count", 0)),
+                "percentage": rounded(zone.get("percentage", 0.0), 1),
+            }
+            for zone in (target_summary.get("zones") or [])
+        ],
+        "average_wall_height_ft": rounded(average(heights_ft), 1),
+        "average_wall_height_reference": {
+            "tin_ft": round(FRONT_WALL_TIN_HEIGHT_FT, 1),
+            "service_line_ft": round(FRONT_WALL_SERVICE_HEIGHT_FT, 1),
+            "out_line_ft": round(FRONT_WALL_OUT_HEIGHT_FT, 1),
+        },
+        "average_incoming_speed_mph": rounded(average(speed_before_mph), 1),
+        "average_exit_speed_mph": rounded(average(speed_after_mph), 1),
+        "average_velocity_change_mph": rounded(average(speed_change_mph), 1),
+        "max_incoming_speed_mph": rounded(max(speed_before_mph), 1) if speed_before_mph else None,
+        "center_target_rate": rounded(center_hits / total_wall_hits * 100, 1) if total_wall_hits else None,
+        "side_target_rate": rounded(side_hits / total_wall_hits * 100, 1) if total_wall_hits else None,
+        "low_target_rate": rounded(low_hits / total_wall_hits * 100, 1) if total_wall_hits else None,
+        "high_target_rate": rounded(high_hits / total_wall_hits * 100, 1) if total_wall_hits else None,
+        "in_count": sum(1 for call in calls if call == "IN"),
+        "out_count": sum(1 for call in calls if call == "OUT"),
+    }
+
+
+def local_coaching_feedback(analytics):
+    if not analytics.get("total_wall_hits"):
+        return (
+            "No reliable front-wall target pattern was detected yet. Start by reviewing the "
+            "bounce labels and making sure the wall-hit detector is finding the main rally shots."
+        )
+
+    notes = []
+    center_rate = analytics.get("center_target_rate")
+    side_rate = analytics.get("side_target_rate")
+    low_rate = analytics.get("low_target_rate")
+    avg_height = analytics.get("average_wall_height_ft")
+    avg_speed = analytics.get("average_incoming_speed_mph")
+    common = analytics.get("common_target_zones") or []
+    missing = analytics.get("missing_target_zones") or []
+
+    if common:
+        notes.append(
+            f"Your most common front-wall target was zone {common[0]['zone']} "
+            f"({common[0]['percentage']:.0f}% of detected wall hits)."
+        )
+    if center_rate is not None and center_rate >= 45:
+        notes.append(
+            f"{center_rate:.0f}% of shots went through the center targets. Mix in more width to "
+            "move the opponent off the T instead of feeding the middle."
+        )
+    elif side_rate is not None and side_rate >= 55:
+        notes.append(
+            f"{side_rate:.0f}% of shots used side targets, which is a useful pattern for creating width."
+        )
+    if low_rate is not None and low_rate >= 45:
+        notes.append(
+            f"{low_rate:.0f}% of shots were in lower target zones. That can be attacking, but "
+            "watch error risk if those are not intentional drops or drives."
+        )
+    if avg_height is not None:
+        if avg_height < FRONT_WALL_SERVICE_HEIGHT_FT:
+            notes.append(
+                f"Average wall height was {avg_height:.1f} ft, below the service line. "
+                "That suggests flatter, more attacking contact."
+            )
+        else:
+            notes.append(
+                f"Average wall height was {avg_height:.1f} ft. Look for chances to vary height "
+                "between safer length and lower attacking drives."
+            )
+    if avg_speed is not None:
+        notes.append(f"Average incoming ball speed was about {avg_speed:.1f} mph.")
+    if missing:
+        shown = ", ".join(str(zone["zone"]) for zone in missing[:3])
+        notes.append(f"Unused or rarely used target zones include {shown}; those are good practice targets.")
+
+    return " ".join(notes[:5])
+
+
+def extract_openai_text(data):
+    if isinstance(data.get("output_text"), str):
+        return data["output_text"].strip()
+    parts = []
+    for item in data.get("output", []) or []:
+        for content in item.get("content", []) or []:
+            text = content.get("text")
+            if isinstance(text, str):
+                parts.append(text)
+    return "\n".join(parts).strip()
+
+
+def llm_coaching_feedback(analytics):
+    api_key = os.getenv("OPENAI_API_KEY", "").strip()
+    if not api_key:
+        return None, "missing_api_key"
+
+    model = os.getenv("OPENAI_COACH_MODEL", "gpt-5-mini")
+    prompt = (
+        "You are a squash coach. Give concise, practical feedback from these "
+        "automated match analytics. Mention limitations if sample size is small. "
+        "Return 3 short bullets and one practice focus.\n\n"
+        + json.dumps(analytics, indent=2)
+    )
+    body = json.dumps(
+        {
+            "model": model,
+            "input": prompt,
+            "text": {"verbosity": "low"},
+            "max_output_tokens": 450,
+        }
+    ).encode("utf-8")
+    request_obj = urllib.request.Request(
+        OPENAI_RESPONSES_URL,
+        data=body,
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        },
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request_obj, timeout=20) as response:
+            data = json.loads(response.read().decode("utf-8"))
+    except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, OSError, json.JSONDecodeError):
+        return None, "request_failed"
+
+    text = extract_openai_text(data)
+    return (text or None), ("ok" if text else "empty_response")
 
 
 @app.get("/")
@@ -398,6 +607,7 @@ def judge_frame():
     try:
         calibration = json.loads(calibration_path.read_text(encoding="utf-8"))
         top_line, bottom_line = load_calibration_lines(calibration)
+        wall_corners = load_wall_corners(calibration)
 
         impact = find_hit_impact_near_frame(run_id, run_dir, frame)
         if impact is not None:
@@ -409,13 +619,14 @@ def judge_frame():
                 raise ValueError(f"No ball detection recorded for frame {frame}.")
             source = "detected_center"
 
-        call, reason, top_y, bottom_y = judge_ball(ball, top_line, bottom_line)
-        margin_px = judge_margin_px(ball, top_line, bottom_line)
+        call, reason, top_y, bottom_y = judge_ball(ball, top_line, bottom_line, wall_corners)
+        margin_px = judge_margin_px(ball, top_line, bottom_line, wall_corners)
         diagram = wall_diagram_coordinates(
             ball,
             top_line,
             bottom_line,
             calibration.get("frame_width", 1),
+            wall_corners,
         )
     except Exception as error:
         return error_response(str(error))
@@ -435,11 +646,46 @@ def judge_frame():
                 "x": diagram["x"],
                 "y": diagram["y"],
                 "x_span": diagram["x_span"],
+                "x_reference": diagram.get("x_reference"),
                 "y_reference": "0 is the out-line lower edge; 1 is the tin top edge",
             },
             "outside_line_span": (
-                not top_line.contains_x(ball.x) or not bottom_line.contains_x(ball.x)
+                not wall_corners.contains_point(ball)
+                if wall_corners is not None
+                else (not top_line.contains_x(ball.x) or not bottom_line.contains_x(ball.x))
             ),
+        }
+    )
+
+
+@app.get("/api/runs/<run_id>/coach")
+def coach_run(run_id):
+    run_dir = RUNS_DIR / secure_filename(run_id)
+    if not run_dir.is_dir():
+        return error_response("Run was not found.", status=404)
+
+    hits_path = run_dir / "detected_hits.json"
+    if not hits_path.exists():
+        return error_response("Run analytics were not found.", status=404)
+
+    try:
+        payload = json.loads(hits_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return error_response("Run analytics could not be read.", status=500)
+
+    analytics = build_coaching_analytics(payload)
+    feedback, llm_status = llm_coaching_feedback(analytics)
+    source = "llm" if feedback else "local"
+    if not feedback:
+        feedback = local_coaching_feedback(analytics)
+
+    return jsonify(
+        {
+            "ok": True,
+            "analytics": analytics,
+            "feedback": feedback,
+            "feedback_source": source,
+            "llm_status": llm_status,
         }
     )
 

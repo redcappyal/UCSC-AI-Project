@@ -14,6 +14,11 @@ from detect_wall_hits import (
     detect_bounce_two_stage,
     detect_hits_from_rows,
 )
+from bounce_gb_model_detector import (
+    calibrated_wall_gate,
+    collapse_wall_area_duplicates,
+    inside_lenient_sidewall_gate,
+)
 
 FPS = 30.0
 CALIBRATION = {
@@ -102,6 +107,31 @@ def test_flat_drive_found_by_line_distance_candidates():
     assert "line_distance" in hit["diagnostics"]["candidate_source"]
     assert hit["diagnostics"]["nearest_line"] == "tin_top_edge"
     assert abs(hit["impact_frame"] - 24) <= 1
+
+
+def test_lenient_sidewall_gate_rejects_obvious_sidewall_points():
+    wall_gate = calibrated_wall_gate(CALIBRATION)
+
+    assert inside_lenient_sidewall_gate(1000, 500, wall_gate, (0, 2000))
+    assert inside_lenient_sidewall_gate(-300, 500, wall_gate, (0, 2000))
+    assert inside_lenient_sidewall_gate(2300, 500, wall_gate, (0, 2000))
+    assert not inside_lenient_sidewall_gate(-700, 500, wall_gate, (0, 2000))
+    assert not inside_lenient_sidewall_gate(2700, 500, wall_gate, (0, 2000))
+
+
+def test_wall_area_duplicate_collapse_keeps_highest_confidence():
+    candidates = [
+        {"hit_frame": 100, "score": 0.42},
+        {"hit_frame": 112, "score": 0.91},
+        {"hit_frame": 125, "score": 0.61},
+        {"hit_frame": 170, "score": 0.55},
+    ]
+
+    picked = collapse_wall_area_duplicates(candidates, max_gap=24)
+
+    assert [hit["hit_frame"] for hit in picked] == [112, 170]
+    assert picked[0]["wall_visit_candidate_count"] == 3
+    assert picked[0]["wall_visit_frames"] == [100, 112, 125]
 
 
 def test_straight_line_crossing_calibrated_line_is_not_a_hit():

@@ -19,12 +19,13 @@ import cv2
 
 import court_model
 from audio_events import extract_audio_candidates, extract_repeating_audio_windows
+from bounce_gb_model_detector import DEFAULT_MODEL_PATH as BOUNCE_GB_MODEL_PATH
 from bounce_gb_model_detector import detect_hits_with_gb_model
 from event_engine import detect_events_fused
 from classify_events import classify_events
 from detect_wall_hits import MAX_GAP_FRAMES, detect_hits_from_rows
 from inference_engine import get_tracking_model, infer_frame_predictions
-from judge_call import Point, judge_ball, judge_margin_px, load_calibration_lines
+from judge_call import Point, judge_ball, judge_margin_px, load_calibration_lines, load_wall_corners
 from judge_call import wall_diagram_coordinates
 from tracking_common import (
     CONFIDENCE_THRESHOLD,
@@ -439,6 +440,7 @@ def build_target_zone_summary(hits):
 
 def judge_hits(run_dir, results, detected, audio_available=None, camera=None, camera_info=None):
     top_line = bottom_line = None
+    wall_corners = None
     pixels_per_foot = None
     floor_map = None
     calibration_path = Path(run_dir) / "calibration.json"
@@ -447,6 +449,7 @@ def judge_hits(run_dir, results, detected, audio_available=None, camera=None, ca
             calibration = json.loads(calibration_path.read_text(encoding="utf-8"))
             floor_map = court_model.load_floor_calibration(calibration)
             top_line, bottom_line = load_calibration_lines(calibration)
+            wall_corners = load_wall_corners(calibration)
             pixels_per_foot = velocity_scale_from_tin_line(bottom_line)
         except (ValueError, json.JSONDecodeError):
             pass
@@ -488,9 +491,9 @@ def judge_hits(run_dir, results, detected, audio_available=None, camera=None, ca
                 reason = f"No ball detection recorded for frame {frame}."
             else:
                 try:
-                    call, reason, _, _ = judge_ball(point, top_line, bottom_line)
+                    call, reason, _, _ = judge_ball(point, top_line, bottom_line, wall_corners)
                     # Positive: IN by this many pixels; negative: OUT by |margin|.
-                    margin_px = judge_margin_px(point, top_line, bottom_line)
+                    margin_px = judge_margin_px(point, top_line, bottom_line, wall_corners)
                 except ValueError as error:
                     call, reason, judge_source = "UNKNOWN", str(error), None
 
@@ -548,11 +551,13 @@ def judge_hits(run_dir, results, detected, audio_available=None, camera=None, ca
                     zone_point,
                     top_line,
                     bottom_line,
+                    wall_corners=wall_corners,
                 )
                 entry["wall_diagram"] = {
                     "x": diagram["x"],
                     "y": diagram["y"],
                     "x_span": diagram["x_span"],
+                    "x_reference": diagram.get("x_reference"),
                     "y_reference": "0 is the out-line lower edge; 1 is the tin top edge",
                 }
                 entry["target_zone"] = target_zone_for_diagram(diagram)
@@ -801,13 +806,14 @@ def run_tracking_job(run_id):
                     update_job(
                         run_id,
                         stage="judging",
-                        message="Judging wall hits with bounce_gb_better_features.pkl...",
+                        message=f"Judging wall hits with {BOUNCE_GB_MODEL_PATH.name}...",
                     )
                     detected = detect_hits_with_gb_model(
                         sorted_rows(results),
                         wall_x_range=wall_x_range,
                         calibration=calibration,
-                        apply_spatial_filter=False,
+                        apply_spatial_filter=True,
+                        spatial_filter_mode="sidewall",
                     )
                     classified = classify_events(
                         detected,

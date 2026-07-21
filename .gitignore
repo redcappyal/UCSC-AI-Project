@@ -36,3 +36,4 @@ venv/
 !eval_set/*.md
 # Design specs are durable project docs
 !docs/**/*.md
+!bounce_gb_model.pkl

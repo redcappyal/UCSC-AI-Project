@@ -9,7 +9,15 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from detect_wall_hits import detect_hits_from_rows
-from judge_call import Line, Point, judge_ball, judge_margin_px, wall_diagram_coordinates
+from judge_call import (
+    Line,
+    Point,
+    WallCorners,
+    judge_ball,
+    judge_margin_px,
+    load_wall_corners,
+    wall_diagram_coordinates,
+)
 from job_runner import judge_hits
 from tracking_common import ball_csv_row
 
@@ -246,3 +254,59 @@ def test_tilted_wall_diagram_coordinates_follow_line_tilt():
 
     assert diagram["x"] == pytest.approx(0.25, abs=0.002)
     assert diagram["y"] == pytest.approx(0.4, abs=0.002)
+
+
+def test_wall_corners_override_line_span_for_judge_bounds():
+    top = Line(Point(100, 100), Point(1100, 100))
+    bottom = Line(Point(100, 700), Point(1100, 700))
+    wall = WallCorners(
+        top_left=Point(200, 50),
+        top_right=Point(1000, 80),
+        bottom_right=Point(940, 760),
+        bottom_left=Point(260, 730),
+    )
+
+    ball = Point(160, 400)
+    call, reason, _, _ = judge_ball(ball, top, bottom, wall)
+
+    assert call == "OUT"
+    assert reason == "outside_wall_bounds"
+    assert judge_margin_px(ball, top, bottom, wall) < 0
+
+
+def test_wall_diagram_coordinates_use_corner_width_when_present():
+    top = Line(Point(100, 100), Point(1100, 100))
+    bottom = Line(Point(100, 700), Point(1100, 700))
+    wall = WallCorners(
+        top_left=Point(200, 50),
+        top_right=Point(1000, 50),
+        bottom_right=Point(900, 750),
+        bottom_left=Point(300, 750),
+    )
+
+    diagram = wall_diagram_coordinates(Point(300, 400), top, bottom, wall_corners=wall)
+
+    assert diagram["x_reference"] == "wall_corners"
+    assert diagram["x_span"] == [250.0, 950.0]
+    assert diagram["x"] == pytest.approx(50 / 700)
+    assert diagram["y"] == pytest.approx(0.5, abs=0.002)
+
+
+def test_load_wall_corners_from_calibration():
+    calibration = {
+        "planes": {
+            "wall": {
+                "corners": [
+                    {"id": "top_left", "tap_px": [10, 20]},
+                    {"id": "top_right", "tap_px": [110, 25]},
+                    {"id": "bottom_right", "tap_px": [100, 220]},
+                    {"id": "bottom_left", "tap_px": [20, 215]},
+                ]
+            }
+        }
+    }
+
+    wall = load_wall_corners(calibration)
+
+    assert wall is not None
+    assert wall.x_bounds_at_y(120)[0] == pytest.approx(15.0, abs=1.0)

@@ -7,15 +7,22 @@ import joblib
 import pandas as pd
 
 from judge_call import Point, load_calibration_lines
-from train_bounce_classifier import build_features_for_frame, finite_point, parse_bool
+from train_bounce_classifier import (
+    DEFAULT_MODEL_PATH as TRAIN_DEFAULT_MODEL_PATH,
+    build_features_for_frame,
+    finite_point,
+    parse_bool,
+)
 
 
-ROOT = Path(__file__).resolve().parent
-DEFAULT_MODEL_PATH = ROOT / "bounce_gb_better_features.pkl"
+DEFAULT_MODEL_PATH = TRAIN_DEFAULT_MODEL_PATH
 DEFAULT_MIN_GAP_FRAMES = 10
 DEFAULT_THRESHOLD = 0.20
 DEFAULT_WALL_GATE_PAD_PX = 80.0
 DEFAULT_WALL_GATE_PAD_FRACTION = 0.85
+DEFAULT_SIDEWALL_GATE_PAD_PX = 120.0
+DEFAULT_SIDEWALL_GATE_PAD_FRACTION = 0.25
+DEFAULT_WALL_VISIT_GAP_FRAMES = 24
 
 _ARTIFACT_CACHE = {}
 
@@ -110,6 +117,16 @@ def env_float(name, default):
         return default
 
 
+def env_int(name, default):
+    raw_value = os.getenv(name)
+    if raw_value is None or raw_value.strip() == "":
+        return default
+    try:
+        return int(raw_value)
+    except ValueError:
+        return default
+
+
 def runtime_threshold(artifact, threshold):
     if threshold is not None:
         return float(threshold)
@@ -165,6 +182,25 @@ def inside_calibrated_wall_gate(x, y, wall_gate, wall_x_range):
     return -pad_fraction <= u <= 1.0 + pad_fraction
 
 
+def inside_lenient_sidewall_gate(x, y, wall_gate, wall_x_range):
+    pad_px = env_float("BOUNCE_GB_SIDEWALL_GATE_PAD_PX", DEFAULT_SIDEWALL_GATE_PAD_PX)
+    pad_fraction = env_float(
+        "BOUNCE_GB_SIDEWALL_GATE_PAD_FRACTION",
+        DEFAULT_SIDEWALL_GATE_PAD_FRACTION,
+    )
+    normalized = normalize_x_range(wall_x_range)
+    if wall_gate is None:
+        line_width = (normalized[1] - normalized[0]) if normalized is not None else 0.0
+        return inside_x_range(x, wall_x_range, max(pad_px, pad_fraction * line_width))
+
+    # Only gate horizontally. This removes obvious side-wall detections while
+    # staying lenient about height, camera tilt, and imperfect line taps.
+    point = Point(float(x), float(y))
+    _, bottom_line = wall_gate
+    u = point_progress_on_line(point, bottom_line)
+    return -pad_fraction <= u <= 1.0 + pad_fraction
+
+
 def pick_probability_peaks(candidates, min_gap):
     ranked = sorted(candidates, key=lambda item: item["score"], reverse=True)
     picked = []
@@ -172,6 +208,34 @@ def pick_probability_peaks(candidates, min_gap):
         if any(abs(candidate["hit_frame"] - hit["hit_frame"]) < min_gap for hit in picked):
             continue
         picked.append(candidate)
+    return sorted(picked, key=lambda item: item["hit_frame"])
+
+
+def collapse_wall_area_duplicates(candidates, max_gap=DEFAULT_WALL_VISIT_GAP_FRAMES):
+    if not candidates:
+        return []
+
+    max_gap = max(0, int(max_gap))
+    grouped = []
+    current = []
+    last_frame = None
+    for candidate in sorted(candidates, key=lambda item: item["hit_frame"]):
+        frame = int(candidate["hit_frame"])
+        if current and last_frame is not None and frame - last_frame > max_gap:
+            grouped.append(current)
+            current = []
+        current.append(candidate)
+        last_frame = frame
+    if current:
+        grouped.append(current)
+
+    picked = []
+    for group in grouped:
+        best = max(group, key=lambda item: item["score"])
+        best = dict(best)
+        best["wall_visit_candidate_count"] = len(group)
+        best["wall_visit_frames"] = [int(item["hit_frame"]) for item in group]
+        picked.append(best)
     return sorted(picked, key=lambda item: item["hit_frame"])
 
 
@@ -184,6 +248,8 @@ def detect_hits_with_gb_model(
     wall_x_range=None,
     calibration=None,
     apply_spatial_filter=True,
+    spatial_filter_mode="wall",
+    collapse_wall_area=True,
 ):
     artifact = load_artifact(model_path)
     model = artifact["model"]
@@ -234,13 +300,23 @@ def detect_hits_with_gb_model(
             continue
         candidate_x = float(row["x"])
         candidate_y = float(row["y"])
-        if apply_spatial_filter and not inside_calibrated_wall_gate(
-            candidate_x,
-            candidate_y,
-            wall_gate,
-            wall_x_range,
-        ):
-            continue
+        if apply_spatial_filter:
+            if spatial_filter_mode == "sidewall":
+                inside_gate = inside_lenient_sidewall_gate(
+                    candidate_x,
+                    candidate_y,
+                    wall_gate,
+                    wall_x_range,
+                )
+            else:
+                inside_gate = inside_calibrated_wall_gate(
+                    candidate_x,
+                    candidate_y,
+                    wall_gate,
+                    wall_x_range,
+                )
+            if not inside_gate:
+                continue
         candidates.append(
             {
                 "hit_frame": int(frame),
@@ -259,5 +335,9 @@ def detect_hits_with_gb_model(
                 "classification_source": "gradient_boosting_model",
             }
         )
+
+    if collapse_wall_area:
+        visit_gap = env_int("BOUNCE_GB_WALL_VISIT_GAP_FRAMES", DEFAULT_WALL_VISIT_GAP_FRAMES)
+        candidates = collapse_wall_area_duplicates(candidates, visit_gap)
 
     return pick_probability_peaks(candidates, min_gap)
