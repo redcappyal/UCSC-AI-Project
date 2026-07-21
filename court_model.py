@@ -900,8 +900,11 @@ def solve_camera_model(calibration):
     center_px = (float(center_px[0]), float(center_px[1]))
     per_point = np.sqrt(residuals[0::2] ** 2 + residuals[1::2] ** 2)
     rms = float(np.sqrt(np.mean(per_point ** 2)))
+    median = float(np.median(per_point))
     info = {
         "rms_px": rms, "max_px": float(per_point.max()),
+        "median_px": median,
+        "det_rotation": float(np.linalg.det(rotation)),
         "point_count": len(court_xyz),
         "center_px": [center_px[0], center_px[1]],
         "init": init_kind,
@@ -928,8 +931,11 @@ def solve_camera_model(calibration):
         info["center_px_offset"] = center_px_offset
         return None, info
 
+    # Robust to a minority of bad taps: gate on the median residual (one
+    # un-refined tap shouldn't reject an otherwise-good fit) while a 3x rms
+    # ceiling still catches globally-sloppy geometry.
     threshold = CAMERA_MAX_RMS_PX * float(frame_width) / 1920.0
-    if rms > threshold:
+    if not (median <= threshold and rms <= 3.0 * threshold):
         info["status"] = "high_residual"
         return None, info
     info["status"] = "ok"
