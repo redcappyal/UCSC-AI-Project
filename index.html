@@ -100,6 +100,7 @@
   main{flex:0 0 auto; overflow:hidden;
     padding:12px 14px calc(70px + env(safe-area-inset-bottom))}
   body.phase-load main{flex:1; display:flex; flex-direction:column; justify-content:center}
+  body.phase-target main{flex:1 1 auto; min-height:0; overflow-y:auto; -webkit-overflow-scrolling:touch}
   main section{display:flex; flex-direction:column; gap:10px}
 
   h2{font-size:21px; text-align:center}
@@ -297,6 +298,11 @@
   .targetMeta div{min-width:0}
   .targetMeta strong{display:block; font-size:13px; color:var(--dim); margin-bottom:4px}
   .targetMeta span{font-size:15px; line-height:1.35}
+  .coachMetrics{display:grid; grid-template-columns:repeat(2, minmax(0, 1fr)); gap:10px; padding:12px 14px}
+  .coachMetric{min-width:0; border:1px solid var(--line); border-radius:8px; background:color-mix(in srgb, var(--surface) 86%, var(--bg)); padding:10px 12px}
+  .coachMetric strong{display:block; color:var(--dim); font-size:13px; line-height:1.25; margin-bottom:5px}
+  .coachMetric span{display:block; font-size:22px; font-weight:800; line-height:1.1; overflow-wrap:anywhere}
+  .coachFeedback{padding:12px 14px; border-top:1px solid var(--line); font-size:16px; line-height:1.45; white-space:pre-wrap}
 
   /* The verdict box always occupies the same space: empty (blank), event
      classification (neutral), and IN/OUT states share one reserved height so
@@ -333,6 +339,10 @@
 
   /* floor calibration wizard */
   .floorRow{display:flex; gap:14px; align-items:flex-start}
+  .wallCornerList{display:grid; grid-template-columns:repeat(2, minmax(0, 1fr)); gap:8px}
+  .wallCornerList span{border:1px solid var(--line); border-radius:8px; padding:8px 10px; color:var(--dim); font-size:13px}
+  .wallCornerList span.done{color:var(--text); border-color:color-mix(in srgb, var(--accent-bg) 70%, var(--line))}
+  .wallCornerList span.active{background:var(--accent-bg); color:var(--accent-text); border-color:transparent; font-weight:700}
   #floorDiagram{width:118px; flex:none; background:var(--surface); border:1px solid var(--line);
     border-radius:8px; padding:4px}
   #floorDiagram .courtLine{stroke:var(--dim); stroke-width:.45; fill:none}
@@ -350,6 +360,10 @@
   #floorMapSvg{display:block; width:100%; max-height:340px}
   #floorMapSvg .courtLine{stroke:var(--dim); stroke-width:.28; fill:none}
   #floorMapSvg .bounceDot{fill:#f5c518; stroke:rgba(0,0,0,.5); stroke-width:.14}
+
+  @media (max-width: 560px){
+    .coachMetrics{grid-template-columns:1fr}
+  }
 
   /* Reduced motion (DESIGN.md §10): opacity pulses and the indeterminate
      progress sweep stay (essential "working" feedback); positional/decorative
@@ -414,6 +428,7 @@
     <label class="filebtn">Load clip
       <input type="file" id="fileIn" accept="video/*">
     </label>
+    <button class="small" id="debugTargetsBtn" type="button">Debug targets</button>
     <p class="status" id="loadStatus"></p>
   </section>
 
@@ -463,6 +478,18 @@
   <section class="hidden" id="p-review">
     <button class="primary proxied" id="chooseClipBtn">Use these lines</button>
     <p class="status" id="reviewWarn"></p>
+  </section>
+
+  <!-- PHASE: front-wall corners -->
+  <section class="hidden" id="p-wall-corners">
+    <p class="instruction" id="wallPrompt"></p>
+    <div class="wallCornerList" id="wallCornerList"></div>
+    <button class="primary proxied" id="wallDoneBtn" disabled>Use wall corners</button>
+    <div class="row">
+      <button class="small" id="wallUndoBtn" type="button" disabled>Undo corner</button>
+      <button class="small" id="wallSkipBtn" type="button">Skip corners</button>
+    </div>
+    <p class="status" id="wallStatus"></p>
   </section>
 
   <!-- PHASE: floor calibration (full-court homography) -->
@@ -713,6 +740,14 @@
         <div><strong>Untouched zones</strong><span id="floorMissing"></span></div>
       </div>
     </div>
+    <div class="targetZones hidden" id="coachPanel">
+      <div class="targetHead">
+        <strong>Coaching report</strong>
+        <span id="coachSource"></span>
+      </div>
+      <div class="coachMetrics" id="coachMetrics"></div>
+      <div class="coachFeedback" id="coachFeedback"></div>
+    </div>
     <p class="status" id="targetStatus"></p>
   </section>
 </main>
@@ -765,9 +800,11 @@ const S = {
   base:null,                  // ImageData of the locked frame
   work:null,                  // {key, seeds:[[x,y],...], mask, maskCanvas, fit, msg, msgKind}
   lines:{out:null, tin:null}, // committed: {seeds, maskCanvas, fit}
+  wall:null,                  // front-wall corner taps, clockwise from upper left
   floor:null,                 // floor-homography wizard state (see newFloorState)
   profile:null,               // {id, name, created_utc} when a saved profile is in play
   run:null,                   // backend tracking result
+  coachReports:{},            // run_id -> coaching analytics/feedback response
   corrections:{},             // frame -> saved v2 correction entry for the run
   corrTarget:null,            // {frame, predicted, draft, pickingFrame} — the hit being corrected
   ballByFrame:null,           // Map(frame -> {x,y}) from ball_coordinates.csv (video px)
@@ -795,18 +832,19 @@ const STEP_META = {
   load:   {label:'Squash Line Calling', instr:''},
   frame:  {label:'1/8 · Pick frame', instr:'Drag the film strip under the playhead to a frame where both red lines are fully visible and unblocked.',
            action:{btn:'useFrame', label:'Use frame'}},
-  tap_out:{label:'2/8 · Out line', instr:'', action:{btn:'confirmBtn', label:'Looks right'}},
-  tap_tin:{label:'3/8 · Tin', instr:'', action:{btn:'confirmBtn', label:'Looks right'}},
-  review: {label:'4/8 · Review', instr:'Check that each fitted edge hugs the real paint edge across the whole line.',
+  tap_out:{label:'2/9 · Out line', instr:'', action:{btn:'confirmBtn', label:'Looks right'}},
+  tap_tin:{label:'3/9 · Tin', instr:'', action:{btn:'confirmBtn', label:'Looks right'}},
+  review: {label:'4/9 · Review', instr:'Check that each fitted edge hugs the real paint edge across the whole line.',
            action:{btn:'chooseClipBtn', label:'Use lines'}},
-  tap_floor:{label:'5/8 · Floor map', instr:'', action:{btn:'floorDoneBtn', label:'Use floor map'}},
-  clip:   {label:'6/8 · Clip', instr:'Drag the top strip to slide the clip along the video, then drag the handles to trim it tight around the shot.',
+  tap_wall:{label:'5/9 · Wall corners', instr:'', action:{btn:'wallDoneBtn', label:'Use corners'}},
+  tap_floor:{label:'6/9 · Floor map', instr:'', action:{btn:'floorDoneBtn', label:'Use floor map'}},
+  clip:   {label:'7/9 · Clip', instr:'Drag the top strip to slide the clip along the video, then drag the handles to trim it tight around the shot.',
            action:{btn:'runTrackBtn', label:'Track ball'}},
   analyze:{label:'Analyzing', instr:''},
-  track:  {label:'7/8 · Call', instr:'Tap a bar to jump to the bounce frame, or drag anywhere on the strip to scrub.',
+  track:  {label:'8/9 · Call', instr:'Tap a bar to jump to the bounce frame, or drag anywhere on the strip to scrub.',
            action:{btn:'judgeBtn', label:'Judge'}},
   label:  {label:'Label bounces', instr:'Drag the strip to the exact impact frame, then tap its bounce type. Tap a marker to revisit it — labels save automatically.'},
-  target: {label:'8/8 · Targets', instr:''},
+  target: {label:'9/9 · Targets', instr:''},
 };
 
 /* Header action pill: proxies the current phase's primary button, which stays
@@ -831,9 +869,10 @@ function setPhase(p){
   transportStop();
   S.phase = p;
   resetZoom();
-  stage.classList.toggle('hidden', p === 'load');
+  stage.classList.toggle('hidden', p === 'load' || p === 'target');
   document.body.classList.toggle('phase-load', p === 'load');
-  for(const id of ['p-load','p-frame','p-tap','p-review','p-tap-floor','p-clip','p-analyze','p-track','p-label','p-target']) $(id).classList.add('hidden');
+  document.body.classList.toggle('phase-target', p === 'target');
+  for(const id of ['p-load','p-frame','p-tap','p-review','p-wall-corners','p-tap-floor','p-clip','p-analyze','p-track','p-label','p-target']) $(id).classList.add('hidden');
   $('analyzeOverlay').classList.toggle('hidden', p !== 'analyze');
   $('stepLabel').textContent = STEP_META[p].label;
   $('hdrBack').classList.toggle('hidden', p === 'load');
@@ -843,6 +882,9 @@ function setPhase(p){
   if(p === 'tap_out' || p === 'tap_tin'){
     const c = CFG[curKey()];
     $('instr').innerHTML = `Tap the red paint of the <b class="${c.key}">${c.label}</b>. If glare breaks the selection, tap the missed stretch to extend it. Pinch to zoom for a precise tap.`;
+    $('instr').classList.remove('hidden');
+  } else if(p === 'tap_wall'){
+    $('instr').textContent = 'Tap the four front-wall corners clockwise, starting with the upper-left corner. Pinch to zoom if needed.';
     $('instr').classList.remove('hidden');
   } else {
     $('instr').textContent = STEP_META[p].instr;
@@ -856,12 +898,13 @@ function setPhase(p){
     $('confirmBtn').disabled = !(S.work && S.work.fit);
     $('zoomCtrl').classList.remove('hidden');
     updateTapStatus();
-  } else if(p === 'tap_floor'){
+  } else if(p === 'tap_wall' || p === 'tap_floor'){
     $('zoomCtrl').classList.remove('hidden');
   } else {
     $('zoomCtrl').classList.add('hidden');
   }
   if(p === 'review'){ $('p-review').classList.remove('hidden'); buildReview(); }
+  if(p === 'tap_wall'){ $('p-wall-corners').classList.remove('hidden'); buildWallCornerView(); }
   if(p === 'tap_floor'){ $('p-tap-floor').classList.remove('hidden'); buildFloorView(); }
   if(p === 'clip'){ $('p-clip').classList.remove('hidden'); setupClipControls(); }
   if(p === 'analyze'){ $('p-analyze').classList.remove('hidden'); startAnalyzePreview(); }
@@ -894,6 +937,7 @@ $('fileIn').addEventListener('change', e => {
   S.videoFile = f;
   S.videoName = f.name;
   S.videoFps = null;
+  S.wall = null;
   S.floor = null;             // floor landmarks belong to the previous video's frame
   S.profile = null;
   S.labelRun = null;          // a new video means a new label run
@@ -1000,10 +1044,12 @@ $('hdrBack').onclick = () => {
     S.work = null; S.lines.out = null; setPhase('tap_out');
   } else if(S.phase === 'review'){
     S.work = null; S.lines.tin = null; setPhase('tap_tin');
-  } else if(S.phase === 'tap_floor'){
+  } else if(S.phase === 'tap_wall'){
     setPhase('review');
+  } else if(S.phase === 'tap_floor'){
+    setPhase('tap_wall');
   } else if(S.phase === 'clip'){
-    setPhase(COURT ? 'tap_floor' : 'review');
+    setPhase(COURT ? 'tap_floor' : 'tap_wall');
   } else if(S.phase === 'analyze'){
     setPhase('clip');   // abandon the in-flight run and return to the clip editor
   } else if(S.phase === 'track'){
@@ -1071,7 +1117,7 @@ const pointers = new Map();
 let pinch = null;
 
 canvas.addEventListener('pointerdown', e => {
-  if(S.phase !== 'tap_out' && S.phase !== 'tap_tin' && S.phase !== 'tap_floor') return;
+  if(S.phase !== 'tap_out' && S.phase !== 'tap_tin' && S.phase !== 'tap_wall' && S.phase !== 'tap_floor') return;
   e.preventDefault();
   canvas.setPointerCapture(e.pointerId);
   pointers.set(e.pointerId, { x:e.clientX, y:e.clientY, startX:e.clientX, startY:e.clientY, moved:false, multi:false });
@@ -1122,13 +1168,15 @@ function endPointer(e){
   pointers.delete(e.pointerId);
   if(pointers.size < 2) pinch = null;
   if(!p) return;
-  const tapPhase = S.phase === 'tap_out' || S.phase === 'tap_tin' || S.phase === 'tap_floor';
+  const tapPhase = S.phase === 'tap_out' || S.phase === 'tap_tin' || S.phase === 'tap_wall' || S.phase === 'tap_floor';
   if(tapPhase && !p.moved && !p.multi && pointers.size === 0){
     const r = canvas.getBoundingClientRect();
     const x = Math.min(S.W - 1, Math.max(0, Math.round((p.x - r.left) * S.W / r.width)));
     const y = Math.min(S.H - 1, Math.max(0, Math.round((p.y - r.top) * S.H / r.height)));
     if(S.phase === 'tap_floor'){
       floorTap(x, y);
+    } else if(S.phase === 'tap_wall'){
+      wallCornerTap(x, y);
     } else {
       // Tapping an existing seed marker removes it; otherwise the tap adds one.
       if(!removeSeedAt(curKey(), x, y)) buildWork(curKey(), x, y);
@@ -1193,6 +1241,10 @@ $('confirmBtn').onclick = () => {
   if(!S.work || !S.work.fit) return;
   const k = S.work.key;
   S.lines[k] = { seeds:S.work.seeds, maskCanvas:S.work.maskCanvas, fit:S.work.fit };
+  if(k === 'tin'){
+    S.wall = null;
+    S.floor = null;
+  }
   S.work = null;
   setPhase(k === 'out' ? 'tap_tin' : 'review');
 };
@@ -1519,6 +1571,78 @@ function drawFitLine(fit, color){
   ctx.restore();
 }
 
+const WALL_CORNERS = [
+  {id:'top_left', label:'Upper left'},
+  {id:'top_right', label:'Upper right'},
+  {id:'bottom_right', label:'Lower right'},
+  {id:'bottom_left', label:'Lower left'},
+];
+
+function newWallState(points = []){
+  return {points: points.slice(0, 4)};
+}
+
+function wallCornerTap(x, y){
+  if(!S.wall) S.wall = newWallState();
+  if(S.wall.points.length >= WALL_CORNERS.length) return;
+  S.wall.points.push([x, y]);
+  buildWallCornerView();
+  render();
+}
+
+function buildWallCornerView(){
+  if(!S.wall) S.wall = newWallState();
+  const n = S.wall.points.length;
+  $('wallPrompt').textContent = n < WALL_CORNERS.length
+    ? `Tap ${WALL_CORNERS[n].label.toLowerCase()} front-wall corner.`
+    : 'All four wall corners are set.';
+  $('wallCornerList').innerHTML = WALL_CORNERS.map((corner, i) => {
+    const cls = i < n ? 'done' : (i === n ? 'active' : '');
+    const suffix = i < n ? ' set' : (i === n ? ' next' : '');
+    return `<span class="${cls}">${i + 1}. ${corner.label}${suffix}</span>`;
+  }).join('');
+  $('wallDoneBtn').disabled = n !== WALL_CORNERS.length;
+  $('wallUndoBtn').disabled = n === 0;
+  $('wallStatus').textContent = n === WALL_CORNERS.length
+    ? 'Wall bounds will be used for horizontal judge limits and target-zone mapping.'
+    : 'Click the visible corners of the front wall, not the tin or service boxes.';
+  $('wallStatus').className = 'status' + (n === WALL_CORNERS.length ? ' ok' : '');
+}
+
+function drawWallOverlay(){
+  if(!S.wall || !S.wall.points.length) return;
+  ctx.save();
+  ctx.strokeStyle = '#ffd60a';
+  ctx.fillStyle = '#ffd60a';
+  ctx.lineWidth = Math.max(3, S.W / 600);
+  ctx.shadowColor = 'rgba(0,0,0,.75)';
+  ctx.shadowBlur = 5;
+  const pts = S.wall.points;
+  if(pts.length > 1){
+    ctx.beginPath();
+    ctx.moveTo(pts[0][0], pts[0][1]);
+    for(let i = 1; i < pts.length; i++) ctx.lineTo(pts[i][0], pts[i][1]);
+    if(pts.length === WALL_CORNERS.length) ctx.closePath();
+    ctx.stroke();
+  }
+  const r = Math.max(8, S.W / 130);
+  pts.forEach(([x, y], i) => {
+    ctx.beginPath();
+    ctx.arc(x, y, r, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = '#000';
+    ctx.stroke();
+    ctx.fillStyle = '#000';
+    ctx.font = `${Math.max(12, S.W / 95)}px sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(String(i + 1), x, y);
+    ctx.fillStyle = '#ffd60a';
+    ctx.strokeStyle = '#ffd60a';
+  });
+  ctx.restore();
+}
+
 function render(){
   if(!S.base) return;
   if(S.phase === 'track' || S.phase === 'analyze') return;
@@ -1530,6 +1654,7 @@ function render(){
       drawFitLine(L.fit, CFG[k].hex);
     }
   }
+  drawWallOverlay();
   drawFloorOverlay();
   if(S.work){
     ctx.drawImage(S.work.maskCanvas, 0, 0);
@@ -1605,8 +1730,20 @@ function buildJson(){
       : 'origin front-left floor corner viewed from back-wall camera; x right 0-21; y toward back wall 0-32',
     distortion: null,
   };
+  if(S.wall && S.wall.points.length === WALL_CORNERS.length){
+    json.planes = json.planes || {};
+    json.planes.wall = {
+      corners: WALL_CORNERS.map((corner, i) => ({
+        id: corner.id,
+        label: corner.label,
+        tap_px: S.wall.points[i].map(v => +v.toFixed(2)),
+      })),
+      fitted_by: 'manual_front_wall_corners',
+    };
+  }
   if(S.floor && S.floor.H){
-    json.planes = { floor: {
+    json.planes = json.planes || {};
+    json.planes.floor = {
       landmarks: S.floor.landmarks
         .filter(l => l.refined_px || l.skipped)
         .map(l => ({
@@ -1622,7 +1759,7 @@ function buildJson(){
       fit_rms_px: +S.floor.rms.toFixed(2),
       max_residual_px: +S.floor.maxResidual.toFixed(2),
       fitted_by: 'client-js-dlt',
-    }};
+    };
   }
   if(S.profile) json.profile = S.profile;
   return json;
@@ -2047,6 +2184,19 @@ function fitFromStoredLine(stored){
     total: stored.edge_pixels_used || 0, trimmed: 0,
   };
 }
+function wallFromCalibration(cal){
+  const wallPlane = cal.planes && cal.planes.wall;
+  if(!wallPlane || !Array.isArray(wallPlane.corners)) return null;
+  const byId = {};
+  for(const corner of wallPlane.corners) byId[corner.id] = corner;
+  const points = [];
+  for(const corner of WALL_CORNERS){
+    const stored = byId[corner.id];
+    if(!stored || !Array.isArray(stored.tap_px) || stored.tap_px.length < 2) return null;
+    points.push([+stored.tap_px[0], +stored.tap_px[1]]);
+  }
+  return newWallState(points);
+}
 function applyProfile(saved){
   const cal = saved.calibration || {};
   const byName = {};
@@ -2062,6 +2212,7 @@ function applyProfile(saved){
   S.profile = saved.profile;
   S.lines.out = { seeds: [], maskCanvas: null, fit: fitFromStoredLine(out) };
   S.lines.tin = { seeds: [], maskCanvas: null, fit: fitFromStoredLine(tin) };
+  S.wall = wallFromCalibration(cal);
 
   S.floor = null;
   const floorPlane = cal.planes && cal.planes.floor;
@@ -2085,6 +2236,7 @@ function applyProfile(saved){
   setPhase('review');                  // visual confirmation against the current frame
   const w = $('reviewWarn');
   const note = `Applied profile “${saved.profile.name}” — check the lines still hug the paint` +
+    (S.wall ? ' (wall corners restored)' : '') +
     (S.floor ? ' (floor map restored too)' : '') + '. If the camera moved, go Back and re-tap.';
   w.textContent = note + (w.textContent ? ' ' + w.textContent : '');
   w.className = 'status warn';
@@ -2113,7 +2265,25 @@ $('floorSaveProfileBtn').onclick = () => {
   $('floorStatus').className = 'status ok';
 };
 
-$('chooseClipBtn').onclick = () => setPhase(COURT ? 'tap_floor' : 'clip');
+$('wallUndoBtn').onclick = () => {
+  if(!S.wall || !S.wall.points.length) return;
+  S.wall.points.pop();
+  buildWallCornerView();
+  render();
+};
+$('wallSkipBtn').onclick = () => {
+  S.wall = null;
+  setPhase(COURT ? 'tap_floor' : 'clip');
+};
+$('wallDoneBtn').onclick = () => {
+  if(!S.wall || S.wall.points.length !== WALL_CORNERS.length) return;
+  setPhase(COURT ? 'tap_floor' : 'clip');
+};
+
+$('chooseClipBtn').onclick = () => {
+  if(!S.wall || S.wall.points.length !== WALL_CORNERS.length) S.wall = newWallState();
+  setPhase('tap_wall');
+};
 
 function fmtTime(value){
   return `${(+value).toFixed(2)}s`;
@@ -3188,6 +3358,24 @@ function targetZoneFill(percentage){
   return `rgba(245,197,24,${alpha.toFixed(3)})`;
 }
 
+function makeDebugTargetZones(){
+  const counts = [0, 0, 0, 0, 0].map(() => 3 + Math.floor(Math.random() * 24));
+  const total = counts.reduce((sum, n) => sum + n, 0);
+  const zones = counts.map((count, idx) => ({
+    zone: idx + 1,
+    count,
+    percentage: total ? count / total * 100 : 0,
+  }));
+  const used = zones.filter(zone => zone.count > 0).sort((a, b) => b.count - a.count);
+  return {
+    layout: 'front_wall_5_target_debug',
+    total_wall_hits: total,
+    zones,
+    common_zones: used.slice(0, 3),
+    missing_zones: zones.filter(zone => zone.count === 0),
+  };
+}
+
 const TARGET_LAYOUT = {
   sideW: 21,
   centerLeft: 21,
@@ -3276,6 +3464,85 @@ function renderFloorMap(){
   return true;
 }
 
+function metricValue(value, suffix = ''){
+  if(value === null || value === undefined || Number.isNaN(Number(value))) return '—';
+  return `${value}${suffix}`;
+}
+
+function coachMetric(label, value){
+  return `<div class="coachMetric"><strong>${label}</strong><span>${value}</span></div>`;
+}
+
+function renderCoachReport(data){
+  const panel = $('coachPanel');
+  const metrics = $('coachMetrics');
+  const analytics = data && data.analytics;
+  if(!analytics){
+    panel.classList.add('hidden');
+    metrics.innerHTML = '';
+    $('coachFeedback').textContent = '';
+    return;
+  }
+
+  panel.classList.remove('hidden');
+  const source = data.feedback_source === 'llm' ? 'LLM feedback' : 'Local feedback';
+  const statusText = {
+    missing_api_key: 'LLM not configured',
+    request_failed: 'LLM unavailable',
+    empty_response: 'LLM unavailable',
+  }[data.llm_status] || String(data.llm_status).replaceAll('_', ' ');
+  $('coachSource').textContent = data.llm_status && data.llm_status !== 'ok'
+    ? `${source} · ${statusText}`
+    : source;
+  metrics.innerHTML = [
+    coachMetric('Front-wall hits', metricValue(analytics.total_wall_hits)),
+    coachMetric('Most common zones', formatZoneList(analytics.common_target_zones, 3)),
+    coachMetric('Average wall height', metricValue(analytics.average_wall_height_ft, ' ft')),
+    coachMetric('Average incoming speed', metricValue(analytics.average_incoming_speed_mph, ' mph')),
+    coachMetric('Average exit speed', metricValue(analytics.average_exit_speed_mph, ' mph')),
+    coachMetric('Center target rate', metricValue(analytics.center_target_rate, '%')),
+    coachMetric('Low target rate', metricValue(analytics.low_target_rate, '%')),
+    coachMetric('Floor bounces', metricValue(analytics.total_floor_bounces)),
+  ].join('');
+  $('coachFeedback').textContent = data.feedback || 'No coaching feedback is available yet.';
+}
+
+function setCoachLoading(){
+  $('coachPanel').classList.remove('hidden');
+  $('coachSource').textContent = 'Loading';
+  $('coachMetrics').innerHTML = [
+    coachMetric('Front-wall hits', '—'),
+    coachMetric('Most common zones', '—'),
+    coachMetric('Average wall height', '—'),
+    coachMetric('Average incoming speed', '—'),
+  ].join('');
+  $('coachFeedback').textContent = 'Building coaching feedback from the target map...';
+}
+
+async function loadCoachReport(){
+  const runId = S.run && S.run.run_id;
+  if(S.debugTargetZones || !runId){
+    $('coachPanel').classList.add('hidden');
+    return;
+  }
+  if(S.coachReports[runId]){
+    renderCoachReport(S.coachReports[runId]);
+    return;
+  }
+  setCoachLoading();
+  try{
+    const response = await fetch(`/api/runs/${encodeURIComponent(runId)}/coach`, {cache:'no-store'});
+    const data = await response.json();
+    if(!response.ok || data.ok === false) throw new Error(data.error || 'Coaching report failed.');
+    S.coachReports[runId] = data;
+    renderCoachReport(data);
+  } catch(error){
+    $('coachSource').textContent = 'Unavailable';
+    $('coachMetrics').innerHTML = '';
+    $('coachFeedback').textContent = error.message || 'Coaching report failed.';
+  }
+}
+
 function buildTargetView(){
   const summary = S.debugTargetZones || (S.run && S.run.target_zones);
   renderTargetZones(summary);
@@ -3294,6 +3561,7 @@ function buildTargetView(){
     $('targetStatus').textContent = 'No target-zone data is available for this clip.';
     $('targetStatus').className = 'status warn';
   }
+  loadCoachReport();
 }
 
 function buildTrackView(){
@@ -3315,6 +3583,11 @@ function buildTrackView(){
 
 $('targetBtn').onclick = () => {
   S.debugTargetZones = null;
+  setPhase('target');
+};
+
+$('debugTargetsBtn').onclick = () => {
+  S.debugTargetZones = makeDebugTargetZones();
   setPhase('target');
 };
 
