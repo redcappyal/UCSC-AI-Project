@@ -1,12 +1,15 @@
 """Fusion engine tests: synthetic rallies, sequence grammar, audio repetition."""
 
+import json
 import sys
 from pathlib import Path
 
 import numpy as np
+import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+import court_model
 from audio_events import repeating_impact_windows
 from event_engine import (
     _emission_scores,
@@ -314,6 +317,72 @@ def test_judge_labels_floor_bounce(tmp_path):
     # Verdicts apply to front-wall hits only: no call, just the classification.
     assert entries[0]["call"] is None
     assert entries[0]["reason"] == "classified_as_floor"
+
+
+def test_judge_hits_prefers_engine_court_position_ft(tmp_path):
+    """No calibration.json at all (no floor_map, no homography possible) —
+    the engine-supplied court_position_ft must still populate the entry."""
+    results = {
+        54: {
+            "source_frame": 54,
+            "timestamp_seconds": "1.800000",
+            "detected": "True",
+            "x_center": "238.000",
+            "y_center": "642.000",
+        }
+    }
+    hit = {
+        "hit_frame": 54,
+        "timestamp_seconds": 1.8,
+        "event_type": "floor",
+        "score": 1.5,
+        "dv_magnitude": 1200.0,
+        "after_gap": False,
+        "court_position_ft": {"x": 6.0, "y": 20.0},
+    }
+    entries = judge_hits(tmp_path, results, [hit])
+    entry = entries[0]
+    assert entry["court_position_ft"] == {"x": 6.0, "y": 20.0}
+    assert entry["floor_zone"] == court_model.floor_zone_for_point(6.0, 20.0)
+
+
+def test_judge_hits_floor_falls_back_to_homography_without_engine_value(tmp_path):
+    """A floor hit with no engine-supplied court_position_ft still goes
+    through the existing floor_map homography path when a calibration with
+    a floor plane is present."""
+    from test_court_model import SyntheticCamera, make_v2_calibration
+
+    camera = SyntheticCamera()
+    calibration = make_v2_calibration(camera)
+    (tmp_path / "calibration.json").write_text(json.dumps(calibration))
+
+    x_ft, y_ft = 6.0, 20.0
+    px, py = camera.project_court_point(x_ft, y_ft)
+    results = {
+        54: {
+            "source_frame": 54,
+            "timestamp_seconds": "1.800000",
+            "detected": "True",
+            "x_center": str(px),
+            "y_center": str(py),
+        }
+    }
+    hit = {
+        "hit_frame": 54,
+        "timestamp_seconds": 1.8,
+        "event_type": "floor",
+        "score": 1.5,
+        "dv_magnitude": 1200.0,
+        "after_gap": False,
+    }
+    entries = judge_hits(tmp_path, results, [hit])
+    entry = entries[0]
+    assert "court_position_ft" in entry
+    assert entry["court_position_ft"]["x"] == pytest.approx(x_ft, abs=0.05)
+    assert entry["court_position_ft"]["y"] == pytest.approx(y_ft, abs=0.05)
+    assert entry["floor_zone"] == court_model.floor_zone_for_point(
+        entry["court_position_ft"]["x"], entry["court_position_ft"]["y"]
+    )
 
 
 def _contact_event(point_ft, v_in, v_out):
