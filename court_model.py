@@ -34,9 +34,9 @@ import numpy as np
 #       -> x=10.5 is the half-court line's CENTERLINE (the one landmark datum
 #          that is a line middle, not an edge — WSF centers it between walls)
 #
-# Landmark labels below must name the exact edge/corner to tap: a 50 mm line
-# spans ~0.164 ft, so "the short line" without an edge is a 5 cm ambiguity —
-# far above the fit's px-level residual targets. Do not change these constants
+# Landmark labels below must name the exact spot to tap: a 50 mm line spans
+# ~0.164 ft, so "the short line" without a datum is a 5 cm ambiguity — far
+# above the fit's px-level residual targets. Do not change these constants
 # without checking every consumer of court coordinates (eval_line_calls.py,
 # judge_call.py, bounce detectors).
 COURT_WIDTH_FT = 21.0
@@ -46,6 +46,26 @@ SERVICE_BOX_FT = 5.25
 HALF_COURT_X_FT = COURT_WIDTH_FT / 2.0
 SERVICE_BOX_BACK_FT = SHORT_LINE_FROM_FRONT_FT + SERVICE_BOX_FT
 
+# Landmark datum: paint CENTERLINES, not WSF edges. The wizard's snap refiner
+# (flood-fill mask -> RANSAC+PCA over the stripe's full width) fits the middle
+# of each 50 mm painted line, so a landmark's court_ft must be the centerline
+# coordinate or every successful snap carries a systematic ~25 mm (half
+# line-width) bias — ~0.3 in, above the fit's px-level residual targets. The
+# constants above stay WSF edge datums (zone logic and judges consume them);
+# only the FLOOR_LANDMARKS below shift by LINE_HALF_WIDTH_FT, on the side of
+# the datum edge where the paint actually lies:
+#   short line   paint spans y in [18.0 - w, 18.0]   (line is OUT: behind it)
+#   box side     paint spans x in [5.25, 5.25 + w]   (outside the box interior)
+#   box back     paint spans y in [23.25, 23.25 + w] (outside the box interior)
+# Backward compatible: stored v2 calibrations embed their own court_ft per
+# landmark and load_floor_calibration reads those, so old fits are unchanged.
+LINE_WIDTH_FT = 50.0 / 304.8  # 50 mm WSF line width, ~0.164 ft
+LINE_HALF_WIDTH_FT = LINE_WIDTH_FT / 2.0
+SHORT_LINE_CENTER_Y_FT = SHORT_LINE_FROM_FRONT_FT - LINE_HALF_WIDTH_FT
+BOX_BACK_CENTER_Y_FT = SERVICE_BOX_BACK_FT + LINE_HALF_WIDTH_FT
+LEFT_BOX_INNER_CENTER_X_FT = SERVICE_BOX_FT + LINE_HALF_WIDTH_FT
+RIGHT_BOX_INNER_CENTER_X_FT = COURT_WIDTH_FT - SERVICE_BOX_FT - LINE_HALF_WIDTH_FT
+
 FLOOR_ZONE_COLUMNS = 3
 FLOOR_ZONE_ROWS = 4
 
@@ -54,52 +74,52 @@ FLOOR_ZONE_ROWS = 4
 FLOOR_LANDMARKS = [
     {
         "id": "short_line_left",
-        "court_ft": [0.0, SHORT_LINE_FROM_FRONT_FT],
+        "court_ft": [0.0, SHORT_LINE_CENTER_Y_FT],
         "label": (
-            "Where the BACK edge of the short line (the edge nearer the back "
-            "wall) meets the LEFT side wall"
+            "Where the MIDDLE of the short line's width meets the LEFT "
+            "side wall"
         ),
         "optional": False,
         "snap_lines": ["h", "v"],
     },
     {
         "id": "short_line_right",
-        "court_ft": [COURT_WIDTH_FT, SHORT_LINE_FROM_FRONT_FT],
+        "court_ft": [COURT_WIDTH_FT, SHORT_LINE_CENTER_Y_FT],
         "label": (
-            "Where the BACK edge of the short line (the edge nearer the back "
-            "wall) meets the RIGHT side wall"
+            "Where the MIDDLE of the short line's width meets the RIGHT "
+            "side wall"
         ),
         "optional": False,
         "snap_lines": ["h", "v"],
     },
     {
         "id": "t_point",
-        "court_ft": [HALF_COURT_X_FT, SHORT_LINE_FROM_FRONT_FT],
+        "court_ft": [HALF_COURT_X_FT, SHORT_LINE_CENTER_Y_FT],
         "label": (
-            "The T — where the MIDDLE of the half-court line's width meets "
-            "the BACK edge of the short line"
+            "The T — where the MIDDLE of the half-court line's width crosses "
+            "the MIDDLE of the short line's width"
         ),
         "optional": False,
         "snap_lines": ["h", "v"],
     },
     {
         "id": "left_box_inner_back",
-        "court_ft": [SERVICE_BOX_FT, SERVICE_BOX_BACK_FT],
+        "court_ft": [LEFT_BOX_INNER_CENTER_X_FT, BOX_BACK_CENTER_Y_FT],
         "label": (
-            "Back-inside corner of the LEFT service box — the corner of the "
-            "unpainted floor INSIDE the box, where the inner edges of its "
-            "back and side lines meet"
+            "Back-inside corner of the LEFT service box — the CENTER of the "
+            "painted corner, where the middle of its back line's width "
+            "crosses the middle of its inner side line's width"
         ),
         "optional": False,
         "snap_lines": ["h", "v"],
     },
     {
         "id": "right_box_inner_back",
-        "court_ft": [COURT_WIDTH_FT - SERVICE_BOX_FT, SERVICE_BOX_BACK_FT],
+        "court_ft": [RIGHT_BOX_INNER_CENTER_X_FT, BOX_BACK_CENTER_Y_FT],
         "label": (
-            "Back-inside corner of the RIGHT service box — the corner of the "
-            "unpainted floor INSIDE the box, where the inner edges of its "
-            "back and side lines meet"
+            "Back-inside corner of the RIGHT service box — the CENTER of the "
+            "painted corner, where the middle of its back line's width "
+            "crosses the middle of its inner side line's width"
         ),
         "optional": False,
         "snap_lines": ["h", "v"],
