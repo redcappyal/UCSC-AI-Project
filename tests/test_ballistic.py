@@ -132,6 +132,70 @@ def test_arc_boundary_events_shape():
         assert event[key] is not None
 
 
+def test_segment_track_min_points_zero_returns_promptly():
+    """A user-config min_points=0 must not hang: `end = min(start + 0, count)`
+    would never advance `start` without the max(1, ...) clamp in
+    segment_track, hanging the job forever (never fail a run)."""
+    camera = make_camera()
+    times = np.arange(6) / 60.0
+    pixels = _project_trajectory(camera, [10.0, 20.0, 5.0], [3.0, -40.0, 8.0], times)
+    segments = ballistic.segment_track(times, pixels, camera, rms_px=3.0, min_points=0)
+    # No hang, and the segmentation covers the whole track.
+    assert segments
+    start = segments[0][0] if isinstance(segments[0], tuple) else segments[0].start
+    assert start == 0
+    last = segments[-1]
+    end = last[1] if isinstance(last, tuple) else last.end
+    assert end == len(times)
+
+
+def test_contact_plausible_in_bounds():
+    assert ballistic._contact_plausible((10.5, 16.0, 7.0))
+    # Just inside the margin around each axis.
+    assert ballistic._contact_plausible((-1.9, 16.0, 7.0))
+    assert ballistic._contact_plausible((10.5, 33.9, 7.0))
+    assert ballistic._contact_plausible((10.5, 16.0, 16.9))
+
+
+def test_contact_plausible_out_of_bounds():
+    # Depth-collapse failure mode from RESULTS-3d-contact.md: a contact that
+    # refines to well above the court volume, or off to the side.
+    assert not ballistic._contact_plausible((10.5, 16.0, 19.0))
+    assert not ballistic._contact_plausible((-5.0, 16.0, 7.0))
+    assert not ballistic._contact_plausible((10.5, -10.0, 7.0))
+
+
+def test_arc_boundary_events_omits_contact_3d_when_implausible(monkeypatch):
+    """A contact refined to an implausible point must still surface as an
+    event (recall matters) but without contact_3d, so the engine falls back
+    to 2D evidence. Crafting a real bounce trajectory whose refined impact
+    naturally lands out of bounds is impractical to construct synthetically
+    (the depth-collapse failure mode is a real-arc/ill-conditioning artifact,
+    not something the clean synthetic bounce in _bounce_trajectory
+    reproduces) -- so this test exercises the helper directly plus the gate
+    branch in arc_boundary_events via a monkeypatched refine_impact, per the
+    brief's fallback allowance."""
+    camera = make_camera()
+    times, pixels, _, _ = _bounce_trajectory(camera)
+    frames = np.arange(len(times))
+    cfg = {"arc3d_rms_px": 3.0, "arc_min_points": 5}
+
+    implausible_point = np.array([10.5, 16.0, 19.0])  # z=19ft: out of bounds
+    assert not ballistic._contact_plausible(implausible_point)
+
+    real_refine_impact = ballistic.refine_impact
+
+    def fake_refine_impact(arc_a, arc_b, t_lo, t_hi):
+        t_star, _point, v_in, v_out = real_refine_impact(arc_a, arc_b, t_lo, t_hi)
+        return t_star, implausible_point, v_in, v_out
+
+    monkeypatch.setattr(ballistic, "refine_impact", fake_refine_impact)
+    events = ballistic.arc_boundary_events(
+        frames, times, pixels, [(0, len(times))], camera, cfg)
+    assert len(events) == 1
+    assert "contact_3d" not in events[0]
+
+
 def test_rerun_detection_smoke(tmp_path):
     import json as jsonlib
     from rerun_detection import replay_run

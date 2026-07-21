@@ -13,9 +13,33 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from court_model import G_FT_PER_S2, undistort_point
+from court_model import (
+    COURT_LENGTH_FT,
+    COURT_WIDTH_FT,
+    G_FT_PER_S2,
+    OUT_LINE_HEIGHT_FT,
+    undistort_point,
+)
 
 GRAVITY_VEC = np.array([0.0, 0.0, -G_FT_PER_S2])
+
+# Refined contact points are only trustworthy if they land near the actual
+# court volume. Ill-conditioned/short arcs can converge to a "hit" deep
+# inside or far outside the court (see eval_set/RESULTS-3d-contact.md); a
+# generous margin still catches those without rejecting real contacts near
+# an edge (e.g. a ball grazing high above the out line).
+CONTACT_MARGIN_FT = 2.0
+
+
+def _contact_plausible(point_ft):
+    """Court-volume plausibility gate for a refined 3D contact point."""
+    x, y, z = (float(c) for c in point_ft)
+    m = CONTACT_MARGIN_FT
+    return (
+        -m <= x <= COURT_WIDTH_FT + m
+        and -m <= y <= COURT_LENGTH_FT + m
+        and -m <= z <= OUT_LINE_HEIGHT_FT + m
+    )
 
 
 @dataclass(frozen=True)
@@ -66,10 +90,17 @@ def fit_arc(times, pixels_und, camera, start=0, end=None):
         return None
     system = np.asarray(rows)
     try:
-        solution, _, rank, _ = np.linalg.lstsq(system, np.asarray(rhs), rcond=None)
+        solution, _, rank, singular_values = np.linalg.lstsq(
+            system, np.asarray(rhs), rcond=None)
     except np.linalg.LinAlgError:
         return None
     if rank < 6:
+        return None
+    # Rank alone only catches exact degeneracy. A short/noisy real arc can be
+    # full-rank yet ill-conditioned along the viewing-ray direction, letting
+    # the solve collapse depth toward the camera (see
+    # eval_set/RESULTS-3d-contact.md) -- guard on the condition number too.
+    if singular_values[-1] <= 0.0 or singular_values[0] / singular_values[-1] > 1e8:
         return None
     x0, v0 = solution[:3], solution[3:]
 
@@ -95,6 +126,9 @@ def segment_track(times, pixels_und, camera, rms_px, min_points):
     """Greedy maximal ballistic arcs, mirroring event_engine.segment_into_arcs:
     grow each arc until adding the next sample pushes reprojection rms past
     rms_px. Unfittable ranges come back as (start, end) tuples."""
+    # A user-config min_points=0 would make `end = min(start + 0, count)`
+    # never advance `start`, hanging the job forever -- never fail a run.
+    min_points = max(1, int(min_points))
     segments = []
     start, count = 0, len(times)
     while start < count:
@@ -194,12 +228,16 @@ def arc_boundary_events(frames, timestamps, positions, tracks, camera, cfg):
                 track_start + current.start, frames, timestamps, positions,
                 v_in_px, v_out_px, "ballistic",
             )
-            event["contact_3d"] = {
-                "time": float(t_star),
-                "point_ft": [float(c) for c in point],
-                "v_in_ft_s": [float(c) for c in v_in_3d],
-                "v_out_ft_s": [float(c) for c in v_out_3d],
-                "arc_rms_px": [float(previous.rms_px), float(current.rms_px)],
-            }
+            # Recall matters: an implausible refined point still surfaces as
+            # an event, just without contact_3d -- the engine then falls
+            # back to scoring it with 2D evidence (existing per-event path).
+            if _contact_plausible(point):
+                event["contact_3d"] = {
+                    "time": float(t_star),
+                    "point_ft": [float(c) for c in point],
+                    "v_in_ft_s": [float(c) for c in v_in_3d],
+                    "v_out_ft_s": [float(c) for c in v_out_3d],
+                    "arc_rms_px": [float(previous.rms_px), float(current.rms_px)],
+                }
             events.append(event)
     return events

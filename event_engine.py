@@ -101,6 +101,11 @@ FUSION_DEFAULTS = {
     "reflection_penalty": 0.5,
     "interior_clearance_ft": 2.5, # farther than this from every surface
     "interior_racket_bonus": 1.25,
+    # Grammar can force a "wall" label onto a contact that isn't actually
+    # near the front wall plane (see eval_set/RESULTS-3d-contact.md); only
+    # synthesize metric impact fields when the contact is within this many
+    # sigmas of the wall plane, else let the 2D two-stage fit handle it.
+    "wall_snap_max_sigmas": 3.0,
     # skip-state: any event may be labeled noise, leaving the grammar state
     # unchanged. Set above the baseline emission of an unsupported audio-only
     # event so phantom sounds get absorbed instead of phase-shifting the
@@ -657,19 +662,31 @@ def detect_events_fused(
             hit["court_position_ft"] = {"x": float(point[0]), "y": float(point[1])}
 
         if label == "wall" and event.get("contact_3d") and camera is not None:
-            contact = event["contact_3d"]
-            point = np.asarray(contact["point_ft"], dtype=float)
-            wall_point = point.copy()
-            wall_point[1] = 0.0  # snap onto the front-wall plane for judging
-            try:
-                pixel = camera.project(wall_point)
-                from court_model import distort_point
-                hit["impact_x"], hit["impact_y"] = distort_point(
-                    pixel, camera.distortion)
-                hit["impact_time"] = contact["time"]
-                hit["impact_height_ft"] = float(point[2])
-            except ValueError:
-                pass  # fall through to the 2D impact fit below
+            evidence = event.get("evidence_3d") or {}
+            plane_distance = evidence.get("plane_distance_ft") or {}
+            sigma = evidence.get("sigma_ft") or {}
+            wall_distance = plane_distance.get("wall")
+            wall_sigma = sigma.get("wall")
+            near_wall = (
+                event.get("evidence_3d") is not None
+                and wall_distance is not None
+                and wall_sigma is not None
+                and wall_distance <= cfg["wall_snap_max_sigmas"] * wall_sigma
+            )
+            if near_wall:
+                contact = event["contact_3d"]
+                point = np.asarray(contact["point_ft"], dtype=float)
+                wall_point = point.copy()
+                wall_point[1] = 0.0  # snap onto the front-wall plane for judging
+                try:
+                    pixel = camera.project(wall_point)
+                    from court_model import distort_point
+                    hit["impact_x"], hit["impact_y"] = distort_point(
+                        pixel, camera.distortion)
+                    hit["impact_time"] = contact["time"]
+                    hit["impact_height_ft"] = float(point[2])
+                except ValueError:
+                    pass  # fall through to the 2D impact fit below
         if label == "wall" and calibration and event["index"] is not None \
                 and "impact_x" not in hit:
             lo = max(0, event["index"] - EVENT_WINDOW_HALF_WIDTH)

@@ -70,3 +70,44 @@ impact pixels and `impact_height_ft` fabricated from bad geometry. Failure chain
    sigma-gated wall snap (fix #2) — small, well-scoped follow-ups.
 3. Re-run this A/B (`rerun_detection.py` both arms) and flip the default only when
    missed-contact and type axes improve with no regressions, per the plan.
+
+## Addendum, 2026-07-21: cheirality fix and `1784583924415`'s post-fix status
+
+`court_model._init_camera_dlt` normalized its projection-matrix sign before RQ
+decomposition (forcing det(rotation) = +1, a proper rotation, deterministically
+instead of leaving it to the SVD's arbitrary null-vector sign) and now returns
+`None` rather than flipping to a mirror (det = -1) when positive depth and a
+proper rotation can't both hold. `solve_camera_model` also gained a
+belt-and-braces `det_rotation < 0 -> "implausible_geometry"` gate.
+
+Re-running `solve_camera_model` on `ui_runs/1784583924415/calibration.json`
+after the fix:
+
+```
+Before: {'rms_px': 5.79, 'median_px': 3.01, 'det_rotation': -1.0, 'status': 'ok', ...}
+After:  {'rms_px': 139.6, 'median_px': 50.3, 'det_rotation': 1.0,
+         'status': 'implausible_geometry', 'reason': 'camera_center_below_floor',
+         'init': 'homography', ...}
+```
+
+The DLT init now hits the mirror-only case (returns `None`) on this
+calibration's sparse/noisy correspondences (4/7 floor landmarks, one 12.9 px
+un-refined outlier tap), so `solve_camera_model` falls back to the
+homography-based initializer — which also fails to converge to a physically
+plausible pose (camera center lands ~250-2500 ft away, below the floor) and is
+rejected outright. **This calibration no longer solves at all** (previously it
+solved "ok" with a mirror camera, det = -1). That is the intended, correct
+outcome per the fix brief: this calibration is unhealthy, and a mirror-fit
+"ok" status was masking that rather than reporting it honestly.
+
+**A/B conclusions are unchanged.** `1784583924415` was never a scoring input
+for either arm's axis numbers — the eval corpus's 14 ground-truth events all
+live on `bayclub-fusion-1`, a v1 calibration with no floor plane, so that run
+is 2D in both arms by construction (row 2 of the Setup section above). This
+calibration only fed the qualitative failure-chain analysis (the two
+grammar-forced "wall" labels at y ~ 26-28 ft) and the "solves self-consistently"
+note in Setup — neither of which was a quantitative A/B input. The 2D-arm and
+3D-arm numbers in the Quantitative-result table above are unaffected and remain
+identical, for the same reason they were identical before this fix (the two
+arms differ only where a camera model exists and 3D evidence can be computed at
+all, and that never happened where labels exist).

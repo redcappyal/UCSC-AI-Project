@@ -721,6 +721,15 @@ def _init_camera_dlt(image_und, court_xyz):
         projection = vt[-1].reshape(3, 4)
 
         m = projection[:, :3]
+        if np.linalg.det(m) < 0:
+            # The SVD null vector's overall sign is arbitrary (projective
+            # scale ambiguity). Pin it so det(M) > 0: with the RQ sign-fix
+            # below forcing K's diagonal positive (det(K) > 0), that makes
+            # det(rotation) come out +1 -- a proper rotation, not a mirror
+            # camera -- deterministically rather than depending on whichever
+            # sign the SVD happened to return.
+            projection = -projection
+            m = projection[:, :3]
         p4 = projection[:, 3]
         k_mat, rotation = _rq3(m)
 
@@ -738,10 +747,15 @@ def _init_camera_dlt(image_und, court_xyz):
         if not np.isfinite(camera_center).all():
             return None
 
+        # Cheirality: rotation already has det=+1 from the sign pin above.
+        # Flipping rotation to fix a negative depth would also flip its
+        # determinant back to -1 (a mirror camera) -- the same single sign
+        # choice controls both. If proper rotation and positive depth can't
+        # both hold, the correspondences don't support a trustworthy pose.
         mean_point = court_xyz.mean(axis=0)
         depth = (rotation @ (mean_point - camera_center))[2]
         if depth < 0:
-            rotation = -rotation
+            return None
         if not np.isfinite(k_mat).all() or not np.isfinite(rotation).all():
             return None
 
@@ -914,6 +928,13 @@ def solve_camera_model(calibration):
     frame_center = (frame_width / 2.0, frame_height / 2.0)
     center_px_offset = float(
         np.hypot(center_px[0] - frame_center[0], center_px[1] - frame_center[1]))
+    if info["det_rotation"] < 0:
+        # Belt-and-braces: _init_camera_dlt and _init_camera_from_floor both
+        # pin the rotation to a proper (det=+1) solution or return None, but
+        # a mirror camera should never reach here regardless of init path.
+        info["status"] = "implausible_geometry"
+        info["reason"] = "mirror_rotation"
+        return None, info
     if float(center[2]) <= 0.0:
         info["status"] = "implausible_geometry"
         info["reason"] = "camera_center_below_floor"
