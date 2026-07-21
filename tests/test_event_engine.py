@@ -10,6 +10,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from audio_events import repeating_impact_windows
 from event_engine import (
     _emission_scores,
+    _emission_scores_3d,
     decode_sequence,
     detect_events_fused,
     make_wall_region,
@@ -312,3 +313,53 @@ def test_judge_labels_floor_bounce(tmp_path):
     # Verdicts apply to front-wall hits only: no call, just the classification.
     assert entries[0]["call"] is None
     assert entries[0]["reason"] == "classified_as_floor"
+
+
+def _contact_event(point_ft, v_in, v_out):
+    return {
+        "x": 900.0, "y": 500.0, "time": 1.0, "frame": 60, "index": 10,
+        "v_in": np.array([0.0, 0.0]), "v_out": np.array([0.0, 0.0]),
+        "speed_before": 1.0, "speed_after": 1.0,
+        "methods": {"ballistic"}, "audio_window": None, "size_ratio": None,
+        "contact_3d": {
+            "time": 1.0, "point_ft": list(point_ft),
+            "v_in_ft_s": list(v_in), "v_out_ft_s": list(v_out),
+            "arc_rms_px": [0.5, 0.5],
+        },
+    }
+
+
+def test_3d_emissions_floor_bounce():
+    from synthetic3d import make_camera
+    camera = make_camera()
+    cfg = merge_fusion_config(None)
+    event = _contact_event((10.0, 15.0, 0.2), (5.0, -20.0, -18.0), (4.0, -16.0, 12.0))
+    scores = _emission_scores_3d(event, False, camera, cfg)
+    assert scores["floor"] == max(scores.values())
+
+
+def test_3d_emissions_front_wall_bounce():
+    from synthetic3d import make_camera
+    camera = make_camera()
+    cfg = merge_fusion_config(None)
+    event = _contact_event((10.0, 0.4, 6.0), (2.0, -60.0, 4.0), (1.5, 40.0, 1.0))
+    scores = _emission_scores_3d(event, False, camera, cfg)
+    assert scores["wall"] == max(scores.values())
+
+
+def test_3d_emissions_racket_interior_energy_gain():
+    from synthetic3d import make_camera
+    camera = make_camera()
+    cfg = merge_fusion_config(None)
+    event = _contact_event((10.0, 25.0, 4.0), (3.0, 30.0, -4.0), (2.0, -70.0, 10.0))
+    scores = _emission_scores_3d(event, False, camera, cfg)
+    assert scores["racket"] == max(scores.values())
+
+
+def test_3d_emissions_side_wall():
+    from synthetic3d import make_camera
+    camera = make_camera()
+    cfg = merge_fusion_config(None)
+    event = _contact_event((0.3, 12.0, 5.0), (-30.0, -30.0, 2.0), (22.0, -26.0, 1.0))
+    scores = _emission_scores_3d(event, False, camera, cfg)
+    assert scores["side"] == max(scores.values())
