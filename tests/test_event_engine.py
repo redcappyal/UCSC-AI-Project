@@ -261,6 +261,35 @@ def test_repeating_waveform_windows_ignore_one_off_sounds():
     assert all(w["cluster_size"] == 3 for w in windows)
 
 
+def test_camera_none_is_default_behavior():
+    # Passing camera=None must equal not passing it at all.
+    rows = rows_from_segments(
+        (100.0, 300.0),
+        [
+            (0.0, 80.0, 120.0),
+            (0.6, 600.0, -330.0),
+            (1.2, -450.0, 780.0),
+        ],
+        end_time=1.6,
+        size_at=size_profile(racket_times=[0.6], wall_times=[1.2]),
+    )
+    baseline = detect_events_fused(rows, calibration=CALIBRATION)
+    explicit = detect_events_fused(rows, calibration=CALIBRATION, camera=None)
+    assert baseline == explicit
+
+
+def test_ballistic_source_used_with_camera():
+    from synthetic3d import make_camera
+    from tests_ballistic_helpers import make_bounce_rows
+
+    camera = make_camera()
+    rows, expected_frame = make_bounce_rows(camera)
+    hits = detect_events_fused(rows, camera=camera)
+    assert any("ballistic" in hit["methods"] for hit in hits)
+    matched = [h for h in hits if abs(h["hit_frame"] - expected_frame) <= 3]
+    assert matched and "contact_3d" in matched[0]
+
+
 def test_judge_labels_floor_bounce(tmp_path):
     results = {
         54: {

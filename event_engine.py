@@ -51,6 +51,7 @@ from judge_call import load_calibration_lines
 FUSION_DEFAULTS = {
     "arc_rms_px": 8.0,           # "wide" parabola tolerance before an arc breaks
     "arc_min_points": 4,
+    "arc3d_rms_px": 3.0,         # 3D reprojection tolerance before an arc breaks
     "derivative_relax": 0.6,     # fraction of the strict significance gates
     "merge_gap_s": 0.20,         # trajectory events closer than this are one event
     "audio_window_s": 0.12,      # event-to-audio-window match tolerance
@@ -252,11 +253,12 @@ def merge_trajectory_events(parabola, derivative, merge_gap_s):
     """Events from both methods within merge_gap_s collapse into one; the
     parabola representative wins (fitted velocities are stabler) and the
     merged event remembers which methods corroborated it."""
+    fitted = {"parabola", "ballistic"}
     merged = []
     for event in sorted(parabola + derivative, key=lambda item: item["time"]):
         if merged and event["time"] - merged[-1]["time"] <= merge_gap_s:
             keeper = merged[-1]
-            if "parabola" in event["methods"] and "parabola" not in keeper["methods"]:
+            if fitted & event["methods"] and not fitted & keeper["methods"]:
                 event["methods"] |= keeper["methods"]
                 merged[-1] = event
             else:
@@ -440,6 +442,7 @@ def detect_events_fused(
     wall_x_range=None,
     config=None,
     max_gap=MAX_GAP_FRAMES,
+    camera=None,
 ):
     """Full fusion pass over one clip's tracking rows.
 
@@ -447,6 +450,10 @@ def detect_events_fused(
     wall / floor / racket (wall hits carry two-stage impact fits when a
     calibration exists). Unmatched audio windows with no trajectory nearby
     still surface as audio-only events so nothing audible is dropped.
+
+    camera: optional court_model.CameraModel; when present the parabola
+    trajectory source is replaced by 3D ballistic segmentation and events
+    gain contact_3d.
     """
     cfg = merge_fusion_config(config)
     frames, timestamps, positions, _ = load_detected_positions_from_rows(rows)
@@ -458,8 +465,16 @@ def detect_events_fused(
     events = []
     if len(frames) >= 3:
         tracks = split_into_tracks(frames, positions, max_gap, MAX_JUMP_PX_PER_FRAME)
+        if camera is not None:
+            from ballistic import arc_boundary_events
+
+            trajectory_events = arc_boundary_events(
+                frames, timestamps, positions, tracks, camera, cfg)
+        else:
+            trajectory_events = parabolic_arc_events(
+                frames, timestamps, positions, tracks, cfg)
         events = merge_trajectory_events(
-            parabolic_arc_events(frames, timestamps, positions, tracks, cfg),
+            trajectory_events,
             derivative_events(frames, timestamps, positions, tracks, cfg),
             cfg["merge_gap_s"],
         )
@@ -537,6 +552,8 @@ def detect_events_fused(
                 audio_cluster_size=int(window["cluster_size"]),
             )
         hit["signals"] = signals
+        if event.get("contact_3d"):
+            hit["contact_3d"] = event["contact_3d"]
         if event.get("audio_only"):
             hit["source"] = "audio"
             hit["audio_assisted"] = True
