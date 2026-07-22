@@ -97,41 +97,57 @@ same pose every session. Target repeatability: ≤1 mm translation, ≤0.3° any
 ## 6. Assembly overview
 
 ```
-[5] mic scoop (optional clip-on)
-[4] phone cradle (TPU-lined pocket, lens corner up, court-side prow)
-[3] tilt wedge — A: 40° (16:9) / B: 32° (4:3)   ← swappable, dovetail + lock screw
-[2] mast (bolted + doweled to saddle)
-[1] saddle (straddles fin top edge at the wall junction)
+[4] mic scoop (optional clip-on)
+[3] phone cradle (TPU-lined frame, lens corner up, court-side prow)
+    ↕ dovetail on the wedge face + tapered pin
+[2] tilt wedge — A: 40° (16:9) / B: 32° (4:3)   ← swappable
+    ↕ dovetail on the mast top + tapered pin
+[1] saddle+mast (one part — straddles the fin top edge at the wall junction)
 ```
 
-Separate parts so each prints in its ideal orientation and the wedge swaps without
-touching registration. Saddle↔mast joint: 4× M5 into heat-set inserts + 2× Ø4 press-fit
-dowel pins, asymmetric pattern (cannot assemble rotated).
+**Fully printed — no purchased hardware** (iteration-1 decision: durability
+traded for zero-BOM). Saddle and mast are merged into one part; every joint is
+a printed dovetail (0.4 clearance, end-stop, Ø5 tapered retaining pin); the
+clamp is a printed coarse-thread thumbscrew. Relaxed fits throughout — the
+registration datums (A/B/C) still come from glass contact, so pose
+repeatability survives sloppy part-to-part fits.
 
 ## 7. Part specifications
 
 ### 7.1 Saddle (PETG)
 
-- **Jaw channel**: width = T_f + 3.5 (12 → **15.5**); accepts 2 mm uncompressed TPU pads each
-  side with 0.5 preload. Inner faces parallel ≤0.2. Channel length along fin: **130**.
+- **Jaw channel**: width = T_f + 3.5 (12 → **15.5**) between PETG faces; **4 mm TPU 68A pads
+  in 2.5-deep recesses each side (1.5 proud)** → light slip fit over the glass (~0.25/side),
+  the clamp screw closes the gap; PETG stays ≥1.75 off the glass at all times. 68A note: at
+  these pad areas flat-pad stiffness is set by area, not durometer — pose stiffness is
+  unaffected; soft pads squirm in shear, hence the deeper pockets (walls carry shear) and
+  thicker sections. All TPU elements are pocketed. Inner faces parallel ≤0.2.
+  Channel length along fin: **130**.
   Jaw depth below top edge: **80** fixed jaw (wall side may shorten to clear F1/F2/F3 —
   model the patch-fitting notch parametrically).
 - **Cap** (bridges the edge): 15 thick above the edge; underside carries a
-  **2 × 12 × 110 TPU seat strip** in a 1.5-deep recess (datum A — glass edge never touches PETG).
-- **Wall stop** (datum C): two bosses at the wall end, faced with 2 mm TPU, contacting the wall
-  outer face; boss length = G + 2 (parametric); vertical spread ≥ 60 for a stable couple.
-- **Clamp**: one M5 stainless thumbscrew, axis 45 below edge at channel mid-length, through
-  clearance hole in the moving-side jaw into an M5 heat-set insert; tip carries a Ø18 swivel
-  pressure pad faced with 2 mm TPU. Thumbwheel Ø≥28. Design clamp force ≤ ~50 N —
-  finger-tight only; the screw holds position, the geometry holds pose.
+  **3 × 12 × 110 TPU 68A seat strip** in a 2.5-deep recess, 0.5 proud (datum A — glass edge
+  never touches PETG).
+- **Wall stop** (datum C): two bosses at the wall end, faced with 3 mm TPU 68A in 2-deep
+  recesses (1 proud), contacting the wall outer face; boss length = G + 2 (parametric);
+  vertical spread ≥ 60 for a stable couple.
+- **Clamp (fully printed)**: coarse printed thread — **M12 × 2.5 trapezoid-profile
+  thumbscrew** (PETG, integrated Ø32 notched knob and Ø8 ball tip) threading directly into a
+  printed nut thread in the outer-jaw boss (0.4 radial clearance). A printed **pad cap**
+  (Ø18, ball-socket snap-fit over the tip, 2.5 mm 68A face disc in a pocket) lands flat on
+  the glass and doesn't rotate while tightening. Advancing the screw presses the glass onto
+  the fixed jaw's bonded pad (datum B). Snug finger-tight only (≤ ~50 N) — the soft 68A face
+  conforms and makes over-tightening obvious by feel; the screw holds position, the geometry
+  holds pose.
 - Edge fillets ≥2 everywhere near glass; no printed corner may touch a glass edge.
 
-### 7.2 Mast (PETG)
+### 7.2 Mast (merged into the saddle — one printed part)
 
-- Bolts to saddle cap (M5 ×4 + dowels ×2). Column section ≥ 30 × 45, ribbed; rises at the
-  wall end of the saddle so the cradle lands over the wall glass.
-- Top face carries the **wedge dovetail**: 45° male dovetail, hard end-stop, one M5 side lock
-  screw into insert. Dovetail axis parallel to the wall.
+- Column ≥ 30 × 45 rising from the cap's wall end so the cradle lands over the wall glass;
+  merging deletes 6 fasteners and stiffens the load path.
+- Top face carries the **wedge dovetail**: male rail (root 20, crest 26, height 6, ~63°
+  flanks — prints support-free), hard end-stop, axis parallel to the wall. Wedge is retained
+  by a Ø5 printed tapered pin dropped through the wedge into the column (friction fit).
 
 ### 7.3 Tilt wedges (PETG) — print both
 
@@ -141,17 +157,24 @@ dowel pins, asymmetric pattern (cannot assemble rotated).
 | B | **32° below horizontal** ±0.5° | ultrawide 4:3 (full sensor, custom AVFoundation) | front-wall out line (4570) | `UW-4:3-32` |
 
 Residual angle error is absorbed by calibration — repeatability matters, accuracy doesn't.
+Each wedge: female dovetail underneath (mast rail + 0.4 clearance), and its **own male rail
++ end-stop on the inclined face** for the cradle — same profile, same tapered-pin retention.
 
 ### 7.4 Phone cradle (PETG body, TPU liner)
 
-- Pocket = phone+case envelope + 0.4 clearance per side; **1.5 TPU liner on every contact
-  face** — the phone never touches PETG (grip + structure-borne vibration decoupling).
+- Pocket = phone+case envelope + 0.4 clearance per side; **liner is a single drop-in TPU
+  insert (1.5 wall)** covering every contact face, keyed into the PETG pocket with shallow
+  dovetail ribs — the phone never touches PETG (grip + structure-borne vibration decoupling),
+  and the liner is replaceable if it wears.
 - Landscape, **ultrawide lens corner at the top, facing the court**.
 - Corner window for the whole lens cluster + mic: no material within a **Ø40 clear zone**
   around the mic port (parameter M), none within the FOV frustum (§8).
-- Retention: insertion from the top, retention lip + **silicone-band groove (mandatory —
-  the wall top edge is in play, WSF 5.03, and the mount will take occasional ball strikes)**.
+- Retention: insertion from the top, retention lip + **band grooves (mandatory — the wall
+  top edge is in play, WSF 5.03, and the mount will take occasional ball strikes)**. Bands
+  are **printed TPU 68A rings** (ID ~48, 4 × 2.5 section — 68A stretches far enough).
   No rigid latch over the top edge — it would sit in the FOV.
+- Mounts to the wedge via a **female dovetail boss on the back** (slot along the wall
+  direction, end-stop, tapered pin).
 - **Prow**: low 45° chamfered ridge on the cradle's court side ahead of the phone's lower
   edge, below the FOV frustum, to shed direct ball strikes.
 - **USB-C slot** 14 × 8 at the phone's lower edge + cable channel with strain-relief boss
@@ -187,13 +210,18 @@ Governing constraints (re-verify in CAD if any input changes):
 
 | Part | Material | Orientation / notes |
 |---|---|---|
-| Saddle | PETG (ASA if the gallery gets hot sun) | channel opening up — jaw faces are vertical walls, parallel off the printer |
-| Mast, wedges | PETG | wedge angled face up-facing at the printed angle for a clean seat |
-| Cradle body | PETG | pocket opening up |
-| Pads, liner, scoop | TPU 95A | glued (CA) into recesses |
+| Saddle+mast | PETG (ASA if the gallery gets hot sun) | channel opening up, mast rising — dovetail flanks print support-free |
+| Wedges | PETG | on the side for face quality |
+| Cradle | PETG | back plate down |
+| Clamp screw, pad cap, pins | PETG | screw vertical, knob down |
+| Pads, liner, bands, scoop, swivel face | **TPU 68A** | print flat; glued (CA) into recesses |
 
-0.2 layers, 4 perimeters, ≥40% gyroid on saddle + mast. **No PLA anywhere** — creep under
+0.2 layers, 4 perimeters, ≥40% gyroid on saddle+mast. **No PLA anywhere** — creep under
 sustained clamp load is pose drift, which defeats the calibrate-once design.
+
+**BOM: none.** Iteration 1 is fully printed — printed M12×2.5 clamp thread, printed
+dovetails + tapered pins, printed 68A bands. Durability is explicitly traded away; if a
+printed thread or pin wears out, reprint it (minutes, not a hardware-store trip).
 
 BOM: M5 brass heat-set inserts ×7 · M5×25 SS thumbscrew ×1 (clamp) · M5×16 SS ×5
 (mast bolts + wedge lock) · Ø4×10 SS dowel pins ×2 · Ø18 swivel pad ×1 · silicone band ×2.

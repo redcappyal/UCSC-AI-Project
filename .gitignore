@@ -36,4 +36,8 @@ venv/
 !eval_set/*.md
 # Design specs are durable project docs
 !docs/**/*.md
+!hardware/README.md
 !bounce_gb_model.pkl
+
+# Claude Code worktrees for spawned background tasks (last: must beat the !*.py whitelist)
+.claude/worktrees/
