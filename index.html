@@ -271,6 +271,9 @@
   button.heroCard{background:var(--surface); border:1px solid var(--line)}
   button.heroCard:active{background:var(--line)}   /* instant press fill */
   button.heroCard>svg{color:var(--dim)}
+  /* hint line is empty in judge mode (no guidance copy on the production home) but keeps
+     its slot so toggling label mode's dev hint causes no layout shift */
+  #loadHint{min-height:1.4em}
   /* dev row: internal tools parked under a hairline at the bottom of Play */
   .hairline{border:none; border-top:1px solid var(--line); margin:4px 0 0}
   .devHead{font-size:11px; font-weight:600; letter-spacing:.06em; text-transform:uppercase;
@@ -474,7 +477,7 @@
 <main>
   <!-- PHASE: load (Play home) -->
   <section class="hidden" id="p-load">
-    <p class="instruction" id="loadHint">Judge a recorded clip, or record live once it lands.</p>
+    <p class="instruction" id="loadHint"></p>
     <p class="hubHead">Play</p>
     <label class="filebtn heroCard">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
@@ -1045,13 +1048,14 @@ const STEP_META = {
            action:{btn:'judgeBtn', label:'Judge'}},
   label:  {label:'Label bounces', instr:'Drag the strip to the exact impact frame, then tap its bounce type. Tap a marker to revisit it — labels save automatically.'},
   target: {label:'9/9 · Targets', instr:''},
-  // Section roots (Matches, Coach hub) + roadmap placeholder pages. No action key: no primary yet.
-  matches: {label:'Matches', instr:'Your matches, cut into rallies automatically.'},
-  coach:   {label:'Coach', instr:'Pick where to improve.'},
-  live:    {label:'Live match', instr:'Record a match and get calls as they happen.'},
-  stats:   {label:'Stats + trends', instr:'Shot types, patterns, and progress over time.'},
-  shot_bot:{label:'Shot selection', instr:'See the shot the numbers would have played.'},
-  sharing: {label:'Your coach', instr:'Share matches and clips with your coach.'},
+  // Section roots (Matches, Coach hub) + roadmap placeholder pages. No action key (no
+  // primary yet) and no instr — production screens carry no guidance copy; the UX leads.
+  matches: {label:'Matches', instr:''},
+  coach:   {label:'Coach', instr:''},
+  live:    {label:'Live match', instr:''},
+  stats:   {label:'Stats + trends', instr:''},
+  shot_bot:{label:'Shot selection', instr:''},
+  sharing: {label:'Your coach', instr:''},
 };
 /* Roadmap phases share one empty-stage treatment; section id = 'p-' + key with _ → - */
 const ROADMAP_PHASES = ['live','matches','coach','stats','shot_bot','sharing'];
@@ -1141,8 +1145,9 @@ async function checkBackend(){
   try{
     const response = await fetch('/api/health', {cache:'no-store'});
     if(!response.ok) throw new Error();
-    $('loadStatus').textContent = 'Backend connected.';
-    $('loadStatus').className = 'status ok';
+    // Healthy backend is silent — the status line only speaks when something is wrong.
+    $('loadStatus').textContent = '';
+    $('loadStatus').className = 'status';
   } catch(_){
     showError('Backend not reachable. Open this page from the Flask server, not as a file.');
   }
@@ -1302,9 +1307,10 @@ $('navCoach').onclick = () => setPhase('coach');
 /* dev row: Label mode toggle — routes the next loaded clip into the labeling flow */
 function updateModePill(){
   $('labelModeBtn').classList.toggle('active', S.mode === 'label');
+  // Production home carries no guidance copy; the hint line only serves label mode (dev).
   $('loadHint').textContent = S.mode === 'label'
-    ? 'Load a rally clip, then tag each bounce frame to build ground truth.'
-    : 'Judge a recorded clip, or record live once it lands.';
+    ? 'Loading a clip opens the bounce labeler.'
+    : '';
 }
 $('labelModeBtn').onclick = () => { S.mode = S.mode === 'label' ? 'judge' : 'label'; updateModePill(); };
 updateModePill();

@@ -483,8 +483,8 @@ tokens.
 
 `:active` = instant `--line` fill (0 ms, §10). The whole card is one target, ≥ 44 pt.
 
-Feature cards live on **hub pages** (currently the Coach hub, `p-coach`), stacked under
-the hub's instruction line. They navigate to sub-pages via `setPhase()` — this is
+Feature cards live on **hub pages** (currently the Coach hub, `p-coach`). Hubs carry no
+guidance copy — the cards are the page. They navigate to sub-pages via `setPhase()` — this is
 sanctioned drill-down navigation, **not** nav chrome: the nav pill stays a section tab
 bar (§8.3) and §3.3/§18 still hold.
 
@@ -599,7 +599,7 @@ Rules:
 
 | State | Pattern |
 |---|---|
-| Empty / first-run | Centered phase (`body.phase-load`), one instruction line + hero action cards (§8.15) |
+| Empty / first-run | Centered phase (`body.phase-load`), hero action cards (§8.15) — no guidance copy |
 | Working (known progress) | `.progressbox` with real stats (frames, fps, ETA) + determinate bar |
 | Working (unknown) | Indeterminate bar or stage scrim + pulsing uppercase label |
 | Inline status | `.status` line (14 dim), reserved height; `.warn` = 700 `--text` (still no red), `.ok` = `--text` |
@@ -648,7 +648,7 @@ Each phase: header shows step label + proxied primary; `#instr` gives the one-li
 
 | Phase | Purpose | Body (top→bottom) | Primary (proxied) |
 |---|---|---|---|
-| `p-load` | Play section root — get a clip | instruction · "PLAY" heading · hero cards (§8.15): Judge a clip (accent, file input) / Live match (surface, SOON) · dev row | — (no chevron; section root) |
+| `p-load` | Play section root — get a clip | "PLAY" heading · hero cards (§8.15): Judge a clip (accent, file input) / Live match (surface, SOON) · dev row | — (no chevron; section root) |
 | `p-frame` | Pick a clean calibration frame | overview rail · editor strip w/ playhead · readout · transport+steppers | "Use this frame" |
 | `p-tap` | Tap out line & tin on frame | stage-driven; clear-selection small button | "Looks right" (disabled until 2 taps) |
 | `p-review` | Approve fitted lines (cyan/lime on stage) | minimal; evidence is the stage | "Use these lines" |
@@ -659,7 +659,7 @@ Each phase: header shows step label + proxied primary; `#instr` gives the one-li
 | `p-label` | Human bounce labeling | overview · label timeline · transport+zoom · 2-col type grid (dot+label) · delete (destructive = plain secondary, disabled until selection) | — |
 | `p-target` | Stats: targets & bounces | Front-wall targets card (court chart + meta) · Floor bounces card (SVG map + meta) | — |
 | `p-matches` | Matches section root (placeholder) | placeholder hero · Planned card (§8.14) | — (no chevron; section root) |
-| `p-coach` | Coach section root (hub) | instruction · three feature cards (§8.13) — no hero | — (no chevron; section root) |
+| `p-coach` | Coach section root (hub) | three feature cards (§8.13) — no hero, no copy | — (no chevron; section root) |
 | `p-live` | Placeholder: live match | placeholder hero · Planned card (§8.14) | — (back chevron only) |
 | `p-stats` | Placeholder: stats + trends | placeholder hero · Planned card (§8.14) | — (back chevron only) |
 | `p-shot-bot` | Placeholder: shot selection | placeholder hero · Planned card (§8.14) | — (back chevron only) |
@@ -669,6 +669,13 @@ Each phase: header shows step label + proxied primary; `#instr` gives the one-li
 old load-button stack. Sub-page back routes: `p-live` → Play; `p-stats` / `p-shot-bot` /
 `p-sharing` → Coach. The nav pill is the section tab bar and appears on the three
 section roots only (§8.3).
+
+Production surfaces (section roots and placeholder pages) carry **no `#instr` guidance
+copy** — the UI leads; onboarding will teach, later. The `#instr` strip remains for the
+working tool flows (calibration, clip, call), whose instructions are operational, not
+explanatory. The Play hint line (`#loadHint`) is empty in judge mode (reserved height,
+no CLS) and speaks only for the dev-row label mode. A healthy backend is silent —
+`#loadStatus` only reports problems.
 
 Mode switch Judge ↔ Label lives in the Play dev-row toggle (§8.15). The call page's
 Review ↔ Challenge switch is a second instance of the same liquid-glass pill
