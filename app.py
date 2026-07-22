@@ -466,6 +466,24 @@ def get_court_model():
     return jsonify({"ok": True, **court_model.court_model_public()})
 
 
+@app.post("/api/camera-check")
+def camera_check():
+    """Run the full camera solve on a candidate calibration and report health.
+
+    Read-only wizard feedback: nothing is stored. Always 200 with a status
+    field, mirroring solve_camera_model's never-raise contract.
+    """
+    payload = request.get_json(silent=True) or {}
+    calibration = payload.get("calibration")
+    if calibration is None:
+        try:
+            calibration = json.loads(payload.get("calibration_json") or "")
+        except (json.JSONDecodeError, TypeError):
+            return jsonify({"ok": True, "status": "invalid_json"})
+    _, info = court_model.solve_camera_model(calibration)
+    return jsonify({"ok": True, **info})
+
+
 def validate_floor_calibration(calibration):
     """Return a warning string (and strip the floor plane) if it cannot be used.
 
@@ -526,6 +544,12 @@ def track_clip():
     if event_engine not in {"", "votes", "gb_model", "fusion"}:
         return error_response("Event engine must be votes, gb_model, or fusion.")
 
+    # Experimental 3D contact detection (fusion engine only; needs a solvable
+    # camera from the calibration — degrades to 2D per-run otherwise).
+    fusion_3d = request.form.get("fusion_3d", "").strip()
+    if fusion_3d not in {"", "1"}:
+        return error_response("fusion_3d must be empty or 1.")
+
     run_id = str(int(time.time() * 1000))
     run_dir = RUNS_DIR / run_id
     run_dir.mkdir(parents=True, exist_ok=True)
@@ -575,6 +599,7 @@ def track_clip():
         frame_stride=frame_stride,
         inference_width=inference_width,
         event_engine=event_engine or None,
+        fusion_3d=fusion_3d == "1",
         processed_frames=0,
         total_frames=total_frames,
         csv_url=f"/api/runs/{run_id}/ball_coordinates.csv",

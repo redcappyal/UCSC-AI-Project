@@ -1,32 +1,33 @@
 {
   "calls": {
-    "IN": 1,
+    "IN": 2,
     "OUT": 0
   },
-  "case_count": 114,
+  "case_count": 113,
   "cases_without_calibration": 0,
-  "cases_without_video_sha": 19,
-  "correction_cases": 2,
+  "cases_without_video_sha": 16,
+  "correction_cases": 4,
   "duplicates_dropped": 0,
-  "ground_truth_cases": 17,
-  "gt_missed_at_build": 13,
+  "ground_truth_cases": 14,
+  "ground_truth_runs_skipped_no_detections": 1,
+  "gt_missed_at_build": 10,
   "label_csv_cases": 95,
   "label_csv_cases_without_detector_run": 95,
   "label_csv_files": 1,
   "label_missed_at_build": 0,
   "label_scorable_cases": 0,
-  "latest_correction_at": "2026-07-20T17:19:54Z",
-  "preserved_cases": 19,
-  "runs_with_corrections": 0,
-  "runs_with_ground_truth": 0,
+  "latest_correction_at": "2026-07-20T21:48:41Z",
+  "preserved_cases": 0,
+  "runs_with_corrections": 2,
+  "runs_with_ground_truth": 1,
   "schema_version": "bounce-eval-v3",
   "skipped_legacy_entries": 0,
   "types": {
-    "floor": 0,
+    "floor": 1,
     "none": 1,
     "racket": 0,
     "side_wall": 0,
-    "wall": 1
+    "wall": 2
   },
   "unreadable_runs": []
 }

@@ -438,7 +438,7 @@ def build_target_zone_summary(hits):
     }
 
 
-def judge_hits(run_dir, results, detected, audio_available=None):
+def judge_hits(run_dir, results, detected, audio_available=None, camera=None, camera_info=None):
     top_line = bottom_line = None
     wall_corners = None
     pixels_per_foot = None
@@ -561,25 +561,31 @@ def judge_hits(run_dir, results, detected, audio_available=None):
                     "y_reference": "0 is the out-line lower edge; 1 is the tin top edge",
                 }
                 entry["target_zone"] = target_zone_for_diagram(diagram)
-        if floor_map is not None and entry.get("event_type") == "floor":
-            bounce_point = None
-            if "impact_x" in hit:
-                bounce_point = (hit["impact_x"], hit["impact_y"])
-            elif display_row is not None:
-                detected_point = ball_point_from_row(display_row)
-                if detected_point is not None:
-                    bounce_point = (detected_point.x, detected_point.y)
-            if bounce_point is not None:
-                try:
-                    x_ft, y_ft = floor_map.image_to_court(*bounce_point)
-                except ValueError:
-                    pass
-                else:
-                    entry["court_position_ft"] = {
-                        "x": round(x_ft, 2),
-                        "y": round(y_ft, 2),
-                    }
-                    entry["floor_zone"] = court_model.floor_zone_for_point(x_ft, y_ft)
+        if entry.get("event_type") == "floor":
+            if hit.get("court_position_ft"):
+                entry["court_position_ft"] = hit["court_position_ft"]
+                x_ft = hit["court_position_ft"]["x"]
+                y_ft = hit["court_position_ft"]["y"]
+                entry["floor_zone"] = court_model.floor_zone_for_point(x_ft, y_ft)
+            elif floor_map is not None:
+                bounce_point = None
+                if "impact_x" in hit:
+                    bounce_point = (hit["impact_x"], hit["impact_y"])
+                elif display_row is not None:
+                    detected_point = ball_point_from_row(display_row)
+                    if detected_point is not None:
+                        bounce_point = (detected_point.x, detected_point.y)
+                if bounce_point is not None:
+                    try:
+                        x_ft, y_ft = floor_map.image_to_court(*bounce_point)
+                    except ValueError:
+                        pass
+                    else:
+                        entry["court_position_ft"] = {
+                            "x": round(x_ft, 2),
+                            "y": round(y_ft, 2),
+                        }
+                        entry["floor_zone"] = court_model.floor_zone_for_point(x_ft, y_ft)
         hits.append(entry)
 
     payload = {"hits": hits, "target_zones": build_target_zone_summary(hits)}
@@ -587,6 +593,10 @@ def judge_hits(run_dir, results, detected, audio_available=None):
         payload["floor_zones"] = court_model.build_floor_zone_summary(hits)
     if audio_available is not None:
         payload["audio_available"] = audio_available
+    if camera is not None:
+        payload["camera_model"] = camera.to_dict()
+    elif camera_info is not None:
+        payload["camera_warning"] = camera_info
     (Path(run_dir) / "detected_hits.json").write_text(
         json.dumps(payload, indent=2), encoding="utf-8"
     )
@@ -773,8 +783,11 @@ def run_tracking_job(run_id):
             hits = []
             hits_error = None
             try:
+                camera = camera_info = None
                 if engine == "fusion":
                     update_job(run_id, stage="judging", message="Judging wall hits...")
+                    if job.get("fusion_3d") and calibration:
+                        camera, camera_info = court_model.solve_camera_model(calibration)
                     classified = detect_events_fused(
                         sorted_rows(results),
                         audio_windows=audio_windows,
@@ -782,6 +795,7 @@ def run_tracking_job(run_id):
                         wall_x_range=wall_x_range,
                         config=job.get("fusion"),
                         max_gap=max(MAX_GAP_FRAMES, frame_stride),
+                        camera=camera,
                     )
                     audio_available = audio_windows is not None
                 elif engine == "gb_model":
@@ -831,6 +845,8 @@ def run_tracking_job(run_id):
                     results,
                     classified,
                     audio_available=audio_available,
+                    camera=camera,
+                    camera_info=camera_info,
                 )
                 target_zones = build_target_zone_summary(hits)
                 floor_zones = floor_zones_from_run(run_dir)

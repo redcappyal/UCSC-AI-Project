@@ -54,6 +54,15 @@ class Line:
 
 @dataclass(frozen=True)
 class WallCorners:
+    """Front-wall reference corners from the wizard's corner taps.
+
+    Top corners are the OUT LINE's junctions with the side walls (15 ft),
+    bottom corners the wall/floor seam — all four have exact court
+    coordinates, so they double as camera-pose correspondences
+    (court_model._camera_correspondences). Judging uses only the lateral
+    bounds, which are height-independent (the side-wall edges are vertical).
+    """
+
     top_left: Point
     top_right: Point
     bottom_right: Point

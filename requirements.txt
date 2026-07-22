@@ -9,3 +9,12 @@ Pillow
 python-dotenv
 pytest
 scikit-learn
+
+# hardware/ STL generation (hardware/generate_mount_stls.py)
+trimesh
+manifold3d
+shapely
+
+# docs/mount-spec.pdf build (docs/build_spec_pdf.py; also needs rsvg-convert on PATH)
+reportlab
+pypdf

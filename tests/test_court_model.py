@@ -254,6 +254,57 @@ def test_skipped_landmarks_are_ignored():
     assert floor_map.fit_rms_px < 1e-6
 
 
+def test_paint_line_landmarks_are_datumed_to_stripe_centerlines():
+    """The wizard's snap refiner (RANSAC+PCA over the stripe's full width)
+    lands on the CENTERLINE of each 50 mm painted line, so landmark court_ft
+    must be paint-centerline coordinates — WSF edge datums would leave every
+    successfully snapped landmark with a systematic ~25 mm bias."""
+    hw = 25.0 / 304.8  # half of a 50 mm line, in feet (~0.082)
+    marks = court_model.FLOOR_LANDMARKS_BY_ID
+    short_y = 18.0 - hw  # paint lies on the front side of the y=18.0 back edge
+    assert marks["short_line_left"]["court_ft"] == pytest.approx([0.0, short_y])
+    assert marks["short_line_right"]["court_ft"] == pytest.approx([21.0, short_y])
+    assert marks["t_point"]["court_ft"] == pytest.approx([10.5, short_y])
+    # Box line paint lies outside the interior edges (x=5.25/15.75, y=23.25).
+    assert marks["left_box_inner_back"]["court_ft"] == pytest.approx(
+        [5.25 + hw, 23.25 + hw]
+    )
+    assert marks["right_box_inner_back"]["court_ft"] == pytest.approx(
+        [15.75 - hw, 23.25 + hw]
+    )
+    # Non-painted landmarks (wall junctions, half-court centerline) unchanged.
+    assert marks["front_seam_left"]["court_ft"] == [0.0, 0.0]
+    assert marks["front_seam_right"]["court_ft"] == [21.0, 0.0]
+    assert marks["half_court_back"]["court_ft"] == [10.5, 32.0]
+
+
+def test_paint_line_landmark_labels_name_the_stripe_middle():
+    """Labels drive the no-snap tap fallback (method 'tap' uses the raw tap
+    verbatim), so they must tell the user to tap the middle of the paint,
+    matching the centerline court_ft datum — never an edge."""
+    for landmark_id in (
+        "short_line_left",
+        "short_line_right",
+        "t_point",
+        "left_box_inner_back",
+        "right_box_inner_back",
+    ):
+        label = court_model.FLOOR_LANDMARKS_BY_ID[landmark_id]["label"].lower()
+        assert "edge" not in label, landmark_id
+        assert "middle" in label or "center" in label, landmark_id
+
+
+def test_zone_constants_stay_edge_datumed():
+    """Zone logic and judges consume the WSF edge-datum constants; the
+    centerline re-datum applies to snap landmarks only."""
+    assert court_model.SHORT_LINE_FROM_FRONT_FT == 18.0
+    assert court_model.SERVICE_BOX_FT == 5.25
+    assert court_model.SERVICE_BOX_BACK_FT == 23.25
+    assert court_model.HALF_COURT_X_FT == 10.5
+    assert court_model.COURT_WIDTH_FT == 21.0
+    assert court_model.COURT_LENGTH_FT == 32.0
+
+
 def test_floor_zone_for_point():
     t_zone = floor_zone_for_point(10.5, 18.0)
     assert t_zone["behind_short_line"] is True

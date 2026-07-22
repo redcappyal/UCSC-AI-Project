@@ -33,6 +33,15 @@ venv/
 # build_eval_set.py) — ui_runs stays ignored, its distillation doesn't.
 !eval_set/*.jsonl
 !eval_set/*.json
+!eval_set/*.md
+# Design specs are durable project docs
+!docs/**/*.md
+!hardware/README.md
+# Printable mount parts + spec PDF: committed so teammates get them without
+# regenerating (source of truth stays the generator + markdown)
+!hardware/stl/*.stl
+!docs/mount-spec.pdf
+!docs/figures/*.svg
 !bounce_gb_model.pkl
 # CI config and the dependency manifests it installs from
 !.github/workflows/*.yml
@@ -44,6 +53,9 @@ venv/
 # Exact suffix, so scratch copies ("wall_hits copy.csv") stay ignored.
 !*wall_hits.csv
 !*wall_hits.meta.json
+
+# Claude Code worktrees for spawned background tasks (last: must beat the !*.py whitelist)
+.claude/worktrees/
 
 # Virtualenvs, re-stated last: the `!*/` above re-includes every directory,
 # which silently un-ignored the rules near the top of this file.

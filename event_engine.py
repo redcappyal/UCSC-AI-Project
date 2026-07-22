@@ -51,6 +51,7 @@ from judge_call import load_calibration_lines
 FUSION_DEFAULTS = {
     "arc_rms_px": 8.0,           # "wide" parabola tolerance before an arc breaks
     "arc_min_points": 4,
+    "arc3d_rms_px": 3.0,         # 3D reprojection tolerance before an arc breaks
     "derivative_relax": 0.6,     # fraction of the strict significance gates
     "merge_gap_s": 0.20,         # trajectory events closer than this are one event
     "audio_window_s": 0.12,      # event-to-audio-window match tolerance
@@ -90,6 +91,25 @@ FUSION_DEFAULTS = {
     "side_out_of_span_bonus": 0.75,
     "side_in_span_penalty": 1.0,
     "silent_side_penalty": 0.5,
+    # 3D evidence mode (camera present). Distances in feet; sigma scales
+    # with per-event depth resolution so far contacts get honest tolerance.
+    "plane_sigma_px": 3.0,        # pixel noise driving positional sigma
+    "plane_sigma_min_ft": 0.4,
+    "surface_near_bonus": 1.5,
+    "surface_far_penalty": 1.0,
+    "reflection_bonus": 0.75,     # velocity mirrors about the surface normal
+    "reflection_penalty": 0.5,
+    "interior_clearance_ft": 2.5, # farther than this from every surface
+    "interior_racket_bonus": 1.25,
+    # Grammar can force a "wall" label onto a contact that isn't actually
+    # near the front wall plane (see eval_set/RESULTS-3d-contact.md); only
+    # synthesize metric impact fields when the contact is within this many
+    # sigmas of the wall plane, else let the 2D two-stage fit handle it.
+    "wall_snap_max_sigmas": 3.0,
+    # Floor analogue of the wall snap gate: only hand a metric court position
+    # to the payload when the contact is credibly on the floor plane, else
+    # leave the event positionless like the pre-3D path.
+    "floor_snap_max_sigmas": 3.0,
     # skip-state: any event may be labeled noise, leaving the grammar state
     # unchanged. Set above the baseline emission of an unsupported audio-only
     # event so phantom sounds get absorbed instead of phase-shifting the
@@ -252,11 +272,12 @@ def merge_trajectory_events(parabola, derivative, merge_gap_s):
     """Events from both methods within merge_gap_s collapse into one; the
     parabola representative wins (fitted velocities are stabler) and the
     merged event remembers which methods corroborated it."""
+    fitted = {"parabola", "ballistic"}
     merged = []
     for event in sorted(parabola + derivative, key=lambda item: item["time"]):
         if merged and event["time"] - merged[-1]["time"] <= merge_gap_s:
             keeper = merged[-1]
-            if "parabola" in event["methods"] and "parabola" not in keeper["methods"]:
+            if fitted & event["methods"] and not fitted & keeper["methods"]:
                 event["methods"] |= keeper["methods"]
                 merged[-1] = event
             else:
@@ -324,7 +345,7 @@ def make_wall_region(calibration, cfg):
     return WallRegion(top_line, bottom_line, cfg)
 
 
-def _emission_scores(event, audio_available, wall_region, cfg):
+def _audio_scores(event, audio_available, cfg):
     scores = {"wall": 0.0, "floor": 0.0, "side": 0.0, "racket": 0.0}
     window = event.get("audio_window")
 
@@ -346,6 +367,11 @@ def _emission_scores(event, audio_available, wall_region, cfg):
             scores["wall"] -= cfg["silent_wall_penalty"]
             scores["racket"] -= cfg["silent_racket_penalty"]
             scores["side"] -= cfg["silent_side_penalty"]
+    return scores
+
+
+def _emission_scores(event, audio_available, wall_region, cfg):
+    scores = _audio_scores(event, audio_available, cfg)
 
     if wall_region is not None and event.get("x") is not None:
         if wall_region.wall(event["x"], event["y"]):
@@ -384,6 +410,79 @@ def _emission_scores(event, audio_available, wall_region, cfg):
             # (dead squash ball, restitution ~0.5) always loses speed.
             scores["racket"] += cfg["racket_gain_bonus"]
             scores["floor"] -= cfg["floor_gain_penalty"]
+    return scores
+
+
+def _surface_geometry(point_ft):
+    x, y, z = (float(c) for c in point_ft)
+    side_normal = np.array([1.0, 0.0, 0.0]) if x <= 10.5 else np.array([-1.0, 0.0, 0.0])
+    return [
+        ("floor", np.array([0.0, 0.0, 1.0]), z),
+        ("wall", np.array([0.0, 1.0, 0.0]), y),
+        ("side", side_normal, min(x, 21.0 - x)),
+    ]
+
+
+def _positional_sigma_ft(camera, point_ft, normal, cfg):
+    """Pixel noise mapped to feet at this point, inflated when the surface
+    normal is nearly parallel to the viewing ray (poorly observed axis)."""
+    point = np.asarray(point_ft, dtype=float)
+    transverse = cfg["plane_sigma_px"] * camera.depth_ft(point) / camera.focal_px
+    _, direction = camera.ray(camera.project(point))
+    perpendicular = normal - (normal @ direction) * direction
+    observability = max(0.2, float(np.linalg.norm(perpendicular)))
+    return max(cfg["plane_sigma_min_ft"], transverse / observability)
+
+
+def _emission_scores_3d(event, audio_available, camera, cfg):
+    scores = _audio_scores(event, audio_available, cfg)
+    contact = event["contact_3d"]
+    point = np.asarray(contact["point_ft"], dtype=float)
+    v_in = np.asarray(contact["v_in_ft_s"], dtype=float)
+    v_out = np.asarray(contact["v_out_ft_s"], dtype=float)
+    speed_in = float(np.linalg.norm(v_in))
+    speed_out = float(np.linalg.norm(v_out))
+
+    min_distance = None
+    try:
+        surfaces = [
+            (state, normal, distance, _positional_sigma_ft(camera, point, normal, cfg))
+            for state, normal, distance in _surface_geometry(point)
+        ]
+    except ValueError:  # contact point projected behind the camera: no 3D vote
+        return scores
+    for state, normal, distance, sigma in surfaces:
+        near = float(np.exp(-0.5 * (distance / sigma) ** 2))
+        scores[state] += cfg["surface_near_bonus"] * near
+        scores[state] -= cfg["surface_far_penalty"] * (1.0 - near)
+        if speed_in > 1e-6 and speed_out > 1e-6:
+            reflected = v_in - 2.0 * float(v_in @ normal) * normal
+            alignment = float(reflected @ v_out) / (
+                np.linalg.norm(reflected) * speed_out)
+            restitution = speed_out / speed_in
+            if alignment > 0 and restitution <= 1.05:
+                scores[state] += cfg["reflection_bonus"] * near * alignment
+            else:
+                scores[state] -= cfg["reflection_penalty"] * near
+        min_distance = distance if min_distance is None else min(min_distance, distance)
+
+    if min_distance is not None and min_distance > cfg["interior_clearance_ft"]:
+        scores["racket"] += cfg["interior_racket_bonus"]
+    if speed_in > 1e-6 and speed_out / speed_in >= cfg["racket_speed_gain"]:
+        scores["racket"] += cfg["racket_gain_bonus"]
+        scores["floor"] -= cfg["floor_gain_penalty"]
+
+    # Debuggability contract from the spec: the evidence that scored this
+    # event must survive into the hit's signals (see step below).
+    event["evidence_3d"] = {
+        "mode": "3d",
+        "plane_distance_ft": {state: round(distance, 3)
+                              for state, _, distance, _ in surfaces},
+        "sigma_ft": {state: round(sigma, 3)
+                     for state, _, _, sigma in surfaces},
+        "restitution": (round(speed_out / speed_in, 3)
+                        if speed_in > 1e-6 else None),
+    }
     return scores
 
 
@@ -440,6 +539,7 @@ def detect_events_fused(
     wall_x_range=None,
     config=None,
     max_gap=MAX_GAP_FRAMES,
+    camera=None,
 ):
     """Full fusion pass over one clip's tracking rows.
 
@@ -447,6 +547,10 @@ def detect_events_fused(
     wall / floor / racket (wall hits carry two-stage impact fits when a
     calibration exists). Unmatched audio windows with no trajectory nearby
     still surface as audio-only events so nothing audible is dropped.
+
+    camera: optional court_model.CameraModel; when present the parabola
+    trajectory source is replaced by 3D ballistic segmentation and events
+    gain contact_3d.
     """
     cfg = merge_fusion_config(config)
     frames, timestamps, positions, _ = load_detected_positions_from_rows(rows)
@@ -458,8 +562,16 @@ def detect_events_fused(
     events = []
     if len(frames) >= 3:
         tracks = split_into_tracks(frames, positions, max_gap, MAX_JUMP_PX_PER_FRAME)
+        if camera is not None:
+            from ballistic import arc_boundary_events
+
+            trajectory_events = arc_boundary_events(
+                frames, timestamps, positions, tracks, camera, cfg)
+        else:
+            trajectory_events = parabolic_arc_events(
+                frames, timestamps, positions, tracks, cfg)
         events = merge_trajectory_events(
-            parabolic_arc_events(frames, timestamps, positions, tracks, cfg),
+            trajectory_events,
             derivative_events(frames, timestamps, positions, tracks, cfg),
             cfg["merge_gap_s"],
         )
@@ -499,7 +611,10 @@ def detect_events_fused(
         events.sort(key=lambda item: item["time"])
 
     emissions = [
-        _emission_scores(event, audio_available, wall_region, cfg) for event in events
+        _emission_scores_3d(event, audio_available, camera, cfg)
+        if camera is not None and event.get("contact_3d")
+        else _emission_scores(event, audio_available, wall_region, cfg)
+        for event in events
     ]
     labels = decode_sequence(emissions, cfg)
 
@@ -537,13 +652,57 @@ def detect_events_fused(
                 audio_cluster_size=int(window["cluster_size"]),
             )
         hit["signals"] = signals
+        if event.get("contact_3d"):
+            hit["contact_3d"] = event["contact_3d"]
+            hit["signals"]["evidence_3d"] = event.get("evidence_3d")
         if event.get("audio_only"):
             hit["source"] = "audio"
             hit["audio_assisted"] = True
             for key in ("dv_magnitude", "speed_before", "speed_after", "turn_degrees"):
                 hit.pop(key)
 
-        if label == "wall" and calibration and event["index"] is not None:
+        if label == "floor" and event.get("contact_3d"):
+            evidence = event.get("evidence_3d") or {}
+            floor_distance = (evidence.get("plane_distance_ft") or {}).get("floor")
+            floor_sigma = (evidence.get("sigma_ft") or {}).get("floor")
+            near_floor = (
+                floor_distance is not None
+                and floor_sigma is not None
+                and floor_distance <= cfg["floor_snap_max_sigmas"] * floor_sigma
+            )
+            if near_floor:
+                point = event["contact_3d"]["point_ft"]
+                hit["court_position_ft"] = {
+                    "x": float(point[0]), "y": float(point[1])}
+
+        if label == "wall" and event.get("contact_3d") and camera is not None:
+            evidence = event.get("evidence_3d") or {}
+            plane_distance = evidence.get("plane_distance_ft") or {}
+            sigma = evidence.get("sigma_ft") or {}
+            wall_distance = plane_distance.get("wall")
+            wall_sigma = sigma.get("wall")
+            near_wall = (
+                event.get("evidence_3d") is not None
+                and wall_distance is not None
+                and wall_sigma is not None
+                and wall_distance <= cfg["wall_snap_max_sigmas"] * wall_sigma
+            )
+            if near_wall:
+                contact = event["contact_3d"]
+                point = np.asarray(contact["point_ft"], dtype=float)
+                wall_point = point.copy()
+                wall_point[1] = 0.0  # snap onto the front-wall plane for judging
+                try:
+                    pixel = camera.project(wall_point)
+                    from court_model import distort_point
+                    hit["impact_x"], hit["impact_y"] = distort_point(
+                        pixel, camera.distortion)
+                    hit["impact_time"] = contact["time"]
+                    hit["impact_height_ft"] = float(point[2])
+                except ValueError:
+                    pass  # fall through to the 2D impact fit below
+        if label == "wall" and calibration and event["index"] is not None \
+                and "impact_x" not in hit:
             lo = max(0, event["index"] - EVENT_WINDOW_HALF_WIDTH)
             hi = min(len(frames), event["index"] + EVENT_WINDOW_HALF_WIDTH + 1)
             diagnostics = {}

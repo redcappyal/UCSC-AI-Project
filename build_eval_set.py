@@ -128,7 +128,13 @@ def match_events_to_hits(events, hits, tolerance):
 
 
 def collect_ground_truth_cases(run_dir, context):
-    """Labeling-mode events -> cases with a build-time detector match."""
+    """Labeling-mode events -> cases with a build-time detector match.
+
+    Returns None when the run has no detected_hits.json at all (a
+    label-only run where detection never ran): an unmatched event there
+    isn't a detector miss, so the caller must skip and count it rather
+    than fold it into the missed-bounce axis as a silent false miss.
+    """
     data = load_json(run_dir / "ground_truth.json")
     if data is None:
         return []
@@ -147,7 +153,12 @@ def collect_ground_truth_cases(run_dir, context):
     if not events:
         return []
 
-    detected = load_json(run_dir / "detected_hits.json") or {}
+    detected_path = run_dir / "detected_hits.json"
+    if not detected_path.exists():
+        # Label-only run: detection never ran, so an unmatched event is not
+        # a detector miss. Skip the run and count it in the manifest.
+        return None
+    detected = load_json(detected_path) or {}
     hits = [h for h in detected.get("hits", [])
             if isinstance(h, dict) and isinstance(h.get("frame"), int)]
     tolerance = max(int(data.get("tolerance_frames") or 1),
@@ -342,6 +353,7 @@ def build_eval_set(runs_dir, labels_dir=None, merge_dir=None):
     runs_with_corrections = runs_with_ground_truth = 0
     unreadable_runs = []
     skipped_legacy = 0
+    ground_truth_runs_skipped_no_detections = 0
 
     run_dirs = sorted({p.parent for pattern in
                        ("*/corrections.json", "*/ground_truth.json")
@@ -357,7 +369,9 @@ def build_eval_set(runs_dir, labels_dir=None, merge_dir=None):
                 runs_with_corrections += 1
                 correction_cases.extend(cases)
         gt = collect_ground_truth_cases(run_dir, context)
-        if gt:
+        if gt is None:
+            ground_truth_runs_skipped_no_detections += 1
+        elif gt:
             runs_with_ground_truth += 1
             gt_cases.extend(gt)
 
@@ -411,6 +425,8 @@ def build_eval_set(runs_dir, labels_dir=None, merge_dir=None):
         # no ui_runs/ for them. Non-zero is normal on a teammate's machine.
         "preserved_cases": preserved_count,
         "skipped_legacy_entries": skipped_legacy,
+        "ground_truth_runs_skipped_no_detections":
+            ground_truth_runs_skipped_no_detections,
         "cases_without_video_sha": sum(
             1 for c in cases if c.get("video_sha") is None),
         "cases_without_calibration": sum(
@@ -535,6 +551,10 @@ def main():
     if manifest["skipped_legacy_entries"]:
         print(f"  {manifest['skipped_legacy_entries']} legacy/malformed "
               "correction(s) skipped — re-label them in the UI")
+    if manifest["ground_truth_runs_skipped_no_detections"]:
+        print(f"  {manifest['ground_truth_runs_skipped_no_detections']} "
+              "label-only run(s) skipped — no detected_hits.json, so their "
+              "events can't count as detector misses")
     if manifest["unreadable_runs"]:
         print(f"  WARNING unreadable corrections in: {manifest['unreadable_runs']}")
     if manifest["cases_without_calibration"]:

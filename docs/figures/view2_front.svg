@@ -1,0 +1,55 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="680" height="545" viewBox="0 0 680 545" font-family="Helvetica, Arial, sans-serif">
+<defs>
+<marker id="ag" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M2 1L8 5L2 9" fill="none" stroke="#888780" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></marker>
+</defs>
+<rect width="680" height="545" fill="#FFFFFF"/>
+<text x="40" y="32" font-size="14" font-weight="500" fill="#2C2C2A">Front elevation — from outside the court (2 px = 1 mm)</text>
+<rect x="60" y="290" width="560" height="220" fill="#5DCAA5" fill-opacity="0.15" stroke="#1D9E75" stroke-width="0.5"/>
+<line x1="60" y1="290" x2="620" y2="290" stroke="#1D9E75" stroke-width="1.25"/>
+<rect x="328" y="290" width="24" height="220" fill="#5DCAA5" fill-opacity="0.35" stroke="#1D9E75" stroke-width="0.5"/>
+<rect x="308" y="290" width="17" height="160" fill="#B4B2A9" fill-opacity="0.35" stroke="#888780" stroke-width="0.75"/>
+<rect x="355" y="290" width="17" height="160" fill="#B4B2A9" fill-opacity="0.35" stroke="#888780" stroke-width="0.75"/>
+<rect x="325" y="300" width="4" height="120" fill="#F0997B" fill-opacity="0.9"/>
+<rect x="351" y="300" width="4" height="120" fill="#F0997B" fill-opacity="0.9"/>
+<rect x="308" y="260" width="64" height="30" rx="2" fill="#B4B2A9" fill-opacity="0.55" stroke="#888780" stroke-width="0.75"/>
+<rect x="310" y="180" width="60" height="80" fill="#B4B2A9" fill-opacity="0.6" stroke="#888780" stroke-width="0.75"/>
+<rect x="310" y="92" width="60" height="90" fill="#B4B2A9" fill-opacity="0.45" stroke="#888780" stroke-width="0.75"/>
+<rect x="190" y="68" width="300" height="126" rx="10" fill="#5F5E5A" stroke="#B4B2A9" stroke-width="0.75"/>
+<rect x="200" y="76" width="52" height="52" rx="8" fill="#444441" stroke="#888780" stroke-width="0.75"/>
+<circle cx="216" cy="92" r="7" fill="#2C2C2A" stroke="#D3D1C7" stroke-width="0.75"/>
+<circle cx="216" cy="112" r="7" fill="#2C2C2A" stroke="#EF9F27" stroke-width="1.25"/>
+<circle cx="238" cy="102" r="7" fill="#2C2C2A" stroke="#D3D1C7" stroke-width="0.75"/>
+<circle cx="244" cy="122" r="2" fill="#D3D1C7"/>
+<rect x="296" y="64" width="8" height="134" fill="#F0997B" fill-opacity="0.45" stroke="#D85A30" stroke-width="0.75" stroke-dasharray="3 2"/>
+<rect x="376" y="64" width="8" height="134" fill="#F0997B" fill-opacity="0.45" stroke="#D85A30" stroke-width="0.75" stroke-dasharray="3 2"/>
+<rect x="196" y="194" width="288" height="8" fill="#B4B2A9" fill-opacity="0.6" stroke="#888780" stroke-width="0.75"/>
+<rect x="372" y="366" width="8" height="28" fill="#B4B2A9" fill-opacity="0.8" stroke="#888780" stroke-width="0.75"/>
+<line x1="356" y1="380" x2="372" y2="380" stroke="#888780" stroke-width="1.25"/>
+<line x1="196" y1="112" x2="112" y2="112" stroke="#888780" stroke-width="0.5" stroke-dasharray="2 2"/>
+<line x1="116" y1="112" x2="116" y2="290" stroke="#888780" stroke-width="0.75" marker-start="url(#ag)" marker-end="url(#ag)"/>
+<text x="108" y="206" font-size="12" fill="#5F5E5A" text-anchor="end">90</text>
+<line x1="308" y1="452" x2="308" y2="478" stroke="#888780" stroke-width="0.5" stroke-dasharray="2 2"/>
+<line x1="372" y1="452" x2="372" y2="478" stroke="#888780" stroke-width="0.5" stroke-dasharray="2 2"/>
+<line x1="308" y1="472" x2="372" y2="472" stroke="#888780" stroke-width="0.75" marker-start="url(#ag)" marker-end="url(#ag)"/>
+<text x="340" y="488" font-size="12" fill="#5F5E5A" text-anchor="middle">≈32</text>
+<line x1="328" y1="512" x2="328" y2="530" stroke="#888780" stroke-width="0.5" stroke-dasharray="2 2"/>
+<line x1="352" y1="512" x2="352" y2="530" stroke="#888780" stroke-width="0.5" stroke-dasharray="2 2"/>
+<line x1="328" y1="526" x2="352" y2="526" stroke="#888780" stroke-width="0.75" marker-start="url(#ag)" marker-end="url(#ag)"/>
+<text x="366" y="530" font-size="12" fill="#5F5E5A">12</text>
+<text x="470" y="272" font-size="12" fill="#5F5E5A">top edge = out boundary</text>
+<line x1="466" y1="276" x2="452" y2="288" stroke="#888780" stroke-width="0.5" stroke-dasharray="2 2"/>
+<text x="340" y="44" font-size="12" fill="#5F5E5A" text-anchor="middle">silicone bands ×2</text>
+<line x1="300" y1="50" x2="300" y2="62" stroke="#888780" stroke-width="0.5" stroke-dasharray="2 2"/>
+<line x1="380" y1="50" x2="380" y2="62" stroke="#888780" stroke-width="0.5" stroke-dasharray="2 2"/>
+<text x="500" y="120" font-size="12" fill="#5F5E5A">phone, landscape</text>
+<line x1="498" y1="122" x2="492" y2="122" stroke="#888780" stroke-width="0.5" stroke-dasharray="2 2"/>
+<text x="44" y="100" font-size="12" fill="#5F5E5A">ultrawide lens + mic</text>
+<line x1="128" y1="104" x2="196" y2="110" stroke="#888780" stroke-width="0.5" stroke-dasharray="2 2"/>
+<text x="388" y="220" font-size="12" fill="#5F5E5A">mast</text>
+<line x1="384" y1="218" x2="372" y2="218" stroke="#888780" stroke-width="0.5" stroke-dasharray="2 2"/>
+<text x="392" y="320" font-size="12" fill="#5F5E5A">jaws + TPU pads</text>
+<line x1="388" y1="318" x2="374" y2="318" stroke="#888780" stroke-width="0.5" stroke-dasharray="2 2"/>
+<text x="396" y="388" font-size="12" fill="#5F5E5A">M5 thumbscrew</text>
+<line x1="392" y1="384" x2="382" y2="380" stroke="#888780" stroke-width="0.5" stroke-dasharray="2 2"/>
+<text x="44" y="470" font-size="12" fill="#5F5E5A">wall glass (court beyond)</text>
+</svg>

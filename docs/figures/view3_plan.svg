@@ -1,0 +1,54 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="680" height="545" viewBox="0 0 680 545" font-family="Helvetica, Arial, sans-serif">
+<defs>
+<marker id="ag" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M2 1L8 5L2 9" fill="none" stroke="#888780" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></marker>
+</defs>
+<rect width="680" height="545" fill="#FFFFFF"/>
+<text x="40" y="32" font-size="14" font-weight="500" fill="#2C2C2A">Plan view — from above (2 px = 1 mm)</text>
+<text x="340" y="48" font-size="12" fill="#5F5E5A" text-anchor="middle">court</text>
+<rect x="60" y="80" width="560" height="24" fill="#5DCAA5" fill-opacity="0.3" stroke="#1D9E75" stroke-width="0.5"/>
+<line x1="60" y1="80" x2="620" y2="80" stroke="#1D9E75" stroke-width="1.25"/>
+<line x1="60" y1="104" x2="620" y2="104" stroke="#1D9E75" stroke-width="0.75"/>
+<rect x="328" y="114" width="24" height="352" fill="#5DCAA5" fill-opacity="0.35" stroke="#1D9E75" stroke-width="0.5"/>
+<line x1="324" y1="472" x2="348" y2="464" stroke="#1D9E75" stroke-width="0.5"/>
+<line x1="324" y1="486" x2="348" y2="478" stroke="#1D9E75" stroke-width="0.5"/>
+<rect x="308" y="114" width="64" height="260" rx="3" fill="#B4B2A9" fill-opacity="0.55" stroke="#888780" stroke-width="0.75"/>
+<rect x="312" y="104" width="18" height="10" fill="#F0997B" fill-opacity="0.9"/>
+<rect x="350" y="104" width="18" height="10" fill="#F0997B" fill-opacity="0.9"/>
+<rect x="310" y="114" width="60" height="90" fill="#B4B2A9" fill-opacity="0.65" stroke="#888780" stroke-width="0.75"/>
+<rect x="372" y="230" width="8" height="28" fill="#B4B2A9" fill-opacity="0.8" stroke="#888780" stroke-width="0.75"/>
+<line x1="356" y1="244" x2="372" y2="244" stroke="#888780" stroke-width="1.25"/>
+<rect x="190" y="90" width="300" height="110" rx="10" fill="#5F5E5A" fill-opacity="0.92" stroke="#B4B2A9" stroke-width="0.75"/>
+<rect x="206" y="96" width="52" height="48" rx="8" fill="#444441" stroke="#888780" stroke-width="0.75"/>
+<circle cx="222" cy="106" r="6" fill="#2C2C2A" stroke="#D3D1C7" stroke-width="0.75"/>
+<circle cx="240" cy="116" r="6" fill="#2C2C2A" stroke="#EF9F27" stroke-width="1.25"/>
+<circle cx="252" cy="132" r="2.5" fill="#D3D1C7"/>
+<rect x="296" y="86" width="8" height="120" fill="#F0997B" fill-opacity="0.45" stroke="#D85A30" stroke-width="0.75" stroke-dasharray="3 2"/>
+<rect x="376" y="86" width="8" height="120" fill="#F0997B" fill-opacity="0.45" stroke="#D85A30" stroke-width="0.75" stroke-dasharray="3 2"/>
+<line x1="58" y1="80" x2="44" y2="80" stroke="#888780" stroke-width="0.5" stroke-dasharray="2 2"/>
+<line x1="58" y1="104" x2="44" y2="104" stroke="#888780" stroke-width="0.5" stroke-dasharray="2 2"/>
+<line x1="48" y1="80" x2="48" y2="104" stroke="#888780" stroke-width="0.75" marker-start="url(#ag)" marker-end="url(#ag)"/>
+<text x="40" y="96" font-size="12" fill="#5F5E5A" text-anchor="end">12</text>
+<line x1="232" y1="116" x2="156" y2="116" stroke="#888780" stroke-width="0.5" stroke-dasharray="2 2"/>
+<line x1="162" y1="80" x2="162" y2="116" stroke="#888780" stroke-width="0.75" marker-start="url(#ag)" marker-end="url(#ag)"/>
+<text x="154" y="102" font-size="12" fill="#5F5E5A" text-anchor="end">18</text>
+<line x1="492" y1="90" x2="514" y2="90" stroke="#888780" stroke-width="0.5" stroke-dasharray="2 2"/>
+<line x1="510" y1="80" x2="510" y2="90" stroke="#888780" stroke-width="0.75" marker-start="url(#ag)" marker-end="url(#ag)"/>
+<text x="518" y="92" font-size="12" fill="#5F5E5A">≥5</text>
+<line x1="376" y1="114" x2="418" y2="114" stroke="#888780" stroke-width="0.5" stroke-dasharray="2 2"/>
+<line x1="376" y1="374" x2="418" y2="374" stroke="#888780" stroke-width="0.5" stroke-dasharray="2 2"/>
+<line x1="414" y1="114" x2="414" y2="374" stroke="#888780" stroke-width="0.75" marker-start="url(#ag)" marker-end="url(#ag)"/>
+<text x="422" y="248" font-size="12" fill="#5F5E5A">130</text>
+<text x="240" y="486" font-size="12" fill="#5F5E5A" text-anchor="end">fin ≈300 deep</text>
+<line x1="244" y1="482" x2="324" y2="474" stroke="#888780" stroke-width="0.5" stroke-dasharray="2 2"/>
+<text x="44" y="164" font-size="12" fill="#5F5E5A">silicone bands</text>
+<line x1="140" y1="160" x2="294" y2="152" stroke="#888780" stroke-width="0.5" stroke-dasharray="2 2"/>
+<text x="44" y="180" font-size="12" fill="#5F5E5A">phone over the edge</text>
+<line x1="166" y1="176" x2="188" y2="168" stroke="#888780" stroke-width="0.5" stroke-dasharray="2 2"/>
+<text x="398" y="68" font-size="12" fill="#5F5E5A">TPU wall stops</text>
+<line x1="394" y1="72" x2="368" y2="106" stroke="#888780" stroke-width="0.5" stroke-dasharray="2 2"/>
+<text x="44" y="398" font-size="12" fill="#5F5E5A">saddle cap — jaws below</text>
+<line x1="192" y1="394" x2="310" y2="376" stroke="#888780" stroke-width="0.5" stroke-dasharray="2 2"/>
+<text x="350" y="416" font-size="12" fill="#5F5E5A">M5 thumbscrew</text>
+<line x1="368" y1="408" x2="377" y2="262" stroke="#888780" stroke-width="0.5" stroke-dasharray="2 2"/>
+<text x="340" y="530" font-size="12" fill="#5F5E5A" text-anchor="middle">outside the court</text>
+</svg>
