@@ -245,6 +245,38 @@
   .clipTransportRow .playBtn:active{background:var(--line)}
   .clipTransportRow .tlReadout{padding:0}
 
+  /* home hub: UP NEXT heading + tappable roadmap feature cards (§8.9 card, not a pill) */
+  .hubHead{font-size:12px; font-weight:600; letter-spacing:.05em; text-transform:uppercase;
+    color:var(--dim); margin-top:4px}
+  .featureCard{background:var(--surface); border:1px solid var(--line); border-radius:8px;
+    width:100%; min-height:56px; padding:12px 14px;
+    display:flex; align-items:center; justify-content:flex-start; gap:10px;
+    text-align:left; text-transform:none; letter-spacing:normal; font-weight:400}
+  .featureCard:active{background:var(--line)}   /* instant press fill, no transition */
+  .featureCard>svg{flex:0 0 24px; width:24px; height:24px; color:var(--dim)}
+  .fcBody{flex:1 1 auto; min-width:0; display:flex; flex-direction:column}
+  .fcBody strong{font-size:16px; font-weight:700; color:var(--text)}
+  .fcBody span{font-size:13px; color:var(--dim);
+    white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
+  .fcTag{flex:0 0 auto; font-size:12px; font-weight:600; letter-spacing:.05em;
+    text-transform:uppercase; color:var(--dim)}
+  /* six cards can outgrow a short phone: the section scrolls internally, never the shell */
+  body.phase-load #p-load{overflow-y:auto; min-height:0; -webkit-overflow-scrolling:touch}
+
+  /* roadmap placeholder pages: coming-soon hero + planned-capability rows */
+  .placeholderHero{border:1px dashed var(--line); border-radius:8px; min-height:180px;
+    display:flex; flex-direction:column; align-items:center; justify-content:center; gap:10px;
+    color:var(--dim)}
+  .placeholderHero svg{width:40px; height:40px}
+  .placeholderHero strong{font-size:16px; font-weight:700; letter-spacing:.05em;
+    text-transform:uppercase}
+  .planBody{padding:12px 14px; display:flex; flex-direction:column; gap:10px}
+  .planRow{display:flex; align-items:center; gap:10px; font-size:15px; color:var(--text)}
+  .corePill, .laterPill{flex:0 0 auto; font-size:12px; font-weight:600; letter-spacing:.05em;
+    text-transform:uppercase; font-style:normal; padding:2px 8px; border-radius:999px}
+  .corePill{background:var(--line); color:var(--text)}
+  .laterPill{border:1px dashed var(--line); color:var(--dim)}
+
   .targetZones{border:1px solid var(--line); border-radius:8px; overflow:hidden; background:var(--surface)}
   .targetHead{display:flex; justify-content:space-between; gap:12px; align-items:baseline;
     padding:12px 14px; border-bottom:1px solid var(--line)}
@@ -431,6 +463,49 @@
     </label>
     <button class="small" id="debugTargetsBtn" type="button">Debug targets</button>
     <p class="status" id="loadStatus"></p>
+    <p class="hubHead">Up next</p>
+    <button class="featureCard" type="button" data-phase="live">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="3.5" fill="currentColor" stroke="none"/>
+      </svg>
+      <span class="fcBody"><strong>Live match</strong><span>Record and call in real time</span></span>
+      <span class="fcTag">Phase 2</span>
+    </button>
+    <button class="featureCard" type="button" data-phase="clips">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 10h18"/>
+      </svg>
+      <span class="fcBody"><strong>Clip library</strong><span>Every rally, saved as a clip</span></span>
+      <span class="fcTag">Phase 3</span>
+    </button>
+    <button class="featureCard" type="button" data-phase="coach_ai">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M5 20v-7M12 20V5M19 20v-11"/>
+      </svg>
+      <span class="fcBody"><strong>Stats + coaching</strong><span>Patterns and reports from your play</span></span>
+      <span class="fcTag">Phase 4</span>
+    </button>
+    <button class="featureCard" type="button" data-phase="platform">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M21 11.5a8.5 8.5 0 0 1-8.5 8.5H4l1.9-3.2A8.5 8.5 0 1 1 21 11.5z"/>
+      </svg>
+      <span class="fcBody"><strong>Coaching platform</strong><span>Share matches with your coach</span></span>
+      <span class="fcTag">Phase 5</span>
+    </button>
+    <button class="featureCard" type="button" data-phase="shot_bot">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M4 19c2-9 8-13 15-13"/><path d="M14 5l5 1-1 5"/>
+      </svg>
+      <span class="fcBody"><strong>Shot selection</strong><span>The shot the numbers would play</span></span>
+      <span class="fcTag">Phase 6</span>
+    </button>
+    <button class="featureCard" type="button" data-phase="flywheel">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M20 12a8 8 0 1 1-3.1-6.3"/><path d="M20 2.5V7h-4.5"/>
+      </svg>
+      <span class="fcBody"><strong>Model improvement</strong><span>Corrections retrain the model</span></span>
+      <span class="fcTag">Ongoing</span>
+    </button>
   </section>
 
   <!-- PHASE: frame -->
@@ -758,6 +833,120 @@
     </div>
     <p class="status" id="targetStatus"></p>
   </section>
+
+  <!-- PHASE: live match (roadmap placeholder) -->
+  <section class="hidden" id="p-live">
+    <div class="placeholderHero">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="3.5" fill="currentColor" stroke="none"/>
+      </svg>
+      <strong>Coming soon!</strong>
+    </div>
+    <div class="targetZones">
+      <div class="targetHead"><strong>Planned</strong><span>PHASE 2 · PILLAR 1</span></div>
+      <div class="planBody">
+        <div class="planRow"><i class="corePill">Core</i>In-app match recording</div>
+        <div class="planRow"><i class="corePill">Core</i>Point-by-point score log</div>
+        <div class="planRow"><i class="laterPill">Later</i>Contested-call review</div>
+        <div class="planRow"><i class="laterPill">Later</i>Streaming inference</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- PHASE: clip library (roadmap placeholder) -->
+  <section class="hidden" id="p-clips">
+    <div class="placeholderHero">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 10h18"/>
+      </svg>
+      <strong>Coming soon!</strong>
+    </div>
+    <div class="targetZones">
+      <div class="targetHead"><strong>Planned</strong><span>PHASE 3 · PILLAR 2</span></div>
+      <div class="planBody">
+        <div class="planRow"><i class="corePill">Core</i>Per-rally clip library</div>
+        <div class="planRow"><i class="laterPill">Later</i>Highlight auto-reels</div>
+        <div class="planRow"><i class="laterPill">Later</i>Dead-time removal</div>
+        <div class="planRow"><i class="laterPill">Later</i>Annotated shot overlays</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- PHASE: stats + coaching (roadmap placeholder) -->
+  <section class="hidden" id="p-coach-ai">
+    <div class="placeholderHero">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M5 20v-7M12 20V5M19 20v-11"/>
+      </svg>
+      <strong>Coming soon!</strong>
+    </div>
+    <div class="targetZones">
+      <div class="targetHead"><strong>Planned</strong><span>PHASE 4 · PILLAR 3</span></div>
+      <div class="planBody">
+        <div class="planRow"><i class="corePill">Core</i>Shot-type classifier</div>
+        <div class="planRow"><i class="corePill">Core</i>Per-shot rally dataset</div>
+        <div class="planRow"><i class="laterPill">Later</i>Heatmaps + trend stats</div>
+        <div class="planRow"><i class="laterPill">Later</i>LLM coach reports</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- PHASE: coaching platform (roadmap placeholder) -->
+  <section class="hidden" id="p-platform">
+    <div class="placeholderHero">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M21 11.5a8.5 8.5 0 0 1-8.5 8.5H4l1.9-3.2A8.5 8.5 0 1 1 21 11.5z"/>
+      </svg>
+      <strong>Coming soon!</strong>
+    </div>
+    <div class="targetZones">
+      <div class="targetHead"><strong>Planned</strong><span>PHASE 5 · PILLAR 4</span></div>
+      <div class="planBody">
+        <div class="planRow"><i class="corePill">Core</i>Accounts + cloud storage</div>
+        <div class="planRow"><i class="laterPill">Later</i>Match sharing</div>
+        <div class="planRow"><i class="laterPill">Later</i>Clip comments + review</div>
+        <div class="planRow"><i class="laterPill">Later</i>Drill assignments</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- PHASE: shot selection (roadmap placeholder) -->
+  <section class="hidden" id="p-shot-bot">
+    <div class="placeholderHero">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M4 19c2-9 8-13 15-13"/><path d="M14 5l5 1-1 5"/>
+      </svg>
+      <strong>Coming soon!</strong>
+    </div>
+    <div class="targetZones">
+      <div class="targetHead"><strong>Planned</strong><span>PHASE 6 · PILLAR 5</span></div>
+      <div class="planBody">
+        <div class="planRow"><i class="corePill">Core</i>Win-probability model</div>
+        <div class="planRow"><i class="laterPill">Later</i>Shot decision grading</div>
+        <div class="planRow"><i class="laterPill">Later</i>What-if rally replay</div>
+        <div class="planRow"><i class="laterPill">Later</i>Opponent profiles</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- PHASE: model improvement (roadmap placeholder) -->
+  <section class="hidden" id="p-flywheel">
+    <div class="placeholderHero">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M20 12a8 8 0 1 1-3.1-6.3"/><path d="M20 2.5V7h-4.5"/>
+      </svg>
+      <strong>Coming soon!</strong>
+    </div>
+    <div class="targetZones">
+      <div class="targetHead"><strong>Planned</strong><span>ONGOING</span></div>
+      <div class="planBody">
+        <div class="planRow"><i class="corePill">Core</i>One-tap call corrections</div>
+        <div class="planRow"><i class="corePill">Core</i>Corrections &#8594; eval set</div>
+        <div class="planRow"><i class="laterPill">Later</i>Scheduled retraining</div>
+        <div class="planRow"><i class="laterPill">Later</i>Model versioning</div>
+      </div>
+    </div>
+  </section>
 </main>
 
 <nav id="navPill">
@@ -854,7 +1043,17 @@ const STEP_META = {
            action:{btn:'judgeBtn', label:'Judge'}},
   label:  {label:'Label bounces', instr:'Drag the strip to the exact impact frame, then tap its bounce type. Tap a marker to revisit it — labels save automatically.'},
   target: {label:'9/9 · Targets', instr:''},
+  // Roadmap placeholder pages (home-hub cards). No action key: no primary yet.
+  live:    {label:'Live match', instr:'Record a match and get calls as they happen.'},
+  clips:   {label:'Clip library', instr:'Every rally, cut and saved automatically.'},
+  coach_ai:{label:'Stats + coaching', instr:'Shot types, patterns, and coaching from your matches.'},
+  platform:{label:'Coaching platform', instr:'Share matches and clips with your coach.'},
+  shot_bot:{label:'Shot selection', instr:'See the shot the numbers would have played.'},
+  flywheel:{label:'Model improvement', instr:'Your corrections make the model better.'},
 };
+/* Placeholder phases share one empty-stage treatment; section id = 'p-' + key with _ → - */
+const ROADMAP_PHASES = ['live','clips','coach_ai','platform','shot_bot','flywheel'];
+const roadmapSection = p => 'p-' + p.replace('_','-');
 
 /* Header action pill: proxies the current phase's primary button, which stays
    the source of truth for behavior and disabled state. */
@@ -878,10 +1077,11 @@ function setPhase(p){
   transportStop();
   S.phase = p;
   resetZoom();
-  stage.classList.toggle('hidden', p === 'load' || p === 'target');
+  stage.classList.toggle('hidden', p === 'load' || p === 'target' || ROADMAP_PHASES.includes(p));
   document.body.classList.toggle('phase-load', p === 'load');
   document.body.classList.toggle('phase-target', p === 'target');
-  for(const id of ['p-load','p-frame','p-tap','p-review','p-wall-corners','p-tap-floor','p-clip','p-analyze','p-track','p-label','p-target']) $(id).classList.add('hidden');
+  for(const id of ['p-load','p-frame','p-tap','p-review','p-wall-corners','p-tap-floor','p-clip','p-analyze','p-track','p-label','p-target',
+                   'p-live','p-clips','p-coach-ai','p-platform','p-shot-bot','p-flywheel']) $(id).classList.add('hidden');
   $('analyzeOverlay').classList.toggle('hidden', p !== 'analyze');
   $('stepLabel').textContent = STEP_META[p].label;
   $('hdrBack').classList.toggle('hidden', p === 'load');
@@ -921,6 +1121,7 @@ function setPhase(p){
   if(p === 'track'){ $('p-track').classList.remove('hidden'); buildTrackView(); }
   if(p === 'label'){ $('p-label').classList.remove('hidden'); buildLabelView(); }
   if(p === 'target'){ $('p-target').classList.remove('hidden'); buildTargetView(); }
+  if(ROADMAP_PHASES.includes(p)){ $(roadmapSection(p)).classList.remove('hidden'); }
   // The mode switcher only exists on the start screen; once a clip is
   // loaded into a path, Back is the only way out to switch modes.
   $('navPill').classList.toggle('hidden', p !== 'load');
@@ -1075,8 +1276,14 @@ $('hdrBack').onclick = () => {
     vid.pause(); S.base = null; $('fileIn').value = ''; setPhase('load');
   } else if(S.phase === 'target'){
     setPhase(S.run ? 'track' : 'load');
+  } else if(ROADMAP_PHASES.includes(S.phase)){
+    setPhase('load');   // placeholders hold no video/calibration state — straight home
   }
 };
+
+/* home hub: each roadmap card opens its placeholder phase */
+for(const card of document.querySelectorAll('.featureCard'))
+  card.onclick = () => setPhase(card.dataset.phase);
 
 function updateModePill(){
   $('navJudge').classList.toggle('active', S.mode !== 'label');

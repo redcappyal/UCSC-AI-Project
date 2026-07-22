@@ -131,7 +131,9 @@ iOS app in Safari (add-to-home-screen capable).
 
 Each screen is a `<section id="p-…">` inside `<main>`, toggled with `.hidden`. The current
 phases: `p-load`, `p-frame`, `p-tap`, `p-review`, `p-tap-floor`, `p-clip`, `p-analyze`,
-`p-track`, `p-label`, `p-target` (blueprints in §16). To add a screen, add a section and
+`p-track`, `p-label`, `p-target`, and the roadmap placeholders `p-live`, `p-clips`,
+`p-coach-ai`, `p-platform`, `p-shot-bot`, `p-flywheel` (blueprints in §16). To add a
+screen, add a section and
 follow §17 — never add a second header, tab bar, or routing chrome.
 
 ### 3.4 The proxied-primary pattern
@@ -463,6 +465,40 @@ tokens.
 - **Zoom controls:** top-right borderless white glyph buttons with heavy text-shadow —
   floating chrome over video never gets a fill.
 
+### 8.13 Feature cards (home hub)
+
+`.featureCard` — the tappable card variant: a `<button>` on the §8.9 card recipe.
+`--surface` fill, `1px --line` border, radius 8, full width, `min-height:56px`, padding
+`12px 14px`, flex row, gap 10, text-align left. Contents, left → right:
+
+- 24 px line icon (§9 grammar) in `--dim`;
+- title 16/700 **normal case** + one-line 13/400 `--dim` description (cards are content,
+  not controls — the uppercase rule applies only to the tag);
+- right-aligned phase tag: 12/600 uppercase `--dim` (`PHASE 2`, `ONGOING`).
+
+`:active` = instant `--line` fill (0 ms, §10). The whole card is one target, ≥ 44 pt.
+
+Feature cards appear **only** on the home screen (`p-load`), stacked under a 12/600
+uppercase `--dim` "UP NEXT" heading below the load button. They navigate to placeholder
+phases via `setPhase()` — this is sanctioned drill-down navigation, **not** nav chrome:
+the nav pill stays modes-only (§8.3) and §3.3/§18 still hold.
+
+### 8.14 Placeholder pages
+
+`.placeholderHero` — the §13 `.blank` dashed treatment scaled to a page: dashed
+`1px --line` border, radius 8, `min-height:180px`, centered column containing the
+feature's line icon at 40 px in `--dim`, then `COMING SOON!` — 16/700, uppercase,
+tracking `.05em`, `--dim` (the one sanctioned exclamation mark, §14). Drawn inline
+(SVG + text); no image files, no network (§0.5).
+
+Below the hero, a §8.9 card titled "Planned" lists capabilities as rows: a leading
+chip tag + a 15 px sentence-case label. Chip tags are 12/600 uppercase, radius 999px:
+`CORE` = `--line` fill, `--text`; `LATER` = transparent, `1px dashed --line`, `--dim`.
+Chips are informational only (not interactive), so they are exempt from the 44 px rule.
+
+Placeholder phases have **no primary action** — the header shows the back chevron and
+step label only (like `p-label`).
+
 ---
 
 ## 9. Iconography
@@ -543,7 +579,7 @@ Rules:
 | Inline status | `.status` line (14 dim), reserved height; `.warn` = 700 `--text` (still no red), `.ok` = `--text` |
 | Error | `#errBanner` top banner: bold message + Dismiss. Recoverable, calm, specific |
 | Result | Verdict box state change within reserved space |
-| Placeholder | Dashed-border `.blank` treatment |
+| Placeholder | Dashed-border `.blank` treatment; full-page placeholders use `.placeholderHero` (§8.14) |
 
 Copy for statuses is specific and actionable ("Tap the two ends of the out line", not
 "Error"). Numbers over adjectives ("132/300 frames" over "working…").
@@ -562,6 +598,8 @@ Copy for statuses is specific and actionable ("Tap the two ends of the out line"
 - Domain terms exactly: *out line, tin, service line, front/side wall, floor, rally,
   bounce* (never "boundary", "net", etc.).
 - No exclamation marks, no praise ("Great!"), no anthropomorphism. The app states facts.
+  Single sanctioned exception: the "COMING SOON!" hero text on roadmap placeholder pages
+  (§8.14) — nowhere else.
 
 ---
 
@@ -594,6 +632,16 @@ Each phase: header shows step label + proxied primary; `#instr` gives the one-li
 | `p-track` | Review track, judge calls | scrub hint lives in the header `#instr` line (detection failures replace it, `.warn`) · overview w/ marker minis · hit timeline (neon bars, center playhead) · readout · transport — **Review pane:** frame input + "Target zones" row · verdict box; **Challenge pane:** type dropdown (In/Out folded into the front-wall options) · Bounce / Not-bounce toggle (`.corrSeg`) · panes switched by a floating Review \| Challenge pill (`.callTabs`, same liquid-glass style as `#navPill`, fixed bottom-center) | "Judge frame" |
 | `p-label` | Human bounce labeling | overview · label timeline · transport+zoom · 2-col type grid (dot+label) · delete (destructive = plain secondary, disabled until selection) | — |
 | `p-target` | Stats: targets & bounces | Front-wall targets card (court chart + meta) · Floor bounces card (SVG map + meta) | — |
+| `p-live` | Roadmap placeholder: live match | placeholder hero · Planned card (§8.14) | — (back chevron only) |
+| `p-clips` | Roadmap placeholder: clip library | placeholder hero · Planned card (§8.14) | — (back chevron only) |
+| `p-coach-ai` | Roadmap placeholder: stats + coaching | placeholder hero · Planned card (§8.14) | — (back chevron only) |
+| `p-platform` | Roadmap placeholder: coaching platform | placeholder hero · Planned card (§8.14) | — (back chevron only) |
+| `p-shot-bot` | Roadmap placeholder: shot selection | placeholder hero · Planned card (§8.14) | — (back chevron only) |
+| `p-flywheel` | Roadmap placeholder: model improvement | placeholder hero · Planned card (§8.14) | — (back chevron only) |
+
+The home screen (`p-load`) also carries the UP NEXT feature-card stack (§8.13) below the
+load button; the six placeholder phases are reached only from there, and their back
+chevron returns to `p-load`.
 
 Mode switch Judge ↔ Label lives only in the nav pill (home page). The call page's
 Review ↔ Challenge switch is a second instance of the same liquid-glass pill
