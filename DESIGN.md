@@ -8,7 +8,7 @@ never silently drift).
 
 The aesthetic in one sentence: **a referee's instrument with a broadcast-sports finish** —
 OLED-black stage, one loud accent, neon functional markers over film strips, giant tabular
-numerals, capsule controls, and a floating liquid-glass mode switcher.
+numerals, capsule controls, and a floating liquid-glass tab bar.
 
 ---
 
@@ -82,7 +82,7 @@ editors) translates into these concrete motifs — all already in the codebase:
 | Play-by-play event feed with OUT chips | Hit timeline markers + verdict states |
 | Video-editor trim UI (yellow handles, filmstrip, white playhead) | `.clipEditor`, `.clipHandle`, center-fixed `#clipCursor` |
 | Segmented duration controls (`15/30/60 sec`, `7D/30D/3M`) | `.engineSeg` segmented control pattern |
-| Bottom toolbar of icon+label actions | `#navPill` liquid-glass mode switcher |
+| Bottom toolbar of icon+label actions | `#navPill` liquid-glass section tab bar |
 | Zone/heat charts on a literal court | `.targetCourt` front-wall chart, `#floorMapSvg` bounce map |
 | Squared "telemetry" typeface | Chakra Petch |
 
@@ -116,7 +116,7 @@ iOS app in Safari (add-to-home-screen capable).
 #instr          one-line contextual instruction strip (dim), directly under header
 #stage          flex-growing black canvas area: video frame, overlays, zoom controls
 <main>          the current phase <section> (controls, timelines, cards)
-#navPill        floating liquid-glass mode switcher, bottom-center
+#navPill        floating liquid-glass section tab bar, bottom-center (section roots only)
 ```
 
 - Header: `min-height:56px`, padding `8px 14px`, gap 10. Step label = uppercase 16/700,
@@ -131,10 +131,10 @@ iOS app in Safari (add-to-home-screen capable).
 
 Each screen is a `<section id="p-…">` inside `<main>`, toggled with `.hidden`. The current
 phases: `p-load`, `p-frame`, `p-tap`, `p-review`, `p-tap-floor`, `p-clip`, `p-analyze`,
-`p-track`, `p-label`, `p-target`, and the roadmap placeholders `p-live`, `p-clips`,
-`p-coach-ai`, `p-platform`, `p-shot-bot`, `p-flywheel` (blueprints in §16). To add a
-screen, add a section and
-follow §17 — never add a second header, tab bar, or routing chrome.
+`p-track`, `p-label`, `p-target`, and the roadmap phases `p-live`, `p-matches`,
+`p-coach`, `p-stats`, `p-shot-bot`, `p-sharing` (blueprints in §16). To add a screen,
+add a section and follow §17 — never add a second header, tab bar, or routing chrome
+beyond the §8.3 nav pill.
 
 ### 3.4 The proxied-primary pattern
 
@@ -370,7 +370,12 @@ around them (label flexes).
 ```
 
 Items: icon (17×17) + 13 px label, `min-height:44px`, dim → `.active` yellow capsule.
-Maximum 3 items; modes only (currently Judge / Label) — never page navigation.
+The pill is the app's **section tab bar** — exactly 3 items: **Play · Matches · Coach**,
+the top-level sections (not judge/label modes; Label mode lives in the Play dev row,
+§8.15). Visible only on the three section roots (`p-load`, `p-matches`, `p-coach`);
+hidden inside flows and sub-pages. Back chevron is hidden on section roots (they are
+siblings — the pill switches between them) and shown everywhere else. The glass recipe
+above is unchanged.
 
 ### 8.4 Inputs
 
@@ -465,7 +470,7 @@ tokens.
 - **Zoom controls:** top-right borderless white glyph buttons with heavy text-shadow —
   floating chrome over video never gets a fill.
 
-### 8.13 Feature cards (home hub)
+### 8.13 Feature cards (hub pages)
 
 `.featureCard` — the tappable card variant: a `<button>` on the §8.9 card recipe.
 `--surface` fill, `1px --line` border, radius 8, full width, `min-height:56px`, padding
@@ -474,14 +479,14 @@ tokens.
 - 24 px line icon (§9 grammar) in `--dim`;
 - title 16/700 **normal case** + one-line 13/400 `--dim` description (cards are content,
   not controls — the uppercase rule applies only to the tag);
-- right-aligned phase tag: 12/600 uppercase `--dim` (`PHASE 2`, `ONGOING`).
+- right-aligned phase tag: 12/600 uppercase `--dim` (`PHASE 4`, `SOON`).
 
 `:active` = instant `--line` fill (0 ms, §10). The whole card is one target, ≥ 44 pt.
 
-Feature cards appear **only** on the home screen (`p-load`), stacked under a 12/600
-uppercase `--dim` "UP NEXT" heading below the load button. They navigate to placeholder
-phases via `setPhase()` — this is sanctioned drill-down navigation, **not** nav chrome:
-the nav pill stays modes-only (§8.3) and §3.3/§18 still hold.
+Feature cards live on **hub pages** (currently the Coach hub, `p-coach`), stacked under
+the hub's instruction line. They navigate to sub-pages via `setPhase()` — this is
+sanctioned drill-down navigation, **not** nav chrome: the nav pill stays a section tab
+bar (§8.3) and §3.3/§18 still hold.
 
 ### 8.14 Placeholder pages
 
@@ -496,8 +501,29 @@ chip tag + a 15 px sentence-case label. Chip tags are 12/600 uppercase, radius 9
 `CORE` = `--line` fill, `--text`; `LATER` = transparent, `1px dashed --line`, `--dim`.
 Chips are informational only (not interactive), so they are exempt from the 44 px rule.
 
-Placeholder phases have **no primary action** — the header shows the back chevron and
-step label only (like `p-label`).
+Placeholder phases have **no primary action** — the header shows the step label plus a
+back chevron on sub-pages (like `p-label`). `p-matches` is a section root: no chevron;
+the nav pill switches away from it (§8.3).
+
+### 8.15 Hero action cards (Play screen)
+
+`.heroCard` — the Play screen's primary actions. Radius 8, full width,
+`min-height:72px`, padding 14px, flex row, gap 12: 28 px line icon (§9) · column of
+title 16/700 **normal case** + 13/400 description. One ≥ 48 px target each (these are
+primaries). Two variants:
+
+- **Accent** — `--accent-bg` fill, all ink `--accent-text`: the working action
+  ("Judge a clip" — it *is* the file input, `label.filebtn` recast around the hidden
+  `<input type=file>`).
+- **Surface** — `--surface` fill, `1px --line` border, `--text` title, `--dim`
+  icon/description, right-aligned `SOON` tag 12/600 uppercase `--dim`: the future
+  action ("Live match").
+
+Cards sit under a 12/600 uppercase `--dim` "PLAY" heading.
+
+**Dev row:** bottom of Play, after a `1px --line` hairline: `DEV` micro-label (11/600
+uppercase, `--dim`) + a row of `button.small` utilities — "Debug targets" and the
+"Label mode" toggle (`.active` = accent fill + 700, like correction chips).
 
 ---
 
@@ -573,7 +599,7 @@ Rules:
 
 | State | Pattern |
 |---|---|
-| Empty / first-run | Centered phase (`body.phase-load`), one instruction line + one primary filebtn |
+| Empty / first-run | Centered phase (`body.phase-load`), one instruction line + hero action cards (§8.15) |
 | Working (known progress) | `.progressbox` with real stats (frames, fps, ETA) + determinate bar |
 | Working (unknown) | Indeterminate bar or stage scrim + pulsing uppercase label |
 | Inline status | `.status` line (14 dim), reserved height; `.warn` = 700 `--text` (still no red), `.ok` = `--text` |
@@ -622,7 +648,7 @@ Each phase: header shows step label + proxied primary; `#instr` gives the one-li
 
 | Phase | Purpose | Body (top→bottom) | Primary (proxied) |
 |---|---|---|---|
-| `p-load` | Get a clip | instruction · `label.filebtn` "Load clip" (vertically centered) | — |
+| `p-load` | Play section root — get a clip | instruction · "PLAY" heading · hero cards (§8.15): Judge a clip (accent, file input) / Live match (surface, SOON) · dev row | — (no chevron; section root) |
 | `p-frame` | Pick a clean calibration frame | overview rail · editor strip w/ playhead · readout · transport+steppers | "Use this frame" |
 | `p-tap` | Tap out line & tin on frame | stage-driven; clear-selection small button | "Looks right" (disabled until 2 taps) |
 | `p-review` | Approve fitted lines (cyan/lime on stage) | minimal; evidence is the stage | "Use these lines" |
@@ -632,18 +658,19 @@ Each phase: header shows step label + proxied primary; `#instr` gives the one-li
 | `p-track` | Review track, judge calls | scrub hint lives in the header `#instr` line (detection failures replace it, `.warn`) · overview w/ marker minis · hit timeline (neon bars, center playhead) · readout · transport — **Review pane:** frame input + "Target zones" row · verdict box; **Challenge pane:** type dropdown (In/Out folded into the front-wall options) · Bounce / Not-bounce toggle (`.corrSeg`) · panes switched by a floating Review \| Challenge pill (`.callTabs`, same liquid-glass style as `#navPill`, fixed bottom-center) | "Judge frame" |
 | `p-label` | Human bounce labeling | overview · label timeline · transport+zoom · 2-col type grid (dot+label) · delete (destructive = plain secondary, disabled until selection) | — |
 | `p-target` | Stats: targets & bounces | Front-wall targets card (court chart + meta) · Floor bounces card (SVG map + meta) | — |
-| `p-live` | Roadmap placeholder: live match | placeholder hero · Planned card (§8.14) | — (back chevron only) |
-| `p-clips` | Roadmap placeholder: clip library | placeholder hero · Planned card (§8.14) | — (back chevron only) |
-| `p-coach-ai` | Roadmap placeholder: stats + coaching | placeholder hero · Planned card (§8.14) | — (back chevron only) |
-| `p-platform` | Roadmap placeholder: coaching platform | placeholder hero · Planned card (§8.14) | — (back chevron only) |
-| `p-shot-bot` | Roadmap placeholder: shot selection | placeholder hero · Planned card (§8.14) | — (back chevron only) |
-| `p-flywheel` | Roadmap placeholder: model improvement | placeholder hero · Planned card (§8.14) | — (back chevron only) |
+| `p-matches` | Matches section root (placeholder) | placeholder hero · Planned card (§8.14) | — (no chevron; section root) |
+| `p-coach` | Coach section root (hub) | instruction · three feature cards (§8.13) — no hero | — (no chevron; section root) |
+| `p-live` | Placeholder: live match | placeholder hero · Planned card (§8.14) | — (back chevron only) |
+| `p-stats` | Placeholder: stats + trends | placeholder hero · Planned card (§8.14) | — (back chevron only) |
+| `p-shot-bot` | Placeholder: shot selection | placeholder hero · Planned card (§8.14) | — (back chevron only) |
+| `p-sharing` | Placeholder: your coach (coaching platform) | placeholder hero · Planned card (§8.14) | — (back chevron only) |
 
-The home screen (`p-load`) also carries the UP NEXT feature-card stack (§8.13) below the
-load button; the six placeholder phases are reached only from there, and their back
-chevron returns to `p-load`.
+`p-load` is the **Play section root**: hero action cards (§8.15) + dev row replace the
+old load-button stack. Sub-page back routes: `p-live` → Play; `p-stats` / `p-shot-bot` /
+`p-sharing` → Coach. The nav pill is the section tab bar and appears on the three
+section roots only (§8.3).
 
-Mode switch Judge ↔ Label lives only in the nav pill (home page). The call page's
+Mode switch Judge ↔ Label lives in the Play dev-row toggle (§8.15). The call page's
 Review ↔ Challenge switch is a second instance of the same liquid-glass pill
 (`.callTabs` shares `#navPill`'s rules); only one pill is ever on screen at a time.
 
