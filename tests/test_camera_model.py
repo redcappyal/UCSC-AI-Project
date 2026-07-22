@@ -77,7 +77,7 @@ def _synthetic_calibration(camera, frame_size=(1920, 1080)):
 def test_camera_correspondences_extracts_floor_and_wall():
     camera = make_camera()
     calibration = _synthetic_calibration(camera)
-    image_px, court_xyz = court_model._camera_correspondences(calibration)
+    image_px, court_xyz, labels = court_model._camera_correspondences(calibration)
     assert len(image_px) == len(court_xyz) == 7 + 4  # 7 required landmarks + 4 line ends
     heights = sorted(set(round(z, 4) for z in court_xyz[:, 2]))
     assert heights == [0.0, round(court_model.TIN_TOP_HEIGHT_FT, 4),
@@ -208,7 +208,7 @@ def _add_wall_corners(camera, calibration):
 def test_camera_correspondences_include_all_wall_corner_taps():
     camera = make_camera()
     calibration = _add_wall_corners(camera, _synthetic_calibration(camera))
-    image_px, court_xyz = court_model._camera_correspondences(calibration)
+    image_px, court_xyz, labels = court_model._camera_correspondences(calibration)
     # 7 required landmarks + 4 line endpoints + 4 corner taps.
     assert len(court_xyz) == 15
     seams = [xyz for xyz in court_xyz if xyz[1] == 0.0 and xyz[2] == 0.0]
@@ -238,5 +238,67 @@ def test_camera_correspondences_ignore_malformed_wall_corners():
         {"id": "mystery", "tap_px": [10, 10]},      # unknown id
         "not-a-dict",
     ]}
-    image_px, court_xyz = court_model._camera_correspondences(calibration)
+    image_px, court_xyz, labels = court_model._camera_correspondences(calibration)
     assert len(court_xyz) == 11  # unchanged: landmarks + line endpoints only
+
+
+def test_solve_camera_model_reports_labeled_per_point_residuals():
+    camera = make_camera()
+    calibration = _synthetic_calibration(camera)
+    solved, info = court_model.solve_camera_model(calibration)
+    assert info["status"] == "ok"
+    per_point = info["per_point"]
+    assert len(per_point) == info["point_count"]
+    residuals = [entry["residual_px"] for entry in per_point]
+    assert residuals == sorted(residuals, reverse=True)
+    labels = {entry["label"] for entry in per_point}
+    assert "line:out_line_lower_edge_left" in labels
+    assert "line:tin_top_edge_right" in labels
+    assert sum(1 for label in labels if label.startswith("floor:")) == 7
+
+
+def test_per_point_names_the_corrupted_tap_on_high_residual():
+    camera = make_camera()
+    calibration = _synthetic_calibration(camera)
+    calibration["lines"][0]["endpoints"][0][0] += 300.0
+    solved, info = court_model.solve_camera_model(calibration)
+    assert solved is None
+    assert info["status"] == "high_residual"
+    assert info["per_point"][0]["label"] == "line:out_line_lower_edge_left"
+
+
+def test_per_point_includes_corner_labels():
+    camera = make_camera()
+    calibration = _add_wall_corners(camera, _synthetic_calibration(camera))
+    solved, info = court_model.solve_camera_model(calibration)
+    assert info["status"] == "ok"
+    labels = {entry["label"] for entry in info["per_point"]}
+    assert {"corner:top_left", "corner:top_right",
+            "corner:bottom_left", "corner:bottom_right"} <= labels
+
+
+def test_camera_check_endpoint():
+    import app as app_module
+
+    client = app_module.app.test_client()
+
+    camera = make_camera()
+    good = client.post("/api/camera-check",
+                       json={"calibration": _synthetic_calibration(camera)})
+    body = good.get_json()
+    assert good.status_code == 200
+    assert body["ok"] is True and body["status"] == "ok"
+    assert body["per_point"][0]["residual_px"] >= body["per_point"][-1]["residual_px"]
+
+    # Degraded: one badly wrong endpoint -> rejected, worst tap named.
+    bad_cal = _synthetic_calibration(camera)
+    bad_cal["lines"][0]["endpoints"][0][0] += 300.0
+    bad = client.post("/api/camera-check", json={"calibration": bad_cal}).get_json()
+    assert bad["status"] == "high_residual"
+    assert bad["per_point"][0]["label"] == "line:out_line_lower_edge_left"
+
+    # Garbage in -> 200 with an explanatory status, never a 500.
+    for payload in ({}, {"calibration": 42}, {"calibration_json": "{nope"}):
+        response = client.post("/api/camera-check", json=payload)
+        assert response.status_code == 200
+        assert response.get_json()["status"] in ("no_frame_size", "invalid_json")

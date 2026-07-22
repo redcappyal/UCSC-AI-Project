@@ -612,10 +612,10 @@ def _camera_correspondences(calibration):
     side-wall junctions. If a calibration violates that, the pose fit's
     residual gate (solve_camera_model) rejects it.
     """
-    image_points, court_points = [], []
+    image_points, court_points, labels = [], [], []
     planes = calibration.get("planes") or {}
     floor_plane = planes.get("floor") or {}
-    for landmark in floor_plane.get("landmarks", []):
+    for index, landmark in enumerate(floor_plane.get("landmarks", [])):
         if landmark.get("skipped"):
             continue
         pixel = landmark.get("refined_px") or landmark.get("tap_px")
@@ -624,14 +624,17 @@ def _camera_correspondences(calibration):
             continue
         image_points.append([float(pixel[0]), float(pixel[1])])
         court_points.append([float(court[0]), float(court[1]), 0.0])
+        labels.append(f"floor:{landmark.get('id') or index}")
     for line in calibration.get("lines", []):
         height = _WALL_LINE_HEIGHTS_FT.get(line.get("name"))
         endpoints = line.get("endpoints") or []
         if height is None or len(endpoints) != 2:
             continue
-        for x_ft, endpoint in zip((0.0, COURT_WIDTH_FT), endpoints):
+        for x_ft, side, endpoint in zip(
+                (0.0, COURT_WIDTH_FT), ("left", "right"), endpoints):
             image_points.append([float(endpoint[0]), float(endpoint[1])])
             court_points.append([x_ft, 0.0, height])
+            labels.append(f"line:{line.get('name')}_{side}")
     # Wall-corner taps (planes.wall.corners, judge_call.load_wall_corners
     # schema). The wizard targets reference corners with exact coordinates:
     # top = the OUT LINE's junctions with the side walls (15 ft), bottom =
@@ -655,9 +658,11 @@ def _camera_correspondences(calibration):
         x_ft, z_ft = placement
         image_points.append([float(tap[0]), float(tap[1])])
         court_points.append([x_ft, 0.0, z_ft])
+        labels.append(f"corner:{corner.get('id')}")
     return (
         np.asarray(image_points, dtype=float).reshape(-1, 2),
         np.asarray(court_points, dtype=float).reshape(-1, 3),
+        labels,
     )
 
 
@@ -922,7 +927,7 @@ def solve_camera_model(calibration):
     center_px = (frame_width / 2.0, frame_height / 2.0)
 
     try:
-        image_px, court_xyz = _camera_correspondences(calibration)
+        image_px, court_xyz, point_labels = _camera_correspondences(calibration)
         distortion = calibration.get("distortion") or None
         floor_count = int(np.sum(court_xyz[:, 2] == 0.0)) if len(court_xyz) else 0
         wall_count = len(court_xyz) - floor_count
@@ -965,6 +970,13 @@ def solve_camera_model(calibration):
         "point_count": len(court_xyz),
         "center_px": [center_px[0], center_px[1]],
         "init": init_kind,
+        # Worst-first, so a wizard can point at the tap to redo. Present on
+        # success and on every post-refine rejection (high_residual is the
+        # case where knowing the offender matters most).
+        "per_point": sorted(
+            ({"label": label, "residual_px": float(error)}
+             for label, error in zip(point_labels, per_point)),
+            key=lambda item: -item["residual_px"]),
     }
 
     frame_diagonal = float(np.hypot(frame_width, frame_height))

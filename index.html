@@ -343,6 +343,7 @@
   .wallCornerList span{border:1px solid var(--line); border-radius:8px; padding:8px 10px; color:var(--dim); font-size:13px}
   .wallCornerList span.done{color:var(--text); border-color:color-mix(in srgb, var(--accent-bg) 70%, var(--line))}
   .wallCornerList span.active{background:var(--accent-bg); color:var(--accent-text); border-color:transparent; font-weight:700}
+  .wallCornerList span.warned{border-color:#f5c518; color:var(--text)}
   #floorDiagram{width:118px; flex:none; background:var(--surface); border:1px solid var(--line);
     border-radius:8px; padding:4px}
   #floorDiagram .courtLine{stroke:var(--dim); stroke-width:.45; fill:none}
@@ -490,6 +491,7 @@
       <button class="small" id="wallSkipBtn" type="button">Skip corners</button>
     </div>
     <p class="status" id="wallStatus"></p>
+    <p class="status" id="camHealthWall"></p>
   </section>
 
   <!-- PHASE: floor calibration (full-court homography) -->
@@ -510,6 +512,7 @@
       <button class="small" id="floorSaveProfileBtn" type="button" disabled>Save as profile</button>
     </div>
     <p class="status" id="floorStatus"></p>
+    <p class="status" id="camHealthFloor"></p>
   </section>
 
   <!-- PHASE: clip -->
@@ -910,7 +913,7 @@ function setPhase(p){
     $('zoomCtrl').classList.add('hidden');
   }
   if(p === 'review'){ $('p-review').classList.remove('hidden'); buildReview(); }
-  if(p === 'tap_wall'){ $('p-wall-corners').classList.remove('hidden'); buildWallCornerView(); }
+  if(p === 'tap_wall'){ $('p-wall-corners').classList.remove('hidden'); buildWallCornerView(); scheduleCameraCheck(); }
   if(p === 'tap_floor'){ $('p-tap-floor').classList.remove('hidden'); buildFloorView(); }
   if(p === 'clip'){ $('p-clip').classList.remove('hidden'); setupClipControls(); }
   if(p === 'analyze'){ $('p-analyze').classList.remove('hidden'); startAnalyzePreview(); }
@@ -1597,6 +1600,7 @@ function wallCornerTap(x, y){
   if(S.wall.points.length >= WALL_CORNERS.length) return;
   S.wall.points.push([x, y]);
   buildWallCornerView();
+  scheduleCameraCheck();
   render();
 }
 
@@ -1607,8 +1611,11 @@ function buildWallCornerView(){
     ? WALL_CORNERS[n].prompt
     : 'All four wall corners are set.';
   $('wallCornerList').innerHTML = WALL_CORNERS.map((corner, i) => {
-    const cls = i < n ? 'done' : (i === n ? 'active' : '');
-    const suffix = i < n ? ' set' : (i === n ? ' next' : '');
+    const flagged = camCheck.worst.includes(`corner:${corner.id}`);
+    const cls = flagged && i < n ? 'warned'
+      : i < n ? 'done' : (i === n ? 'active' : '');
+    const suffix = flagged && i < n ? ' — re-tap?'
+      : i < n ? ' set' : (i === n ? ' next' : '');
     return `<span class="${cls}">${i + 1}. ${corner.label}${suffix}</span>`;
   }).join('');
   $('wallDoneBtn').disabled = n !== WALL_CORNERS.length;
@@ -1773,6 +1780,87 @@ function buildJson(){
   }
   if(S.profile) json.profile = S.profile;
   return json;
+}
+
+/* ---------- live camera-solve health check ----------
+   Debounced POST of the current buildJson() to /api/camera-check after every
+   wall/floor state change. The server's solve_camera_model is authoritative;
+   this surfaces its verdict (and the worst-fitting taps) while you can still
+   fix them at the court. */
+const CAM_CHECK_DEBOUNCE_MS = 400;
+let camCheckTimer = null, camCheckToken = 0;
+const camCheck = {status: null, worst: []};   // worst: per_point labels to flag
+
+function camPointName(label){
+  const sep = label.indexOf(':');
+  const kind = label.slice(0, sep), rest = label.slice(sep + 1);
+  if(kind === 'floor') return rest.replace(/_/g, ' ');
+  if(kind === 'corner'){
+    const corner = WALL_CORNERS.find(c => c.id === rest);
+    return corner ? corner.label : rest;
+  }
+  if(kind === 'line'){
+    const cut = rest.lastIndexOf('_');
+    return `${rest.slice(0, cut)} line · ${rest.slice(cut + 1)} end`;
+  }
+  return label;
+}
+
+function camHealthText(r){
+  if(r.status === 'ok')
+    return {cls: ' ok', text: `Camera OK · rms ${r.rms_px.toFixed(1)} px · ${r.point_count} pts`};
+  if(r.status === 'insufficient_points')
+    return {cls: '', text: `Camera solve: needs 4+ floor landmarks and 2+ wall points (${r.floor_points || 0} floor / ${r.wall_points || 0} wall so far).`};
+  const worst = r.per_point && r.per_point.length
+    ? ` Worst: ${camPointName(r.per_point[0].label)} (${r.per_point[0].residual_px.toFixed(1)} px).` : '';
+  const reasons = {
+    high_residual: `Camera solve failed — taps don't agree (median ${(r.median_px || 0).toFixed(1)} px).${worst}`,
+    mirror_rotation: 'Camera solve failed — geometry came out mirrored. Re-check left/right taps.',
+    camera_center_below_floor: 'Camera solve failed — the solution puts the camera below the floor. Re-check the taps.',
+    focal_out_of_range: 'Camera solve failed — implausible focal length. Re-check the taps.',
+    principal_point_far_from_center: 'Camera solve failed — implausible image center. Re-check the taps.',
+    no_frame_size: 'Camera solve unavailable — no frame size.',
+    init_failed: 'Camera solve failed to initialize — re-check the taps.',
+    refine_failed: 'Camera solve did not converge — re-check the taps.',
+    invalid_json: 'Camera solve unavailable — calibration incomplete.',
+  };
+  return {cls: ' warn', text: reasons[r.reason] || reasons[r.status] ||
+    `Camera solve failed (${r.status}).${worst}`};
+}
+
+function scheduleCameraCheck(){
+  clearTimeout(camCheckTimer);
+  camCheckTimer = setTimeout(runCameraCheck, CAM_CHECK_DEBOUNCE_MS);
+}
+
+async function runCameraCheck(){
+  const token = ++camCheckToken;
+  let calibration = null;
+  try{ calibration = buildJson(); }catch(e){ /* wizard state incomplete */ }
+  let result = {status: 'invalid_json'};
+  if(calibration){
+    try{
+      const response = await fetch('/api/camera-check', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({calibration}),
+      });
+      if(response.ok) result = await response.json();
+    }catch(e){ return; /* offline: keep the last verdict rather than flap */ }
+  }
+  if(token !== camCheckToken) return;  // a newer tap superseded this reply
+  camCheck.status = result.status;
+  // Flag re-tap candidates only when the solve says the fit is bad; on an
+  // accepted solve the markers stay quiet even if one point is worst.
+  camCheck.worst = (result.status === 'high_residual' && result.per_point)
+    ? result.per_point.slice(0, 2).map(p => p.label) : [];
+  const view = camHealthText(result);
+  for(const id of ['camHealthWall', 'camHealthFloor']){
+    $(id).textContent = view.text;
+    $(id).className = 'status' + view.cls;
+  }
+  buildFloorDiagram();
+  buildWallCornerView();
 }
 
 /* ---------- floor calibration (full-court floor homography) ----------
@@ -2024,6 +2112,7 @@ function refitFloor(){
     }
   }
   updateFloorUI();
+  scheduleCameraCheck();
   render();
 }
 function floorTap(x, y){
@@ -2051,6 +2140,7 @@ function landmarkStateClass(l, isActive){
   if(isActive) return 'active';
   if(l.skipped) return '';
   if(!l.refined_px) return '';
+  if(camCheck.worst.includes(`floor:${l.id}`)) return 'warned';
   if(l.residual_px != null && l.residual_px > FLOOR_RMS_WARN + 1) return 'warned';
   return 'done';
 }
@@ -2110,6 +2200,7 @@ function buildFloorView(){
   if(COURT && !S.floor) S.floor = newFloorState();
   if(S.floor && S.floor.activeIdx !== -1) S.floor.activeIdx = nextIncompleteIdx();
   updateFloorUI();
+  scheduleCameraCheck();
 }
 $('floorSkipLandmarkBtn').onclick = () => {
   const F = S.floor;
@@ -2279,6 +2370,7 @@ $('wallUndoBtn').onclick = () => {
   if(!S.wall || !S.wall.points.length) return;
   S.wall.points.pop();
   buildWallCornerView();
+  scheduleCameraCheck();
   render();
 };
 $('wallSkipBtn').onclick = () => {

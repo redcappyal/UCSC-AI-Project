@@ -450,6 +450,24 @@ def get_court_model():
     return jsonify({"ok": True, **court_model.court_model_public()})
 
 
+@app.post("/api/camera-check")
+def camera_check():
+    """Run the full camera solve on a candidate calibration and report health.
+
+    Read-only wizard feedback: nothing is stored. Always 200 with a status
+    field, mirroring solve_camera_model's never-raise contract.
+    """
+    payload = request.get_json(silent=True) or {}
+    calibration = payload.get("calibration")
+    if calibration is None:
+        try:
+            calibration = json.loads(payload.get("calibration_json") or "")
+        except (json.JSONDecodeError, TypeError):
+            return jsonify({"ok": True, "status": "invalid_json"})
+    _, info = court_model.solve_camera_model(calibration)
+    return jsonify({"ok": True, **info})
+
+
 def validate_floor_calibration(calibration):
     """Return a warning string (and strip the floor plane) if it cannot be used.
 

@@ -464,3 +464,32 @@ def test_3d_wall_hit_carries_metric_impact():
     assert "impact_x" in hit and "impact_y" in hit
     assert "impact_height_ft" in hit
     assert 0.0 < hit["impact_height_ft"] < 15.0
+
+
+def test_3d_floor_hit_carries_court_position_within_sigma_gate():
+    from synthetic3d import make_camera
+    from tests_ballistic_helpers import make_floor_bounce_rows
+    camera = make_camera()
+    rows, expected_frame = make_floor_bounce_rows(camera)
+    hits = detect_events_fused(rows, camera=camera)
+    floor_hits = [h for h in hits if h["event_type"] == "floor"
+                  and abs(h["hit_frame"] - expected_frame) <= 3]
+    assert floor_hits
+    position = floor_hits[0]["court_position_ft"]
+    assert 0.0 <= position["x"] <= 21.0
+    assert 0.0 <= position["y"] <= 32.0
+
+
+def test_floor_handoff_sigma_gate_blocks_far_contacts():
+    # Same bounce, but an impossibly strict gate: the metric court position
+    # must be withheld while the event itself still comes through.
+    from synthetic3d import make_camera
+    from tests_ballistic_helpers import make_floor_bounce_rows
+    camera = make_camera()
+    rows, expected_frame = make_floor_bounce_rows(camera)
+    hits = detect_events_fused(rows, camera=camera,
+                               config={"floor_snap_max_sigmas": -1.0})
+    floor_hits = [h for h in hits if h["event_type"] == "floor"
+                  and abs(h["hit_frame"] - expected_frame) <= 3]
+    assert floor_hits
+    assert "court_position_ft" not in floor_hits[0]

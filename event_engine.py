@@ -106,6 +106,10 @@ FUSION_DEFAULTS = {
     # synthesize metric impact fields when the contact is within this many
     # sigmas of the wall plane, else let the 2D two-stage fit handle it.
     "wall_snap_max_sigmas": 3.0,
+    # Floor analogue of the wall snap gate: only hand a metric court position
+    # to the payload when the contact is credibly on the floor plane, else
+    # leave the event positionless like the pre-3D path.
+    "floor_snap_max_sigmas": 3.0,
     # skip-state: any event may be labeled noise, leaving the grammar state
     # unchanged. Set above the baseline emission of an unsupported audio-only
     # event so phantom sounds get absorbed instead of phase-shifting the
@@ -658,8 +662,18 @@ def detect_events_fused(
                 hit.pop(key)
 
         if label == "floor" and event.get("contact_3d"):
-            point = event["contact_3d"]["point_ft"]
-            hit["court_position_ft"] = {"x": float(point[0]), "y": float(point[1])}
+            evidence = event.get("evidence_3d") or {}
+            floor_distance = (evidence.get("plane_distance_ft") or {}).get("floor")
+            floor_sigma = (evidence.get("sigma_ft") or {}).get("floor")
+            near_floor = (
+                floor_distance is not None
+                and floor_sigma is not None
+                and floor_distance <= cfg["floor_snap_max_sigmas"] * floor_sigma
+            )
+            if near_floor:
+                point = event["contact_3d"]["point_ft"]
+                hit["court_position_ft"] = {
+                    "x": float(point[0]), "y": float(point[1])}
 
         if label == "wall" and event.get("contact_3d") and camera is not None:
             evidence = event.get("evidence_3d") or {}
