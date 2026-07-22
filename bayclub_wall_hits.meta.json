@@ -5,7 +5,9 @@
   "labeled_at": "2026-07-21T22:34:15Z",
   "labeled_max_frame": 17975,
   "labeled_min_frame": 58,
+  "rekeyed_from_sha": "9da63c198fa61036c71c5e94238695508b569ea3accef0129fed282d4ba34272",
+  "rekeyed_note": "Original labels were made against an .mp4 remux of the same footage (identical 18000 frames @ 60fps, verified); re-keyed to the .mov sha that the tracked upload uses so the labels join the eval set.",
   "schema_version": "label-run-v1",
-  "video_path": "/Users/matthewsong/Downloads/Bay Club Squash 5min+audio.mp4",
-  "video_sha": "9da63c198fa61036c71c5e94238695508b569ea3accef0129fed282d4ba34272"
+  "video_path": "/Users/Ian2/Desktop/Training Data/Bay Club Squash 5min+audio.mov",
+  "video_sha": "68a6272d2d4c6c6ebf4d57370c7915239422885a6990c41d306d1f120f1fde9e"
 }
