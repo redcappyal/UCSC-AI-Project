@@ -8,6 +8,8 @@ description: Build/launch/drive recipe for verifying UI and pipeline changes in 
 ## Launch
 - Server: `PORT=5177 .venv/bin/python app.py` (repo venv has flask + cv2; system python3 does not). Health check: `curl http://127.0.0.1:5177/api/health`.
 - The whole UI is `index.html` (inline HTML/CSS/JS), served by Flask at `/`.
+- Worktrees have no `.venv` — symlink the main repo's: `ln -sfn <main-repo>/.venv <worktree>/.venv`, then launch from the worktree on a spare port. `/api/health` returns `root` — check it to confirm which checkout you're actually serving.
+- UI-only checks work without Flask: `python3 -m http.server <port>` in the repo root; the "Backend not reachable" banner is expected noise, only JS exceptions matter.
 
 ## Drive the browser
 - No playwright in any venv, but Playwright browsers are cached at `~/Library/Caches/ms-playwright/`. `npm install playwright-core` in a scratch dir and launch with
@@ -27,3 +29,4 @@ description: Build/launch/drive recipe for verifying UI and pipeline changes in 
 ## Gotchas
 - Page requests `/favicon.ico` → 404 console error; pre-existing noise, not a failure.
 - Filmstrip thumbnail renders seek the single shared `<video>` element; renders are debounced and token-guarded — wait on `S.clip.detailKey` changing rather than fixed timeouts.
+- Theme is pinned from `localStorage('slc-theme')` before first paint — emulating `prefers-color-scheme` after load does nothing. Flip themes with the in-app sun/moon toggle, or set localStorage and reload.
