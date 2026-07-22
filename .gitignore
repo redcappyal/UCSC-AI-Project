@@ -37,6 +37,11 @@ venv/
 # Design specs are durable project docs
 !docs/**/*.md
 !hardware/README.md
+# Printable mount parts + spec PDF: committed so teammates get them without
+# regenerating (source of truth stays the generator + markdown)
+!hardware/stl/*.stl
+!docs/mount-spec.pdf
+!docs/figures/*.svg
 !bounce_gb_model.pkl
 
 # Claude Code worktrees for spawned background tasks (last: must beat the !*.py whitelist)
