@@ -13,22 +13,26 @@ Iteration-1 tradeoff: durability for convenience — worn printed parts get repr
 
 ## Parts (hardware/stl/)
 
-| File | Material | Qty | Print orientation |
-|---|---|---|---|
-| `saddle_mast.stl` | PETG | 1 | channel opening up, mast rising (dovetail flanks print support-free) |
-| `wedge_A_uw169_40deg.stl` | PETG | 1 | on its side for face quality |
-| `wedge_B_uw43_32deg.stl` | PETG | 1 | same |
-| `cradle.stl` | PETG | 1 | back plate down |
-| `clamp_screw.stl` | PETG | 1 | vertical, knob down |
-| `pad_cap.stl` | PETG | 1 | face down |
-| `pin_x2.stl` | PETG | 2 | vertical, head down |
-| `tpu_seat_strip.stl` | TPU 68A | 1 | flat |
-| `tpu_jaw_pad_x2.stl` | TPU 68A | 2 | flat |
-| `tpu_wall_pad_x2.stl` | TPU 68A | 2 | flat |
-| `tpu_swivel_face.stl` | TPU 68A | 1 | flat |
-| `tpu_band_x2.stl` | TPU 68A | 2 | flat |
+**Every STL is exported already posed for printing — do not rotate in the
+slicer.** Supports: cradle only (under its back-plate wings, 8 mm gap).
 
-0.2 mm layers, 4 perimeters, ≥40% gyroid on saddle_mast. No PLA (creep).
+| File | Material | Qty | Pose as exported | Supports |
+|---|---|---|---|---|
+| `saddle.stl` | PETG | 1 | upside-down: cap on plate, jaws opening up (datum pockets print crisp; boss chamfers + teardrop) | none — slot ceiling + bores are designed bridges |
+| `mast.stl` | PETG | 1 | lying on its side (all features are Y-extrusions) | none |
+| `wedge_A_uw169_40deg.stl` | PETG | 1 | lying on its side | none |
+| `wedge_B_uw43_32deg.stl` | PETG | 1 | lying on its side | none |
+| `cradle.stl` | PETG | 1 | back dovetail boss down | under plate wings (cosmetic face) |
+| `clamp_screw.stl` | PETG | 1 | knob down, thread vertical | none |
+| `pad_cap.stl` | PETG | 1 | face down | none |
+| `pin_x2.stl` | PETG | 2 | head down | none |
+| `tpu_seat_strip.stl` | TPU 68A | 1 | flat | none |
+| `tpu_jaw_pad_x2.stl` | TPU 68A | 2 | flat | none |
+| `tpu_wall_pad_x2.stl` | TPU 68A | 2 | flat | none |
+| `tpu_swivel_face.stl` | TPU 68A | 1 | flat | none |
+| `tpu_band_x2.stl` | TPU 68A | 2 | flat | none |
+
+0.2 mm layers, 4 perimeters, ≥40% gyroid on the saddle. No PLA (creep).
 68A pad note: pose stiffness is unaffected by the soft durometer (flat-pad
 stiffness scales with area, and these areas are huge); pockets are deeper
 (2.5) and sections thicker so soft pads can't squirm in shear.
@@ -55,10 +59,15 @@ stiffness scales with area, and these areas are huge); pockets are deeper
    the pad cap.
 2. Snap the pad cap over the clamp screw's ball tip.
 3. Thread the clamp screw into the boss (it should turn by hand; see fit note).
-4. Slide wedge onto the mast dovetail to the end-stop; drop a tapered pin in.
-5. Slide cradle onto the wedge's face dovetail to the end-stop; second pin.
-6. On court: hook over the fin, slide to the wall stops, snug the screw,
+4. Slide the mast's base rail into the saddle-cap slot to the end; drop a
+   tapered pin through the base ledge into the cap.
+5. Slide wedge onto the mast dovetail to the end-stop; pin it.
+6. Slide cradle onto the wedge's face dovetail to the end-stop; pin it.
+7. On court: hook over the fin, slide to the wall stops, snug the screw,
    seat the phone, stretch both bands on.
+
+Note: three pins are used (saddle-mast, mast-wedge, wedge-cradle) — print a
+spare or two; `pin_x2.stl` is one pin, print as many as needed.
 
 Fit checks done in generation: all meshes watertight; dovetail rail/slot and
 screw/nut thread sectioned at assembly position with designed clearances.

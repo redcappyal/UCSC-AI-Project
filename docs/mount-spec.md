@@ -102,13 +102,15 @@ same pose every session. Target repeatability: ≤1 mm translation, ≤0.3° any
     ↕ dovetail on the wedge face + tapered pin
 [2] tilt wedge — A: 40° (16:9) / B: 32° (4:3)   ← swappable
     ↕ dovetail on the mast top + tapered pin
-[1] saddle+mast (one part — straddles the fin top edge at the wall junction)
+[1b] mast — dovetail into the saddle cap + tapered pin
+[1a] saddle (straddles the fin top edge at the wall junction)
 ```
 
 **Fully printed — no purchased hardware** (iteration-1 decision: durability
-traded for zero-BOM). Saddle and mast are merged into one part; every joint is
-a printed dovetail (0.4 clearance, end-stop, Ø5 tapered retaining pin); the
-clamp is a printed coarse-thread thumbscrew. Relaxed fits throughout — the
+traded for zero-BOM). Every joint is a printed dovetail (0.4 clearance,
+end-stop, Ø5 tapered retaining pin); the clamp is a printed coarse-thread
+thumbscrew. Saddle and mast are separate parts joined by the same dovetail —
+a merged part has no support-free print orientation. Relaxed fits throughout — the
 registration datums (A/B/C) still come from glass contact, so pose
 repeatability survives sloppy part-to-part fits.
 
@@ -141,10 +143,11 @@ repeatability survives sloppy part-to-part fits.
   holds pose.
 - Edge fillets ≥2 everywhere near glass; no printed corner may touch a glass edge.
 
-### 7.2 Mast (merged into the saddle — one printed part)
+### 7.2 Mast (PETG, joined to the saddle by dovetail + pin)
 
-- Column ≥ 30 × 45 rising from the cap's wall end so the cradle lands over the wall glass;
-  merging deletes 6 fasteners and stiffens the load path.
+- Column ≥ 30 × 45 rising from the cap's wall end so the cradle lands over the wall glass.
+  Base carries a male rail underneath that slides into a slot in the cap top (pinned);
+  base width = column width so the part lies flat on its side for printing.
 - Top face carries the **wedge dovetail**: male rail (root 20, crest 26, height 6, ~63°
   flanks — prints support-free), hard end-stop, axis parallel to the wall. Wedge is retained
   by a Ø5 printed tapered pin dropped through the wedge into the column (friction fit).
@@ -210,14 +213,15 @@ Governing constraints (re-verify in CAD if any input changes):
 
 | Part | Material | Orientation / notes |
 |---|---|---|
-| Saddle+mast | PETG (ASA if the gallery gets hot sun) | channel opening up, mast rising — dovetail flanks print support-free |
-| Wedges | PETG | on the side for face quality |
-| Cradle | PETG | back plate down |
+| Saddle | PETG (ASA if the gallery gets hot sun) | upside-down (cap on plate, jaws opening up) — datum pockets print crisp; boss chamfers + teardrop make it support-free |
+| Mast, wedges | PETG | lying on the side — every feature is a Y-extrusion, support-free |
+| Cradle | PETG | back boss down — the ONE supported part (under the plate wings) |
 | Clamp screw, pad cap, pins | PETG | screw vertical, knob down |
 | Pads, liner, bands, scoop, swivel face | **TPU 68A** | print flat; glued (CA) into recesses |
 
 0.2 layers, 4 perimeters, ≥40% gyroid on saddle+mast. **No PLA anywhere** — creep under
 sustained clamp load is pose drift, which defeats the calibrate-once design.
+**STLs are exported already posed for printing** — no rotation in the slicer.
 
 **BOM: none.** Iteration 1 is fully printed — printed M12×2.5 clamp thread, printed
 dovetails + tapered pins, printed 68A bands. Durability is explicitly traded away; if a
