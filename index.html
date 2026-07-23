@@ -1229,6 +1229,7 @@ function loadVideoFile(f, recCal = null){
   S.videoName = f.name;
   S.pendingRecCal = recCal;   // set only when judging an in-app recording
   S.videoFps = null;
+  S.lines = {out:null, tin:null};  // line fits belong to the previous video's frame — clear so a fresh calibration starts blank
   S.wall = null;
   S.floor = null;             // floor landmarks belong to the previous video's frame
   S.profile = null;
