@@ -5,8 +5,8 @@
 1. Xcode → Settings → Accounts → add the Apple ID on the paid developer team.
 2. `cd ios && xcodegen generate && open SquashLineCalling.xcodeproj`.
 3. Target SquashLineCalling → Signing & Capabilities → select the Team.
-   (Automatic signing; the bundle id com.redcappyal.squashlinecalling registers itself.)
-4. App Store Connect → Apps → "+" → New App → iOS, name "Squash Line Calling",
+   (Automatic signing; the bundle id app.crosscourt registers itself.)
+4. App Store Connect → Apps → "+" → New App → iOS, name "CrossCourt",
    bundle id from step 3, SKU anything.
 5. Select "Any iOS Device (arm64)" → Product → Archive → Distribute App →
    TestFlight & App Store → Upload.
