@@ -223,6 +223,9 @@
     border:0; background:transparent; color:var(--dim); font-size:13px}
   #navPill button.active, .callTabs button.active{background:var(--accent-bg); color:var(--accent-text)}
   #navPill svg, .callTabs svg{width:17px; height:17px; flex:0 0 auto}
+  /* Inside the native iOS shell (#shell=1) the app's tab bar owns navigation;
+     showing the web pill too would stack two navs. */
+  body.shell-embed #navPill{display:none}
   /* Bounce labeling */
   .labelGrid{display:grid; grid-template-columns:1fr 1fr; gap:10px}
   .labelGrid .dot{width:10px; height:10px; border-radius:50%; margin-right:9px; flex:0 0 auto}
@@ -5665,10 +5668,40 @@ async function startDevReloadPoller(){
   }, 1000);
 }
 
+/* ---------- deep links (#run=<id>&frame=<n>, #tab=matches|coach) ----------
+   The native iOS shell opens the webview at a specific run (results card →
+   full review) or a section tab. A #run link seeds the restore stash so
+   tryRestoreSession does the rehydration exactly like a returning session. */
+function applyDeepLink(){
+  const params = new URLSearchParams(location.hash.replace(/^#/, ''));
+  if(params.get('shell') === '1') document.body.classList.add('shell-embed');
+  const runId = (params.get('run') || '').trim();
+  if(runId){
+    try{
+      /* Reloads of the same deep link (e.g. the iOS webview restoring after
+         a process kill) must not clobber a newer saved position for this
+         run — only seed when the stash points at a different run. */
+      const existing = JSON.parse(localStorage.getItem(RESTORE_KEY) || 'null');
+      if(!existing || existing.run_id !== runId){
+        localStorage.setItem(RESTORE_KEY, JSON.stringify({
+          run_id: runId,
+          frame: Number(params.get('frame')) || 0,
+          videoName: null,
+        }));
+      }
+    }catch(_){ /* storage unavailable — boot normally */ }
+    return 'run';
+  }
+  const tab = params.get('tab');
+  return (tab === 'matches' || tab === 'coach') ? tab : null;
+}
+
 updatePlayButtons();
 setPhase('load');
 checkBackend();
-tryRestoreSession();
+const bootLink = applyDeepLink();
+if(bootLink === 'matches' || bootLink === 'coach') setPhase(bootLink);
+else tryRestoreSession();
 startDevReloadPoller();
 </script>
 </body>

@@ -466,6 +466,41 @@ def get_court_model():
     return jsonify({"ok": True, **court_model.court_model_public()})
 
 
+@app.get("/api/calibration/latest")
+def latest_calibration():
+    """Most recent run's calibration so a native client can reuse the court
+    setup without redoing the wizard. Recency = calibration.json mtime, which
+    tracks the last time /api/track accepted that calibration."""
+    best = None
+    if RUNS_DIR.exists():
+        for path in RUNS_DIR.glob("*/calibration.json"):
+            try:
+                key = (path.stat().st_mtime_ns, path.parent.name)
+            except OSError:
+                continue
+            if best is None or key > best[0]:
+                best = (key, path)
+
+    if best is None:
+        return error_response(
+            "No saved calibration found. Run a calibrated analysis first.", status=404)
+
+    path = best[1]
+    try:
+        calibration = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return error_response("Latest calibration could not be read.", status=500)
+
+    saved_at = time.strftime(
+        "%Y-%m-%dT%H:%M:%SZ", time.gmtime(path.stat().st_mtime))
+    return jsonify({
+        "ok": True,
+        "run_id": path.parent.name,
+        "saved_at": saved_at,
+        "calibration": calibration,
+    })
+
+
 @app.post("/api/camera-check")
 def camera_check():
     """Run the full camera solve on a candidate calibration and report health.

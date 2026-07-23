@@ -1,0 +1,7 @@
+# Replace with the real domain; Caddy fetches/renews the certificate itself.
+squash.example.com {
+    reverse_proxy 127.0.0.1:5188
+    request_body {
+        max_size 2GB
+    }
+}
