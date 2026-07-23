@@ -5665,10 +5665,33 @@ async function startDevReloadPoller(){
   }, 1000);
 }
 
+/* ---------- deep links (#run=<id>&frame=<n>, #tab=matches|coach) ----------
+   The native iOS shell opens the webview at a specific run (results card →
+   full review) or a section tab. A #run link seeds the restore stash so
+   tryRestoreSession does the rehydration exactly like a returning session. */
+function applyDeepLink(){
+  const params = new URLSearchParams(location.hash.replace(/^#/, ''));
+  const runId = (params.get('run') || '').trim();
+  if(runId){
+    try{
+      localStorage.setItem(RESTORE_KEY, JSON.stringify({
+        run_id: runId,
+        frame: Number(params.get('frame')) || 0,
+        videoName: null,
+      }));
+    }catch(_){ /* storage unavailable — boot normally */ }
+    return 'run';
+  }
+  const tab = params.get('tab');
+  return (tab === 'matches' || tab === 'coach') ? tab : null;
+}
+
 updatePlayButtons();
 setPhase('load');
 checkBackend();
-tryRestoreSession();
+const bootLink = applyDeepLink();
+if(bootLink === 'matches' || bootLink === 'coach') setPhase(bootLink);
+else tryRestoreSession();
 startDevReloadPoller();
 </script>
 </body>
