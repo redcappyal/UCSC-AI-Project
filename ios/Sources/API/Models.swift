@@ -18,7 +18,9 @@ struct Hit: Decodable, Equatable, Identifiable {
     var id: Int { frame }
     let frame: Int
     let timestampSeconds: Double
-    let call: String            // IN | OUT | UNKNOWN | AUDIO
+    /// IN | OUT | UNKNOWN | AUDIO — null when the server classified the hit
+    /// as a non-wall event (racket/floor/side_wall), which stays in the payload.
+    let call: String?
     let marginPx: Double?
     let eventType: String?
     let hasTargetZone: Bool
@@ -37,7 +39,7 @@ struct Hit: Decodable, Equatable, Identifiable {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         frame = try container.decode(Int.self, forKey: .frame)
         timestampSeconds = try container.decode(Double.self, forKey: .timestampSeconds)
-        call = try container.decode(String.self, forKey: .call)
+        call = try container.decodeIfPresent(String.self, forKey: .call)
         marginPx = try container.decodeIfPresent(Double.self, forKey: .marginPx)
         eventType = try container.decodeIfPresent(String.self, forKey: .eventType)
         // Presence-only: the shapes are the server's business (opaque here).

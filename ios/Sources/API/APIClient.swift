@@ -31,12 +31,12 @@ struct APIClient: APIClientProtocol {
         request.httpMethod = "POST"
         request.setValue("multipart/form-data; boundary=\(boundary)",
                          forHTTPHeaderField: "Content-Type")
-        let fileData = try Data(contentsOf: videoURL)   // demo rallies: tens of MB
-        let body = Multipart.body(
+        let bodyURL = try Multipart.writeBody(
             boundary: boundary, fields: [],
             fileField: "video_file", filename: videoURL.lastPathComponent,
-            contentType: "video/mp4", fileData: fileData)
-        let (data, response) = try await session.upload(for: request, from: body)
+            contentType: "video/mp4", fileURL: videoURL)
+        defer { try? FileManager.default.removeItem(at: bodyURL) }
+        let (data, response) = try await session.upload(for: request, fromFile: bodyURL)
         try Self.checkHTTP(response, data: data)
         return try JSONDecoder().decode(UploadResponse.self, from: data)
     }
@@ -72,11 +72,14 @@ struct APIClient: APIClientProtocol {
         return try JSONDecoder().decode(JobStatus.self, from: data)
     }
 
+    private struct ErrorBody: Decodable {
+        let error: String?
+    }
+
     private static func checkHTTP(_ response: URLResponse, data: Data) throws {
         guard let http = response as? HTTPURLResponse else { throw APIError.badResponse }
         guard (200..<300).contains(http.statusCode) else {
-            let message = (try? JSONDecoder().decode(
-                [String: String].self, from: data))?["error"]
+            let message = (try? JSONDecoder().decode(ErrorBody.self, from: data))?.error
             throw APIError.http(http.statusCode, message)
         }
     }

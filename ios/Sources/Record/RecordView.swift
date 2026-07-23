@@ -49,8 +49,10 @@ struct RecordView: View {
                 ZStack {
                     Circle().stroke(Theme.text, lineWidth: 4).frame(width: 76, height: 76)
                     if model.isRecording {
+                        // Yellow, not red: DESIGN.md reserves red for OUT
+                        // verdicts ("never a red record dot", §8.16).
                         RoundedRectangle(cornerRadius: 6)
-                            .fill(Theme.outCall).frame(width: 32, height: 32)
+                            .fill(Theme.accentBg).frame(width: 32, height: 32)
                     } else {
                         Circle().fill(Theme.accentBg).frame(width: 62, height: 62)
                     }

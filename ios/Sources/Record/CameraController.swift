@@ -3,7 +3,7 @@ import Foundation
 
 final class CameraController: NSObject {
     enum CameraError: LocalizedError {
-        case permissionDenied, configurationFailed, notRecording
+        case permissionDenied, configurationFailed, notRecording, recordingEmpty
 
         var errorDescription: String? {
             switch self {
@@ -11,6 +11,8 @@ final class CameraController: NSObject {
                 return "Camera or microphone access was denied. Enable both in Settings."
             case .configurationFailed: return "The camera could not be configured."
             case .notRecording: return "No recording is in progress."
+            case .recordingEmpty:
+                return "Recording stopped before any video was captured. Try again."
             }
         }
     }
@@ -135,8 +137,9 @@ final class CameraController: NSObject {
     }
 
     func stopRecording() async throws -> URL {
-        let (writer, video, audio, url) = outputQueue.sync {
-            let state = (self.writer, self.writerVideo, self.writerAudio, self.outputURL)
+        let (writer, video, audio, url, sessionStarted) = outputQueue.sync {
+            let state = (self.writer, self.writerVideo, self.writerAudio,
+                         self.outputURL, self.writerSessionStarted)
             self.writer = nil
             self.writerVideo = nil
             self.writerAudio = nil
@@ -144,6 +147,14 @@ final class CameraController: NSObject {
             return state
         }
         guard let writer, let url else { throw CameraError.notRecording }
+        guard sessionStarted else {
+            // No frame ever reached the writer (instant stop / stalled
+            // session): finishWriting would fail with an opaque -11800,
+            // so cancel and clean up instead.
+            writer.cancelWriting()
+            try? FileManager.default.removeItem(at: url)
+            throw CameraError.recordingEmpty
+        }
         video?.markAsFinished()
         audio?.markAsFinished()
         await writer.finishWriting()

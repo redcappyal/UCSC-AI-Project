@@ -57,6 +57,13 @@ venv/
 # generated .xcodeproj and Info.plist)
 !ios/**
 !deploy/**
+# Re-stated after the whitelist above (last match wins): the blanket !ios/**
+# and !deploy/** must never make secrets or junk trackable inside those trees.
+.env
+.DS_Store
+__pycache__/
+*.pyc
+usage.db
 
 # Claude Code worktrees for spawned background tasks (last: must beat the !*.py whitelist)
 .claude/worktrees/

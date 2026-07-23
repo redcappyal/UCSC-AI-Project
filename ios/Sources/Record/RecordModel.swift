@@ -28,8 +28,19 @@ final class RecordModel: ObservableObject {
             trail.append(observation)
             if trail.count > Self.trailLength { trail.removeFirst() }
         }
+        // Inference must never block the capture callback: that queue also
+        // feeds the AVAssetWriter, and a synchronous Core ML pass (~20-60 ms)
+        // would drop recorded frames. Hop to a dedicated queue and skip
+        // frames while a detection is in flight — the overlay can afford
+        // missed frames, the recording cannot.
+        let inferenceQueue = DispatchQueue(label: "slc.record.inference")
+        let inFlight = DispatchSemaphore(value: 1)
         camera.onVideoSample = { [tracker] pixelBuffer, timestamp in
-            tracker.process(pixelBuffer, timestamp: timestamp)
+            guard inFlight.wait(timeout: .now()) == .success else { return }
+            inferenceQueue.async {
+                tracker.process(pixelBuffer, timestamp: timestamp)
+                inFlight.signal()
+            }
         }
     }
 

@@ -98,12 +98,13 @@ struct ResultsView: View {
     }
 
     private func callChip(_ hit: Hit) -> some View {
-        let color: Color = hit.call == "IN" ? Theme.inCall
-            : hit.call == "OUT" ? Theme.outCall : Theme.unknown
+        let call = hit.call ?? "UNKNOWN"
+        let color: Color = call == "IN" ? Theme.inCall
+            : call == "OUT" ? Theme.outCall : Theme.unknown
         let margin = hit.marginPx.map {
             String(format: " %+.1f px", $0)
         } ?? ""
-        return Text(hit.call + margin)
+        return Text(call + margin)
             .font(.footnote.weight(.bold))
             .foregroundStyle(.black)
             .padding(.horizontal, 10).padding(.vertical, 5)

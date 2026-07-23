@@ -35,7 +35,10 @@ final class RunSubmission: ObservableObject {
 
             phase = .uploading
             let upload = try await api.upload(videoURL: videoURL)
-            let clipDuration = upload.duration ?? duration
+            // Server duration can be 0.0 when OpenCV fails to read frame_count;
+            // fall back to the measured recording duration then.
+            let serverDuration = upload.duration ?? 0
+            let clipDuration = serverDuration > 0 ? serverDuration : duration
 
             var job = try await api.startTrack(
                 videoID: upload.videoID,

@@ -5678,11 +5678,17 @@ function applyDeepLink(){
   const runId = (params.get('run') || '').trim();
   if(runId){
     try{
-      localStorage.setItem(RESTORE_KEY, JSON.stringify({
-        run_id: runId,
-        frame: Number(params.get('frame')) || 0,
-        videoName: null,
-      }));
+      /* Reloads of the same deep link (e.g. the iOS webview restoring after
+         a process kill) must not clobber a newer saved position for this
+         run — only seed when the stash points at a different run. */
+      const existing = JSON.parse(localStorage.getItem(RESTORE_KEY) || 'null');
+      if(!existing || existing.run_id !== runId){
+        localStorage.setItem(RESTORE_KEY, JSON.stringify({
+          run_id: runId,
+          frame: Number(params.get('frame')) || 0,
+          videoName: null,
+        }));
+      }
     }catch(_){ /* storage unavailable — boot normally */ }
     return 'run';
   }

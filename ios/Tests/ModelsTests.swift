@@ -38,13 +38,18 @@ final class ModelsTests: XCTestCase {
           {"frame": 400, "timestamp_seconds": 13.3, "call": "UNKNOWN",
            "event_type": "floor"},
           {"frame": 500, "timestamp_seconds": 16.6, "call": "AUDIO",
-           "event_type": "wall"}
+           "event_type": "wall"},
+          {"frame": 600, "timestamp_seconds": 20.0, "call": null,
+           "event_type": "racket"}
         ]}
         """#)
         let hits = try XCTUnwrap(status.hits)
-        XCTAssertEqual(hits.count, 4)
+        XCTAssertEqual(hits.count, 5)
         XCTAssertTrue(hits[0].hasTargetZone && hits[0].hasWallDiagram)
         XCTAssertFalse(hits[2].hasTargetZone)
+        // Server emits call:null for racket/floor/side_wall-classified hits;
+        // decoding must survive it (the whole JobStatus decode used to fail).
+        XCTAssertNil(hits[4].call)
         // Mirrors app.py front_wall_hits_from_payload: needs zone + diagram,
         // event_type in (null, wall, unknown). The floor hit and the
         // diagram-less AUDIO hit drop out.

@@ -26,6 +26,11 @@ targets:
         NSMicrophoneUsageDescription: Impact sounds help the analyzer find wall hits.
         UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait]
         ITSAppUsesNonExemptEncryption: false
+        # Allows the plain-HTTP serverBase override against a LAN Flask
+        # instance (Config.swift). Local networking only; ATS still enforces
+        # HTTPS for everything else.
+        NSAppTransportSecurity:
+          NSAllowsLocalNetworking: true
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.redcappyal.squashlinecalling
