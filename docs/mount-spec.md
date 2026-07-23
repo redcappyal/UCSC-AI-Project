@@ -75,10 +75,12 @@ homography as truth. The underside of each line is the precise calibration featu
 |---|---|---|
 | A | Fin top edge (horizontal, 2130 AFF) | height (Z), pitch |
 | B | Fin faces (both sides of 12 mm glass) | lateral (Y), yaw, roll |
-| C | Wall glass outer face | setback (X) |
+| C | ~~Wall glass outer face~~ **dropped in v2** (2026-07-23 field decision) | setback (X) by hand |
 
-Gravity seats A; the jaws close on B; a sprung stop butts C. Drop-on, one thumbscrew,
-same pose every session. Target repeatability: ≤1 mm translation, ≤0.3° any axis.
+Gravity seats A; the jaws close on B. **v2**: datum C (wall stop bosses) was removed at
+the team's request — the saddle is slid as far toward the court as it goes and screw
+friction holds setback. Setback repeatability is consciously traded away; per-court
+calibration (and re-calibration after remounting) absorbs it.
 
 ## 5. Measure on site before finalizing CAD (parameters)
 
@@ -98,8 +100,9 @@ same pose every session. Target repeatability: ≤1 mm translation, ≤0.3° any
 
 ```
 [4] mic scoop (optional clip-on)
-[3] phone cradle (TPU-lined frame, lens corner up, court-side prow)
-    ↕ dovetail on the wedge face + tapered pin
+[3] Printables "Tripod Mobile Phone Clamp V2" (screw-driven jaws, any phone;
+    phone landscape, lens corner up) — its LOWER part remixed with a T-slot block
+    ↕ T-rail on the wedge face + end stop + tapered pin
 [2] tilt wedge — A: 40° (16:9) / B: 32° (4:3)   ← swappable
     ↕ dovetail on the mast top + tapered pin
 [1b] mast — dovetail into the saddle cap + tapered pin
@@ -130,27 +133,28 @@ repeatability survives sloppy part-to-part fits.
 - **Cap** (bridges the edge): 15 thick above the edge; underside carries a
   **3 × 12 × 110 TPU 68A seat strip** in a 2.5-deep recess, 0.5 proud (datum A — glass edge
   never touches PETG).
-- **Wall stop** (datum C): two bosses at the wall end, faced with 3 mm TPU 68A in 2-deep
-  recesses (1 proud), contacting the wall outer face; boss length = G + 2 (parametric);
-  vertical spread ≥ 60 for a stable couple.
+- **Wall stop: deleted in v2** (field decision 2026-07-23 — see §4 datum C).
 - **Clamp (fully printed)**: coarse printed thread — **M12 × 2.5 trapezoid-profile
-  thumbscrew** (PETG, integrated Ø32 notched knob and Ø8 ball tip) threading directly into a
-  printed nut thread in the outer-jaw boss (0.4 radial clearance). A printed **pad cap**
-  (Ø18, ball-socket snap-fit over the tip, 2.5 mm 68A face disc in a pocket) lands flat on
-  the glass and doesn't rotate while tightening. Advancing the screw presses the glass onto
-  the fixed jaw's bonded pad (datum B). Snug finger-tight only (≤ ~50 N) — the soft 68A face
-  conforms and makes over-tightening obvious by feel; the screw holds position, the geometry
-  holds pose.
+  thumbscrew** (PETG, integrated Ø32 notched knob, thread runs to the tip) threading into a
+  printed nut thread in the outer-jaw boss (0.4 radial clearance). v2 tip: a **Ø18 tip
+  disc with an internal printed thread** screws onto the protruding end inside the channel
+  and is CA-glued (captive — the v1 snap-on pad cap fell out when unclamped); a 2.5 mm
+  68A face pad glues into its pocket. The disc rotates with the screw against the glass —
+  acceptable at finger-tight loads on TPU. Advancing the screw presses the glass onto the
+  fixed jaw's bonded pad (datum B). Snug finger-tight only (≤ ~50 N).
 - Edge fillets ≥2 everywhere near glass; no printed corner may touch a glass edge.
 
 ### 7.2 Mast (PETG, joined to the saddle by dovetail + pin)
 
-- Column ≥ 30 × 45 rising from the cap's wall end so the cradle lands over the wall glass.
-  Base carries a male rail underneath that slides into a slot in the cap top (pinned);
-  base width = column width so the part lies flat on its side for printing.
+- Column 30 × 45. v2: height and position along the saddle are **solved by the
+  generator** against §8 (currently ~160 mm tall, base ~50 mm from the wall end) — the
+  clamp bar holds the lens farther from the wall than the v1 cradle did, so the lens must
+  sit higher to keep the occlusion ratio. Base carries a male rail underneath that slides
+  into a slot in the cap top (pinned); lies flat on its side for printing.
 - Top face carries the **wedge dovetail**: male rail (root 20, crest 26, height 6, ~63°
-  flanks — prints support-free), hard end-stop, axis parallel to the wall. Wedge is retained
-  by a Ø5 printed tapered pin dropped through the wedge into the column (friction fit).
+  flanks — prints support-free, embedded 2 mm for robust booleans), hard end-stop, axis
+  parallel to the wall. Wedge is retained by a Ø5 printed tapered pin dropped through the
+  wedge into the column beside the rail's low end (friction fit).
 
 ### 7.3 Tilt wedges (PETG) — print both
 
@@ -160,28 +164,36 @@ repeatability survives sloppy part-to-part fits.
 | B | **32° below horizontal** ±0.5° | ultrawide 4:3 (full sensor, custom AVFoundation) | front-wall out line (4570) | `UW-4:3-32` |
 
 Residual angle error is absorbed by calibration — repeatability matters, accuracy doesn't.
-Each wedge: female dovetail underneath (mast rail + 0.4 clearance), and its **own male rail
-+ end-stop on the inclined face** for the cradle — same profile, same tapered-pin retention.
+v2 geometry: the clamp bar mounts **perpendicular** to the inclined face, so the camera
+axis runs along the face's slope — **face inclination = optical pitch directly** and the
+face descends toward the wall (v1's cradle lay flat on the face, so v1 used 90°−pitch).
+Each wedge: female dovetail underneath (mast rail + 0.4 clearance), and a **T-rail +
+end-stop on the inclined face** (stem 14×3.3, head 26×3.0, 2 mm embedment) for the clamp
+block — T instead of dovetail because on the clamp's print orientation a dovetail flank
+would be an unsupported ~25° ceiling; the T decomposes into vertical walls + 3–4 mm
+designed bridges on both parts. Same slide-to-stop + tapered-pin retention. The rail's
+position along the face is per-wedge, solved by the generator against §8.
 
-### 7.4 Phone cradle (PETG body, TPU liner)
+### 7.4 Phone holder (v2: Printables "Tripod Mobile Phone Clamp V2", remixed lower)
 
-- Pocket = phone+case envelope + 0.4 clearance per side; **liner is a single drop-in TPU
-  insert (1.5 wall)** covering every contact face, keyed into the PETG pocket with shallow
-  dovetail ribs — the phone never touches PETG (grip + structure-borne vibration decoupling),
-  and the liner is replaceable if it wears.
-- Landscape, **ultrawide lens corner at the top, facing the court**.
-- Corner window for the whole lens cluster + mic: no material within a **Ø40 clear zone**
-  around the mic port (parameter M), none within the FOV frustum (§8).
-- Retention: insertion from the top, retention lip + **band grooves (mandatory — the wall
-  top edge is in play, WSF 5.03, and the mount will take occasional ball strikes)**. Bands
-  are **printed TPU 68A rings** (ID ~48, 4 × 2.5 section — 68A stretches far enough).
-  No rigid latch over the top edge — it would sit in the FOV.
-- Mounts to the wedge via a **female dovetail boss on the back** (slot along the wall
-  direction, end-stop, tapered pin).
-- **Prow**: low 45° chamfered ridge on the cradle's court side ahead of the phone's lower
-  edge, below the FOV frustum, to shed direct ball strikes.
-- **USB-C slot** 14 × 8 at the phone's lower edge + cable channel with strain-relief boss
-  down the mast (match recordings need wall power).
+v1's custom cradle is replaced by the Stamos clamp (CC BY-NC-SA, files vendored in
+`hardware/third_party/`): screw-driven sprung jaws fit any phone 68–95 mm wide —
+the field-reported adjustability gap. Upper jaw, thread insert, knurled wheel and split
+screw print unmodified. The **lower part is remixed** (`clamp_lower_mount.stl`):
+
+- The tripod foot's underside — arca bevels, 1/4-20 hole and the **metal-nut cavity**
+  (stock clamp needs a non-printable nut) — is swallowed by a grafted solid block; the
+  foot plate above it is untouched (it is the lower jaw's backing).
+- The block carries the **T-slot** (mouth on the underside face, through both ends),
+  a peg bore beside the bar, and seats mouth-face-flat on the wedge face.
+- Phone mounts **landscape, ultrawide lens corner up, back facing the court**; bar is
+  vertical-leaning-over-the-wall (⊥ the wedge face). Phone center lands ~8 mm off the
+  fin midplane (within the ±20 budget).
+- Retention: the screw-driven jaws replace the v1 bands (a clamped jaw is far more
+  strike-proof than the open cradle + bands; reintroduce bands around bar+phone only if
+  strikes ever dislodge a phone in practice).
+- USB-C: both phone short edges are clear of the clamp — cable routes freely; no
+  dedicated channel in v2.
 
 ### 7.5 Mic scoop (optional, TPU)
 
@@ -192,8 +204,8 @@ window, removable for A/B testing. Any scoop change ⇒ audio threshold retune.
 
 | Parameter | Value | Derivation |
 |---|---|---|
-| Lens center height | **2220 AFF** (90 above top edge) | see setback coupling below |
-| Lens center setback | **18 outboard of the court-side wall face** (= 6 outboard of the wall's outer face) | edge-occlusion + phone-lean limits |
+| Lens center height | v1: 2220 AFF · **v2: ~2395 AFF (~265 above edge), solved** | see setback coupling below |
+| Lens center setback | v1: 18 · **v2: ~54 outboard of the court-side face (clamp-bar bulk), solved** | edge-occlusion + phone-lean limits |
 | Optical axis yaw | 0° (⊥ back wall) ±0.5° | datum B |
 | Optical axis pitch | wedge A/B (§7.3) | |
 | Cradle lateral position | phone center within ±20 of the fin midplane | mass over the clamp |
@@ -213,27 +225,26 @@ Governing constraints (re-verify in CAD if any input changes):
 
 | Part | Material | Orientation / notes |
 |---|---|---|
-| Saddle | PETG (ASA if the gallery gets hot sun) | upside-down (cap on plate, jaws opening up) — datum pockets print crisp; boss chamfers + teardrop make it support-free |
+| Saddle | PETG (ASA if the gallery gets hot sun) | upside-down (cap on plate, jaws opening up) — datum pockets print crisp; teardrop boss keeps it support-free |
 | Mast, wedges | PETG | lying on the side — every feature is a Y-extrusion, support-free |
-| Cradle | PETG | back boss down — the ONE supported part (under the plate wings) |
-| Clamp screw, pad cap, pins | PETG | screw vertical, knob down |
-| Pads, liner, bands, scoop, swivel face | **TPU 68A** | print flat; glued (CA) into recesses |
+| clamp_lower_mount | PETG | stock clamp orientation (flat) — T-slot ceilings are 3–4 mm designed bridges, support-free |
+| Clamp upper/threads/knurl/screws | PETG | per the Printables author (threads vertical) |
+| Saddle screw, tip disc, pins | PETG | screw vertical knob down; disc face down |
+| Seat strip, jaw pads, screw pad, scoop | **TPU 68A** | print flat; glued (CA) into recesses |
 
 0.2 layers, 4 perimeters, ≥40% gyroid on saddle+mast. **No PLA anywhere** — creep under
 sustained clamp load is pose drift, which defeats the calibrate-once design.
 **STLs are exported already posed for printing** — no rotation in the slicer.
 
-**BOM: none.** Iteration 1 is fully printed — printed M12×2.5 clamp thread, printed
-dovetails + tapered pins, printed 68A bands. Durability is explicitly traded away; if a
-printed thread or pin wears out, reprint it (minutes, not a hardware-store trip).
-
-BOM: M5 brass heat-set inserts ×7 · M5×25 SS thumbscrew ×1 (clamp) · M5×16 SS ×5
-(mast bolts + wedge lock) · Ø4×10 SS dowel pins ×2 · Ø18 swivel pad ×1 · silicone band ×2.
+**BOM: none.** Fully printed — printed M12×2.5 clamp thread, printed dovetail/T joints +
+tapered pins, printed clamp (the stock clamp foot's 1/4-20 metal nut is designed out by
+the graft block). Durability is explicitly traded away; reprint worn parts.
 
 ## 10. Install & verification
 
-Install: hook cap over fin edge at the junction → slide until wall stops touch → finger-tighten
-thumbscrew → seat phone → band. Target < 30 s.
+Install: hook cap over fin edge at the junction → slide as far toward the court as it
+goes → finger-tighten thumbscrew → clamp phone with the knurled wheel. Target < 30 s.
+(Setback is no longer datumed — re-run the calibration wizard after each remount.)
 
 Acceptance tests before trusting data:
 1. **Repeatability**: 10× full remount; court-line homography corner residuals ≤ 2 px

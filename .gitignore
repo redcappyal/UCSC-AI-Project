@@ -40,8 +40,12 @@ venv/
 # Printable mount parts + spec PDF: committed so teammates get them without
 # regenerating (source of truth stays the generator + markdown)
 !hardware/stl/*.stl
+# Vendored Printables clamp (CC BY-NC-SA, see hardware/README.md attribution):
+# the generator remixes the lower part, the rest print unmodified
+!hardware/third_party/*.stl
 !docs/mount-spec.pdf
 !docs/figures/*.svg
+!docs/figures/*.png
 !bounce_gb_model.pkl
 # CI config and the dependency manifests it installs from
 !.github/workflows/*.yml
