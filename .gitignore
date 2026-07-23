@@ -42,6 +42,7 @@ venv/
 !hardware/stl/*.stl
 !docs/mount-spec.pdf
 !docs/figures/*.svg
+!docs/figures/*.png
 !bounce_gb_model.pkl
 # CI config and the dependency manifests it installs from
 !.github/workflows/*.yml
