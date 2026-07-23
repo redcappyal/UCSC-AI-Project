@@ -1,21 +1,42 @@
-"""Parametric STL generator for the squash fin mount — fully-printed revision.
+"""Parametric STL generator for the squash fin mount — v3 (own clamp, old mast).
 
-Source of truth: docs/mount-spec.md. All dimensions mm. Iteration-1 design
-goals: NO purchased hardware (printed threads, dovetails, tapered pins), TPU
-68A for all soft parts, relaxed tolerances (usable, not precise).
+Source of truth: docs/mount-spec.md + docs/superpowers/specs/
+2026-07-23-mount-v2-clamp-redesign-design.md (v3 addendum). All dimensions mm.
 
-Every STL is exported ALREADY POSED FOR PRINTING — load into the slicer and
-print without rotating. Overhangs are designed out (45-degree chamfers,
-teardrop boss, side-lying exports); only the cradle needs supports (under its
-back-plate wings around the dovetail boss).
+v3 keeps the v1 architecture the team already printed and validated — the
+mast is emitted BYTE-COMPATIBLE with v1 (do not reprint it), the saddle keeps
+its v1 slot position, and the wedges keep their v1 steep-face geometry
+(face angle = 90 - pitch; the phone plane lies parallel to the face exactly
+like the v1 cradle). The custom cradle is replaced by a phone clamp of our
+own design that BORROWS THE MECHANISM of the Printables tripod clamp
+(fixed jaw + rail-guided sliding jaw + screw drive) but is built from our
+proven printed M12x2.5 thread and mounts through the same female-dovetail
+back boss + tapered peg the v1 cradle used. No third-party files needed.
 
-Edit the PARAMS block (site-measured values marked TODO) and re-run:
+Field-test fixes carried over from v2:
+- wall-stop bosses / gap fillers deleted from the saddle;
+- all NEW rail/stop unions embedded >= 2 mm (the v1 0.05 mm embedment made
+  the wedge-face dovetails degenerate — root cause of the unmountable
+  cradle. The v1 wedge cradle-peg bore was also misaligned with the cradle:
+  offset along the slope on the wedge but along the wall on the cradle);
+- saddle screw ball tip replaced by a threaded-on tip disc (glued = captive);
+  the phone-jaw screw uses the same disc to hold its carriage captive;
+- every peg bore modeled open and asserted open by containment sampling
+  (the saddle cap bore stays blind BY DESIGN — it must never reach glass);
+- optics: with the phone stack ~9 mm thicker than the v1 cradle and the mast
+  kept at 48, the legacy h/s >= 4.92 ratio (derived for a 90-mm-high lens)
+  does not hold, but the FUNCTIONAL spec s10 acceptance — floor visible to
+  <= 0.6 m of the back wall — is computed and asserted for both wedges,
+  along with the WSF court-plane margin (>= 3 mm from the court-side face).
+
+Every STL is exported ALREADY POSED FOR PRINTING — no rotation in the slicer.
+phone_clamp_body is the ONE supported part (boss-down, supports under the
+plate, 8 mm gap — same deal as the v1 cradle).
 
     python3 hardware/generate_mount_stls.py
 
-Outputs to hardware/stl/. Requires: trimesh, manifold3d, shapely, numpy.
-Draft solids: no fillets (spec 7.1 wants >=2 near glass — acceptable for the
-first test print).
+Outputs to hardware/stl/. Requires: trimesh, manifold3d, shapely, numpy,
+scipy, networkx, rtree.
 """
 import numpy as np
 import trimesh
@@ -29,7 +50,7 @@ OUT.mkdir(exist_ok=True)
 
 # ---------------------------------------------------------------- parameters
 T_F = 12.0        # fin/wall glass thickness
-G = 5.0           # TODO site: fin-to-wall gap at junction (spec 5: 2-8)
+WALL_T_GLASS = 12.0
 CHANNEL = T_F + 3.5          # 15.5 between PETG jaw faces
 JAW_WALL = 8.0
 JAW_DEPTH = 80.0
@@ -37,23 +58,38 @@ SADDLE_LEN = 130.0
 CAP_T = 15.0
 CAP_HALF_W = 20.0
 SEAT_PROUD = 0.5
-# TPU 68A pads: deeper pockets (soft pads need wall support), thicker sections
-SEAT_T, SEAT_RECESS = 3.0, 2.5            # 0.5 proud
-PAD_T, PAD_RECESS = 4.0, 2.5              # jaw pads, 1.5 proud
-WALL_T, WALL_RECESS = 3.0, 2.0            # wall stops, 1 proud
+SEAT_T, SEAT_RECESS = 3.0, 2.5
+PAD_T, PAD_RECESS = 4.0, 2.5
 SCREW_X, SCREW_Z = 65.0, -45.0
-# printed clamp thread (coarse prints anywhere)
 THR_MAJ, THR_MIN, THR_PITCH = 6.0, 4.75, 2.5   # radii: M12x2.5-ish
-THR_CLEAR = 0.4                                 # radial nut clearance
-DT_CLEAR = 0.4                                  # dovetail clearance (relaxed)
-WEDGE_ANGLES = {"A_uw169_40deg": 40.0, "B_uw43_32deg": 32.0}
-# phone + case envelope — TODO site: measure actual phone/case (spec 5: P, E, M)
-PHONE_L, PHONE_H, PHONE_T = 152.0, 77.0, 10.0
-LINER = 1.5
+THR_CLEAR = 0.4
+DT_CLEAR = 0.4
+PIN_R = 2.6
+T_EMBED = 2.0                # embedment for all new rail/stop unions
+WEDGE_ANGLES = {"A_uw169_40deg": 40.0, "B_uw43_32deg": 32.0}   # optical pitch
+MAST_H = 48.0                # v1 mast column top — KEPT (part already printed)
+
+# phone clamp (own design, borrowed screw-drive mechanism)
+PLATE_W = 70.0               # x, across the wall direction
+PLATE_T = 6.0                # z, back 0 .. front 6
+PLATE_L = 159.0              # y, 0 = top (hook end, up-slope) .. screw boss end
+BOSS_H = 8.0                 # back dovetail boss height (v1 cradle value)
+BOSS_YC = 64.0               # boss center along the plate
+HOOK_Y = 10.0                # fixed top hook: phone top-edge contact plane
+PW_MIN, PW_MAX = 68.0, 95.0  # phone width range across the jaws
+PHONE_T_MIN, PHONE_T_MAX = 8.0, 11.0
+LINER = 1.5                  # TPU proud of pockets on every phone contact
+RAIL_Y0, RAIL_Y1 = 70.0, 145.0     # carriage rail span on the plate front
+CARR_L = 40.0                # carriage body length along y
+SCREW_AXIS_Z = 22.0          # phone-jaw screw axis height above plate back
+LENS_FROM_TOP = 22.0         # ultrawide lens center below the phone top edge
+COURT_MARGIN = 3.0           # min distance outboard of the court-side face
+BLIND_MAX = 600.0            # spec s10: floor visible to <= 0.6 m of the wall
+EDGE_AFF = 2130.0
 
 HALF_CH = CHANNEL / 2.0
-CAP_TOP = SEAT_PROUD + CAP_T             # 15.5
-BOSS_Y = HALF_CH + JAW_WALL              # outer jaw face
+CAP_TOP = SEAT_PROUD + CAP_T
+BOSS_Y = HALF_CH + JAW_WALL
 
 
 def box(x0, x1, y0, y1, z0, z1):
@@ -76,6 +112,14 @@ def prism_xz(points, y0, y1):
     """Extrude an XZ polygon along Y."""
     p = extrude_polygon(Polygon(points), y1 - y0)
     p.apply_transform(np.array([[1, 0, 0, 0], [0, 0, 1, y0], [0, 1, 0, 0],
+                                [0, 0, 0, 1]], float))
+    return p
+
+
+def prism_yz(points, x0, x1):
+    """Extrude a YZ polygon along X."""
+    p = extrude_polygon(Polygon(points), x1 - x0)
+    p.apply_transform(np.array([[0, 0, 1, x0], [1, 0, 0, 0], [0, 1, 0, 0],
                                 [0, 0, 0, 1]], float))
     return p
 
@@ -119,7 +163,6 @@ def diff(base, cuts):
 
 
 def lie_on_minus_y(mesh):
-    """Print pose for parts whose features are all extrusions along Y."""
     m = mesh.copy()
     m.apply_transform(rotation_matrix(np.pi / 2, [1, 0, 0]))
     m.apply_translation([0, 0, -m.bounds[0][2]])
@@ -150,41 +193,97 @@ def save(mesh, name, orient=drop_to_plate):
     return mesh
 
 
-# shared dovetail profile: root 20 wide, crest 26, height 6
-def male_rail_xz(cx, z0):
-    return [(cx - 10, z0), (cx + 10, z0), (cx + 13, z0 + 6), (cx - 13, z0 + 6)]
+def assert_bore_open(mesh, p0, p1, name, samples=15):
+    p0, p1 = np.array(p0, float), np.array(p1, float)
+    ts = np.linspace(0.05, 0.95, samples)[:, None]
+    pts = p0 + ts * (p1 - p0)
+    inside = mesh.contains(pts)
+    assert not inside.any(), (
+        f"{name}: bore {p0}->{p1} blocked at t="
+        f"{ts[inside.nonzero()[0][0], 0]:.2f}")
+
+
+# shared dovetail profile: root 20 wide, crest 26, height 6 (v1 family)
+def male_rail_pts(cx, z0, embed=T_EMBED):
+    """Hexagon: straight root buried `embed` deep, then the v1 flare."""
+    return [(cx - 10, z0 - embed), (cx + 10, z0 - embed), (cx + 10, z0),
+            (cx + 13, z0 + 6), (cx - 13, z0 + 6), (cx - 10, z0)]
+
+
+# ------------------------------------------------- placement (v1 frame, fixed)
+# World: X along the fin, 0 at the wall OUTER face; Z vertical, 0 at the
+# fin/wall top edge. Saddle X 0..130 (slid flush). Mast local == saddle X
+# (v1 slot position), wedge local x = mast x - 5, wedge sits at CAP_TOP+48.
+# Face angle from horizontal th_f = 90 - pitch, DESCENDING away from the wall
+# (v1 geometry): face top corner f0 = (5, CAP_TOP+48+h_hi) in world (X, Z),
+# down-slope dir d = (cos, -sin), outward normal n = (sin, cos).
+# The clamp body lies parallel: back plane at n=BOSS_H; body y_b maps to the
+# slope coord t = T0 + y_b (T0 = t of the plate's top end, may be negative =
+# overhanging the face's top corner toward the wall).
+
+def wedge_frame(pitch_deg):
+    th_f = np.radians(90.0 - pitch_deg)
+    h_hi = 10.0 + 42.0 * np.tan(th_f)
+    L = 42.0 / np.cos(th_f)
+    d = np.array([np.cos(th_f), -np.sin(th_f)])
+    n = np.array([np.sin(th_f), np.cos(th_f)])
+    return th_f, h_hi, L, d, n
+
+
+def placement(pitch_deg):
+    """Per-wedge rail position on the face: bind the court-plane margin."""
+    th_f, h_hi, L, d, n = wedge_frame(pitch_deg)
+    # most court-side hardware = plate top BACK corner (y_b=0, n=BOSS_H):
+    # X = 5 + T0*d_x + BOSS_H*n_x >= -WALL_T_GLASS + COURT_MARGIN
+    T0_bind = ((-WALL_T_GLASS + COURT_MARGIN) - 5 - BOSS_H * n[0]) / d[0]
+    t_rail = np.clip(T0_bind + BOSS_YC, 15.0, L - 15.0)
+    T0 = t_rail - BOSS_YC
+    f0 = np.array([5.0, CAP_TOP + MAST_H + h_hi])
+
+    def world(y_b, n_off):
+        p = f0 + (T0 + y_b) * d + n_off * n
+        return p[0], p[1]
+
+    margin = world(0.0, BOSS_H)[0] + WALL_T_GLASS
+    # worst case for the blind zone and h/s: thickest phone (lens farthest out)
+    n_lens = BOSS_H + PLATE_T + LINER + PHONE_T_MAX
+    Xl, Zl = world(HOOK_Y + LENS_FROM_TOP, n_lens)
+    s_occ = Xl + WALL_T_GLASS
+    ratio = Zl / s_occ
+    blind = (EDGE_AFF + Zl) * s_occ / Zl - (s_occ)   # floor hidden, from court face
+    return dict(t_rail=float(t_rail), T0=float(T0), margin=float(margin),
+                ratio=float(ratio), blind=float(blind), Xl=float(Xl),
+                Zl=float(Zl))
+
+
+PLACE = {name: placement(ang) for name, ang in WEDGE_ANGLES.items()}
+for name, p in PLACE.items():
+    print(f"placement {name}: rail at t={p['t_rail']:.1f}  "
+          f"court-margin={p['margin']:.1f}mm  lens h={p['Zl']:.0f} "
+          f"s={p['Xl']+WALL_T_GLASS:.0f}  h/s={p['ratio']:.2f}  "
+          f"floor-blind={p['blind']:.0f}mm (max {BLIND_MAX:.0f})")
+    assert p['margin'] >= COURT_MARGIN - 0.1, f"{name}: court-plane margin"
+    assert p['blind'] <= BLIND_MAX, f"{name}: near-wall floor blind zone"
 
 
 # ------------------------------------------------------- 1. saddle
-# Design frame: X along fin (0 = wall end), Y across fin, Z from fin top edge.
-# PRINTS UPSIDE-DOWN (cap top on the plate, jaws opening up): the datum-A seat
-# pocket and both jaw-pad pockets print crisp; wall bosses get 45-degree
-# chamfers and the screw boss a teardrop roof so the flipped part is
-# support-free. Cap top carries a female dovetail slot + pin hole for the mast.
+# v1 slot position (mast at the saddle's wall end — the printed mast drops
+# straight back in). v2 simplifications kept: no wall bosses/stops/pads;
+# screw tip is the glued-on threaded disc.
 def make_saddle():
     cap = box(0, SADDLE_LEN, -CAP_HALF_W, CAP_HALF_W, SEAT_PROUD, CAP_TOP)
     jaw_n = box(0, SADDLE_LEN, -HALF_CH - JAW_WALL, -HALF_CH, -JAW_DEPTH, SEAT_PROUD)
     jaw_p = box(0, SADDLE_LEN, HALF_CH, BOSS_Y, -JAW_DEPTH, SEAT_PROUD)
-    boss_hi = box(-(G - 1), 0, -10, 10, -30, -10)
-    boss_lo = box(-(G - 1), 0, -10, 10, -80, -60)
-    # 45-degree chamfers above each wall boss (self-supporting when flipped)
-    cham_hi = prism_xz([(-(G - 1), -10), (0, -10), (0, -10 + (G - 1))], -10, 10)
-    cham_lo = prism_xz([(-(G - 1), -60), (0, -60), (0, -60 + (G - 1))], -10, 10)
     screw_boss = cyl(13, [SCREW_X, BOSS_Y - 0.1, SCREW_Z],
                      [SCREW_X, BOSS_Y + 14, SCREW_Z])
-    # true 45-degree teardrop: sides tangent to the boss circle, so the
-    # flipped print has no bare cylinder-top slivers
     td = 13 * 1.4142
     teardrop = prism_xz([(SCREW_X - td, SCREW_Z), (SCREW_X + td, SCREW_Z),
                          (SCREW_X, SCREW_Z + td)], BOSS_Y - 0.1, BOSS_Y + 14)
-    body = union([cap, jaw_n, jaw_p, boss_hi, boss_lo, cham_hi, cham_lo,
-                  screw_boss, teardrop])
+    body = union([cap, jaw_n, jaw_p, screw_boss, teardrop])
 
     nut = threaded_rod(THR_MAJ + THR_CLEAR, THR_MIN + THR_CLEAR, THR_PITCH, 24)
     nut.apply_transform(trimesh.geometry.align_vectors([0, 0, 1], [0, 1, 0]))
     nut.apply_translation([SCREW_X, BOSS_Y + 14.1 - 24, SCREW_Z])
-    # mast slot in cap top: mouth 20.8 at the surface flaring to 26.8 at -6.3,
-    # along Y, stop at +Y end
     slot = prism_xz([(17.1, CAP_TOP + 0.1), (37.9, CAP_TOP + 0.1),
                      (40.9, CAP_TOP - 6.3), (14.1, CAP_TOP - 6.3)],
                     -CAP_HALF_W - 0.1, 15.0)
@@ -192,130 +291,213 @@ def make_saddle():
         box(9.75, 120.25, -6.2, 6.2, SEAT_PROUD, SEAT_PROUD + SEAT_RECESS),
         box(10, 120, -HALF_CH - PAD_RECESS, -HALF_CH + 0.1, -70, -10),
         box(10, 120, HALF_CH - 0.1, HALF_CH + PAD_RECESS, -70, -10),
-        box(-(G - 1) - 0.1, -(G - 1) + WALL_RECESS, -8, 8, -28, -12),
-        box(-(G - 1) - 0.1, -(G - 1) + WALL_RECESS, -8, 8, -78, -62),
         nut,
         cyl(10, [SCREW_X, HALF_CH - 0.1, SCREW_Z], [SCREW_X, HALF_CH + 6, SCREW_Z]),
         slot,
-        cyl(2.6, [55, 0, 7.0], [55, 0, CAP_TOP + 0.1]),   # mast pin hole
+        cyl(PIN_R, [55, 0, 6.0], [55, 0, CAP_TOP + 0.1]),  # blind BY DESIGN
     ]
-    return save(diff(body, cuts), "saddle", orient=flip_upside_down)
+    m = diff(body, cuts)
+    assert_bore_open(m, [55, 0, 6.2], [55, 0, CAP_TOP], "saddle mast-peg bore")
+    assert_bore_open(m, [SCREW_X, HALF_CH + 1, SCREW_Z],
+                     [SCREW_X, BOSS_Y + 13.5, SCREW_Z], "saddle thread bore")
+    return save(m, "saddle", orient=flip_upside_down)
 
 
-# ------------------------------------------------------- 2. mast
-# Separate part again (the merged version had no printable orientation).
-# Base carries a male rail underneath (slides into the cap slot, pinned);
-# column rises to the wedge rail. Base width = column width so the whole -Y
-# side is coplanar: PRINTS LYING ON ITS SIDE, fully support-free (every
-# feature is an extrusion along Y).
+# ------------------------------------------------------- 2. mast — v1 VERBATIM
+# The team's printed mast fits perfectly; this reproduces the v1 geometry
+# byte-for-byte so the file matches the part in hand. Do not "improve".
 def make_mast():
     base = box(0, 60, -15, 15, 0, 8)
     under_rail = prism_xz([(17.5, 0.1), (37.5, 0.1), (40.5, -6.0), (14.5, -6.0)],
                           -15, 15)
     col = box(5, 50, -15, 15, 8, 48)
-    top_rail = prism_xz(male_rail_xz(27.5, 48), -15, 15)
+    top_rail = prism_xz([(17.5, 48), (37.5, 48), (40.5, 54), (14.5, 54)], -15, 15)
     stop = prism_xz([(14.5, 48), (40.5, 48), (40.5, 54), (14.5, 54)], 15, 17)
     body = union([base, under_rail, col, top_rail, stop])
     cuts = [
-        cyl(2.6, [44.5, 0, 38], [44.5, 0, 48.1]),    # wedge pin hole
-        cyl(2.6, [55, 0, -6.1], [55, 0, 8.1]),       # saddle pin hole (through)
+        cyl(PIN_R, [44.5, 0, 38], [44.5, 0, 48.1]),    # wedge pin hole
+        cyl(PIN_R, [55, 0, -6.1], [55, 0, 8.1]),       # saddle pin hole (through)
     ]
-    return save(diff(body, cuts), "mast", orient=lie_on_minus_y)
+    m = diff(body, cuts)
+    assert_bore_open(m, [55, 0, -5.9], [55, 0, 7.9], "mast saddle-peg bore")
+    assert_bore_open(m, [44.5, 0, 38.2], [44.5, 0, 47.9], "mast wedge-peg pocket")
+    return save(m, "mast", orient=lie_on_minus_y)
 
 
-# ------------------------------------------------------- 3. wedges
-# Female slot below rides the mast rail; the inclined face carries its own
-# male rail + end stop for the cradle. PRINTS LYING ON ITS SIDE (all features
-# are Y-extrusions), support-free.
+# ------------------------------------------------------- 3. wedges (v1 + fixes)
+# v1 steep-face geometry (face = 90 - pitch, descending away from the wall);
+# fixes: rail/stop embedded 2 mm (v1's 0.05 mm overlap corrupted the
+# booleans), rail position per-wedge from placement(), and the clamp-peg
+# bore moved to (t_rail, wall -10) — v1 had it offset along the SLOPE while
+# the cradle's bore was offset along the WALL, so they never lined up.
 def make_wedge(name, pitch_deg):
-    slope = np.radians(90.0 - pitch_deg)
-    x0, x1, h_low = 0.0, 42.0, 10.0
-    h_high = h_low + (x1 - x0) * np.tan(slope)
-    body = prism_xz([(x0, 0), (x1, 0), (x1, h_low), (x0, h_high)], -15, 15)
-    c, h = DT_CLEAR, 6 + DT_CLEAR
+    th_f, h_hi, L, d2, n2 = wedge_frame(pitch_deg)
+    body = prism_xz([(0, 0), (42, 0), (42, 10), (0, h_hi)], -15, 15)
+    c, hh = DT_CLEAR, 6 + DT_CLEAR
     slot = prism_xz([(22.5 - 10 - c, -0.1), (22.5 + 10 + c, -0.1),
-                     (22.5 + 13 + c, -0.1 + h), (22.5 - 13 - c, -0.1 + h)],
+                     (22.5 + 13 + c, -0.1 + hh), (22.5 - 13 - c, -0.1 + hh)],
                     -15.2, 15.2)   # mast rail cx 27.5 -> local 22.5
 
-    n = np.array([np.sin(np.radians(pitch_deg)), 0, np.cos(np.radians(pitch_deg))])
-    fx = np.array([np.cos(np.radians(pitch_deg)), 0, -np.sin(np.radians(pitch_deg))])
-    mid = np.array([(x0 + x1) / 2, 0, (h_low + h_high) / 2])
-    rail = prism_xz(male_rail_xz(0, 0), -15, 15)
-    stop = prism_xz([(-13, 0), (13, 0), (13, 6), (-13, 6)], 15, 17)
-    R = rotation_matrix(np.radians(pitch_deg), [0, 1, 0])
-    for part in (rail, stop):
-        part.apply_transform(R)
-        part.apply_translation(mid - 0.05 * n)
+    f0 = np.array([0.0, h_hi])                      # face top corner (x, z)
+    d3 = np.array([d2[0], 0, d2[1]])
+    n3 = np.array([n2[0], 0, n2[1]])
+    tr = PLACE[name]['t_rail']
+
+    def face_pt(t, n_off):
+        p = f0 + t * d2 + n_off * n2
+        return (p[0], p[1])
+
+    rail = prism_xz([face_pt(tr - 10, -T_EMBED), face_pt(tr + 10, -T_EMBED),
+                     face_pt(tr + 10, 0), face_pt(tr + 13, 6),
+                     face_pt(tr - 13, 6), face_pt(tr - 10, 0)], -15, 15)
+    # stop tab caps the rail's +y end (fully on the wedge body): the clamp
+    # boss (40 wide) rides to it, so the body sits at lateral -9 and its
+    # x=-1 peg bore lands on this wedge's y=-10 bore (v1 had these crossed)
+    stop = prism_xz([face_pt(tr - 15, -T_EMBED), face_pt(tr + 15, -T_EMBED),
+                     face_pt(tr + 15, 6), face_pt(tr - 15, 6)], 11, 15)
     body = union([body, rail, stop])
+
+    p_pin = f0[0] * np.array([1, 0, 0]) + np.array([0, 0, f0[1]]) + tr * d3
+    p_pin = np.array([p_pin[0], -10.0, p_pin[2]])   # wall offset -10
     cuts = [slot,
-            cyl(2.6, mid - 10 * fx + 7 * n, mid - 10 * fx - 12 * n),  # cradle pin
-            cyl(2.6, [37.5, 0, -0.1], [37.5, 0, 12])]                  # mast pin
-    return save(diff(body, cuts), f"wedge_{name}", orient=lie_on_minus_y)
+            cyl(PIN_R, p_pin + 8 * n3, p_pin - 12 * n3),   # clamp peg bore
+            cyl(PIN_R, [37.5, 0, -0.1], [37.5, 0, 12])]     # mast peg (v1)
+    m = diff(body, cuts)
+    assert_bore_open(m, p_pin + 6.2 * n3, p_pin - 11.8 * n3,
+                     f"wedge {name} clamp-peg bore", samples=25)
+    assert_bore_open(m, [37.5, 0, 0.2], [37.5, 0, 11.8],
+                     f"wedge {name} mast-peg bore")
+    return save(m, f"wedge_{name}", orient=lie_on_minus_y), m
 
 
-# ------------------------------------------------------- 4. cradle
-# PRINTS BACK-BOSS-DOWN — the one part that needs supports (under the
-# back-plate wings around the dovetail boss, 8 mm gap; scars are cosmetic).
-def make_cradle():
-    L = PHONE_L + 2 * (LINER + 0.4) + 12
-    H = PHONE_H + LINER + 0.4 + 6
-    rail_top = 5 + LINER + PHONE_T + 5
-    plate = box(0, L, 0, H, 0, 5)
-    rail_b = box(0, L, 0, 6, 5, rail_top)
-    rail_l = box(0, 6, 0, H, 5, rail_top)
-    rail_r = box(L - 6, L, 0, H, 5, rail_top)
-    prow = extrude_polygon(Polygon([(0, rail_top), (6, rail_top), (0, rail_top + 5)]),
-                           L - 40)
-    prow.apply_transform(np.array([[0, 0, 1, 20], [1, 0, 0, 0], [0, 1, 0, 0],
-                                   [0, 0, 0, 1]], float))
-    tabs = [box(30, 42, 0, 11, 5 + LINER + PHONE_T, rail_top),
-            box(L - 42, L - 30, 0, 11, 5 + LINER + PHONE_T, rail_top),
-            box(0, 11, 34, 46, 5 + LINER + PHONE_T, rail_top),
-            box(L - 11, L, 20, 32, 5 + LINER + PHONE_T, rail_top)]
-    cx, cy = L / 2, H / 2 + 3
-    boss = box(cx - 20, cx + 20, cy - 17, cy + 17, -8, 0)
-    body = union([plate, rail_b, rail_l, rail_r, prow, boss] + tabs)
-    c, h = DT_CLEAR, 6 + DT_CLEAR
-    slot = extrude_polygon(Polygon([(cy - 10 - c, -8.1), (cy + 10 + c, -8.1),
-                                    (cy + 13 + c, -8.1 + h), (cy - 13 - c, -8.1 + h)]),
-                           40.1)
-    slot.apply_transform(np.array([[0, 0, 1, cx - 26.2], [1, 0, 0, 0],
-                                   [0, 1, 0, 0], [0, 0, 0, 1]], float))
+# ------------------------------------------------------- 4. phone clamp body
+# Own design, borrowed mechanism. Plate with: fixed top hook (up-slope,
+# low-profile), male dovetail rail on the front for the jaw carriage,
+# M12x2.5 nut boss at the bottom end for the drive screw, and on the BACK
+# the v1-cradle female-dovetail boss (slot along the wall, peg bore at
+# wall -10) that rides the wedge face rail. Prints boss-down WITH SUPPORTS
+# under the plate (8 mm gap) — the one supported part, like the v1 cradle.
+def make_phone_clamp_body():
+    plate = box(-PLATE_W / 2, PLATE_W / 2, 0, PLATE_L, 0, PLATE_T)
+    hook_wall = box(-PLATE_W / 2, PLATE_W / 2, 0, HOOK_Y, PLATE_T,
+                    PLATE_T + LINER + PHONE_T_MAX + 3.0)   # z to 21.5
+    lip_z0 = PLATE_T + LINER + PHONE_T_MAX
+    # lip with 45-deg underside: wedges thin phones toward the plate
+    lip = prism_yz([(HOOK_Y, lip_z0 + 3.0), (HOOK_Y + 5.0, lip_z0 + 3.0),
+                    (HOOK_Y + 2.0, lip_z0), (HOOK_Y, lip_z0)],
+                   -PLATE_W / 2, PLATE_W / 2)
+    rail = prism_xz(male_rail_pts(0.0, PLATE_T), RAIL_Y0, RAIL_Y1)
+    # screw boss at the bottom end
+    sboss = box(-15, 15, PLATE_L - 14, PLATE_L, 0, SCREW_AXIS_Z + 9)
+    # back dovetail boss (v1 cradle values: 40 x 34 footprint, 8 tall)
+    bboss = box(-20, 20, BOSS_YC - 17, BOSS_YC + 17, -BOSS_H, 0.1)
+    body = union([plate, hook_wall, lip, rail, sboss, bboss])
+
+    # female slot in the back boss: along X, mouth 20.8 flaring 26.8 (v1)
+    ch = 6 + DT_CLEAR
+    slot = prism_yz([(BOSS_YC - 10 - DT_CLEAR, -BOSS_H - 0.1),
+                     (BOSS_YC + 10 + DT_CLEAR, -BOSS_H - 0.1),
+                     (BOSS_YC + 13 + DT_CLEAR, -BOSS_H - 0.1 + ch),
+                     (BOSS_YC - 13 - DT_CLEAR, -BOSS_H - 0.1 + ch)],
+                    -20.2, 20.2)
+    nut = threaded_rod(THR_MAJ + THR_CLEAR, THR_MIN + THR_CLEAR, THR_PITCH, 14.2)
+    nut.apply_transform(trimesh.geometry.align_vectors([0, 0, 1], [0, -1, 0]))
+    nut.apply_translation([0, PLATE_L + 0.1, SCREW_AXIS_Z])
     cuts = [
-        box(24, L - 24, 14, H - 8, -0.1, 5.1),
-        box(-0.1, 60, H - 26, H + 0.1, -0.1, rail_top + 6),
-        box(cx - 8, cx + 8, -0.1, 6.1, 4.9, rail_top + 6),
-        box(52, 61, -0.1, H + 0.1, -0.1, 2),
-        box(L - 61, L - 52, -0.1, H + 0.1, -0.1, 2),
         slot,
-        cyl(2.6, [cx - 10, cy, -8.1], [cx - 10, cy, 5.1]),
+        nut,
+        # peg bore at x=-1 (lands on the wedge bore at wall -10 given the
+        # body's -9 lateral seat), through plate + boss ceiling + slot cavity
+        cyl(PIN_R, [-1, BOSS_YC, PLATE_T + 0.1], [-1, BOSS_YC, -BOSS_H - 0.1]),
+        # TPU pockets: hook face (1.5 deep) + two back strips on the plate front
+        box(-30, 30, HOOK_Y - 1.5, HOOK_Y + 0.1, PLATE_T + 1, PLATE_T + 9),
+        box(-30, 30, 20, 30, PLATE_T - 1.5, PLATE_T + 0.1),
+        box(-30, 30, 50, 60, PLATE_T - 1.5, PLATE_T + 0.1),
     ]
-    return save(diff(body, cuts), "cradle")   # drop_to_plate: boss face at z0
+    m = diff(body, cuts)
+    assert_bore_open(m, [-1, BOSS_YC, PLATE_T - 0.1],
+                     [-1, BOSS_YC, -BOSS_H + 0.4], "clamp body peg bore")
+    assert_bore_open(m, [0, PLATE_L - 0.5, SCREW_AXIS_Z],
+                     [0, PLATE_L - 13.5, SCREW_AXIS_Z], "clamp body nut bore")
+    # print pose: the boss is already the lowest feature — drop_to_plate IS
+    # boss-down; supports go under the plate (8 mm gap), like the v1 cradle
+    return save(m, "phone_clamp_body"), m
 
 
-# ------------------------------------------------------- 5. printed clamp
+# ------------------------------------------------------- 5. jaw carriage
+# Rides the body rail (female slot on its back), bottom-jaw shelf + 45-deg
+# lip on its top end, and a coin-slot pocket at its bottom end that captures
+# the screw tip disc (screw threads through the boss nut into the disc;
+# CA-glue = carriage captive both ways). Prints slot-mouth-down (bridges).
+def make_jaw_carriage():
+    zb = PLATE_T + DT_CLEAR              # carriage back plane over plate front
+    body = box(-22, 22, 0, CARR_L, zb, zb + 8)
+    # jaw shelf + hook at the TOP end (contacts the phone bottom edge)
+    shelf = box(-30, 30, 0, 8, zb, PLATE_T + LINER + PHONE_T_MAX + 3.0)
+    lip = prism_yz([(0.0, PLATE_T + LINER + PHONE_T_MAX + 3.0),
+                    (0.0, PLATE_T + LINER + PHONE_T_MAX),
+                    (-2.0, PLATE_T + LINER + PHONE_T_MAX),
+                    (-5.0, PLATE_T + LINER + PHONE_T_MAX + 3.0)],
+                   -30, 30)
+    # tower at the bottom end around the disc pocket
+    tower = box(-14, 14, CARR_L - 12, CARR_L, zb, SCREW_AXIS_Z + 11)
+    body = union([body, shelf, lip, tower])
+    # female dovetail slot on the back, through (rides the body rail)
+    ch = 6 + DT_CLEAR
+    slot = prism_xz([(-10 - DT_CLEAR, zb - 0.1 - 20), (10 + DT_CLEAR, zb - 0.1 - 20),
+                     (10 + DT_CLEAR, zb - 0.1), (13 + DT_CLEAR, zb - 0.1 + ch),
+                     (-13 - DT_CLEAR, zb - 0.1 + ch), (-10 - DT_CLEAR, zb - 0.1)],
+                    -0.2, CARR_L + 0.2)
+    # slot is the male-shaped void: cut = rail shape + entry below
+    coin = box(-9.6, 9.6, CARR_L - 10.4, CARR_L - 3.8,
+               SCREW_AXIS_Z - 9.6, SCREW_AXIS_Z + 11.1)   # disc drops in from top
+    tip_clear = cyl(7, [0, CARR_L - 10.4 - 9, SCREW_AXIS_Z],
+                    [0, CARR_L - 3, SCREW_AXIS_Z])
+    m = diff(body, [slot, coin, tip_clear])
+    # pocket for the bottom-jaw TPU strip (same strip as the hook pocket)
+    m = diff(m, [box(-30, 30, -0.1, 1.5, zb + 1, zb + 9)])
+    def slot_down(mesh):
+        mm = mesh.copy()
+        mm.apply_translation([0, 0, -mm.bounds[0][2]])
+        return mm
+    return save(m, "phone_jaw_carriage", orient=slot_down), m
+
+
+# ------------------------------------------------------- 6. screws & discs
 def make_clamp_screw():
+    """Saddle thumbscrew (v2: thread to the tip, disc threads on + glued)."""
     knob = cyl(16, [0, 0, 0], [0, 0, 10])
     notches = [cyl(3.5, [16 * np.cos(a), 16 * np.sin(a), -0.1],
                    [16 * np.cos(a), 16 * np.sin(a), 10.1])
                for a in np.linspace(0, 2 * np.pi, 6, endpoint=False)]
     collar = cyl(7, [0, 0, 10], [0, 0, 14])
-    thread = threaded_rod(THR_MAJ, THR_MIN, THR_PITCH, 30)
+    thread = threaded_rod(THR_MAJ, THR_MIN, THR_PITCH, 34)
     thread.apply_translation([0, 0, 14])
-    tip = cyl(3.5, [0, 0, 44], [0, 0, 48])
-    ball = trimesh.creation.icosphere(radius=4, subdivisions=3)
-    ball.apply_translation([0, 0, 49])
-    body = diff(union([knob, collar, thread, tip, ball]), notches)
-    return save(body, "clamp_screw")          # knob down, thread vertical
+    body = diff(union([knob, collar, thread]), notches)
+    return save(body, "clamp_screw")
 
 
-def make_pad_cap():
-    disc = cyl(9, [0, 0, 0], [0, 0, 4])
-    face_pocket = cyl(7.6, [0, 0, -0.1], [0, 0, 1.5])
-    socket = trimesh.creation.icosphere(radius=4.3, subdivisions=3)
-    socket.apply_translation([0, 0, 4.6])
-    entry = cyl(3.4, [0, 0, 3.9], [0, 0, 8.1])
-    return save(diff(disc, [face_pocket, socket, entry]), "pad_cap")  # face down
+def make_phone_jaw_screw():
+    """Phone-jaw drive screw: knob + 52 mm thread; tip disc captures carriage."""
+    knob = cyl(14, [0, 0, 0], [0, 0, 10])
+    notches = [cyl(3.0, [14 * np.cos(a), 14 * np.sin(a), -0.1],
+                   [14 * np.cos(a), 14 * np.sin(a), 10.1])
+               for a in np.linspace(0, 2 * np.pi, 6, endpoint=False)]
+    collar = cyl(7, [0, 0, 10], [0, 0, 13])
+    thread = threaded_rod(THR_MAJ, THR_MIN, THR_PITCH, 52)
+    thread.apply_translation([0, 0, 13])
+    body = diff(union([knob, collar, thread]), notches)
+    return save(body, "phone_jaw_screw")
+
+
+def make_screw_tip_disc():
+    """Ø18 disc, internal thread; used on BOTH screws (print 2). Face pocket
+    takes the TPU pad on the saddle screw; harmless empty on the jaw screw."""
+    disc = cyl(9, [0, 0, 0], [0, 0, 6])
+    pocket = cyl(7.6, [0, 0, -0.1], [0, 0, 1.5])
+    nut = threaded_rod(THR_MAJ + THR_CLEAR, THR_MIN + THR_CLEAR, THR_PITCH, 4.6)
+    nut.apply_translation([0, 0, 1.5])
+    return save(diff(disc, [pocket, nut]), "screw_tip_disc")
 
 
 def make_pins():
@@ -330,27 +512,67 @@ def make_pins():
         f += [[a, b, 48 + b], [a, 48 + b, 48 + a], [96, b, a], [97, 48 + a, 48 + b]]
     frustum = trimesh.Trimesh(v, f, process=True)
     head = cyl(4.5, [0, 0, -3], [0, 0, 0])
-    return save(union([frustum, head]), "pin_x2")   # head down
+    return save(union([frustum, head]), "pin_x3")
 
 
-# ------------------------------------------------------- 6. TPU 68A parts
+# ------------------------------------------------------- 7. TPU 68A parts
 def make_tpu():
     save(box(0, 110.5, 0, 12.2, 0, SEAT_T), "tpu_seat_strip")
     save(box(0, 110, 0, 60, 0, PAD_T), "tpu_jaw_pad_x2")
-    save(box(0, 16, 0, 16, 0, WALL_T), "tpu_wall_pad_x2")
-    save(cyl(7.4, [0, 0, 0], [0, 0, 2.5]), "tpu_swivel_face")
-    band = diff(cyl(28, [0, 0, 0], [0, 0, 2.5]), [cyl(24, [0, 0, -0.1], [0, 0, 2.6])])
-    save(band, "tpu_band_x2")
+    save(cyl(7.4, [0, 0, 0], [0, 0, 2.5]), "tpu_screw_pad")
+    save(box(0, 59.5, 0, 7.8, 0, 3.0), "tpu_phone_jaw_x2")    # hook + carriage
+    save(box(0, 59.5, 0, 9.8, 0, 3.0), "tpu_phone_back_x2")   # plate front
+
+
+# ------------------------------------------------------- assembly verification
+def pose_body_on_wedge(body_mesh, name, pitch_deg):
+    """Clamp-body frame -> wedge local frame at the assembled position."""
+    th_f, h_hi, L, d2, n2 = wedge_frame(pitch_deg)
+    T0 = PLACE[name]['T0']
+    M = np.eye(4)
+    M[:3, 0] = [0, 1, 0]                          # body x -> wedge y (wall)
+    M[:3, 1] = [d2[0], 0, d2[1]]                  # body y -> down-slope
+    M[:3, 2] = [n2[0], 0, n2[1]]                  # body z -> +normal
+    org = (np.array([0.0, h_hi]) + T0 * d2 + BOSS_H * n2)   # body (0,0,0)
+    M[:3, 3] = [org[0], -9.0, org[1]]             # boss rides to the stop at 11
+    b = body_mesh.copy()
+    b.apply_transform(M)
+    return b
+
+
+def verify_mount(wedge_mesh, body_mesh, name, pitch_deg):
+    posed = pose_body_on_wedge(body_mesh, name, pitch_deg)
+    inter = trimesh.boolean.intersection([wedge_mesh, posed], engine="manifold")
+    vol = 0.0 if inter.is_empty else inter.volume
+    assert vol < 5.0, f"body-wedge interference on {name}: {vol:.1f} mm3"
+    print(f"mount {name}: body/wedge interference {vol:.2f} mm3 (OK)")
+
+
+def verify_carriage(body_mesh, carr_mesh):
+    for jaw_y in (HOOK_Y + PW_MIN, HOOK_Y + PW_MAX):
+        c = carr_mesh.copy()
+        c.apply_translation([0, jaw_y, 0])
+        inter = trimesh.boolean.intersection([body_mesh, c], engine="manifold")
+        vol = 0.0 if inter.is_empty else inter.volume
+        assert vol < 5.0, f"carriage-body interference at jaw {jaw_y}: {vol:.1f}"
+        print(f"carriage at jaw y={jaw_y:.0f}: interference {vol:.2f} mm3 (OK)")
 
 
 if __name__ == "__main__":
     make_saddle()
     make_mast()
+    wedges = {}
     for name, ang in WEDGE_ANGLES.items():
-        make_wedge(name, ang)
-    make_cradle()
+        _, wedges[name] = make_wedge(name, ang)
+    _, body_m = make_phone_clamp_body()
+    _, carr_m = make_jaw_carriage()
     make_clamp_screw()
-    make_pad_cap()
+    make_phone_jaw_screw()
+    make_screw_tip_disc()
     make_pins()
     make_tpu()
-    print("\nAll STLs written to", OUT, "- posed for printing, no rotation needed")
+    for name, ang in WEDGE_ANGLES.items():
+        verify_mount(wedges[name], body_m, name, ang)
+    verify_carriage(body_m, carr_m)
+    print("\nAll STLs written to", OUT, "- posed for printing; only "
+          "phone_clamp_body needs supports (under the plate, boss-down)")

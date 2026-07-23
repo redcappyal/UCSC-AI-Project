@@ -80,7 +80,7 @@ def test_coaching_analytics_summarizes_target_and_speed_data():
 
     feedback = local_coaching_feedback(analytics)
     assert "zone 4" in feedback
-    assert "center" in feedback
+    assert "middle of the wall" in feedback
 
 
 def test_coach_route_returns_local_feedback(tmp_path, monkeypatch):

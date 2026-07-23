@@ -31,7 +31,7 @@ from tracking_common import (
     CONFIDENCE_THRESHOLD,
     CSV_FIELDNAMES,
     ball_csv_row,
-    select_ball_prediction,
+    select_motion_consistent_ball_predictions,
 )
 
 
@@ -189,6 +189,7 @@ def track_segments(model, video_path, segments, inference_width, source_fps, res
     )
     decoder.start()
 
+    raw_predictions = {}
     try:
         while True:
             item = frame_queue.get()
@@ -202,8 +203,7 @@ def track_segments(model, video_path, segments, inference_width, source_fps, res
                 CONFIDENCE_THRESHOLD,
                 inference_width,
             )
-            ball_prediction = select_ball_prediction(predictions)
-            results[frame_idx] = ball_csv_row(frame_idx, source_fps, ball_prediction)
+            raw_predictions[frame_idx] = predictions
             on_frame(frame_idx)
     finally:
         stop_event.set()
@@ -216,6 +216,13 @@ def track_segments(model, video_path, segments, inference_width, source_fps, res
 
     if decode_errors:
         raise decode_errors[0]
+
+    selected_predictions = select_motion_consistent_ball_predictions(
+        raw_predictions,
+        CONFIDENCE_THRESHOLD,
+    )
+    for frame_idx, ball_prediction in selected_predictions.items():
+        results[frame_idx] = ball_csv_row(frame_idx, source_fps, ball_prediction)
 
 
 def write_results_csv(csv_path, results):
@@ -812,6 +819,9 @@ def run_tracking_job(run_id):
                         sorted_rows(results),
                         wall_x_range=wall_x_range,
                         calibration=calibration,
+                        # Location filtering runs inside the detector before
+                        # wall-visit grouping, so sidewall/outside-wall
+                        # candidates cannot merge otherwise valid wall hits.
                         apply_spatial_filter=True,
                         spatial_filter_mode="sidewall",
                     )

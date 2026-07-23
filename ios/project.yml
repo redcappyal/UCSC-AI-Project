@@ -1,6 +1,6 @@
 name: SquashLineCalling
 options:
-  bundleIdPrefix: com.redcappyal
+  bundleIdPrefix: app.crosscourt
   deploymentTarget:
     iOS: "17.0"
 settings:

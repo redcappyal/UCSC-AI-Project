@@ -83,7 +83,7 @@ if TRACKING_BACKEND == "torch":
 else:
     os.environ.setdefault("DEFAULT_DEVICE", "cpu")
 
-DEFAULT_MODEL_ID = "ai-squash-line-tracker/4"
+DEFAULT_MODEL_ID = "squashai/1"
 DEFAULT_INFERENCE_WIDTH = int(os.getenv("INFERENCE_WIDTH", "960"))
 
 _MODEL = None

@@ -284,8 +284,8 @@ def build_coaching_analytics(payload):
 def local_coaching_feedback(analytics):
     if not analytics.get("total_wall_hits"):
         return (
-            "No reliable front-wall target pattern was detected yet. Start by reviewing the "
-            "bounce labels and making sure the wall-hit detector is finding the main rally shots."
+            "No clear shot pattern was found yet. Review the labeled clips first and make sure "
+            "the app is finding the main shots that hit the front wall."
         )
 
     notes = []
@@ -299,39 +299,40 @@ def local_coaching_feedback(analytics):
 
     if common:
         notes.append(
-            f"Your most common front-wall target was zone {common[0]['zone']} "
-            f"({common[0]['percentage']:.0f}% of detected wall hits)."
+            f"Your most-used wall area was zone {common[0]['zone']} "
+            f"({common[0]['percentage']:.0f}% of the shots analyzed)."
         )
     if center_rate is not None and center_rate >= 45:
         notes.append(
-            f"{center_rate:.0f}% of shots went through the center targets. Mix in more width to "
-            "move the opponent off the T instead of feeding the middle."
+            f"{center_rate:.0f}% of your shots went through the middle of the wall. Mix in more "
+            "width so the opponent has to move off the T."
         )
     elif side_rate is not None and side_rate >= 55:
         notes.append(
-            f"{side_rate:.0f}% of shots used side targets, which is a useful pattern for creating width."
+            f"{side_rate:.0f}% of your shots used the side areas. That is good for creating width "
+            "and pulling the opponent away from the center."
         )
     if low_rate is not None and low_rate >= 45:
         notes.append(
-            f"{low_rate:.0f}% of shots were in lower target zones. That can be attacking, but "
-            "watch error risk if those are not intentional drops or drives."
+            f"{low_rate:.0f}% of your shots hit lower on the front wall. That can be attacking, "
+            "but it also raises error risk if you are not intentionally driving or dropping."
         )
     if avg_height is not None:
         if avg_height < FRONT_WALL_SERVICE_HEIGHT_FT:
             notes.append(
-                f"Average wall height was {avg_height:.1f} ft, below the service line. "
-                "That suggests flatter, more attacking contact."
+                f"Your typical front-wall contact height was {avg_height:.1f} ft, below the "
+                "service line. That suggests a flatter, more attacking pattern."
             )
         else:
             notes.append(
-                f"Average wall height was {avg_height:.1f} ft. Look for chances to vary height "
-                "between safer length and lower attacking drives."
+                f"Your typical front-wall contact height was {avg_height:.1f} ft. Look for chances "
+                "to vary height between safer length and lower attacking drives."
             )
     if avg_speed is not None:
-        notes.append(f"Average incoming ball speed was about {avg_speed:.1f} mph.")
+        notes.append(f"Your average ball pace into the front wall was about {avg_speed:.1f} mph.")
     if missing:
         shown = ", ".join(str(zone["zone"]) for zone in missing[:3])
-        notes.append(f"Unused or rarely used target zones include {shown}; those are good practice targets.")
+        notes.append(f"You rarely used zones {shown}; those are good practice targets.")
 
     return " ".join(notes[:5])
 
@@ -355,8 +356,11 @@ def llm_coaching_feedback(analytics):
 
     model = os.getenv("OPENAI_COACH_MODEL", "gpt-5-mini")
     prompt = (
-        "You are a squash coach. Give concise, practical feedback from these "
-        "automated match analytics. Mention limitations if sample size is small. "
+        "You are a squash coach speaking to a player. Give concise, practical feedback "
+        "from automated squash video analytics. Use plain player language: say "
+        "'shots analyzed' instead of 'front-wall hits', explain that wall height means "
+        "where the ball struck the front wall, and explain that pace means estimated "
+        "ball speed around front-wall contact. Mention limitations if sample size is small. "
         "Return 3 short bullets and one practice focus.\n\n"
         + json.dumps(analytics, indent=2)
     )
