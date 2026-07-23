@@ -388,6 +388,8 @@
   .coachMetric{min-width:0; border:1px solid var(--line); border-radius:8px; background:color-mix(in srgb, var(--surface) 86%, var(--bg)); padding:10px 12px}
   .coachMetric strong{display:block; color:var(--dim); font-size:13px; line-height:1.25; margin-bottom:5px}
   .coachMetric span{display:block; font-size:22px; font-weight:800; line-height:1.1; overflow-wrap:anywhere}
+  .coachMetric small{display:block; color:var(--dim); font-size:12px; line-height:1.35; margin-top:7px}
+  .coachIntro{padding:12px 14px 0; color:var(--dim); font-size:14px; line-height:1.45}
   .coachFeedback{padding:12px 14px; border-top:1px solid var(--line); font-size:16px; line-height:1.45; white-space:pre-wrap}
 
   /* The verdict box always occupies the same space: empty (blank), event
@@ -880,6 +882,7 @@
         <strong>Coaching report</strong>
         <span id="coachSource"></span>
       </div>
+      <div class="coachIntro" id="coachIntro"></div>
       <div class="coachMetrics" id="coachMetrics"></div>
       <div class="coachFeedback" id="coachFeedback"></div>
     </div>
@@ -4265,8 +4268,9 @@ function metricValue(value, suffix = ''){
   return `${value}${suffix}`;
 }
 
-function coachMetric(label, value){
-  return `<div class="coachMetric"><strong>${label}</strong><span>${value}</span></div>`;
+function coachMetric(label, value, description=''){
+  const help = description ? `<small>${description}</small>` : '';
+  return `<div class="coachMetric"><strong>${label}</strong><span>${value}</span>${help}</div>`;
 }
 
 function renderCoachReport(data){
@@ -4290,15 +4294,49 @@ function renderCoachReport(data){
   $('coachSource').textContent = data.llm_status && data.llm_status !== 'ok'
     ? `${source} · ${statusText}`
     : source;
+  $('coachIntro').textContent =
+    'This report uses the shots where the app found the ball hitting the front wall. Treat the numbers as patterns to review, not official match stats.';
   metrics.innerHTML = [
-    coachMetric('Front-wall hits', metricValue(analytics.total_wall_hits)),
-    coachMetric('Most common zones', formatZoneList(analytics.common_target_zones, 3)),
-    coachMetric('Average wall height', metricValue(analytics.average_wall_height_ft, ' ft')),
-    coachMetric('Average incoming speed', metricValue(analytics.average_incoming_speed_mph, ' mph')),
-    coachMetric('Average exit speed', metricValue(analytics.average_exit_speed_mph, ' mph')),
-    coachMetric('Center target rate', metricValue(analytics.center_target_rate, '%')),
-    coachMetric('Low target rate', metricValue(analytics.low_target_rate, '%')),
-    coachMetric('Floor bounces', metricValue(analytics.total_floor_bounces)),
+    coachMetric(
+      'Shots analyzed',
+      metricValue(analytics.total_wall_hits),
+      'How many front-wall contacts were reliable enough to include.'
+    ),
+    coachMetric(
+      'Main targets',
+      formatZoneList(analytics.common_target_zones, 3),
+      'The wall areas you used most often.'
+    ),
+    coachMetric(
+      'Typical shot height',
+      metricValue(analytics.average_wall_height_ft, ' ft'),
+      'Where your shots usually struck the front wall, measured from the floor.'
+    ),
+    coachMetric(
+      'Pace before contact',
+      metricValue(analytics.average_incoming_speed_mph, ' mph'),
+      'Estimated speed as the ball reached the front wall.'
+    ),
+    coachMetric(
+      'Pace after contact',
+      metricValue(analytics.average_exit_speed_mph, ' mph'),
+      'Estimated speed as the ball came off the front wall.'
+    ),
+    coachMetric(
+      'Middle usage',
+      metricValue(analytics.center_target_rate, '%'),
+      'Higher means more shots fed the center instead of making the opponent move wide.'
+    ),
+    coachMetric(
+      'Low attacking rate',
+      metricValue(analytics.low_target_rate, '%'),
+      'Lower wall contact often means drives, drops, and more attacking shots.'
+    ),
+    coachMetric(
+      'Court bounces mapped',
+      metricValue(analytics.total_floor_bounces),
+      'How many ball bounces were placed on the court map.'
+    ),
   ].join('');
   $('coachFeedback').textContent = data.feedback || 'No coaching feedback is available yet.';
 }
@@ -4306,13 +4344,14 @@ function renderCoachReport(data){
 function setCoachLoading(){
   $('coachPanel').classList.remove('hidden');
   $('coachSource').textContent = 'Loading';
+  $('coachIntro').textContent = 'Reading the target map and summarizing the patterns.';
   $('coachMetrics').innerHTML = [
-    coachMetric('Front-wall hits', '—'),
-    coachMetric('Most common zones', '—'),
-    coachMetric('Average wall height', '—'),
-    coachMetric('Average incoming speed', '—'),
+    coachMetric('Shots analyzed', '—', 'Reliable front-wall contacts included in the report.'),
+    coachMetric('Main targets', '—', 'The wall areas you used most often.'),
+    coachMetric('Typical shot height', '—', 'Where your shots usually struck the front wall.'),
+    coachMetric('Pace before contact', '—', 'Estimated speed as the ball reached the front wall.'),
   ].join('');
-  $('coachFeedback').textContent = 'Building coaching feedback from the target map...';
+  $('coachFeedback').textContent = 'Building player feedback from the target map...';
 }
 
 async function loadCoachReport(){

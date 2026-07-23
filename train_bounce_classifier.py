@@ -34,6 +34,7 @@ import numpy as np
 import pandas as pd
 from sklearn.ensemble import GradientBoostingClassifier
 from sklearn.metrics import classification_report, confusion_matrix
+from sklearn.model_selection import train_test_split
 from sklearn.utils.class_weight import compute_sample_weight
 
 from audio_events import detect_audio_candidates_from_file
@@ -42,8 +43,16 @@ from inference_engine import (
     get_tracking_model,
     infer_frame_predictions,
 )
-from judge_call import Point, judge_ball, load_calibration_lines
-from tracking_common import CONFIDENCE_THRESHOLD, CSV_FIELDNAMES, ball_csv_row, select_ball_prediction
+from judge_call import Point, judge_ball, load_calibration_lines, load_wall_corners
+from tracking_common import (
+    CONFIDENCE_THRESHOLD,
+    CSV_FIELDNAMES,
+    ball_csv_row,
+    fill_short_trajectory_gaps,
+    select_motion_consistent_ball_predictions,
+    TRAJECTORY_FILL_EDGE_MARGIN_PX,
+    TRAJECTORY_FILL_MAX_GAP_FRAMES,
+)
 
 try:
     from dotenv import load_dotenv
@@ -65,6 +74,18 @@ NEGATIVE_EXCLUSION_FRAMES = 8
 POSITIVE_WINDOW_FRAMES = 1
 AUDIO_PEAK_WINDOW_FRAMES = 5
 DEFAULT_HIT_THRESHOLD = 0.25
+STATIONARY_WINDOW_FRAMES = 8
+STATIONARY_MIN_DETECTIONS = 4
+STATIONARY_MIN_SPAN_PX = 12.0
+STATIONARY_MIN_PATH_PX = 18.0
+RUNTIME_EVAL_MIN_GAP_FRAMES = 10
+RUNTIME_EVAL_WALL_VISIT_GAP_FRAMES = 24
+RUNTIME_EVAL_WALL_GATE_PAD_PX = 80.0
+RUNTIME_EVAL_WALL_GATE_PAD_FRACTION = 0.85
+RUNTIME_EVAL_SIDEWALL_GATE_PAD_PX = 120.0
+RUNTIME_EVAL_SIDEWALL_GATE_PAD_FRACTION = 0.25
+RUNTIME_EVAL_FRONT_WALL_CHUNK_PAD_PX = 24.0
+RUNTIME_EVAL_FRONT_WALL_CHUNK_PAD_FRACTION = 0.02
 MODEL_FEATURE_COLUMNS = [
     "velocity_change_px_s",
     "speed_after_px_s",
@@ -73,6 +94,10 @@ MODEL_FEATURE_COLUMNS = [
     "area_span_context",
     "local_velocity_change_px_s",
     "min_nearest_wall_line_distance_context",
+    "calibration_wall_height_px",
+    "calibration_wall_width_px",
+    "calibration_roll_degrees",
+    "calibration_perspective_shear",
     "local_accel_mag_px_s2",
     "local_turn_degrees",
     "speed_before_px_s",
@@ -131,6 +156,8 @@ def video_metadata(video_path):
         return {
             "fps": cap.get(cv2.CAP_PROP_FPS) or 30.0,
             "frame_count": int(cap.get(cv2.CAP_PROP_FRAME_COUNT)),
+            "frame_width": int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)),
+            "frame_height": int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)),
         }
     finally:
         cap.release()
@@ -173,7 +200,14 @@ def tracking_frame_plan(training_frames, start_frame, end_frame, context, track_
     return required_context_frames(training_frames, start_frame, end_frame, context)
 
 
-def track_selected_frames(video_path, frames, inference_width, confidence):
+def track_selected_frames(
+    video_path,
+    frames,
+    inference_width,
+    confidence,
+    trajectory_fill_max_gap,
+    trajectory_fill_edge_margin,
+):
     if not frames:
         return {}
 
@@ -187,8 +221,11 @@ def track_selected_frames(video_path, frames, inference_width, confidence):
 
     metadata = video_metadata(video_path)
     fps = metadata["fps"]
+    frame_width = metadata["frame_width"]
+    frame_height = metadata["frame_height"]
     sorted_frames = sorted(frames)
     tracked_rows = {}
+    raw_predictions = {}
     last_requested_frame = None
     processed = 0
     progress_interval = max(25, min(500, max(1, len(sorted_frames) // 20)))
@@ -215,8 +252,7 @@ def track_selected_frames(video_path, frames, inference_width, confidence):
                 confidence,
                 inference_width,
             )
-            ball_prediction = select_ball_prediction(predictions)
-            tracked_rows[frame_idx] = ball_csv_row(frame_idx, fps, ball_prediction)
+            raw_predictions[frame_idx] = predictions
 
             processed += 1
             if processed == 1 or processed % progress_interval == 0 or processed == len(sorted_frames):
@@ -230,6 +266,26 @@ def track_selected_frames(video_path, frames, inference_width, confidence):
     finally:
         cap.release()
 
+    selected_predictions = select_motion_consistent_ball_predictions(
+        raw_predictions,
+        confidence,
+    )
+    filled_predictions, trajectory_fill_count = fill_short_trajectory_gaps(
+        selected_predictions,
+        frame_width,
+        frame_height,
+        max_gap_frames=trajectory_fill_max_gap,
+        edge_margin_px=trajectory_fill_edge_margin,
+    )
+    if trajectory_fill_max_gap > 0:
+        print(
+            f"Trajectory fill added {trajectory_fill_count} interpolated coordinate row(s) "
+            f"(max_gap={trajectory_fill_max_gap}, edge_margin={trajectory_fill_edge_margin:g}px).",
+            flush=True,
+        )
+    for frame_idx, ball_prediction in selected_predictions.items():
+        tracked_rows[frame_idx] = ball_csv_row(frame_idx, fps, filled_predictions.get(frame_idx))
+
     return tracked_rows
 
 
@@ -241,6 +297,8 @@ def ensure_ball_csv(
     confidence,
     generate_ball_csv,
     force,
+    trajectory_fill_max_gap,
+    trajectory_fill_edge_margin,
 ):
     existing_rows = raw_ball_csv_rows(csv_path)
     existing_frames = set(existing_rows)
@@ -273,7 +331,14 @@ def ensure_ball_csv(
     action = "Regenerating" if force else "Generating"
     print(f"{action} {len(frames_to_track)} ball-coordinate row(s) with local Roboflow inference.")
     print("This uses get_model(..., countinference=False); it avoids the remote serverless workflow.")
-    tracked_rows = track_selected_frames(video_path, frames_to_track, inference_width, confidence)
+    tracked_rows = track_selected_frames(
+        video_path,
+        frames_to_track,
+        inference_width,
+        confidence,
+        trajectory_fill_max_gap,
+        trajectory_fill_edge_margin,
+    )
     existing_rows.update(tracked_rows)
     write_raw_ball_csv_rows(csv_path, existing_rows)
     print(f"Saved {len(existing_rows)} total coordinate row(s) to {csv_path}")
@@ -300,19 +365,214 @@ def load_ball_rows(csv_path):
     return rows
 
 
+def motion_stats_around_frame(rows, frame, window_frames):
+    window_frames = max(0, int(window_frames))
+    points = []
+    for sample_frame in range(int(frame) - window_frames, int(frame) + window_frames + 1):
+        row = rows.get(sample_frame)
+        if finite_point(row):
+            points.append((sample_frame, float(row["x"]), float(row["y"])))
+
+    if not points:
+        return {"detected": 0, "span_px": 0.0, "path_px": 0.0}
+
+    xs = [point[1] for point in points]
+    ys = [point[2] for point in points]
+    x_span = max(xs) - min(xs)
+    y_span = max(ys) - min(ys)
+    path = 0.0
+    for prev, cur in zip(points, points[1:]):
+        path += math.hypot(cur[1] - prev[1], cur[2] - prev[2])
+
+    return {
+        "detected": len(points),
+        "span_px": math.hypot(x_span, y_span),
+        "path_px": path,
+    }
+
+
+def filter_stationary_ball_rows(
+    rows,
+    *,
+    window_frames=STATIONARY_WINDOW_FRAMES,
+    min_detections=STATIONARY_MIN_DETECTIONS,
+    min_span_px=STATIONARY_MIN_SPAN_PX,
+    min_path_px=STATIONARY_MIN_PATH_PX,
+):
+    filtered = {frame: dict(row) for frame, row in rows.items()}
+    rejected_frames = []
+    for frame, row in rows.items():
+        if not finite_point(row):
+            continue
+        stats = motion_stats_around_frame(rows, frame, window_frames)
+        if stats["detected"] < min_detections:
+            continue
+        if stats["span_px"] >= min_span_px or stats["path_px"] >= min_path_px:
+            continue
+
+        filtered_row = filtered[frame]
+        filtered_row["detected"] = False
+        filtered_row["confidence"] = 0.0
+        filtered_row["x"] = np.nan
+        filtered_row["y"] = np.nan
+        filtered_row["width"] = 0.0
+        filtered_row["height"] = 0.0
+        rejected_frames.append(frame)
+
+    return filtered, sorted(rejected_frames)
+
+
 def load_geometry(calibration_path):
+    calibration_path = Path(calibration_path) if calibration_path else None
     if not calibration_path or not calibration_path.exists():
         return None
     calibration = json.loads(calibration_path.read_text(encoding="utf-8"))
     top_line, bottom_line = load_calibration_lines(calibration)
     tin_left = min(bottom_line.left.x, bottom_line.right.x)
     tin_right = max(bottom_line.left.x, bottom_line.right.x)
+    left_x = max(min(top_line.left.x, top_line.right.x), tin_left)
+    right_x = min(max(top_line.left.x, top_line.right.x), tin_right)
+    center_x = (tin_left + tin_right) / 2
+    left_height = 0.0
+    right_height = 0.0
+    center_height = 0.0
+    try:
+        left_height = bottom_line.y_at_x(left_x) - top_line.y_at_x(left_x)
+        right_height = bottom_line.y_at_x(right_x) - top_line.y_at_x(right_x)
+        center_height = bottom_line.y_at_x(center_x) - top_line.y_at_x(center_x)
+    except ValueError:
+        pass
+
+    mean_height = float(np.mean([value for value in (left_height, right_height) if value > 0.0])) if left_height > 0.0 or right_height > 0.0 else 0.0
+    roll_degrees = (
+        abs(math.degrees(math.atan2(top_line.dy, top_line.dx)))
+        + abs(math.degrees(math.atan2(bottom_line.dy, bottom_line.dx)))
+    ) / 2
+    perspective_shear = (right_height - left_height) / mean_height if mean_height > 0.0 else 0.0
     return {
         "top_line": top_line,
         "bottom_line": bottom_line,
         "tin_left": tin_left,
         "tin_right": tin_right,
+        "wall_height_px": max(0.0, center_height),
+        "wall_width_px": max(0.0, bottom_line.length),
+        "roll_degrees": roll_degrees,
+        "perspective_shear": perspective_shear,
+        "wall_corners": load_wall_corners(calibration),
     }
+
+
+def point_progress_on_line(point, line):
+    length_squared = line.dx * line.dx + line.dy * line.dy
+    if length_squared <= 1e-9:
+        return 0.0
+    return (
+        (point.x - line.left.x) * line.dx
+        + (point.y - line.left.y) * line.dy
+    ) / length_squared
+
+
+def wall_corners_y_bounds(wall_corners):
+    return (
+        min(wall_corners.top_left.y, wall_corners.top_right.y),
+        max(wall_corners.bottom_left.y, wall_corners.bottom_right.y),
+    )
+
+
+def inside_wall_corners_gate(x, y, wall_corners, *, horizontal_only, pad_px, pad_fraction):
+    x = float(x)
+    y = float(y)
+    top_y, bottom_y = wall_corners_y_bounds(wall_corners)
+    left, right = wall_corners.x_bounds_at_y(min(max(y, top_y), bottom_y))
+    wall_width = max(0.0, right - left)
+    pad = max(float(pad_px), float(pad_fraction) * wall_width)
+
+    if x < left - pad or x > right + pad:
+        return False
+    if horizontal_only:
+        return True
+    return top_y - pad <= y <= bottom_y + pad
+
+
+def runtime_eval_inside_gate(x, y, geometry, mode):
+    if geometry is None:
+        return True
+
+    wall_corners = geometry.get("wall_corners")
+    if mode == "sidewall":
+        pad_px = RUNTIME_EVAL_SIDEWALL_GATE_PAD_PX
+        pad_fraction = RUNTIME_EVAL_SIDEWALL_GATE_PAD_FRACTION
+        horizontal_only = True
+    else:
+        pad_px = RUNTIME_EVAL_WALL_GATE_PAD_PX
+        pad_fraction = RUNTIME_EVAL_WALL_GATE_PAD_FRACTION
+        horizontal_only = False
+
+    if wall_corners is not None:
+        return inside_wall_corners_gate(
+            x,
+            y,
+            wall_corners,
+            horizontal_only=horizontal_only,
+            pad_px=pad_px,
+            pad_fraction=pad_fraction,
+        )
+
+    point = Point(float(x), float(y))
+    top_line = geometry["top_line"]
+    bottom_line = geometry["bottom_line"]
+    if mode != "sidewall":
+        try:
+            top_margin = y - top_line.y_at_x(x)
+            bottom_margin = bottom_line.y_at_x(x) - y
+        except ValueError:
+            return False
+        if top_margin < -pad_px or bottom_margin < -pad_px:
+            return False
+
+    u = point_progress_on_line(point, bottom_line)
+    return -pad_fraction <= u <= 1.0 + pad_fraction
+
+
+def runtime_eval_inside_front_wall_chunk(x, y, geometry):
+    if geometry is None:
+        return True
+
+    pad_px = RUNTIME_EVAL_FRONT_WALL_CHUNK_PAD_PX
+    pad_fraction = RUNTIME_EVAL_FRONT_WALL_CHUNK_PAD_FRACTION
+    wall_corners = geometry.get("wall_corners")
+    if wall_corners is not None:
+        horizontally_inside_wall = inside_wall_corners_gate(
+            x,
+            y,
+            wall_corners,
+            horizontal_only=True,
+            pad_px=pad_px,
+            pad_fraction=pad_fraction,
+        )
+        if not horizontally_inside_wall:
+            return False
+
+        bottom_line = geometry.get("bottom_line")
+        if bottom_line is not None:
+            point = Point(float(x), float(y))
+            bottom_margin = -bottom_line.signed_distance_below(point)
+            return bottom_margin >= -pad_px
+
+        top_y, bottom_y = wall_corners_y_bounds(wall_corners)
+        return float(y) <= bottom_y + pad_px
+
+    point = Point(float(x), float(y))
+    bottom_line = geometry["bottom_line"]
+    try:
+        bottom_margin = -bottom_line.signed_distance_below(point)
+    except ValueError:
+        return False
+    if bottom_margin < -pad_px:
+        return False
+
+    u = point_progress_on_line(point, bottom_line)
+    return -pad_fraction <= u <= 1.0 + pad_fraction
 
 
 def load_audio_candidates_file(path, start_frame, end_frame):
@@ -455,8 +715,20 @@ def geometry_features(row, geometry):
         "distance_to_tin_line_px": 0.0,
         "nearest_wall_line_distance_px": 0.0,
         "judge_margin_px": 0.0,
+        "calibration_wall_height_px": 0.0,
+        "calibration_wall_width_px": 0.0,
+        "calibration_roll_degrees": 0.0,
+        "calibration_perspective_shear": 0.0,
     }
-    if geometry is None or not finite_point(row):
+    if geometry is None:
+        return features
+
+    features["calibration_wall_height_px"] = float(geometry.get("wall_height_px", 0.0))
+    features["calibration_wall_width_px"] = float(geometry.get("wall_width_px", 0.0))
+    features["calibration_roll_degrees"] = float(geometry.get("roll_degrees", 0.0))
+    features["calibration_perspective_shear"] = float(geometry.get("perspective_shear", 0.0))
+
+    if not finite_point(row):
         return features
 
     x = row["x"]
@@ -756,28 +1028,295 @@ def metrics_from_confusion(cm):
     }
 
 
-def chronological_split(features, test_size, embargo_frames):
-    """Split by time, not at random.
+def collapse_runtime_eval_duplicates(candidates, max_gap):
+    if not candidates:
+        return []
 
-    Feature rows are per-frame and their context windows overlap, so frame N
-    and N+1 are near-duplicates. A random split scatters those across train
-    and test and reports a test score the model never earned. Cutting on the
-    frame axis keeps every test row strictly after every train row, and the
-    embargo band drops the rows whose context windows straddle the cut — the
-    only place the two sides can still touch.
-    """
-    ordered = features.sort_values("frame").reset_index(drop=True)
-    cut_index = int(len(ordered) * (1.0 - test_size))
-    if cut_index <= 0 or cut_index >= len(ordered):
-        raise RuntimeError(
-            f"test_size={test_size} leaves one side of the split empty "
-            f"({len(ordered)} row(s))."
+    grouped = []
+    current = []
+    last_frame = None
+    for candidate in sorted(candidates, key=lambda item: item["frame"]):
+        frame = int(candidate["frame"])
+        if current and last_frame is not None and frame - last_frame > max(0, int(max_gap)):
+            grouped.append(current)
+            current = []
+        current.append(candidate)
+        last_frame = frame
+    if current:
+        grouped.append(current)
+
+    return sorted(
+        (max(group, key=lambda item: item["probability"]) for group in grouped),
+        key=lambda item: item["frame"],
+    )
+
+
+def collapse_runtime_eval_front_wall_chunks(
+    candidates,
+    eval_features,
+    geometry,
+    geometry_by_source,
+    fallback_gap,
+):
+    if not candidates:
+        return []
+    if geometry is None and not geometry_by_source:
+        return collapse_runtime_eval_duplicates(candidates, fallback_gap)
+
+    candidates_by_row_index = {
+        int(candidate["row_index"]): candidate
+        for candidate in candidates
+    }
+    working = eval_features.copy()
+    working["_runtime_row_index"] = np.arange(len(working))
+    if "source_video" not in working.columns:
+        working["source_video"] = ""
+    working = working.sort_values(["source_video", "frame"])
+
+    picked = []
+    current_candidates = []
+    current_frames = []
+    current_source = None
+
+    def finish_chunk():
+        if not current_frames or not current_candidates:
+            return
+        best = max(current_candidates, key=lambda item: item["probability"])
+        best = dict(best)
+        best["front_wall_chunk_start_frame"] = int(current_frames[0])
+        best["front_wall_chunk_end_frame"] = int(current_frames[-1])
+        best["front_wall_chunk_frame_count"] = len(current_frames)
+        best["wall_visit_candidate_count"] = len(current_candidates)
+        best["wall_visit_frames"] = [int(item["frame"]) for item in current_candidates]
+        picked.append(best)
+
+    for _, row in working.iterrows():
+        source = str(row.get("source_video", ""))
+        if current_source is not None and source != current_source:
+            finish_chunk()
+            current_candidates = []
+            current_frames = []
+
+        current_source = source
+        row_geometry = geometry
+        if geometry_by_source:
+            row_geometry = geometry_by_source.get(source, geometry)
+
+        detected = float(row.get("t+0_detected", 0.0)) >= 0.5
+        x = float(row.get("t+0_x", 0.0))
+        y = float(row.get("t+0_y", 0.0))
+        if not detected or not math.isfinite(x) or not math.isfinite(y):
+            continue
+
+        inside = runtime_eval_inside_front_wall_chunk(x, y, row_geometry)
+        if not inside:
+            finish_chunk()
+            current_candidates = []
+            current_frames = []
+            continue
+
+        current_frames.append(int(row["frame"]))
+        candidate = candidates_by_row_index.get(int(row["_runtime_row_index"]))
+        if candidate is not None:
+            current_candidates.append(candidate)
+
+    finish_chunk()
+    return sorted(picked, key=lambda item: item["frame"])
+
+
+def pick_runtime_eval_probability_peaks(candidates, min_gap):
+    ranked = sorted(candidates, key=lambda item: item["probability"], reverse=True)
+    picked = []
+    min_gap = max(0, int(min_gap))
+    for candidate in ranked:
+        if any(abs(int(candidate["frame"]) - int(hit["frame"])) < min_gap for hit in picked):
+            continue
+        picked.append(candidate)
+    return sorted(picked, key=lambda item: item["frame"])
+
+
+def app_filtered_eval_predictions(
+    eval_features,
+    probabilities,
+    hit_threshold,
+    *,
+    geometry=None,
+    geometry_by_source=None,
+    spatial_filter=True,
+    spatial_filter_mode="sidewall",
+    collapse_wall_area=True,
+    wall_visit_gap=RUNTIME_EVAL_WALL_VISIT_GAP_FRAMES,
+    min_gap=RUNTIME_EVAL_MIN_GAP_FRAMES,
+):
+    candidates = []
+    for row_index, (_, row) in enumerate(eval_features.iterrows()):
+        probability = float(probabilities[row_index])
+        if probability < hit_threshold:
+            continue
+        if float(row.get("t+0_detected", 0.0)) < 0.5:
+            continue
+
+        x = float(row.get("t+0_x", 0.0))
+        y = float(row.get("t+0_y", 0.0))
+        if not math.isfinite(x) or not math.isfinite(y):
+            continue
+        row_geometry = geometry
+        if geometry_by_source and "source_video" in row:
+            row_geometry = geometry_by_source.get(str(row.get("source_video")), geometry)
+        if spatial_filter and not runtime_eval_inside_gate(x, y, row_geometry, spatial_filter_mode):
+            continue
+
+        candidates.append(
+            {
+                "frame": int(row["frame"]),
+                "probability": probability,
+                "row_index": row_index,
+            }
         )
 
-    cut_frame = int(ordered.loc[cut_index, "frame"])
-    train = ordered[ordered["frame"] < cut_frame - embargo_frames]
-    test = ordered[ordered["frame"] >= cut_frame]
-    return train, test, cut_frame
+    if collapse_wall_area:
+        candidates = collapse_runtime_eval_front_wall_chunks(
+            candidates,
+            eval_features,
+            geometry,
+            geometry_by_source,
+            wall_visit_gap,
+        )
+    candidates = pick_runtime_eval_probability_peaks(candidates, min_gap)
+
+    predictions = np.zeros(len(eval_features), dtype=int)
+    for candidate in candidates:
+        predictions[int(candidate["row_index"])] = 1
+    return predictions, {
+        "threshold_candidates": int(sum(probabilities >= hit_threshold)),
+        "kept_candidates": len(candidates),
+    }
+
+
+def evaluate_model_predictions(
+    eval_features,
+    y_true,
+    probabilities,
+    hit_threshold,
+    runtime_eval_config=None,
+):
+    raw_predictions = (probabilities >= hit_threshold).astype(int)
+    raw_cm = confusion_matrix(y_true, raw_predictions, labels=[0, 1])
+    raw_metrics = metrics_from_confusion(raw_cm)
+
+    if not runtime_eval_config or not runtime_eval_config.get("enabled", True):
+        return {
+            "predictions": raw_predictions,
+            "confusion_matrix": raw_cm,
+            "metrics": raw_metrics,
+            "raw_metrics": raw_metrics,
+            "runtime_eval": {
+                "enabled": False,
+                "threshold_candidates": int(raw_predictions.sum()),
+                "kept_candidates": int(raw_predictions.sum()),
+            },
+        }
+
+    required_columns = {"frame", "t+0_detected", "t+0_x", "t+0_y"}
+    missing_columns = sorted(required_columns - set(eval_features.columns))
+    if missing_columns:
+        return {
+            "predictions": raw_predictions,
+            "confusion_matrix": raw_cm,
+            "metrics": raw_metrics,
+            "raw_metrics": raw_metrics,
+            "runtime_eval": {
+                "enabled": False,
+                "disabled_reason": (
+                    "missing evaluation coordinate columns: "
+                    + ", ".join(missing_columns)
+                ),
+                "threshold_candidates": int(raw_predictions.sum()),
+                "kept_candidates": int(raw_predictions.sum()),
+            },
+        }
+
+    predictions, runtime_eval = app_filtered_eval_predictions(
+        eval_features,
+        probabilities,
+        hit_threshold,
+        geometry=runtime_eval_config.get("geometry"),
+        geometry_by_source=runtime_eval_config.get("geometry_by_source"),
+        spatial_filter=runtime_eval_config.get("spatial_filter", True),
+        spatial_filter_mode=runtime_eval_config.get("spatial_filter_mode", "sidewall"),
+        collapse_wall_area=runtime_eval_config.get("collapse_wall_area", True),
+        wall_visit_gap=runtime_eval_config.get(
+            "wall_visit_gap",
+            RUNTIME_EVAL_WALL_VISIT_GAP_FRAMES,
+        ),
+        min_gap=runtime_eval_config.get("min_gap", RUNTIME_EVAL_MIN_GAP_FRAMES),
+    )
+    cm = confusion_matrix(y_true, predictions, labels=[0, 1])
+    metrics = metrics_from_confusion(cm)
+    runtime_eval["enabled"] = True
+    runtime_eval["raw_threshold_predictions"] = int(raw_predictions.sum())
+    return {
+        "predictions": predictions,
+        "confusion_matrix": cm,
+        "metrics": metrics,
+        "raw_metrics": raw_metrics,
+        "runtime_eval": runtime_eval,
+    }
+
+
+def base_training_sample_weights(y_train, class_balance):
+    if not class_balance:
+        return np.ones(len(y_train), dtype=float)
+    return compute_sample_weight(class_weight="balanced", y=y_train).astype(float)
+
+
+def print_class_balance_weights(sample_weight, y_train):
+    negative_weights = sample_weight[y_train.to_numpy() == 0]
+    positive_weights = sample_weight[y_train.to_numpy() == 1]
+    negative_weight = float(negative_weights[0]) if len(negative_weights) else 1.0
+    positive_weight = float(positive_weights[0]) if len(positive_weights) else 1.0
+    print(
+        "Using balanced sample weights: "
+        f"negative={negative_weight:.3f}, positive={positive_weight:.3f}",
+        flush=True,
+    )
+
+
+def hard_example_sample_weights(
+    model,
+    train_features,
+    x_train,
+    y_train,
+    hit_threshold,
+    runtime_eval_config,
+    base_weight,
+    *,
+    false_positive_multiplier,
+    false_negative_multiplier,
+):
+    positive_class_index = list(model.classes_).index(1)
+    probabilities = model.predict_proba(x_train)[:, positive_class_index]
+    evaluation = evaluate_model_predictions(
+        train_features,
+        y_train,
+        probabilities,
+        hit_threshold,
+        runtime_eval_config,
+    )
+    predictions = evaluation["predictions"]
+    labels = y_train.to_numpy()
+    false_positive_mask = (labels == 0) & (predictions == 1)
+    false_negative_mask = (labels == 1) & (predictions == 0)
+
+    weights = base_weight.copy()
+    weights[false_positive_mask] *= float(false_positive_multiplier)
+    weights[false_negative_mask] *= float(false_negative_multiplier)
+    return weights, {
+        "false_positives": int(false_positive_mask.sum()),
+        "false_negatives": int(false_negative_mask.sum()),
+        "runtime_eval": evaluation["runtime_eval"],
+        "metrics": evaluation["metrics"],
+    }
 
 
 def train_model(
@@ -788,13 +1327,23 @@ def train_model(
     class_balance,
     gb_params=None,
     save_model=True,
-    embargo_frames=0,
+    runtime_eval_config=None,
+    hard_mining_rounds=0,
+    hard_fp_weight_multiplier=3.0,
+    hard_fn_weight_multiplier=3.0,
 ):
     y = features["is_wall_hit"].astype(int)
     missing_features = [column for column in MODEL_FEATURE_COLUMNS if column not in features.columns]
     if missing_features:
         missing_text = ", ".join(missing_features)
-        raise RuntimeError(f"Training table is missing model feature column(s): {missing_text}")
+        print(
+            "Warning: training table is missing model feature column(s); "
+            f"filling with 0.0: {missing_text}",
+            flush=True,
+        )
+        features = features.copy()
+        for column in missing_features:
+            features[column] = 0.0
     x = features[MODEL_FEATURE_COLUMNS]
 
     if y.nunique() < 2:
@@ -805,54 +1354,105 @@ def train_model(
         f"with {len(x.columns)} feature column(s)...",
         flush=True,
     )
-    train_rows, test_rows, cut_frame = chronological_split(
-        features, test_size=0.25, embargo_frames=embargo_frames
+    stratify = y if y.value_counts().min() >= 2 else None
+    x_train, x_test, y_train, y_test = train_test_split(
+        x,
+        y,
+        test_size=0.25,
+        random_state=random_seed,
+        stratify=stratify,
     )
-    x_train = train_rows[MODEL_FEATURE_COLUMNS]
-    x_test = test_rows[MODEL_FEATURE_COLUMNS]
-    y_train = train_rows["is_wall_hit"].astype(int)
-    y_test = test_rows["is_wall_hit"].astype(int)
-
-    if y_train.nunique() < 2 or y_test.nunique() < 2:
-        raise RuntimeError(
-            "Chronological split left one side single-class "
-            f"(train positives {int(y_train.sum())}, test positives "
-            f"{int(y_test.sum())}). Label hits across more of the clip, or "
-            "train on several clips."
-        )
-
     print(
-        f"Chronological split at frame {cut_frame} "
-        f"(embargo {embargo_frames} frame(s)): "
-        f"{len(x_train)} train row(s) / {int(y_train.sum())} positive, "
-        f"{len(x_test)} test row(s) / {int(y_test.sum())} positive.",
+        f"Train/test split: {len(x_train)} train row(s), {len(x_test)} test row(s).",
         flush=True,
     )
 
     gb_params = dict(gb_params or {})
-    model = GradientBoostingClassifier(random_state=random_seed, **gb_params)
     if gb_params:
         print(f"GradientBoosting hyperparameters: {gb_params}", flush=True)
-    print("Fitting classifier...", flush=True)
-    sample_weight = None
+    base_sample_weight = base_training_sample_weights(y_train, class_balance)
     if class_balance:
-        sample_weight = compute_sample_weight(class_weight="balanced", y=y_train)
-        negative_weight = float(sample_weight[y_train.to_numpy() == 0][0])
-        positive_weight = float(sample_weight[y_train.to_numpy() == 1][0])
+        print_class_balance_weights(base_sample_weight, y_train)
+
+    hard_mining_rounds = max(0, int(hard_mining_rounds))
+    train_features_for_eval = features.loc[x_train.index].copy()
+    sample_weight = base_sample_weight
+    hard_mining_history = []
+    for fit_round in range(hard_mining_rounds + 1):
+        model = GradientBoostingClassifier(random_state=random_seed, **gb_params)
+        if fit_round == 0:
+            print("Fitting classifier...", flush=True)
+        else:
+            print(
+                f"Refitting classifier with hard-example weights "
+                f"(round {fit_round}/{hard_mining_rounds})...",
+                flush=True,
+            )
+        model.fit(x_train, y_train, sample_weight=sample_weight)
+        if fit_round >= hard_mining_rounds:
+            break
+
+        sample_weight, mining_summary = hard_example_sample_weights(
+            model,
+            train_features_for_eval,
+            x_train,
+            y_train,
+            hit_threshold,
+            runtime_eval_config,
+            base_sample_weight,
+            false_positive_multiplier=hard_fp_weight_multiplier,
+            false_negative_multiplier=hard_fn_weight_multiplier,
+        )
+        hard_mining_history.append(mining_summary)
+        mining_metrics = mining_summary["metrics"]
         print(
-            "Using balanced sample weights: "
-            f"negative={negative_weight:.3f}, positive={positive_weight:.3f}",
+            "Hard-example mining found "
+            f"{mining_summary['false_positives']} filtered false positive(s) and "
+            f"{mining_summary['false_negatives']} filtered false negative(s) "
+            f"on the training split "
+            f"(precision={mining_metrics['precision']:.3f}, "
+            f"recall={mining_metrics['recall']:.3f}).",
             flush=True,
         )
-    model.fit(x_train, y_train, sample_weight=sample_weight)
     print("Classifier fit complete. Evaluating...", flush=True)
 
     positive_class_index = list(model.classes_).index(1)
     hit_probabilities = model.predict_proba(x_test)[:, positive_class_index]
-    predictions = (hit_probabilities >= hit_threshold).astype(int)
-    cm = confusion_matrix(y_test, predictions, labels=[0, 1])
-    metrics = metrics_from_confusion(cm)
+    eval_features = features.loc[x_test.index].copy()
+    evaluation = evaluate_model_predictions(
+        eval_features,
+        y_test,
+        hit_probabilities,
+        hit_threshold,
+        runtime_eval_config,
+    )
+    predictions = evaluation["predictions"]
+    cm = evaluation["confusion_matrix"]
+    metrics = evaluation["metrics"]
     print(f"Using hit probability threshold: {hit_threshold:.3f}", flush=True)
+    runtime_eval = evaluation["runtime_eval"]
+    if runtime_eval["enabled"]:
+        print(
+            "Using app-style evaluation filters: "
+            f"raw threshold hits={runtime_eval['raw_threshold_predictions']}, "
+            f"after filters/grouping={runtime_eval['kept_candidates']}.",
+            flush=True,
+        )
+        raw_metrics = evaluation["raw_metrics"]
+        print(
+            "Raw threshold metrics before app filters: "
+            f"precision={raw_metrics['precision']:.3f}, "
+            f"recall={raw_metrics['recall']:.3f}, "
+            f"f1={raw_metrics['f1']:.3f}, "
+            f"fp={raw_metrics['fp']}, fn={raw_metrics['fn']}",
+            flush=True,
+        )
+    else:
+        reason = runtime_eval.get("disabled_reason")
+        if reason:
+            print(f"Runtime evaluation filters are disabled: {reason}.", flush=True)
+        else:
+            print("Runtime evaluation filters are disabled.", flush=True)
     print("Confusion matrix:")
     print(cm)
     print()
@@ -865,6 +1465,13 @@ def train_model(
         "hit_threshold": hit_threshold,
         "class_balance": bool(class_balance),
         "gb_params": gb_params,
+        "runtime_evaluation": evaluation["runtime_eval"],
+        "hard_example_mining": {
+            "rounds": hard_mining_rounds,
+            "false_positive_multiplier": float(hard_fp_weight_multiplier),
+            "false_negative_multiplier": float(hard_fn_weight_multiplier),
+            "history": hard_mining_history,
+        },
     }
     if save_model:
         joblib.dump(artifact, model_output)
@@ -883,6 +1490,7 @@ def train_model(
         "artifact": artifact,
         "metrics": metrics,
         "confusion_matrix": cm,
+        "raw_metrics": evaluation["raw_metrics"],
         "feature_importances": importances,
     }
 
@@ -964,7 +1572,24 @@ def parse_args():
     parser.add_argument("--video", type=Path, default=DEFAULT_VIDEO_PATH)
     parser.add_argument("--labels", type=Path, default=DEFAULT_LABELS_PATH)
     parser.add_argument("--calibration", type=Path, default=DEFAULT_CALIBRATION_PATH)
+    parser.add_argument(
+        "--source-calibration-map",
+        default=None,
+        help=(
+            "Comma-separated source_video=calibration.json map for app-style evaluation "
+            "when training from a combined feature CSV."
+        ),
+    )
     parser.add_argument("--ball-csv", type=Path, default=DEFAULT_BALL_CSV_PATH)
+    parser.add_argument(
+        "--features-input",
+        type=Path,
+        default=None,
+        help=(
+            "Train from an existing feature CSV and skip video tracking/feature generation. "
+            "Use this after combining feature CSVs from multiple videos."
+        ),
+    )
     parser.add_argument("--features-output", type=Path, default=DEFAULT_FEATURES_PATH)
     parser.add_argument("--model-output", type=Path, default=DEFAULT_MODEL_PATH)
     parser.add_argument("--context", type=int, default=CONTEXT_FRAMES)
@@ -1027,9 +1652,62 @@ def parse_args():
         ),
     )
     parser.add_argument(
+        "--no-runtime-eval-filters",
+        action="store_true",
+        help=(
+            "Evaluate raw threshold frame predictions instead of applying the app-style "
+            "spatial gate and wall-visit grouping before computing metrics."
+        ),
+    )
+    parser.add_argument(
+        "--runtime-eval-spatial-mode",
+        choices=("sidewall", "wall"),
+        default="sidewall",
+        help=(
+            "Spatial gate used during evaluation. The app uses sidewall mode: it only "
+            "filters predictions outside the calibrated wall's horizontal range."
+        ),
+    )
+    parser.add_argument(
+        "--runtime-eval-wall-visit-gap",
+        type=int,
+        default=RUNTIME_EVAL_WALL_VISIT_GAP_FRAMES,
+        help=(
+            "Fallback grouping gap used only when calibration is unavailable. "
+            "With calibration, evaluation groups by front-wall chunks instead."
+        ),
+    )
+    parser.add_argument(
+        "--runtime-eval-min-gap",
+        type=int,
+        default=RUNTIME_EVAL_MIN_GAP_FRAMES,
+        help="Minimum frame gap between kept evaluation predictions after wall-visit grouping.",
+    )
+    parser.add_argument(
         "--no-class-balance",
         action="store_true",
         help="Disable balanced sample weights during GradientBoostingClassifier training.",
+    )
+    parser.add_argument(
+        "--hard-mining-rounds",
+        type=int,
+        default=0,
+        help=(
+            "After the initial fit, run app-style filtered evaluation on the training split, "
+            "upweight surviving false positives and missed positives, then refit this many times."
+        ),
+    )
+    parser.add_argument(
+        "--hard-fp-weight-multiplier",
+        type=float,
+        default=3.0,
+        help="Multiply sample weight for training-split false positives found after app filters.",
+    )
+    parser.add_argument(
+        "--hard-fn-weight-multiplier",
+        type=float,
+        default=3.0,
+        help="Multiply sample weight for training-split false negatives found after app filters.",
     )
     parser.add_argument("--random-seed", type=int, default=7)
     parser.add_argument("--start-frame", type=int, default=0)
@@ -1072,6 +1750,35 @@ def parse_args():
         help="Maximum number of audio peaks to keep from --audio-file.",
     )
     parser.add_argument(
+        "--no-stationary-filter",
+        action="store_true",
+        help="Do not mark near-stationary ball detections as missing before feature extraction.",
+    )
+    parser.add_argument(
+        "--stationary-window-frames",
+        type=int,
+        default=STATIONARY_WINDOW_FRAMES,
+        help="Frame radius used to identify dust-like stationary detections.",
+    )
+    parser.add_argument(
+        "--stationary-min-detections",
+        type=int,
+        default=STATIONARY_MIN_DETECTIONS,
+        help="Minimum detections in the window before a stationary rejection is allowed.",
+    )
+    parser.add_argument(
+        "--stationary-min-span-px",
+        type=float,
+        default=STATIONARY_MIN_SPAN_PX,
+        help="Reject detected points with less than this local position span.",
+    )
+    parser.add_argument(
+        "--stationary-min-path-px",
+        type=float,
+        default=STATIONARY_MIN_PATH_PX,
+        help="Reject detected points with less than this local path length.",
+    )
+    parser.add_argument(
         "--generate-ball-csv",
         action="store_true",
         help=(
@@ -1090,6 +1797,24 @@ def parse_args():
         help="Track every frame in the selected range instead of only sampled training/context frames.",
     )
     parser.add_argument(
+        "--trajectory-fill-max-gap",
+        type=int,
+        default=TRAJECTORY_FILL_MAX_GAP_FRAMES,
+        help=(
+            "When generating ball CSV rows, interpolate missing detections across this many "
+            "fully contiguous frames between two motion-consistent detections. Use 0 to disable."
+        ),
+    )
+    parser.add_argument(
+        "--trajectory-fill-edge-margin",
+        type=float,
+        default=TRAJECTORY_FILL_EDGE_MARGIN_PX,
+        help=(
+            "Do not create trajectory-filled coordinate rows when the previous, next, or "
+            "estimated box is this close to the video edge."
+        ),
+    )
+    parser.add_argument(
         "--prepare-model-only",
         action="store_true",
         help="Load/cache the Roboflow model and exit before tracking or training.",
@@ -1097,21 +1822,250 @@ def parse_args():
     return parser.parse_args()
 
 
+def runtime_eval_config_from_args(args, geometry):
+    geometry_by_source = load_source_calibration_map(args.source_calibration_map)
+    return {
+        "enabled": not args.no_runtime_eval_filters,
+        "geometry": geometry,
+        "geometry_by_source": geometry_by_source,
+        "spatial_filter": True,
+        "spatial_filter_mode": args.runtime_eval_spatial_mode,
+        "collapse_wall_area": True,
+        "wall_visit_gap": max(0, args.runtime_eval_wall_visit_gap),
+        "min_gap": max(0, args.runtime_eval_min_gap),
+    }
+
+
+def load_source_calibration_map(raw_map):
+    if not raw_map:
+        return {}
+
+    geometries = {}
+    for entry in str(raw_map).split(","):
+        entry = entry.strip()
+        if not entry:
+            continue
+        if "=" not in entry:
+            raise ValueError(
+                "--source-calibration-map entries must look like source_video=path.json"
+            )
+        source, path_text = entry.split("=", 1)
+        source = source.strip()
+        path = Path(path_text.strip())
+        if not source:
+            raise ValueError("--source-calibration-map contains an empty source name")
+        geometry = load_geometry(path)
+        if geometry is None:
+            raise FileNotFoundError(f"Calibration for source {source!r} was not found: {path}")
+        geometries[source] = geometry
+    return geometries
+
+
+def describe_runtime_eval_config(config):
+    source_names = sorted((config.get("geometry_by_source") or {}).keys())
+    if source_names:
+        print(
+            "App-style evaluation filters are enabled with per-source calibration for: "
+            + ", ".join(source_names),
+            flush=True,
+        )
+    elif config["enabled"]:
+        if config.get("geometry") is None:
+            print(
+                "App-style evaluation filters are enabled without calibration geometry; "
+                "wall-visit grouping will still run, but spatial gating is a no-op.",
+                flush=True,
+            )
+        else:
+            print("App-style evaluation filters are enabled using calibration geometry.", flush=True)
+    else:
+        print("App-style evaluation filters are disabled for metrics.", flush=True)
+
+
 def main():
     if load_dotenv is not None:
         load_dotenv(ROOT / ".env")
 
     args = parse_args()
+    if args.trajectory_fill_max_gap < 0:
+        raise RuntimeError("--trajectory-fill-max-gap must be 0 or greater.")
+    if args.trajectory_fill_edge_margin < 0:
+        raise RuntimeError("--trajectory-fill-edge-margin must be 0 or greater.")
+
     print("Starting bounce classifier training pipeline.", flush=True)
     print(f"Video: {args.video}", flush=True)
     print(f"Labels: {args.labels}", flush=True)
     print(f"Ball coordinates: {args.ball_csv}", flush=True)
+    if args.features_input is not None:
+        print(f"Features input: {args.features_input}", flush=True)
 
     if args.prepare_model_only:
         print("Preparing local Roboflow model cache...")
         print("This loads the local model with countinference=False and exits before frame inference.")
         get_tracking_model()
         print("Model is available locally.")
+        return
+
+    if args.features_input is not None:
+        features = pd.read_csv(args.features_input)
+        print(
+            f"Loaded {len(features)} feature row(s) from {args.features_input} "
+            f"({int(features['is_wall_hit'].sum())} positive).",
+            flush=True,
+        )
+        eval_geometry = load_geometry(args.calibration) if args.calibration else None
+        runtime_eval_config = runtime_eval_config_from_args(args, eval_geometry)
+        describe_runtime_eval_config(runtime_eval_config)
+        if args.hyperparameter_matrix:
+            gb_n_estimators_values = args.gb_n_estimators_grid or [args.gb_n_estimators]
+            gb_learning_rate_values = args.gb_learning_rate_grid or [args.gb_learning_rate]
+            gb_max_depth_values = args.gb_max_depth_grid or [args.gb_max_depth]
+            gb_min_samples_leaf_values = args.gb_min_samples_leaf_grid or [args.gb_min_samples_leaf]
+            gb_subsample_values = args.gb_subsample_grid or [args.gb_subsample]
+        else:
+            gb_n_estimators_values = [args.gb_n_estimators]
+            gb_learning_rate_values = [args.gb_learning_rate]
+            gb_max_depth_values = [args.gb_max_depth]
+            gb_min_samples_leaf_values = [args.gb_min_samples_leaf]
+            gb_subsample_values = [args.gb_subsample]
+
+        best = None
+        all_results = []
+        gb_configs = list(
+            itertools.product(
+                gb_n_estimators_values,
+                gb_learning_rate_values,
+                gb_max_depth_values,
+                gb_min_samples_leaf_values,
+                gb_subsample_values,
+            )
+        )
+        if args.hyperparameter_matrix:
+            print(f"GradientBoosting hyperparameter matrix: {len(gb_configs)} run(s).", flush=True)
+
+        for index, (
+            gb_n_estimators,
+            gb_learning_rate,
+            gb_max_depth,
+            gb_min_samples_leaf,
+            gb_subsample,
+        ) in enumerate(gb_configs, start=1):
+            params = {
+                "context": None,
+                "positive_window": None,
+                "negative_exclusion": None,
+                "gb_n_estimators": gb_n_estimators,
+                "gb_learning_rate": gb_learning_rate,
+                "gb_max_depth": gb_max_depth,
+                "gb_min_samples_leaf": gb_min_samples_leaf,
+                "gb_subsample": gb_subsample,
+            }
+            if args.hyperparameter_matrix:
+                print(
+                    "\n"
+                    f"Matrix run {index}/{len(gb_configs)}: "
+                    f"gb_n_estimators={gb_n_estimators}, "
+                    f"gb_learning_rate={gb_learning_rate}, "
+                    f"gb_max_depth={gb_max_depth}, "
+                    f"gb_min_samples_leaf={gb_min_samples_leaf}, "
+                    f"gb_subsample={gb_subsample}",
+                    flush=True,
+                )
+
+            result = train_model(
+                features,
+                args.model_output,
+                args.random_seed,
+                args.hit_threshold,
+                class_balance=not args.no_class_balance,
+                gb_params={
+                    "n_estimators": gb_n_estimators,
+                    "learning_rate": gb_learning_rate,
+                    "max_depth": gb_max_depth,
+                    "min_samples_leaf": gb_min_samples_leaf,
+                    "subsample": gb_subsample,
+                },
+                save_model=not args.hyperparameter_matrix,
+                runtime_eval_config=runtime_eval_config,
+                hard_mining_rounds=args.hard_mining_rounds,
+                hard_fp_weight_multiplier=args.hard_fp_weight_multiplier,
+                hard_fn_weight_multiplier=args.hard_fn_weight_multiplier,
+            )
+            entry = {"params": params, "features": features, "result": result}
+            all_results.append(entry)
+            if best is None or metric_sort_key(
+                entry,
+                min_precision=args.min_selection_precision,
+                beta=args.selection_beta,
+            ) > metric_sort_key(
+                best,
+                min_precision=args.min_selection_precision,
+                beta=args.selection_beta,
+            ):
+                best = entry
+
+        if args.hyperparameter_matrix:
+            print(
+                "\nHyperparameter matrix summary "
+                f"(selection: require precision >= {args.min_selection_precision:.3f} when possible, "
+                f"then maximize F-beta with beta={args.selection_beta:g}):"
+            )
+            for entry in all_results:
+                params = entry["params"]
+                metrics = entry["result"]["metrics"]
+                selection_score = fbeta_score(
+                    metrics["precision"],
+                    metrics["recall"],
+                    args.selection_beta,
+                )
+                print(
+                    f"  gb=(n={params['gb_n_estimators']}, "
+                    f"lr={params['gb_learning_rate']}, "
+                    f"depth={params['gb_max_depth']}, "
+                    f"leaf={params['gb_min_samples_leaf']}, "
+                    f"subsample={params['gb_subsample']}) -> "
+                    f"precision={metrics['precision']:.3f}, "
+                    f"recall={metrics['recall']:.3f}, "
+                    f"f1={metrics['f1']:.3f}, "
+                    f"f2={metrics['f2']:.3f}, "
+                    f"selection={selection_score:.3f}, "
+                    f"precision_ok={metrics['precision'] >= args.min_selection_precision}, "
+                    f"accuracy={metrics['accuracy']:.3f}, "
+                    f"fp={metrics['fp']}, fn={metrics['fn']}"
+                )
+            print_best_result(
+                best,
+                min_precision=args.min_selection_precision,
+                beta=args.selection_beta,
+            )
+            best["result"]["artifact"]["hyperparameters"] = dict(best["params"])
+            best["result"]["artifact"]["selection"] = {
+                "metric": "fbeta_with_precision_floor",
+                "beta": float(args.selection_beta),
+                "min_precision": float(args.min_selection_precision),
+                "score": float(
+                    fbeta_score(
+                        best["result"]["metrics"]["precision"],
+                        best["result"]["metrics"]["recall"],
+                        args.selection_beta,
+                    )
+                ),
+                "precision_floor_met": bool(
+                    best["result"]["metrics"]["precision"] >= args.min_selection_precision
+                ),
+            }
+            joblib.dump(best["result"]["artifact"], args.model_output)
+            print(f"\nSaved best model artifact to {args.model_output}")
+            features = best["features"]
+
+        args.features_output.parent.mkdir(parents=True, exist_ok=True)
+        features.to_csv(args.features_output, index=False)
+        print(
+            f"Saved training rows: {len(features)} row(s) "
+            f"({int(features['is_wall_hit'].sum())} positive) to {args.features_output}",
+            flush=True,
+        )
+        print("Training pipeline complete.", flush=True)
         return
 
     metadata = video_metadata(args.video)
@@ -1292,6 +2246,8 @@ def main():
         args.confidence,
         args.generate_ball_csv,
         args.force_track,
+        args.trajectory_fill_max_gap,
+        args.trajectory_fill_edge_margin,
     )
 
     rows = load_ball_rows(args.ball_csv)
@@ -1301,6 +2257,28 @@ def main():
         f"{detected_rows} have detected ball positions.",
         flush=True,
     )
+    if args.no_stationary_filter:
+        print("Stationary detection filter is disabled.", flush=True)
+    else:
+        rows, stationary_frames = filter_stationary_ball_rows(
+            rows,
+            window_frames=args.stationary_window_frames,
+            min_detections=args.stationary_min_detections,
+            min_span_px=args.stationary_min_span_px,
+            min_path_px=args.stationary_min_path_px,
+        )
+        if stationary_frames:
+            preview = ", ".join(str(frame) for frame in stationary_frames[:12])
+            suffix = "..." if len(stationary_frames) > 12 else ""
+            print(
+                f"Stationary detection filter marked {len(stationary_frames)} row(s) as missing "
+                f"(likely dust/static false positives): {preview}{suffix}",
+                flush=True,
+            )
+        else:
+            print("Stationary detection filter did not reject any coordinate rows.", flush=True)
+        detected_rows = sum(1 for row in rows.values() if finite_point(row))
+        print(f"Using {detected_rows} moving ball detection row(s) after filtering.", flush=True)
     missing_label_rows = [frame for frame in labels_in_range if frame not in rows]
     if missing_label_rows:
         preview = ", ".join(str(frame) for frame in missing_label_rows[:8])
@@ -1313,6 +2291,9 @@ def main():
         print("Including calibration geometry features.")
     else:
         print("Geometry features are disabled; training uses tracking and motion features only.")
+    eval_geometry = geometry or (load_geometry(args.calibration) if args.calibration else None)
+    runtime_eval_config = runtime_eval_config_from_args(args, eval_geometry)
+    describe_runtime_eval_config(runtime_eval_config)
     audio_candidates = load_audio_features(args, start_frame, end_frame, metadata["fps"])
     if audio_candidates is None:
         print("Audio features are disabled.", flush=True)
@@ -1379,7 +2360,10 @@ def main():
                 "subsample": params["gb_subsample"],
             },
             save_model=not args.hyperparameter_matrix,
-            embargo_frames=params["context"],
+            runtime_eval_config=runtime_eval_config,
+            hard_mining_rounds=args.hard_mining_rounds,
+            hard_fp_weight_multiplier=args.hard_fp_weight_multiplier,
+            hard_fn_weight_multiplier=args.hard_fn_weight_multiplier,
         )
         entry = {"params": params, "features": features, "result": result}
         all_results.append(entry)

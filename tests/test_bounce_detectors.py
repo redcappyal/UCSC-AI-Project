@@ -6,6 +6,7 @@ import sys
 from pathlib import Path
 
 import numpy as np
+import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -15,10 +16,21 @@ from detect_wall_hits import (
     detect_bounce_two_stage,
     detect_hits_from_rows,
 )
+from train_bounce_classifier import filter_stationary_ball_rows
+from train_bounce_classifier import (
+    app_filtered_eval_predictions,
+    geometry_features,
+    load_geometry,
+)
+from tracking_common import select_motion_consistent_ball_predictions
 from bounce_gb_model_detector import (
     calibrated_wall_gate,
+    collapse_front_wall_chunks,
     collapse_wall_area_duplicates,
+    inside_front_wall_chunk_gate,
     inside_lenient_sidewall_gate,
+    is_stationary_false_track,
+    rows_by_frame,
 )
 
 FPS = 30.0
@@ -48,6 +60,30 @@ def rows_from_trajectory(trajectory):
         }
         for frame, t, (x, y) in zip(frames, timestamps, positions)
     ]
+
+
+def detector_row(frame, x, y):
+    return {
+        "source_frame": frame,
+        "timestamp_seconds": f"{frame / FPS:.6f}",
+        "detected": "True",
+        "confidence": "0.900",
+        "x_center": f"{x:.3f}",
+        "y_center": f"{y:.3f}",
+        "width": "12.000",
+        "height": "12.000",
+    }
+
+
+def pred(x, y, confidence, class_name="ball"):
+    return {
+        "x": x,
+        "y": y,
+        "width": 10,
+        "height": 10,
+        "confidence": confidence,
+        "class": class_name,
+    }
 
 
 def lofted_shot(*, vertex_t=1.0, n=60, noise=None):
@@ -120,6 +156,32 @@ def test_lenient_sidewall_gate_rejects_obvious_sidewall_points():
     assert not inside_lenient_sidewall_gate(2700, 500, wall_gate, (0, 2000))
 
 
+def test_sidewall_gate_prefers_tilted_wall_corners():
+    calibration = {
+        "lines": [
+            {"name": "out_line_lower_edge", "endpoints": [[100, 100], [900, 100]]},
+            {"name": "tin_top_edge", "endpoints": [[100, 700], [900, 700]]},
+        ],
+        "planes": {
+            "wall": {
+                "corners": [
+                    {"id": "top_left", "tap_px": [180, 90]},
+                    {"id": "top_right", "tap_px": [860, 120]},
+                    {"id": "bottom_right", "tap_px": [940, 720]},
+                    {"id": "bottom_left", "tap_px": [120, 690]},
+                ]
+            }
+        },
+    }
+    wall_gate = calibrated_wall_gate(calibration)
+
+    assert wall_gate[0] == "wall_corners"
+    assert inside_lenient_sidewall_gate(150, 650, wall_gate, (100, 900))
+    assert inside_lenient_sidewall_gate(910, 650, wall_gate, (100, 900))
+    assert not inside_lenient_sidewall_gate(-250, 650, wall_gate, (100, 900))
+    assert not inside_lenient_sidewall_gate(1300, 650, wall_gate, (100, 900))
+
+
 def test_wall_area_duplicate_collapse_keeps_highest_confidence():
     candidates = [
         {"hit_frame": 100, "score": 0.42},
@@ -133,6 +195,351 @@ def test_wall_area_duplicate_collapse_keeps_highest_confidence():
     assert [hit["hit_frame"] for hit in picked] == [112, 170]
     assert picked[0]["wall_visit_candidate_count"] == 3
     assert picked[0]["wall_visit_frames"] == [100, 112, 125]
+
+
+def test_front_wall_chunks_keep_best_confidence_across_long_wall_visit():
+    calibration = {
+        "lines": [
+            {"name": "out_line_lower_edge", "endpoints": [[100, 100], [900, 100]]},
+            {"name": "tin_top_edge", "endpoints": [[100, 700], [900, 700]]},
+        ],
+        "planes": {
+            "wall": {
+                "corners": [
+                    {"id": "top_left", "tap_px": [100, 100]},
+                    {"id": "top_right", "tap_px": [900, 100]},
+                    {"id": "bottom_right", "tap_px": [900, 700]},
+                    {"id": "bottom_left", "tap_px": [100, 700]},
+                ]
+            }
+        },
+    }
+    parsed_rows = rows_by_frame([
+        detector_row(frame, 300 + frame, 400)
+        for frame in range(100, 171)
+    ])
+    candidates = [
+        {"hit_frame": 100, "score": 0.50},
+        {"hit_frame": 140, "score": 0.92},
+        {"hit_frame": 170, "score": 0.70},
+    ]
+
+    picked = collapse_front_wall_chunks(
+        candidates,
+        parsed_rows,
+        calibrated_wall_gate(calibration),
+        (100, 900),
+    )
+
+    assert [hit["hit_frame"] for hit in picked] == [140]
+    assert picked[0]["wall_visit_candidate_count"] == 3
+    assert picked[0]["front_wall_chunk_start_frame"] == 100
+    assert picked[0]["front_wall_chunk_end_frame"] == 170
+
+
+def test_front_wall_chunks_split_when_ball_leaves_wall_bounds():
+    calibration = {
+        "lines": [
+            {"name": "out_line_lower_edge", "endpoints": [[100, 100], [900, 100]]},
+            {"name": "tin_top_edge", "endpoints": [[100, 700], [900, 700]]},
+        ],
+        "planes": {
+            "wall": {
+                "corners": [
+                    {"id": "top_left", "tap_px": [100, 100]},
+                    {"id": "top_right", "tap_px": [900, 100]},
+                    {"id": "bottom_right", "tap_px": [900, 700]},
+                    {"id": "bottom_left", "tap_px": [100, 700]},
+                ]
+            }
+        },
+    }
+    parsed_rows = rows_by_frame([
+        detector_row(100, 450, 400),
+        detector_row(101, 460, 400),
+        detector_row(102, 1300, 400),
+        detector_row(103, 500, 420),
+        detector_row(104, 510, 420),
+    ])
+    candidates = [
+        {"hit_frame": 100, "score": 0.50},
+        {"hit_frame": 101, "score": 0.80},
+        {"hit_frame": 103, "score": 0.60},
+        {"hit_frame": 104, "score": 0.70},
+    ]
+
+    picked = collapse_front_wall_chunks(
+        candidates,
+        parsed_rows,
+        calibrated_wall_gate(calibration),
+        (100, 900),
+    )
+
+    assert [hit["hit_frame"] for hit in picked] == [101, 104]
+    assert picked[0]["front_wall_chunk_end_frame"] == 101
+    assert picked[1]["front_wall_chunk_start_frame"] == 103
+
+
+def test_front_wall_chunks_do_not_split_on_missing_detection_hiccup():
+    calibration = {
+        "lines": [
+            {"name": "out_line_lower_edge", "endpoints": [[100, 100], [900, 100]]},
+            {"name": "tin_top_edge", "endpoints": [[100, 700], [900, 700]]},
+        ],
+        "planes": {
+            "wall": {
+                "corners": [
+                    {"id": "top_left", "tap_px": [100, 100]},
+                    {"id": "top_right", "tap_px": [900, 100]},
+                    {"id": "bottom_right", "tap_px": [900, 700]},
+                    {"id": "bottom_left", "tap_px": [100, 700]},
+                ]
+            }
+        },
+    }
+    parsed_rows = rows_by_frame([
+        detector_row(100, 450, 400),
+        detector_row(101, 460, 400),
+        {
+            "source_frame": 102,
+            "timestamp_seconds": f"{102 / FPS:.6f}",
+            "detected": "False",
+            "confidence": "0.000",
+            "x_center": "",
+            "y_center": "",
+            "width": "0.000",
+            "height": "0.000",
+        },
+        detector_row(103, 500, 420),
+        detector_row(104, 510, 420),
+    ])
+    candidates = [
+        {"hit_frame": 101, "score": 0.80},
+        {"hit_frame": 103, "score": 0.70},
+    ]
+
+    picked = collapse_front_wall_chunks(
+        candidates,
+        parsed_rows,
+        calibrated_wall_gate(calibration),
+        (100, 900),
+    )
+
+    assert [hit["hit_frame"] for hit in picked] == [101]
+    assert picked[0]["wall_visit_frames"] == [101, 103]
+
+
+def test_front_wall_chunk_gate_is_horizontal_and_tin_bounded():
+    calibration = {
+        "lines": [
+            {"name": "out_line_lower_edge", "endpoints": [[100, 100], [900, 100]]},
+            {"name": "tin_top_edge", "endpoints": [[100, 700], [900, 700]]},
+        ],
+        "planes": {
+            "wall": {
+                "corners": [
+                    {"id": "top_left", "tap_px": [100, 100]},
+                    {"id": "top_right", "tap_px": [900, 100]},
+                    {"id": "bottom_right", "tap_px": [900, 700]},
+                    {"id": "bottom_left", "tap_px": [100, 700]},
+                ]
+            }
+        },
+    }
+    wall_gate = calibrated_wall_gate(calibration)
+
+    assert inside_front_wall_chunk_gate(500, 50, wall_gate, (100, 900))
+    assert not inside_front_wall_chunk_gate(950, 400, wall_gate, (100, 900))
+    assert not inside_front_wall_chunk_gate(500, 760, wall_gate, (100, 900))
+
+
+def test_stationary_false_track_rejects_dust_like_detection():
+    rows = rows_by_frame([
+        detector_row(frame, 500 + (frame % 2) * 0.7, 300 + (frame % 3) * 0.5)
+        for frame in range(20)
+    ])
+
+    stationary, stats = is_stationary_false_track(rows, 10)
+
+    assert stationary
+    assert stats["span_px"] < 3
+
+
+def test_stationary_false_track_keeps_moving_ball():
+    rows = rows_by_frame([
+        detector_row(frame, 300 + frame * 9, 260 + frame * 4)
+        for frame in range(20)
+    ])
+
+    stationary, stats = is_stationary_false_track(rows, 10)
+
+    assert not stationary
+    assert stats["span_px"] > 100
+
+
+def test_training_stationary_filter_marks_static_rows_missing():
+    rows = {
+        frame: {
+            "frame": frame,
+            "timestamp": frame / FPS,
+            "detected": True,
+            "confidence": 0.9,
+            "x": 640.0 + (frame % 2) * 0.4,
+            "y": 360.0 + (frame % 3) * 0.4,
+            "width": 11.0,
+            "height": 11.0,
+        }
+        for frame in range(20)
+    }
+
+    filtered, rejected = filter_stationary_ball_rows(rows)
+
+    assert rejected
+    assert not filtered[10]["detected"]
+    assert filtered[10]["confidence"] == 0.0
+
+
+def test_training_runtime_eval_filters_group_app_style_predictions(tmp_path):
+    calibration_path = tmp_path / "calibration.json"
+    calibration_path.write_text(
+        json.dumps(
+            {
+                "lines": [
+                    {"name": "out_line_lower_edge", "endpoints": [[100, 100], [900, 100]]},
+                    {"name": "tin_top_edge", "endpoints": [[100, 700], [900, 700]]},
+                ],
+                "planes": {
+                    "wall": {
+                        "corners": [
+                            {"id": "top_left", "tap_px": [100, 100]},
+                            {"id": "top_right", "tap_px": [900, 100]},
+                            {"id": "bottom_right", "tap_px": [900, 700]},
+                            {"id": "bottom_left", "tap_px": [100, 700]},
+                        ]
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    geometry = load_geometry(calibration_path)
+    features = pd.DataFrame(
+        [
+            {"frame": 100, "t+0_detected": 1.0, "t+0_x": 500.0, "t+0_y": 500.0},
+            {"frame": 108, "t+0_detected": 1.0, "t+0_x": 520.0, "t+0_y": 500.0},
+            {"frame": 116, "t+0_detected": 1.0, "t+0_x": 530.0, "t+0_y": 500.0},
+            {"frame": 170, "t+0_detected": 1.0, "t+0_x": 1300.0, "t+0_y": 500.0},
+        ]
+    )
+
+    predictions, stats = app_filtered_eval_predictions(
+        features,
+        np.array([0.40, 0.91, 0.61, 0.88]),
+        0.25,
+        geometry=geometry,
+        spatial_filter=True,
+        spatial_filter_mode="sidewall",
+        wall_visit_gap=24,
+        min_gap=0,
+    )
+
+    assert predictions.tolist() == [0, 1, 0, 0]
+    assert stats["threshold_candidates"] == 4
+    assert stats["kept_candidates"] == 1
+
+
+def test_geometry_features_include_video_level_calibration_context(tmp_path):
+    calibration_path = tmp_path / "calibration.json"
+    calibration_path.write_text(
+        json.dumps(
+            {
+                "lines": [
+                    {"name": "out_line_lower_edge", "endpoints": [[100, 120], [900, 140]]},
+                    {"name": "tin_top_edge", "endpoints": [[80, 720], [920, 760]]},
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    geometry = load_geometry(calibration_path)
+    row = {
+        "detected": True,
+        "confidence": 0.8,
+        "x": 500.0,
+        "y": 500.0,
+        "width": 12.0,
+        "height": 12.0,
+    }
+
+    features = geometry_features(row, geometry)
+
+    assert features["calibration_wall_height_px"] > 0.0
+    assert features["calibration_wall_width_px"] > 0.0
+    assert features["calibration_roll_degrees"] > 0.0
+    assert features["calibration_perspective_shear"] != 0.0
+
+
+def test_motion_consistent_selector_prefers_moving_ball_over_static_dust():
+    predictions_by_frame = {
+        frame: [
+            pred(500, 300, 0.60),
+            pred(200 + frame * 9, 430 + frame * 2, 0.50),
+        ]
+        for frame in range(12)
+    }
+
+    selected = select_motion_consistent_ball_predictions(predictions_by_frame)
+
+    assert selected[6]["confidence"] == 0.50
+    assert selected[6]["x"] == 254
+
+
+def test_motion_consistent_selector_rejects_only_stationary_dust():
+    predictions_by_frame = {
+        frame: [pred(500 + (frame % 2), 300, 0.60)]
+        for frame in range(12)
+    }
+
+    selected = select_motion_consistent_ball_predictions(predictions_by_frame)
+
+    assert selected[6] is None
+
+
+def test_motion_consistent_selector_falls_back_to_confidence_without_context():
+    selected = select_motion_consistent_ball_predictions({
+        100: [pred(10, 20, 0.40), pred(30, 40, 0.75)]
+    })
+
+    assert selected[100]["confidence"] == 0.75
+
+
+def test_motion_consistent_selector_does_not_teleport_link_fragmented_dust():
+    predictions_by_frame = {}
+    for frame in range(9):
+        predictions_by_frame[frame] = [pred(180 + frame * 11, 420 + frame * 3, 0.50)]
+
+    for frame in [0, 1, 2, 6, 7, 8]:
+        predictions_by_frame[frame].append(pred(520 + (frame % 2), 300, 0.60))
+
+    selected = select_motion_consistent_ball_predictions(predictions_by_frame)
+
+    assert selected[2]["confidence"] == 0.50
+    assert selected[6]["confidence"] == 0.50
+
+
+def test_motion_consistent_selector_uses_multiple_non_ball_class_fallbacks():
+    predictions_by_frame = {
+        frame: [
+            pred(500, 300, 0.60, class_name="object"),
+            pred(200 + frame * 9, 430 + frame * 2, 0.50, class_name="object"),
+        ]
+        for frame in range(12)
+    }
+
+    selected = select_motion_consistent_ball_predictions(predictions_by_frame)
+
+    assert selected[6]["confidence"] == 0.50
+    assert selected[6]["x"] == 254
 
 
 def test_straight_line_crossing_calibrated_line_is_not_a_hit():
