@@ -283,6 +283,37 @@
   /* content can outgrow a short phone: the section scrolls internally, never the shell */
   body.phase-load #p-load{overflow-y:auto; min-height:0; -webkit-overflow-scrolling:touch}
 
+  /* record phase (§8.16): live camera preview in the stage + REC readout + recordings list.
+     The record dot is accent yellow — red stays reserved for OUT verdicts (§5.2). */
+  #camVid{position:absolute; inset:0; width:100%; height:100%; object-fit:contain;
+    background:var(--strip-bg); z-index:4}
+  #p-record{overflow-y:auto; min-height:0; -webkit-overflow-scrolling:touch}
+  .recRow{display:flex; align-items:center; justify-content:center; gap:8px; min-height:24px}
+  .recDot{width:10px; height:10px; border-radius:999px; background:var(--line)}
+  .recDot.on{background:var(--accent-bg)}
+  @media (prefers-reduced-motion: no-preference){
+    .recDot.on{animation:recPulse 1.2s ease-in-out infinite}
+  }
+  @keyframes recPulse{0%,100%{opacity:.35} 50%{opacity:1}}
+  #recClock{font-size:14px; font-weight:600; color:var(--dim); font-variant-numeric:tabular-nums}
+  #p-record.recording #recClock{color:var(--text)}
+  .recItem{display:flex; flex-direction:column; gap:8px; padding:10px 14px;
+    border-bottom:1px solid var(--line)}
+  .recItem:last-child{border-bottom:none}
+  .recItemTop{display:flex; align-items:baseline; gap:8px; min-width:0}
+  .recItemTop strong{font-size:15px; font-weight:600; font-variant-numeric:tabular-nums;
+    white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
+  .recDetail{margin-left:auto; font-size:13px; color:var(--dim);
+    font-variant-numeric:tabular-nums; white-space:nowrap}
+  .recCalTag{flex:0 0 auto; font-size:12px; font-weight:600; letter-spacing:.05em;
+    text-transform:uppercase; color:var(--dim); border:1px dashed var(--line);
+    border-radius:999px; padding:2px 8px}
+  .recItemBtns{display:flex; gap:6px}
+  .recItemBtns button{width:auto; min-height:34px; padding:6px 12px; font-size:12px;
+    font-weight:600; background:none; border:1px solid var(--line); color:var(--text)}
+  .recItemBtns button.arm{background:var(--accent-bg); color:var(--accent-text); font-weight:700}
+  .recEmpty{padding:12px 14px; font-size:14px; color:var(--dim)}
+
   /* roadmap placeholder pages: coming-soon hero + planned-capability rows */
   .placeholderHero{border:1px dashed var(--line); border-radius:8px; min-height:180px;
     display:flex; flex-direction:column; align-items:center; justify-content:center; gap:10px;
@@ -466,6 +497,7 @@
 
 <div id="stage" class="hidden">
   <canvas id="view"></canvas>
+  <video id="camVid" class="hidden" playsinline muted autoplay></video>
   <div id="analyzeOverlay" class="hidden"><span class="analyzePulse">Analyzing…</span></div>
   <div id="zoomCtrl" class="hidden">
     <button class="small" id="zoomOutBtn" type="button" aria-label="Zoom out">−</button>
@@ -487,6 +519,12 @@
       <span class="fcBody"><strong>Judge a clip</strong><span>Call a rally from a clip on this phone</span></span>
       <input type="file" id="fileIn" accept="video/*">
     </label>
+    <button class="heroCard" type="button" data-phase="record">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <rect x="2.5" y="6.5" width="13" height="11" rx="2.5"/><path d="M15.5 10.5l6-3.5v10l-6-3.5"/>
+      </svg>
+      <span class="fcBody"><strong>Record a clip</strong><span>Film a rally with this phone's camera</span></span>
+    </button>
     <button class="heroCard" type="button" data-phase="live">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
         <circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="3.5" fill="currentColor" stroke="none"/>
@@ -500,6 +538,22 @@
     <div class="devRow">
       <button class="small" id="debugTargetsBtn" type="button">Debug targets</button>
       <button class="small" id="labelModeBtn" type="button">Label mode</button>
+    </div>
+  </section>
+
+  <!-- PHASE: record (in-app camera capture + on-site calibration) -->
+  <section class="hidden" id="p-record">
+    <div class="recRow">
+      <span class="recDot" id="recDot"></span>
+      <output id="recClock">0:00.0</output>
+    </div>
+    <p class="status" id="camStatus"></p>
+    <button class="primary proxied" id="recBtn" disabled>Record</button>
+    <button id="recCalibrateBtn" type="button" disabled>Calibrate court</button>
+    <p class="status" id="recCalStatus">Not calibrated</p>
+    <div class="targetZones">
+      <div class="targetHead"><strong>Recordings</strong><span id="recCount"></span></div>
+      <div id="recList"><p class="recEmpty">No recordings yet.</p></div>
     </div>
   </section>
 
@@ -1028,11 +1082,15 @@ const S = {
   frameView:{span:4, cursor:0, gen:0, key:'', timer:null, ovDone:false,
     dragging:false, ovDragging:false, dragX:0, dragT:0},
   view:{scale:1, tx:0, ty:0}, // zoom/pan applied to the canvas while tapping
+  rec:{stream:null, recorder:null, chunks:[], startedAt:0, timer:null,
+    calibration:null, calibrating:false, mime:''},   // record phase: camera + capture state
+  pendingRecCal:null,         // a recording's on-site calibration riding into the judge flow
 };
 
 /* ---------- phase / UI ---------- */
 const STEP_META = {
   load:   {label:'Squash Line Calling', instr:''},
+  record: {label:'Record', instr:'', action:{btn:'recBtn', label:'Record'}},
   frame:  {label:'1/8 · Pick frame', instr:'Drag the film strip under the playhead to a frame where both red lines are fully visible and unblocked.',
            action:{btn:'useFrame', label:'Use frame'}},
   tap_out:{label:'2/9 · Out line', instr:'', action:{btn:'confirmBtn', label:'Looks right'}},
@@ -1088,8 +1146,9 @@ function setPhase(p){
   stage.classList.toggle('hidden', p === 'load' || p === 'target' || ROADMAP_PHASES.includes(p));
   document.body.classList.toggle('phase-load', p === 'load');
   document.body.classList.toggle('phase-target', p === 'target');
-  for(const id of ['p-load','p-frame','p-tap','p-review','p-wall-corners','p-tap-floor','p-clip','p-analyze','p-track','p-label','p-target',
+  for(const id of ['p-load','p-record','p-frame','p-tap','p-review','p-wall-corners','p-tap-floor','p-clip','p-analyze','p-track','p-label','p-target',
                    'p-live','p-matches','p-coach','p-stats','p-shot-bot','p-sharing']) $(id).classList.add('hidden');
+  $('camVid').classList.toggle('hidden', p !== 'record');   // live preview only on the record screen
   $('analyzeOverlay').classList.toggle('hidden', p !== 'analyze');
   $('stepLabel').textContent = STEP_META[p].label;
   $('hdrBack').classList.toggle('hidden', SECTION_ROOTS.includes(p));
@@ -1109,6 +1168,7 @@ function setPhase(p){
   }
 
   if(p === 'load'){ $('p-load').classList.remove('hidden'); }
+  if(p === 'record'){ $('p-record').classList.remove('hidden'); enterRecordPhase(); }
   if(p === 'frame'){ $('p-frame').classList.remove('hidden'); setupFrameTimeline(); updateProfileButton(); }
   if(p === 'tap_out' || p === 'tap_tin'){
     $('p-tap').classList.remove('hidden');
@@ -1156,8 +1216,12 @@ async function checkBackend(){
 $('fileIn').addEventListener('change', e => {
   const f = e.target.files[0];
   if(!f) return;
+  loadVideoFile(f);
+});
+function loadVideoFile(f, recCal = null){
   S.videoFile = f;
   S.videoName = f.name;
+  S.pendingRecCal = recCal;   // set only when judging an in-app recording
   S.videoFps = null;
   S.wall = null;
   S.floor = null;             // floor landmarks belong to the previous video's frame
@@ -1181,10 +1245,26 @@ $('fileIn').addEventListener('change', e => {
   clearThumbCache();   // cache keys are absolute video times; a new file invalidates them
   vid.src = URL.createObjectURL(f);
   vid.load();
-});
+}
 vid.addEventListener('loadedmetadata', () => {
   if(S.loadTimer) clearTimeout(S.loadTimer);
   S.W = vid.videoWidth; S.H = vid.videoHeight;
+  if(S.W && S.H && !Number.isFinite(vid.duration)){
+    // MediaRecorder webm blobs report duration=Infinity until the decoder is forced
+    // to the end; seek far ahead, wait for a real duration, then route normally.
+    const fixed = () => {
+      if(!Number.isFinite(vid.duration)) return;
+      vid.removeEventListener('durationchange', fixed);
+      vid.currentTime = 0;
+      routeLoadedVideo();
+    };
+    vid.addEventListener('durationchange', fixed);
+    vid.currentTime = 1e9;
+    return;
+  }
+  routeLoadedVideo();
+});
+function routeLoadedVideo(){
   if(!S.W || !S.H || !Number.isFinite(vid.duration)){
     $('loadStatus').textContent = 'The browser could not read this video. Try exporting it as H.264 .mp4.';
     $('loadStatus').className = 'status warn';
@@ -1204,7 +1284,7 @@ vid.addEventListener('loadedmetadata', () => {
   }
   // The clip routes into whichever mode was chosen on the start screen.
   setPhase(S.mode === 'label' ? 'label' : 'frame');
-});
+}
 vid.addEventListener('error', () => {
   if(S.loadTimer) clearTimeout(S.loadTimer);
   const error = vid.error;
@@ -1257,11 +1337,380 @@ $('themeBtn').onclick = () => {
 };
 applyTheme(document.documentElement.dataset.theme);
 
+/* ---------- record phase: on-device capture + on-site calibration ----------
+   Recordings live on the device in the app's own OPFS `recordings/` folder
+   (blob + JSON sidecar carrying the on-site calibration); browsers without
+   OPFS writes fall back to an IndexedDB blob store. Zero server involvement. */
+const RecStore = (() => {
+  let modePromise = null;
+  const hasOpfs = () => navigator.storage && navigator.storage.getDirectory &&
+    typeof FileSystemFileHandle !== 'undefined' &&
+    FileSystemFileHandle.prototype.createWritable;
+  async function dir(){
+    const root = await navigator.storage.getDirectory();
+    return root.getDirectoryHandle('recordings', {create:true});
+  }
+  function idb(){
+    return new Promise((resolve, reject) => {
+      const req = indexedDB.open('slc-recordings', 1);
+      req.onupgradeneeded = () => req.result.createObjectStore('recs', {keyPath:'id'});
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error);
+    });
+  }
+  function idbOp(txMode, fn){
+    return idb().then(db => new Promise((resolve, reject) => {
+      const tx = db.transaction('recs', txMode);
+      const req = fn(tx.objectStore('recs'));
+      tx.oncomplete = () => { db.close(); resolve(req ? req.result : undefined); };
+      tx.onerror = () => { db.close(); reject(tx.error); };
+    }));
+  }
+  function mode(){
+    if(!modePromise) modePromise = (async () => {
+      if(hasOpfs()){
+        try{ await dir(); return 'opfs'; } catch(_){}
+      }
+      return 'idb';
+    })();
+    return modePromise;
+  }
+  const newestFirst = metas => metas.sort((a, b) => a.created_utc < b.created_utc ? 1 : -1);
+  async function list(){
+    if(await mode() === 'opfs'){
+      const d = await dir(), metas = [];
+      for await (const [name, handle] of d.entries()){
+        if(!name.endsWith('.json')) continue;
+        try{ metas.push(JSON.parse(await (await handle.getFile()).text())); } catch(_){}
+      }
+      return newestFirst(metas);
+    }
+    const rows = await idbOp('readonly', s => s.getAll());
+    return newestFirst(rows.map(r => r.meta));
+  }
+  async function save(blob, meta){
+    if(await mode() === 'opfs'){
+      const d = await dir();
+      const fw = await (await d.getFileHandle(`${meta.id}.${meta.ext}`, {create:true})).createWritable();
+      await fw.write(blob); await fw.close();
+      const mw = await (await d.getFileHandle(`${meta.id}.json`, {create:true})).createWritable();
+      await mw.write(JSON.stringify(meta, null, 2)); await mw.close();
+      return;
+    }
+    await idbOp('readwrite', s => s.put({id:meta.id, meta, blob}));
+  }
+  async function load(id){
+    if(await mode() === 'opfs'){
+      const d = await dir();
+      const meta = JSON.parse(await (await (await d.getFileHandle(`${id}.json`)).getFile()).text());
+      const blob = await (await d.getFileHandle(`${id}.${meta.ext}`)).getFile();
+      return {blob, meta};
+    }
+    const row = await idbOp('readonly', s => s.get(id));
+    if(!row) throw new Error('recording not found');
+    return {blob:row.blob, meta:row.meta};
+  }
+  async function remove(id){
+    if(await mode() === 'opfs'){
+      const d = await dir();
+      let meta = null;
+      try{ meta = JSON.parse(await (await (await d.getFileHandle(`${id}.json`)).getFile()).text()); } catch(_){}
+      if(meta) await d.removeEntry(`${id}.${meta.ext}`).catch(() => {});
+      await d.removeEntry(`${id}.json`).catch(() => {});
+      return;
+    }
+    await idbOp('readwrite', s => s.delete(id));
+  }
+  return {mode, list, save, load, remove};
+})();
+
+const camVid = $('camVid');
+
+function pickRecMime(){
+  const candidates = [
+    'video/mp4;codecs=avc1.42E01E,mp4a.40.2',
+    'video/mp4',
+    'video/webm;codecs=h264,opus',
+    'video/webm;codecs=vp9,opus',
+    'video/webm',
+  ];
+  return candidates.find(m => MediaRecorder.isTypeSupported(m)) || '';
+}
+const recExt = mime => /mp4/.test(mime || '') ? 'mp4' : 'webm';
+const fmtBytes = n => n >= 1e9 ? (n / 1e9).toFixed(2) + ' GB' : (n / 1e6).toFixed(1) + ' MB';
+function fmtClock(seconds){
+  const m = Math.floor(seconds / 60), s = seconds - m * 60;
+  return `${m}:${s < 10 ? '0' : ''}${s.toFixed(1)}`;
+}
+function camStatusMsg(text, warn = false){
+  $('camStatus').textContent = text;
+  $('camStatus').className = warn ? 'status warn' : 'status';
+}
+
+async function enterRecordPhase(){
+  updateRecCalStatus();
+  renderRecList();
+  if(S.rec.stream){ camVid.srcObject = S.rec.stream; return; }   // back from calibration
+  if(!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia){
+    camStatusMsg('Camera not available in this browser.', true);
+    return;
+  }
+  camStatusMsg('Starting camera…');
+  const video = {facingMode:{ideal:'environment'}, width:{ideal:1920}, height:{ideal:1080}, frameRate:{ideal:60}};
+  let stream = null;
+  try{
+    stream = await navigator.mediaDevices.getUserMedia({video, audio:true});
+  } catch(_){
+    try{ stream = await navigator.mediaDevices.getUserMedia({video, audio:false}); }
+    catch(err){
+      camStatusMsg('Camera unavailable — allow camera access in the browser to record.', true);
+      return;
+    }
+  }
+  if(S.phase !== 'record'){   // user backed out while the permission prompt was up
+    for(const track of stream.getTracks()) track.stop();
+    return;
+  }
+  S.rec.stream = stream;
+  camVid.srcObject = stream;
+  const ready = () => {
+    if(S.phase !== 'record' || S.rec.stream !== stream) return;
+    const settings = stream.getVideoTracks()[0]?.getSettings?.() || {};
+    const w = settings.width || camVid.videoWidth, h = settings.height || camVid.videoHeight;
+    const fps = settings.frameRate ? ` · ${Math.round(settings.frameRate)} fps` : '';
+    const mic = stream.getAudioTracks().length ? '' : ' · no mic';
+    if(typeof MediaRecorder === 'undefined'){
+      camStatusMsg('This browser cannot record video — calibration still works.', true);
+    } else {
+      S.rec.mime = pickRecMime();
+      $('recBtn').disabled = false;
+      camStatusMsg(`Camera ready · ${w}×${h}${fps}${mic}`);
+    }
+    $('recCalibrateBtn').disabled = false;
+  };
+  if(camVid.readyState >= 1) ready();
+  else camVid.addEventListener('loadedmetadata', ready, {once:true});
+}
+
+function stopRecordSession(){
+  if(S.rec.recorder && S.rec.recorder.state !== 'inactive'){
+    try{ S.rec.recorder.stop(); } catch(_){}   // onstop still saves what was captured
+  }
+  if(S.rec.stream) for(const track of S.rec.stream.getTracks()) track.stop();
+  S.rec.stream = null;
+  camVid.srcObject = null;
+  stopRecClock();
+  setRecordingUi(false);
+  $('recBtn').disabled = true;
+  $('recCalibrateBtn').disabled = true;
+  camStatusMsg('');
+}
+
+function startRecClock(){
+  const tick = () => { $('recClock').textContent = fmtClock((performance.now() - S.rec.startedAt) / 1000); };
+  tick();
+  S.rec.timer = setInterval(tick, 100);
+}
+function stopRecClock(){
+  if(S.rec.timer) clearInterval(S.rec.timer);
+  S.rec.timer = null;
+  $('recClock').textContent = '0:00.0';
+}
+function setRecordingUi(on){
+  $('p-record').classList.toggle('recording', on);
+  $('recDot').classList.toggle('on', on);
+  $('recBtn').textContent = on ? 'Stop' : 'Record';
+  if(hdrActionTarget === $('recBtn')) hdrAction.textContent = on ? 'Stop' : 'Record';
+  $('recCalibrateBtn').disabled = on || !S.rec.stream;
+}
+
+$('recBtn').onclick = () => { S.rec.recorder ? stopRecording() : startRecording(); };
+function startRecording(){
+  if(!S.rec.stream) return;
+  let recorder;
+  try{
+    const opts = {videoBitsPerSecond:12_000_000};
+    if(S.rec.mime) opts.mimeType = S.rec.mime;
+    recorder = new MediaRecorder(S.rec.stream, opts);
+  } catch(err){
+    camStatusMsg(`Could not start the recorder: ${err.message}`, true);
+    return;
+  }
+  S.rec.chunks = [];
+  recorder.ondataavailable = e => { if(e.data && e.data.size) S.rec.chunks.push(e.data); };
+  recorder.onstop = finishRecording;
+  recorder.start(1000);   // 1 s timeslice: an interruption loses at most a second
+  S.rec.recorder = recorder;
+  S.rec.startedAt = performance.now();
+  startRecClock();
+  setRecordingUi(true);
+}
+function stopRecording(){
+  if(S.rec.recorder && S.rec.recorder.state !== 'inactive') S.rec.recorder.stop();
+}
+async function finishRecording(){
+  const recorder = S.rec.recorder;
+  S.rec.recorder = null;
+  const duration = (performance.now() - S.rec.startedAt) / 1000;
+  const chunks = S.rec.chunks;
+  S.rec.chunks = [];
+  stopRecClock();
+  setRecordingUi(false);
+  if(!chunks.length) return;
+  const mime = (recorder && recorder.mimeType) || S.rec.mime || 'video/webm';
+  const blob = new Blob(chunks, {type:mime.split(';')[0]});
+  const now = new Date();
+  const pad = n => String(n).padStart(2, '0');
+  const id = `rec-${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}-` +
+    `${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
+  const meta = {
+    id, ext:recExt(mime),
+    created_utc:now.toISOString(),
+    duration_s:+duration.toFixed(1),
+    mime, size:blob.size,
+    width:camVid.videoWidth, height:camVid.videoHeight,
+    calibration:S.rec.calibration,
+  };
+  try{
+    if(navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});
+    await RecStore.save(blob, meta);
+  } catch(err){
+    showError(`Could not save the recording on this device: ${err.message}`);
+    return;
+  }
+  const where = await RecStore.mode() === 'opfs' ? 'recordings folder' : 'app storage';
+  camStatusMsg(`Saved to the ${where} · ${fmtClock(duration)} · ${fmtBytes(blob.size)}`);
+  renderRecList();
+}
+
+async function renderRecList(){
+  let metas = [];
+  try{ metas = await RecStore.list(); } catch(_){}
+  if(S.phase !== 'record') return;
+  $('recCount').textContent = metas.length
+    ? `${metas.length} clip${metas.length === 1 ? '' : 's'} · ${fmtBytes(metas.reduce((sum, m) => sum + (m.size || 0), 0))}`
+    : '';
+  const list = $('recList');
+  list.innerHTML = '';
+  if(!metas.length){
+    const empty = document.createElement('p');
+    empty.className = 'recEmpty';
+    empty.textContent = 'No recordings yet.';
+    list.appendChild(empty);
+    return;
+  }
+  for(const meta of metas){
+    const row = document.createElement('div');
+    row.className = 'recItem';
+    const when = new Date(meta.created_utc);
+    const top = document.createElement('div');
+    top.className = 'recItemTop';
+    const title = document.createElement('strong');
+    title.textContent = `${when.toLocaleDateString([], {month:'short', day:'numeric'})} · ` +
+      when.toLocaleTimeString([], {hour:'numeric', minute:'2-digit'});
+    top.appendChild(title);
+    if(meta.calibration){
+      const tag = document.createElement('span');
+      tag.className = 'recCalTag';
+      tag.textContent = 'cal';
+      top.appendChild(tag);
+    }
+    const detail = document.createElement('span');
+    detail.className = 'recDetail';
+    detail.textContent = `${fmtClock(meta.duration_s || 0)} · ${fmtBytes(meta.size || 0)}`;
+    top.appendChild(detail);
+    row.appendChild(top);
+    const judge = document.createElement('button');
+    judge.type = 'button'; judge.textContent = 'Judge';
+    judge.onclick = () => judgeRecording(meta.id);
+    const share = document.createElement('button');
+    share.type = 'button'; share.textContent = 'Save';
+    share.onclick = () => exportRecording(meta.id);
+    const del = document.createElement('button');
+    del.type = 'button'; del.textContent = 'Delete';
+    del.onclick = () => {
+      if(!del.classList.contains('arm')){   // two-tap confirm; disarms after a beat
+        del.classList.add('arm'); del.textContent = 'Confirm';
+        setTimeout(() => { del.classList.remove('arm'); del.textContent = 'Delete'; }, 2600);
+        return;
+      }
+      RecStore.remove(meta.id).then(renderRecList, err => showError(`Could not delete: ${err.message}`));
+    };
+    const btns = document.createElement('div');
+    btns.className = 'recItemBtns';
+    btns.append(judge, share, del);
+    row.appendChild(btns);
+    list.appendChild(row);
+  }
+}
+
+async function judgeRecording(id){
+  let rec;
+  try{ rec = await RecStore.load(id); }
+  catch(err){ showError(`Could not open that recording: ${err.message}`); return; }
+  const file = new File([rec.blob], `${rec.meta.id}.${rec.meta.ext}`,
+    {type:rec.blob.type || rec.meta.mime, lastModified:Date.parse(rec.meta.created_utc) || Date.now()});
+  stopRecordSession();
+  S.mode = 'judge';
+  updateModePill();
+  loadVideoFile(file, rec.meta.calibration || null);
+}
+
+async function exportRecording(id){
+  let rec;
+  try{ rec = await RecStore.load(id); }
+  catch(err){ showError(`Could not open that recording: ${err.message}`); return; }
+  const name = `${rec.meta.id}.${rec.meta.ext}`;
+  const file = new File([rec.blob], name, {type:rec.blob.type || rec.meta.mime});
+  if(navigator.canShare && navigator.canShare({files:[file]})){
+    try{ await navigator.share({files:[file], title:name}); return; }
+    catch(_){ /* user closed the share sheet */ }
+  }
+  const url = URL.createObjectURL(rec.blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = name;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 10_000);
+}
+
+/* On-site calibration: freeze the live view into S.base and run the standard
+   wizard (tap lines → wall corners → floor map); its exits return here. */
+$('recCalibrateBtn').onclick = () => {
+  if(!camVid.videoWidth || !camVid.videoHeight) return;
+  S.W = camVid.videoWidth; S.H = camVid.videoHeight;
+  canvas.width = S.W; canvas.height = S.H;
+  ctx.drawImage(camVid, 0, 0, S.W, S.H);
+  S.base = ctx.getImageData(0, 0, S.W, S.H);
+  S.videoName = 'live-camera';
+  S.frameTime = 0;
+  S.work = null; S.lines = {out:null, tin:null}; S.wall = null; S.floor = null; S.profile = null;
+  S.rec.calibrating = true;
+  setPhase('tap_out');
+};
+function updateRecCalStatus(){
+  const cal = S.rec.calibration;
+  if(!cal){ $('recCalStatus').textContent = 'Not calibrated'; return; }
+  const parts = ['lines'];
+  if(cal.planes && cal.planes.wall) parts.push('wall corners');
+  if(cal.planes && cal.planes.floor) parts.push('floor map');
+  $('recCalStatus').textContent = `Calibrated · ${parts.join(' + ')}`;
+}
+function finishCalWizard(){
+  if(!S.rec.calibrating){ setPhase('clip'); return; }
+  S.rec.calibration = buildJson();
+  S.rec.calibrating = false;
+  setPhase('record');
+}
+
 $('hdrBack').onclick = () => {
   if(S.phase === 'frame'){
     vid.pause(); S.base = null; $('fileIn').value = ''; setPhase('load');
+  } else if(S.phase === 'record'){
+    stopRecordSession(); setPhase('load');
   } else if(S.phase === 'tap_out'){
-    S.work = null; S.base = null; setPhase('frame'); ctx.drawImage(vid, 0, 0, S.W, S.H);
+    S.work = null; S.base = null;
+    if(S.rec.calibrating){ S.rec.calibrating = false; setPhase('record'); }
+    else { setPhase('frame'); ctx.drawImage(vid, 0, 0, S.W, S.H); }
   } else if(S.phase === 'tap_tin'){
     S.work = null; S.lines.out = null; setPhase('tap_out');
   } else if(S.phase === 'review'){
@@ -2442,10 +2891,10 @@ $('floorClearBtn').onclick = () => {
   updateFloorUI();
   render();
 };
-$('floorSkipAllBtn').onclick = () => { S.floor = null; setPhase('clip'); };
+$('floorSkipAllBtn').onclick = () => { S.floor = null; finishCalWizard(); };
 $('floorDoneBtn').onclick = () => {
   if(!S.floor || !S.floor.H) return;
-  setPhase('clip');
+  finishCalWizard();
 };
 
 function drawFloorOverlay(){
@@ -2496,6 +2945,14 @@ function matchingProfile(){
 }
 function updateProfileButton(){
   const btn = $('applyProfileBtn');
+  const recCal = S.pendingRecCal;   // on-site calibration attached to an in-app recording
+  if(recCal && recCal.frame_width === S.W && recCal.frame_height === S.H){
+    btn.classList.remove('hidden');
+    btn.textContent = 'Use this frame with the on-site calibration';
+    btn.onclick = () => applyProfile({calibration:recCal,
+      profile:{id:'onsite', name:'On-site calibration', created_utc:recCal.created_utc}});
+    return;
+  }
   const match = matchingProfile();
   btn.classList.toggle('hidden', !match);
   if(match) btn.textContent = `Use this frame with saved profile “${match.profile.name}”`;
@@ -2601,11 +3058,11 @@ $('wallUndoBtn').onclick = () => {
 };
 $('wallSkipBtn').onclick = () => {
   S.wall = null;
-  setPhase(COURT ? 'tap_floor' : 'clip');
+  if(COURT) setPhase('tap_floor'); else finishCalWizard();
 };
 $('wallDoneBtn').onclick = () => {
   if(!S.wall || S.wall.points.length !== WALL_CORNERS.length) return;
-  setPhase(COURT ? 'tap_floor' : 'clip');
+  if(COURT) setPhase('tap_floor'); else finishCalWizard();
 };
 
 $('chooseClipBtn').onclick = () => {

@@ -130,9 +130,9 @@ iOS app in Safari (add-to-home-screen capable).
 ### 3.3 Phases, not pages
 
 Each screen is a `<section id="p-…">` inside `<main>`, toggled with `.hidden`. The current
-phases: `p-load`, `p-frame`, `p-tap`, `p-review`, `p-tap-floor`, `p-clip`, `p-analyze`,
-`p-track`, `p-label`, `p-target`, and the roadmap phases `p-live`, `p-matches`,
-`p-coach`, `p-stats`, `p-shot-bot`, `p-sharing` (blueprints in §16). To add a screen,
+phases: `p-load`, `p-record`, `p-frame`, `p-tap`, `p-review`, `p-tap-floor`, `p-clip`,
+`p-analyze`, `p-track`, `p-label`, `p-target`, and the roadmap phases `p-live`,
+`p-matches`, `p-coach`, `p-stats`, `p-shot-bot`, `p-sharing` (blueprints in §16). To add a screen,
 add a section and follow §17 — never add a second header, tab bar, or routing chrome
 beyond the §8.3 nav pill.
 
@@ -512,18 +512,44 @@ the nav pill switches away from it (§8.3).
 title 16/700 **normal case** + 13/400 description. One ≥ 48 px target each (these are
 primaries). Two variants:
 
-- **Accent** — `--accent-bg` fill, all ink `--accent-text`: the working action
+- **Accent** — `--accent-bg` fill, all ink `--accent-text`: the *single loudest* action
   ("Judge a clip" — it *is* the file input, `label.filebtn` recast around the hidden
-  `<input type=file>`).
+  `<input type=file>`). Exactly one accent card per screen, ever.
 - **Surface** — `--surface` fill, `1px --line` border, `--text` title, `--dim`
-  icon/description, right-aligned `SOON` tag 12/600 uppercase `--dim`: the future
-  action ("Live match").
+  icon/description: every other card. A working surface card ("Record a clip", opens
+  `p-record`) carries no tag; a future one carries the right-aligned `SOON` tag
+  12/600 uppercase `--dim` ("Live match"). Tag presence is what separates "works
+  today" from "coming" — never a second accent.
 
-Cards sit under a 12/600 uppercase `--dim` "PLAY" heading.
+Cards sit under a 12/600 uppercase `--dim` "PLAY" heading, order: Judge a clip ·
+Record a clip · Live match.
 
 **Dev row:** bottom of Play, after a `1px --line` hairline: `DEV` micro-label (11/600
 uppercase, `--dim`) + a row of `button.small` utilities — "Debug targets" and the
 "Label mode" toggle (`.active` = accent fill + 700, like correction chips).
+
+### 8.16 Record screen components (`p-record`)
+
+- **Live preview** (`#camVid`): a `<video>` absolutely filling the stage,
+  `object-fit:contain` on the `--strip-bg` well, z-index 4 (under the §3.2 overlay
+  ladder). Visible only in the record phase; the canvas stays beneath it.
+- **REC readout** (`.recRow`, reserved 24 px): 10 px `.recDot` + `#recClock` `m:ss.t`
+  14/600 tabular. Idle: dot `--line`, clock `--dim`. Recording: dot **accent yellow**
+  with an opacity-only 1.2 s pulse (reduced-motion wrapped), clock `--text`. The dot is
+  yellow because **red belongs to OUT verdicts** (§5.2) — never a red record dot.
+- **Primary**: Record ↔ Stop, proxied (§3.4). Secondary full-width "Calibrate court"
+  (disabled while recording) + a `.status` calibration line ("Not calibrated" /
+  "Calibrated · lines + wall corners + floor map").
+- **Recordings list**: a §8.9 card ("Recordings" + count/total-size meta). Rows
+  (`.recItem`, hairline-separated) are two lines: top line = 15/600 tabular date,
+  optional `CAL` tag (12/600 uppercase, dashed `--line` capsule, `--dim` — marks an
+  attached on-site calibration), right-aligned 13 dim duration + size; second line =
+  chip-style actions **Judge · Save · Delete** (34 px visual, `1px --line` border,
+  12/600, like correction chips). Delete arms on first tap — label flips to
+  "Confirm" with the accent fill (`.arm`) and disarms after ~2.6 s; no modal.
+- Empty state: dim sentence-case `.recEmpty` row ("No recordings yet.").
+- Storage is on-device only: OPFS `recordings/` folder (blob + JSON sidecar carrying
+  the calibration) with an IndexedDB fallback; no server round-trip.
 
 ---
 
@@ -648,7 +674,8 @@ Each phase: header shows step label + proxied primary; `#instr` gives the one-li
 
 | Phase | Purpose | Body (top→bottom) | Primary (proxied) |
 |---|---|---|---|
-| `p-load` | Play section root — get a clip | "PLAY" heading · hero cards (§8.15): Judge a clip (accent, file input) / Live match (surface, SOON) · dev row | — (no chevron; section root) |
+| `p-load` | Play section root — get a clip | "PLAY" heading · hero cards (§8.15): Judge a clip (accent, file input) / Record a clip (surface, working) / Live match (surface, SOON) · dev row | — (no chevron; section root) |
+| `p-record` | Record rallies + on-site calibration | stage = live camera preview · REC readout · Calibrate court + calibration status · Recordings card (§8.16) | "Record" ↔ "Stop" |
 | `p-frame` | Pick a clean calibration frame | overview rail · editor strip w/ playhead · readout · transport+steppers | "Use this frame" |
 | `p-tap` | Tap out line & tin on frame | stage-driven; clear-selection small button | "Looks right" (disabled until 2 taps) |
 | `p-review` | Approve fitted lines (cyan/lime on stage) | minimal; evidence is the stage | "Use these lines" |
@@ -666,8 +693,11 @@ Each phase: header shows step label + proxied primary; `#instr` gives the one-li
 | `p-sharing` | Placeholder: your coach (coaching platform) | placeholder hero · Planned card (§8.14) | — (back chevron only) |
 
 `p-load` is the **Play section root**: hero action cards (§8.15) + dev row replace the
-old load-button stack. Sub-page back routes: `p-live` → Play; `p-stats` / `p-shot-bot` /
-`p-sharing` → Coach. The nav pill is the section tab bar and appears on the three
+old load-button stack. Sub-page back routes: `p-record` / `p-live` → Play; `p-stats` /
+`p-shot-bot` / `p-sharing` → Coach. The calibration wizard (`p-tap` → … → `p-tap-floor`)
+serves two flows: entered from `p-frame` it exits to `p-clip`; entered from `p-record`
+("Calibrate court", on a frame frozen from the live camera) it exits back to `p-record`
+and the result rides along with each recording. The nav pill is the section tab bar and appears on the three
 section roots only (§8.3).
 
 Production surfaces (section roots and placeholder pages) carry **no `#instr` guidance
