@@ -61,6 +61,8 @@
     white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
   #hdrBack{width:44px; min-width:44px; min-height:44px; padding:0 8px 3px 0;
     background:none; border:none; font-size:30px; font-weight:400; line-height:1; color:var(--text)}
+  #hdrHome{width:44px; min-width:44px; min-height:44px; padding:0; display:flex;
+    align-items:center; justify-content:center; background:none; border:none; color:var(--text)}
   .pill{width:auto; min-height:40px; padding:0 18px; border:none; border-radius:999px;
     background:var(--accent-bg); color:var(--accent-text); font-size:15px; font-weight:700;
     white-space:nowrap}
@@ -476,6 +478,13 @@
 
 <header>
   <button class="hidden" id="hdrBack" type="button" aria-label="Back">&#8249;</button>
+  <button class="hidden" id="hdrHome" type="button" aria-label="Home">
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <path d="M3 11l9-7 9 7"/>
+      <path d="M5 10v9h5v-6h4v6h5v-9"/>
+    </svg>
+  </button>
   <div id="stepLabel">Squash Line Calling</div>
   <button class="small" id="themeBtn" type="button" aria-label="Toggle light or dark theme">
     <svg class="sun-and-moon" width="24" height="24" viewBox="0 0 24 24" aria-hidden="true">
@@ -1158,6 +1167,7 @@ function setPhase(p){
   $('analyzeOverlay').classList.toggle('hidden', p !== 'analyze');
   $('stepLabel').textContent = STEP_META[p].label;
   $('hdrBack').classList.toggle('hidden', SECTION_ROOTS.includes(p));
+  $('hdrHome').classList.toggle('hidden', p === 'load');   // shortcut to the load screen from anywhere else
   syncHeaderAction(STEP_META[p].action);
 
   $('instr').classList.remove('warn');
@@ -1750,6 +1760,20 @@ $('hdrBack').onclick = () => {
     setPhase(S.phase === 'live' ? 'load' : 'coach');
   }
 };
+
+/* Header home button: one tap back to the load screen from any phase, instead
+   of stepping back through the flow. Mirrors the teardown the back chevron
+   already runs on the branches that land on 'load'. */
+function goHome(){
+  if(S.phase === 'load') return;
+  if(S.phase === 'record') stopRecordSession();
+  else vid.pause();
+  S.base = null;
+  $('fileIn').value = '';
+  if(S.restoredSession){ S.restoredSession = false; clearRestoreStash(); }
+  setPhase('load');
+}
+$('hdrHome').onclick = goHome;
 
 /* drill-down cards (Coach hub) + the Live hero open their phase directly */
 for(const card of document.querySelectorAll('button[data-phase]'))

@@ -112,7 +112,7 @@ iOS app in Safari (add-to-home-screen capable).
 ### 3.2 Shell anatomy (do not restructure)
 
 ```
-<header>        fixed-height top bar: back chevron · step label · theme toggle · action pill
+<header>        fixed-height top bar: back chevron · home button · step label · theme toggle · action pill
 #instr          one-line contextual instruction strip (dim), directly under header
 #stage          flex-growing black canvas area: video frame, overlays, zoom controls
 <main>          the current phase <section> (controls, timelines, cards)
@@ -357,9 +357,14 @@ in-between sizes, or put two primary-styled buttons on screen at once.
 
 ### 8.2 Header
 
-Back chevron (`‹`, 30/400, 44 px) — step label (ellipsizing) — theme toggle (animated
-sun/moon SVG, §10) — action pill. Hidden elements use `.hidden`, layout never reflows
-around them (label flexes).
+Back chevron (`‹`, 30/400, 44 px) — home button (`#hdrHome`, house stroke SVG, 44 px) —
+step label (ellipsizing) — theme toggle (animated sun/moon SVG, §10) — action pill. Hidden
+elements use `.hidden`, layout never reflows around them (label flexes).
+
+The back chevron steps up one phase; the home button is a shortcut straight to the load
+screen (hidden only on `load` itself, where you are already home). Both are header
+affordances on the single shell header — not new nav chrome (§18): the §8.3 nav pill
+remains the only section router.
 
 ### 8.3 Nav pill (liquid glass — the only glass in the app)
 
