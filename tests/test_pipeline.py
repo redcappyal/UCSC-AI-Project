@@ -254,10 +254,13 @@ def test_label_run_creation_from_uploaded_video(tmp_path):
     import numpy as np
 
     video_path = tmp_path / "tiny.mp4"
-    writer = cv2.VideoWriter(str(video_path), cv2.VideoWriter_fourcc(*"avc1"), 30.0, (64, 48))
+    # mp4v, not avc1: Linux opencv-python-headless ships no H.264 encoder,
+    # and a failed VideoWriter drops no file rather than raising.
+    writer = cv2.VideoWriter(str(video_path), cv2.VideoWriter_fourcc(*"mp4v"), 30.0, (64, 48))
     for _ in range(12):
         writer.write(np.zeros((48, 64, 3), dtype=np.uint8))
     writer.release()
+    assert video_path.exists(), "VideoWriter produced no file (codec unavailable?)"
 
     client = app_module.app.test_client()
 
