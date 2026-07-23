@@ -1,4 +1,24 @@
-# Fin mount v2 — tripod-clamp redesign (2026-07-23)
+# Fin mount v2/v3 — clamp redesign (2026-07-23)
+
+> **v3 addendum (same day, supersedes the v2 decision summary below):** the team asked
+> to *borrow only the mechanism* of the Printables clamp and fit the **old mast design**.
+> v3 therefore keeps the entire v1 architecture — the mast STL is emitted geometrically
+> identical (reuse the printed part), the saddle keeps its v1 slot position, and the
+> wedges keep their v1 steep faces (90°−pitch; the phone plane lies parallel to the face
+> as the cradle did) with the 2 mm-embedment fix and per-wedge rail placement. The phone
+> holder is an original design: `phone_clamp_body` (fixed top hook that registers the
+> phone's top edge, front dovetail rail, M12×2.5 nut boss, v1-cradle back boss) +
+> `phone_jaw_carriage` (sliding bottom jaw, coin-slot capture of the screw's glued-on
+> tip disc) + `phone_jaw_screw`. Jaw span 68–95 mm, thickness 8–11 mm. No third-party
+> files; the vendored Printables STLs were removed from the repo (mechanism-only
+> attribution note in hardware/README.md). Two v1 latent bugs fixed: the 0.05 mm rail
+> unions AND a cross-axis misalignment of the wedge↔cradle peg bores (offset along the
+> slope on one part, along the wall on the other). Optics: with the clamp stack ~9 mm
+> thicker than the cradle and the mast pinned at 48 mm, the legacy h/s ≥ 4.92 ratio
+> (derived for a 90 mm lens height) is not met (3.7/4.5); the binding *functional*
+> requirement — spec §10 floor visibility ≤0.6 m of the back wall — is computed and
+> asserted instead: 0.57 m (A) / 0.47 m (B). Court-plane margin 3 mm, asserted.
+> The T-joint of v2 is no longer needed and was dropped.
 
 Redesign of the printed fin mount after the first hardware test (2026-07-23), replacing
 the custom phone cradle with the Printables "Tripod Mobile Phone Clamp V2" (Stamos,
