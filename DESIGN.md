@@ -124,6 +124,10 @@ iOS app in Safari (add-to-home-screen capable).
 - `<main>` padding: `12px 14px calc(70px + env(safe-area-inset-bottom))` — the bottom
   clearance keeps content above the nav pill. Never remove the safe-area term.
 - Nav pill sits at `bottom:calc(12px + env(safe-area-inset-bottom))`.
+- **Shell embed:** when loaded inside the native iOS shell the URL hash carries
+  `shell=1`, which adds `body.shell-embed` and hides `#navPill` — the app's own
+  tab bar owns section navigation there. Everything else renders unchanged;
+  `.callTabs` (review/challenge pill) stays visible since it has no native twin.
 - Z-index ladder: stage overlays `5–6` · error banner `30` · nav pill `40`. New modal
   surfaces (if ever needed) start at `50`. Do not exceed without updating this table.
 

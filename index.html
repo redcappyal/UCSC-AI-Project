@@ -223,6 +223,9 @@
     border:0; background:transparent; color:var(--dim); font-size:13px}
   #navPill button.active, .callTabs button.active{background:var(--accent-bg); color:var(--accent-text)}
   #navPill svg, .callTabs svg{width:17px; height:17px; flex:0 0 auto}
+  /* Inside the native iOS shell (#shell=1) the app's tab bar owns navigation;
+     showing the web pill too would stack two navs. */
+  body.shell-embed #navPill{display:none}
   /* Bounce labeling */
   .labelGrid{display:grid; grid-template-columns:1fr 1fr; gap:10px}
   .labelGrid .dot{width:10px; height:10px; border-radius:50%; margin-right:9px; flex:0 0 auto}
@@ -5671,6 +5674,7 @@ async function startDevReloadPoller(){
    tryRestoreSession does the rehydration exactly like a returning session. */
 function applyDeepLink(){
   const params = new URLSearchParams(location.hash.replace(/^#/, ''));
+  if(params.get('shell') === '1') document.body.classList.add('shell-embed');
   const runId = (params.get('run') || '').trim();
   if(runId){
     try{

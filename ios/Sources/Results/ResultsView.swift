@@ -22,7 +22,7 @@ struct ResultsView: View {
         .task { await submission.submit(videoURL: clip.url, duration: clip.duration) }
         .fullScreenCover(isPresented: $showFullReview) {
             if let runID = submission.completedRunID {
-                WebScreen(url: URL(string: Config.baseURL.absoluteString + "/#run=\(runID)")!,
+                WebScreen(url: URL(string: Config.baseURL.absoluteString + "/#run=\(runID)&shell=1")!,
                           showsClose: true)
             }
         }
