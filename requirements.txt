@@ -4,9 +4,11 @@ inference-sdk
 inference
 numpy
 opencv-python
+pandas
 Pillow
 python-dotenv
 pytest
+scikit-learn
 
 # hardware/ STL generation (hardware/generate_mount_stls.py)
 trimesh
