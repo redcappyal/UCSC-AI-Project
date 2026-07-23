@@ -1028,6 +1028,18 @@ def metrics_from_confusion(cm):
     }
 
 
+def split_training_rows(features, random_seed, test_size=0.25):
+    y = features["is_wall_hit"].astype(int)
+    stratify = y if y.value_counts().min() >= 2 else None
+    return train_test_split(
+        features,
+        y,
+        test_size=test_size,
+        random_state=random_seed,
+        stratify=stratify,
+    )
+
+
 def collapse_runtime_eval_duplicates(candidates, max_gap):
     if not candidates:
         return []
@@ -1354,14 +1366,13 @@ def train_model(
         f"with {len(x.columns)} feature column(s)...",
         flush=True,
     )
-    stratify = y if y.value_counts().min() >= 2 else None
-    x_train, x_test, y_train, y_test = train_test_split(
-        x,
-        y,
+    train_rows, test_rows, y_train, y_test = split_training_rows(
+        features,
+        random_seed,
         test_size=0.25,
-        random_state=random_seed,
-        stratify=stratify,
     )
+    x_train = train_rows[MODEL_FEATURE_COLUMNS]
+    x_test = test_rows[MODEL_FEATURE_COLUMNS]
     print(
         f"Train/test split: {len(x_train)} train row(s), {len(x_test)} test row(s).",
         flush=True,
