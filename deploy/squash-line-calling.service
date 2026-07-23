@@ -1,0 +1,14 @@
+[Unit]
+Description=Squash Line Calling (Flask pipeline)
+After=network.target
+
+[Service]
+User=squash
+WorkingDirectory=/opt/squash-line-calling
+Environment=HOST=127.0.0.1
+Environment=PORT=5188
+ExecStart=/opt/squash-line-calling/venv/bin/python app.py
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target
