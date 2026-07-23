@@ -69,7 +69,7 @@ TARGET_SERVICE_Y = (4.57 - 1.78) / (4.57 - 0.48)
 TARGET_TIN_Y = 1.0
 TARGET_SIDE_ZONE_BOUNDS = (0.0, 0.324, TARGET_SERVICE_Y, TARGET_TIN_Y)
 TARGET_CENTER_ZONE_BOUNDS = (0.0, TARGET_SERVICE_Y, TARGET_TIN_Y)
-TARGET_ZONE_IDS = (1, 2, 3, 4, 5)
+TARGET_ZONE_IDS = (1, 2, 3, 4, 5, 6, 7, 8)
 
 
 def persist_job(job):
@@ -388,10 +388,11 @@ def target_zone_for_diagram(diagram):
         zone = 4 if y < TARGET_CENTER_ZONE_BOUNDS[1] else 5
         side = "center"
     else:
-        zone = 3
+        side_offset = 0 if x < TARGET_CENTER_LEFT else 5
+        zone = side_offset + 3
         for index in range(3):
             if TARGET_SIDE_ZONE_BOUNDS[index] <= y < TARGET_SIDE_ZONE_BOUNDS[index + 1]:
-                zone = index + 1
+                zone = side_offset + index + 1
                 break
         side = "left" if x < TARGET_CENTER_LEFT else "right"
 
@@ -435,7 +436,7 @@ def build_target_zone_summary(hits):
     ][:3]
     missing = [dict(zone) for zone in zones if zone["count"] == 0]
     return {
-        "layout": "front_wall_5_target",
+        "layout": "front_wall_8_target",
         "rows": 3,
         "columns": 3,
         "total_wall_hits": total,
@@ -443,6 +444,31 @@ def build_target_zone_summary(hits):
         "common_zones": common,
         "missing_zones": missing,
     }
+
+
+def assign_front_wall_hit_players(hits):
+    sequence = 0
+    for hit in sorted(hits, key=lambda item: (float(item.get("timestamp_seconds", 0.0)), int(item.get("frame", 0)))):
+        if not (is_front_wall_hit(hit) and hit.get("target_zone") is not None):
+            continue
+        sequence += 1
+        hit["front_wall_sequence"] = sequence
+        hit["player_number"] = 1 if sequence % 2 == 1 else 2
+
+
+def build_player_target_zone_summaries(hits):
+    summaries = {}
+    for player_number in (1, 2):
+        player_hits = [
+            hit
+            for hit in hits
+            if int(hit.get("player_number") or 0) == player_number
+        ]
+        summary = build_target_zone_summary(player_hits)
+        summary["player_number"] = player_number
+        summary["label"] = f"Player {player_number}"
+        summaries[str(player_number)] = summary
+    return summaries
 
 
 def judge_hits(run_dir, results, detected, audio_available=None, camera=None, camera_info=None):
@@ -595,7 +621,12 @@ def judge_hits(run_dir, results, detected, audio_available=None, camera=None, ca
                         entry["floor_zone"] = court_model.floor_zone_for_point(x_ft, y_ft)
         hits.append(entry)
 
-    payload = {"hits": hits, "target_zones": build_target_zone_summary(hits)}
+    assign_front_wall_hit_players(hits)
+    payload = {
+        "hits": hits,
+        "target_zones": build_target_zone_summary(hits),
+        "target_zones_by_player": build_player_target_zone_summaries(hits),
+    }
     if floor_map is not None:
         payload["floor_zones"] = court_model.build_floor_zone_summary(hits)
     if audio_available is not None:

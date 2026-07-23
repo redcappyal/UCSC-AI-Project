@@ -213,47 +213,41 @@ def zone_lookup(zones):
     return {int(zone["zone"]): zone for zone in zones or [] if "zone" in zone}
 
 
-def build_coaching_analytics(payload):
-    target_summary = payload.get("target_zones") or {}
-    floor_summary = payload.get("floor_zones") or {}
-    front_wall_hits = front_wall_hits_from_payload(payload)
+def coaching_analytics_for_hits(hits, target_summary):
     target_zones = zone_lookup(target_summary.get("zones"))
 
     heights_ft = [
         wall_height_from_diagram_y(hit["wall_diagram"]["y"])
-        for hit in front_wall_hits
+        for hit in hits
         if hit.get("wall_diagram") and hit["wall_diagram"].get("y") is not None
     ]
     speed_before_mph = [
         hit.get("velocity", {}).get("speed_before", {}).get("mph")
-        for hit in front_wall_hits
+        for hit in hits
         if hit.get("velocity")
     ]
     speed_after_mph = [
         hit.get("velocity", {}).get("speed_after", {}).get("mph")
-        for hit in front_wall_hits
+        for hit in hits
         if hit.get("velocity")
     ]
     speed_change_mph = [
         hit.get("velocity", {}).get("velocity_change", {}).get("mph")
-        for hit in front_wall_hits
+        for hit in hits
         if hit.get("velocity")
     ]
 
-    total_wall_hits = int(target_summary.get("total_wall_hits") or len(front_wall_hits))
+    total_wall_hits = int(target_summary.get("total_wall_hits") or len(hits))
     center_hits = sum(int(target_zones.get(zone, {}).get("count", 0)) for zone in (4, 5))
-    side_hits = sum(int(target_zones.get(zone, {}).get("count", 0)) for zone in (1, 2, 3))
-    low_hits = sum(int(target_zones.get(zone, {}).get("count", 0)) for zone in (3, 5))
-    high_hits = sum(int(target_zones.get(zone, {}).get("count", 0)) for zone in (1, 4))
-    calls = [hit.get("call") for hit in front_wall_hits]
+    side_hits = sum(int(target_zones.get(zone, {}).get("count", 0)) for zone in (1, 2, 3, 6, 7, 8))
+    low_hits = sum(int(target_zones.get(zone, {}).get("count", 0)) for zone in (3, 5, 8))
+    high_hits = sum(int(target_zones.get(zone, {}).get("count", 0)) for zone in (1, 4, 6))
+    calls = [hit.get("call") for hit in hits]
 
     return {
         "total_wall_hits": total_wall_hits,
-        "total_floor_bounces": int(floor_summary.get("total_floor_bounces") or 0),
         "common_target_zones": target_summary.get("common_zones") or [],
         "missing_target_zones": target_summary.get("missing_zones") or [],
-        "common_floor_zones": floor_summary.get("common_zones") or [],
-        "missing_floor_zones": floor_summary.get("missing_zones") or [],
         "target_zone_percentages": [
             {
                 "zone": int(zone.get("zone")),
@@ -263,11 +257,6 @@ def build_coaching_analytics(payload):
             for zone in (target_summary.get("zones") or [])
         ],
         "average_wall_height_ft": rounded(average(heights_ft), 1),
-        "average_wall_height_reference": {
-            "tin_ft": round(FRONT_WALL_TIN_HEIGHT_FT, 1),
-            "service_line_ft": round(FRONT_WALL_SERVICE_HEIGHT_FT, 1),
-            "out_line_ft": round(FRONT_WALL_OUT_HEIGHT_FT, 1),
-        },
         "average_incoming_speed_mph": rounded(average(speed_before_mph), 1),
         "average_exit_speed_mph": rounded(average(speed_after_mph), 1),
         "average_velocity_change_mph": rounded(average(speed_change_mph), 1),
@@ -281,6 +270,44 @@ def build_coaching_analytics(payload):
     }
 
 
+def build_coaching_analytics(payload):
+    target_summary = payload.get("target_zones") or {}
+    floor_summary = payload.get("floor_zones") or {}
+    player_target_summaries = payload.get("target_zones_by_player") or {}
+    front_wall_hits = front_wall_hits_from_payload(payload)
+
+    aggregate = coaching_analytics_for_hits(front_wall_hits, target_summary)
+    players = []
+    for player_number in (1, 2):
+        player_hits = [
+            hit
+            for hit in front_wall_hits
+            if int(hit.get("player_number") or 0) == player_number
+        ]
+        player_summary = player_target_summaries.get(str(player_number)) or {}
+        player_analytics = coaching_analytics_for_hits(player_hits, player_summary)
+        player_analytics["player_number"] = player_number
+        player_analytics["label"] = f"Player {player_number}"
+        players.append(player_analytics)
+
+    aggregate.update({
+        "total_floor_bounces": int(floor_summary.get("total_floor_bounces") or 0),
+        "common_floor_zones": floor_summary.get("common_zones") or [],
+        "missing_floor_zones": floor_summary.get("missing_zones") or [],
+        "average_wall_height_reference": {
+            "tin_ft": round(FRONT_WALL_TIN_HEIGHT_FT, 1),
+            "service_line_ft": round(FRONT_WALL_SERVICE_HEIGHT_FT, 1),
+            "out_line_ft": round(FRONT_WALL_OUT_HEIGHT_FT, 1),
+        },
+        "players": players,
+        "player_assignment": (
+            "Odd-numbered front-wall contacts are Player 1; even-numbered "
+            "front-wall contacts are Player 2."
+        ),
+    })
+    return aggregate
+
+
 def local_coaching_feedback(analytics):
     if not analytics.get("total_wall_hits"):
         return (
@@ -289,6 +316,27 @@ def local_coaching_feedback(analytics):
         )
 
     notes = []
+    players = [
+        player for player in (analytics.get("players") or [])
+        if player.get("total_wall_hits")
+    ]
+    for player in players[:2]:
+        common = player.get("common_target_zones") or []
+        center_rate = player.get("center_target_rate")
+        side_rate = player.get("side_target_rate")
+        avg_height = player.get("average_wall_height_ft")
+        pieces = []
+        if common:
+            pieces.append(f"used zone {common[0]['zone']} most")
+        if center_rate is not None:
+            pieces.append(f"{center_rate:.0f}% middle")
+        if side_rate is not None:
+            pieces.append(f"{side_rate:.0f}% wide")
+        if avg_height is not None:
+            pieces.append(f"{avg_height:.1f} ft average height")
+        if pieces:
+            notes.append(f"{player['label']}: " + ", ".join(pieces) + ".")
+
     center_rate = analytics.get("center_target_rate")
     side_rate = analytics.get("side_target_rate")
     low_rate = analytics.get("low_target_rate")
@@ -332,7 +380,55 @@ def local_coaching_feedback(analytics):
         notes.append(f"Your average ball pace into the front wall was about {avg_speed:.1f} mph.")
     if missing:
         shown = ", ".join(str(zone["zone"]) for zone in missing[:3])
-        notes.append(f"You rarely used zones {shown}; those are good practice targets.")
+        notes.append(f"Across both players, zones {shown} were rarely used; those are good practice targets.")
+
+    return " ".join(notes[:7])
+
+
+def local_player_coaching_feedback(player_analytics):
+    label = player_analytics.get("label") or f"Player {player_analytics.get('player_number', '')}".strip()
+    total = int(player_analytics.get("total_wall_hits") or 0)
+    if not total:
+        return f"{label}: no reliable front-wall contacts were detected for this player."
+
+    notes = []
+    common = player_analytics.get("common_target_zones") or []
+    center_rate = player_analytics.get("center_target_rate")
+    side_rate = player_analytics.get("side_target_rate")
+    low_rate = player_analytics.get("low_target_rate")
+    avg_height = player_analytics.get("average_wall_height_ft")
+    avg_speed = player_analytics.get("average_incoming_speed_mph")
+    missing = player_analytics.get("missing_target_zones") or []
+
+    if common:
+        top = common[0]
+        notes.append(
+            f"{label} used zone {top['zone']} most "
+            f"({top.get('percentage', 0):.0f}% of their shots)."
+        )
+    if center_rate is not None and side_rate is not None:
+        if center_rate >= 50:
+            notes.append(
+                f"{center_rate:.0f}% of {label}'s shots went through the middle. "
+                "Mix in more width to move the opponent off the T."
+            )
+        else:
+            notes.append(
+                f"{side_rate:.0f}% of {label}'s shots went wide, which is good for "
+                "using the side walls and making the opponent cover more court."
+            )
+    if low_rate is not None:
+        notes.append(
+            f"{label}'s low attacking rate was {low_rate:.0f}%. "
+            "Low shots can pressure the opponent, but they raise tin risk if overused."
+        )
+    if avg_height is not None:
+        notes.append(f"{label}'s typical front-wall contact height was {avg_height:.1f} ft.")
+    if avg_speed is not None:
+        notes.append(f"{label}'s average pace into the front wall was about {avg_speed:.1f} mph.")
+    if missing:
+        shown = ", ".join(str(zone["zone"]) for zone in missing[:3])
+        notes.append(f"{label} rarely used zones {shown}; those are useful practice targets.")
 
     return " ".join(notes[:5])
 
@@ -755,6 +851,11 @@ def coach_run(run_id):
     source = "llm" if feedback else "local"
     if not feedback:
         feedback = local_coaching_feedback(analytics)
+    player_feedback = {
+        str(player.get("player_number")): local_player_coaching_feedback(player)
+        for player in analytics.get("players", [])
+        if player.get("player_number") is not None
+    }
 
     return jsonify(
         {
@@ -762,6 +863,8 @@ def coach_run(run_id):
             "analytics": analytics,
             "feedback": feedback,
             "feedback_source": source,
+            "player_feedback": player_feedback,
+            "player_feedback_source": "local",
             "llm_status": llm_status,
         }
     )

@@ -120,7 +120,7 @@ def test_judge_hits_wall_events_judged_as_before(tmp_path):
 
     payload = json.loads((tmp_path / "detected_hits.json").read_text())
     assert payload["target_zones"]["total_wall_hits"] == 1
-    assert payload["target_zones"]["layout"] == "front_wall_5_target"
+    assert payload["target_zones"]["layout"] == "front_wall_8_target"
     assert payload["target_zones"]["zones"][3]["count"] == 1
     assert payload["target_zones"]["common_zones"][0]["zone"] == 4
 
@@ -129,11 +129,38 @@ def test_target_zone_layout_matches_front_wall_sketch():
     from job_runner import target_zone_for_diagram
 
     assert target_zone_for_diagram({"x": 0.08, "y": 0.10})["zone"] == 1
-    assert target_zone_for_diagram({"x": 0.92, "y": 0.50})["zone"] == 2
+    assert target_zone_for_diagram({"x": 0.08, "y": 0.50})["zone"] == 2
     assert target_zone_for_diagram({"x": 0.08, "y": 0.76})["zone"] == 3
-    assert target_zone_for_diagram({"x": 0.92, "y": 0.95})["zone"] == 3
     assert target_zone_for_diagram({"x": 0.50, "y": 0.30})["zone"] == 4
     assert target_zone_for_diagram({"x": 0.50, "y": 0.80})["zone"] == 5
+    assert target_zone_for_diagram({"x": 0.92, "y": 0.10})["zone"] == 6
+    assert target_zone_for_diagram({"x": 0.92, "y": 0.50})["zone"] == 7
+    assert target_zone_for_diagram({"x": 0.92, "y": 0.95})["zone"] == 8
+
+
+def test_target_zones_are_split_by_alternating_players():
+    from job_runner import assign_front_wall_hit_players, build_player_target_zone_summaries
+
+    hits = [
+        {"frame": 10, "timestamp_seconds": 1.0, "event_type": "wall", "target_zone": {"zone": 1}},
+        {"frame": 20, "timestamp_seconds": 2.0, "event_type": "wall", "target_zone": {"zone": 4}},
+        {"frame": 30, "timestamp_seconds": 3.0, "event_type": "floor", "target_zone": {"zone": 5}},
+        {"frame": 40, "timestamp_seconds": 4.0, "event_type": "wall", "target_zone": {"zone": 5}},
+        {"frame": 50, "timestamp_seconds": 5.0, "event_type": "wall", "target_zone": {"zone": 2}},
+    ]
+
+    assign_front_wall_hit_players(hits)
+    summaries = build_player_target_zone_summaries(hits)
+
+    assert [hit.get("player_number") for hit in hits if hit.get("event_type") == "wall"] == [1, 2, 1, 2]
+    assert hits[0]["front_wall_sequence"] == 1
+    assert hits[1]["front_wall_sequence"] == 2
+    assert summaries["1"]["total_wall_hits"] == 2
+    assert summaries["1"]["zones"][0]["count"] == 1
+    assert summaries["1"]["zones"][4]["count"] == 1
+    assert summaries["2"]["total_wall_hits"] == 2
+    assert summaries["2"]["zones"][1]["count"] == 1
+    assert summaries["2"]["zones"][3]["count"] == 1
 
 
 def test_job_restart_recovery(tmp_path, monkeypatch):
