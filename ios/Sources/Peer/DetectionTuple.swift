@@ -14,6 +14,8 @@ enum DetectionBatch {
     static let tupleSize = 24
 
     static func encode(_ tuples: [DetectionTuple]) -> Data {
+        // Wire format's count field is a u16; clamp rather than trap on oversize input.
+        let tuples = tuples.prefix(Int(UInt16.max))
         var out = Data([typeByte])
         out.append(withUnsafeBytes(of: UInt16(tuples.count).littleEndian) { Data($0) })
         for t in tuples {

@@ -25,4 +25,12 @@ final class DetectionTupleTests: XCTestCase {
         XCTAssertNil(DetectionBatch.decode(Data([0x02, 0, 0])))          // unknown type
         XCTAssertNil(DetectionBatch.decode(Data()))                       // empty
     }
+
+    func testEncodeClampsToU16CountCapacity() {
+        let tuples = (0..<65_536).map { sample(UInt32($0)) }
+        let decoded = DetectionBatch.decode(DetectionBatch.encode(tuples))
+        XCTAssertEqual(decoded?.count, 65_535)
+        XCTAssertEqual(decoded?.first?.seq, 0)
+        XCTAssertEqual(decoded?.last?.seq, 65_534)
+    }
 }
