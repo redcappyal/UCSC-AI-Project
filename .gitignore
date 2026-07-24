@@ -41,6 +41,9 @@ venv/
 # regenerating (source of truth stays the generator + markdown)
 !hardware/stl/*.stl
 !docs/mount-spec.pdf
+# Same deal for the annotation guide: whoever is labeling needs the printable
+# PDF, and they are the least likely person to run a build script for it.
+!docs/annotation-guide.pdf
 !docs/figures/*.svg
 !docs/figures/*.png
 !bounce_gb_model.pkl

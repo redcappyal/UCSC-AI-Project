@@ -86,6 +86,8 @@ RUNTIME_EVAL_SIDEWALL_GATE_PAD_PX = 120.0
 RUNTIME_EVAL_SIDEWALL_GATE_PAD_FRACTION = 0.25
 RUNTIME_EVAL_FRONT_WALL_CHUNK_PAD_PX = 24.0
 RUNTIME_EVAL_FRONT_WALL_CHUNK_PAD_FRACTION = 0.02
+RUNTIME_EVAL_MAX_BALL_JUMP_PX_PER_FRAME = 55.0
+RUNTIME_EVAL_MAX_BALL_JUMP_BASE_PX = 90.0
 MODEL_FEATURE_COLUMNS = [
     "velocity_change_px_s",
     "speed_after_px_s",
@@ -573,6 +575,19 @@ def runtime_eval_inside_front_wall_chunk(x, y, geometry):
 
     u = point_progress_on_line(point, bottom_line)
     return -pad_fraction <= u <= 1.0 + pad_fraction
+
+
+def runtime_eval_is_plausible_ball_step(prev_frame, prev_x, prev_y, frame, x, y):
+    if prev_frame is None:
+        return True
+
+    frame_gap = max(1, abs(int(frame) - int(prev_frame)))
+    max_jump = (
+        RUNTIME_EVAL_MAX_BALL_JUMP_BASE_PX
+        + RUNTIME_EVAL_MAX_BALL_JUMP_PX_PER_FRAME * frame_gap
+    )
+    distance = math.hypot(float(x) - float(prev_x), float(y) - float(prev_y))
+    return distance <= max_jump
 
 
 def load_audio_candidates_file(path, start_frame, end_frame):
@@ -1089,6 +1104,9 @@ def collapse_runtime_eval_front_wall_chunks(
     current_candidates = []
     current_frames = []
     current_source = None
+    last_accepted_frame = None
+    last_accepted_x = None
+    last_accepted_y = None
 
     def finish_chunk():
         if not current_frames or not current_candidates:
@@ -1108,6 +1126,9 @@ def collapse_runtime_eval_front_wall_chunks(
             finish_chunk()
             current_candidates = []
             current_frames = []
+            last_accepted_frame = None
+            last_accepted_x = None
+            last_accepted_y = None
 
         current_source = source
         row_geometry = geometry
@@ -1120,14 +1141,32 @@ def collapse_runtime_eval_front_wall_chunks(
         if not detected or not math.isfinite(x) or not math.isfinite(y):
             continue
 
+        plausible_step = runtime_eval_is_plausible_ball_step(
+            last_accepted_frame,
+            last_accepted_x,
+            last_accepted_y,
+            int(row["frame"]),
+            x,
+            y,
+        )
+        if not plausible_step:
+            continue
+
         inside = runtime_eval_inside_front_wall_chunk(x, y, row_geometry)
         if not inside:
             finish_chunk()
             current_candidates = []
             current_frames = []
+            last_accepted_frame = None
+            last_accepted_x = None
+            last_accepted_y = None
             continue
 
-        current_frames.append(int(row["frame"]))
+        frame = int(row["frame"])
+        current_frames.append(frame)
+        last_accepted_frame = frame
+        last_accepted_x = x
+        last_accepted_y = y
         candidate = candidates_by_row_index.get(int(row["_runtime_row_index"]))
         if candidate is not None:
             current_candidates.append(candidate)

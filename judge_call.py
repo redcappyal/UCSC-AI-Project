@@ -80,10 +80,15 @@ class WallCorners:
         return (min(left, right), max(left, right))
 
     def contains_point(self, point):
-        left, right = self.x_bounds_at_y(point.y)
+        if not self.contains_x(point):
+            return False
         top_y = min(self.top_left.y, self.top_right.y)
         bottom_y = max(self.bottom_left.y, self.bottom_right.y)
-        return left <= point.x <= right and top_y <= point.y <= bottom_y
+        return top_y <= point.y <= bottom_y
+
+    def contains_x(self, point):
+        left, right = self.x_bounds_at_y(point.y)
+        return left <= point.x <= right
 
     def normalized_x(self, point):
         left, right = self.x_bounds_at_y(point.y)
@@ -199,6 +204,14 @@ def calibration_wall_x_bounds(top_line, bottom_line, frame_width):
     return left, right
 
 
+def point_inside_wall_x_bounds(ball, top_line, bottom_line, wall_corners=None):
+    if wall_corners is not None:
+        return wall_corners.contains_x(ball)
+
+    left, right = calibration_wall_x_bounds(top_line, bottom_line, None)
+    return left <= ball.x <= right
+
+
 def load_ball_positions(csv_path):
     positions = {}
     with csv_path.open(newline="") as csv_file:
@@ -245,8 +258,8 @@ def judge_ball(ball, top_line, bottom_line, wall_corners=None):
             "Check that the line coordinates were entered correctly."
         )
 
-    if wall_corners is not None and not wall_corners.contains_point(ball):
-        return "OUT", "outside_wall_bounds", top_y, bottom_y
+    if not point_inside_wall_x_bounds(ball, top_line, bottom_line, wall_corners):
+        return None, "outside_wall_x_bounds", top_y, bottom_y
 
     if top_margin <= 0:
         return "OUT", "above_or_on_top_line", top_y, bottom_y

@@ -127,6 +127,9 @@ def public_job(job):
         "rows",
         "hits",
         "target_zones",
+        "target_zones_by_player",
+        "player_assignment",
+        "rallies",
         "floor_zones",
         "calibration_warning",
         "hits_error",
@@ -271,10 +274,48 @@ def coaching_analytics_for_hits(hits, target_summary):
     }
 
 
+def player_error_metrics(rallies, player_number):
+    """Classify each lost rally from its final front-wall contact.
+
+    An OUT shot by the loser is an unforced error. When the winner made the
+    final IN shot, the loser's failure to return it is a forced error.
+    """
+    unforced_errors = 0
+    forced_errors = 0
+    for rally in rallies or []:
+        winner = int(rally.get("winner_player_number") or 0)
+        if winner not in (1, 2) or winner == player_number:
+            continue
+
+        loser = 2 if winner == 1 else 1
+        last_player = int(rally.get("last_player_number") or 0)
+        if rally.get("last_call") == "OUT" and last_player == loser:
+            unforced_errors += 1
+        else:
+            forced_errors += 1
+
+    total_errors = unforced_errors + forced_errors
+    return {
+        "unforced_errors": unforced_errors,
+        "forced_errors": forced_errors,
+        "total_errors": total_errors,
+        "unforced_error_percentage": (
+            rounded(unforced_errors / total_errors * 100, 1)
+            if total_errors
+            else None
+        ),
+    }
+
+
 def build_coaching_analytics(payload):
     target_summary = payload.get("target_zones") or {}
     floor_summary = payload.get("floor_zones") or {}
     player_target_summaries = payload.get("target_zones_by_player") or {}
+    rallies = (
+        payload.get("rallies")
+        or (payload.get("player_assignment") or {}).get("rallies")
+        or []
+    )
     front_wall_hits = front_wall_hits_from_payload(payload)
 
     aggregate = coaching_analytics_for_hits(front_wall_hits, target_summary)
@@ -289,6 +330,7 @@ def build_coaching_analytics(payload):
         player_analytics = coaching_analytics_for_hits(player_hits, player_summary)
         player_analytics["player_number"] = player_number
         player_analytics["label"] = f"Player {player_number}"
+        player_analytics.update(player_error_metrics(rallies, player_number))
         players.append(player_analytics)
 
     aggregate.update({
@@ -301,10 +343,13 @@ def build_coaching_analytics(payload):
             "out_line_ft": round(FRONT_WALL_OUT_HEIGHT_FT, 1),
         },
         "players": players,
-        "player_assignment": (
-            "Odd-numbered front-wall contacts are Player 1; even-numbered "
-            "front-wall contacts are Player 2."
-        ),
+        "player_assignment": payload.get("player_assignment") or {
+            "method": "legacy_global_alternation",
+            "description": (
+                "Odd-numbered front-wall contacts are Player 1; even-numbered "
+                "front-wall contacts are Player 2."
+            ),
+        },
     })
     return aggregate
 
@@ -873,7 +918,11 @@ def judge_frame():
             source = "detected_center"
 
         call, reason, top_y, bottom_y = judge_ball(ball, top_line, bottom_line, wall_corners)
-        margin_px = judge_margin_px(ball, top_line, bottom_line, wall_corners)
+        margin_px = (
+            judge_margin_px(ball, top_line, bottom_line, wall_corners)
+            if call in ("IN", "OUT")
+            else None
+        )
         diagram = wall_diagram_coordinates(
             ball,
             top_line,
@@ -903,7 +952,7 @@ def judge_frame():
                 "y_reference": "0 is the out-line lower edge; 1 is the tin top edge",
             },
             "outside_line_span": (
-                not wall_corners.contains_point(ball)
+                not wall_corners.contains_x(ball)
                 if wall_corners is not None
                 else (not top_line.contains_x(ball.x) or not bottom_line.contains_x(ball.x))
             ),

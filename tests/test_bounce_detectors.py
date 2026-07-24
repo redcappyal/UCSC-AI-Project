@@ -255,9 +255,9 @@ def test_front_wall_chunks_split_when_ball_leaves_wall_bounds():
         },
     }
     parsed_rows = rows_by_frame([
-        detector_row(100, 450, 400),
-        detector_row(101, 460, 400),
-        detector_row(102, 1300, 400),
+        detector_row(100, 830, 400),
+        detector_row(101, 850, 400),
+        detector_row(102, 930, 400),
         detector_row(103, 500, 420),
         detector_row(104, 510, 420),
     ])
@@ -278,6 +278,50 @@ def test_front_wall_chunks_split_when_ball_leaves_wall_bounds():
     assert [hit["hit_frame"] for hit in picked] == [101, 104]
     assert picked[0]["front_wall_chunk_end_frame"] == 101
     assert picked[1]["front_wall_chunk_start_frame"] == 103
+
+
+def test_front_wall_chunks_ignore_sudden_dust_jump():
+    calibration = {
+        "lines": [
+            {"name": "out_line_lower_edge", "endpoints": [[100, 100], [900, 100]]},
+            {"name": "tin_top_edge", "endpoints": [[100, 700], [900, 700]]},
+        ],
+        "planes": {
+            "wall": {
+                "corners": [
+                    {"id": "top_left", "tap_px": [100, 100]},
+                    {"id": "top_right", "tap_px": [900, 100]},
+                    {"id": "bottom_right", "tap_px": [900, 700]},
+                    {"id": "bottom_left", "tap_px": [100, 700]},
+                ]
+            }
+        },
+    }
+    parsed_rows = rows_by_frame([
+        detector_row(100, 450, 400),
+        detector_row(101, 460, 400),
+        detector_row(102, 1300, 400),
+        detector_row(103, 500, 420),
+        detector_row(104, 510, 420),
+    ])
+    candidates = [
+        {"hit_frame": 101, "score": 0.80},
+        {"hit_frame": 102, "score": 0.99},
+        {"hit_frame": 103, "score": 0.60},
+        {"hit_frame": 104, "score": 0.70},
+    ]
+
+    picked = collapse_front_wall_chunks(
+        candidates,
+        parsed_rows,
+        calibrated_wall_gate(calibration),
+        (100, 900),
+    )
+
+    assert [hit["hit_frame"] for hit in picked] == [101]
+    assert picked[0]["wall_visit_frames"] == [101, 103, 104]
+    assert picked[0]["front_wall_chunk_start_frame"] == 100
+    assert picked[0]["front_wall_chunk_end_frame"] == 104
 
 
 def test_front_wall_chunks_do_not_split_on_missing_detection_hiccup():

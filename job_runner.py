@@ -70,6 +70,10 @@ TARGET_TIN_Y = 1.0
 TARGET_SIDE_ZONE_BOUNDS = (0.0, 0.324, TARGET_SERVICE_Y, TARGET_TIN_Y)
 TARGET_CENTER_ZONE_BOUNDS = (0.0, TARGET_SERVICE_Y, TARGET_TIN_Y)
 TARGET_ZONE_IDS = (1, 2, 3, 4, 5, 6, 7, 8)
+DEFAULT_RALLY_GAP_SECONDS = 5.0
+DEFAULT_FIRST_SERVER_PLAYER = 1
+RALLY_GAP_MIN_SPLIT_SECONDS = 4.0
+RALLY_GAP_RATIO_SPLIT = 1.75
 
 
 def persist_job(job):
@@ -380,6 +384,67 @@ def is_front_wall_hit(hit):
     return event_type in (None, "wall", "unknown")
 
 
+def env_float(name, default):
+    raw_value = os.getenv(name)
+    if raw_value is None:
+        return float(default)
+    try:
+        return float(raw_value)
+    except ValueError:
+        return float(default)
+
+
+def configured_env_float(name):
+    raw_value = os.getenv(name)
+    if raw_value is None:
+        return None
+    try:
+        return float(raw_value)
+    except ValueError:
+        return None
+
+
+def other_player(player_number):
+    return 2 if int(player_number) == 1 else 1
+
+
+def is_player_assignable_front_wall_hit(hit):
+    return (
+        is_front_wall_hit(hit)
+        and hit.get("target_zone") is not None
+        and hit.get("call") in ("IN", "OUT")
+    )
+
+
+def hit_sort_key(hit):
+    return (
+        float(hit.get("timestamp_seconds", 0.0)),
+        int(hit.get("frame", hit.get("hit_frame", 0)) or 0),
+    )
+
+
+def infer_rally_gap_seconds(front_wall_hits):
+    ordered = sorted(front_wall_hits, key=hit_sort_key)
+    gaps = [
+        float(cur.get("timestamp_seconds", 0.0)) - float(prev.get("timestamp_seconds", 0.0))
+        for prev, cur in zip(ordered, ordered[1:])
+    ]
+    positive_gaps = sorted(gap for gap in gaps if gap > 0)
+    best = None
+    for lower, upper in zip(positive_gaps, positive_gaps[1:]):
+        if lower <= 0:
+            continue
+        ratio = upper / lower
+        if upper < RALLY_GAP_MIN_SPLIT_SECONDS or ratio < RALLY_GAP_RATIO_SPLIT:
+            continue
+        if best is None or ratio > best[0]:
+            best = (ratio, (lower + upper) / 2)
+
+    if best is not None:
+        return max(RALLY_GAP_MIN_SPLIT_SECONDS, best[1]), "adaptive_gap_ratio"
+    return DEFAULT_RALLY_GAP_SECONDS, "default_gap_seconds"
+
+
 def target_zone_for_diagram(diagram):
     x = clamp(diagram["x"])
     y = clamp(diagram["y"])
@@ -446,14 +511,119 @@ def build_target_zone_summary(hits):
     }
 
 
+def segment_front_wall_hits_into_rallies(front_wall_hits, rally_gap_seconds=None):
+    if rally_gap_seconds is None:
+        configured_gap = configured_env_float("PLAYER_ASSIGNMENT_RALLY_GAP_SECONDS")
+        if configured_gap is None:
+            rally_gap_seconds, gap_method = infer_rally_gap_seconds(front_wall_hits)
+        else:
+            rally_gap_seconds = configured_gap
+            gap_method = "env_PLAYER_ASSIGNMENT_RALLY_GAP_SECONDS"
+    else:
+        rally_gap_seconds = float(rally_gap_seconds)
+        gap_method = "explicit"
+    rally_gap_seconds = max(0.0, rally_gap_seconds)
+    rallies = []
+    current = []
+    previous_time = None
+    for hit in sorted(front_wall_hits, key=hit_sort_key):
+        timestamp = float(hit.get("timestamp_seconds", 0.0))
+        if (
+            current
+            and previous_time is not None
+            and timestamp - previous_time >= rally_gap_seconds
+        ):
+            rallies.append(current)
+            current = []
+        current.append(hit)
+        previous_time = timestamp
+    if current:
+        rallies.append(current)
+    return rallies, rally_gap_seconds, gap_method
+
+
 def assign_front_wall_hit_players(hits):
+    for hit in hits:
+        for key in (
+            "front_wall_sequence",
+            "rally_number",
+            "rally_hit_sequence",
+            "server_player_number",
+            "player_number",
+        ):
+            hit.pop(key, None)
+
+    assignable_hits = [
+        hit for hit in hits if is_player_assignable_front_wall_hit(hit)
+    ]
+    rallies, rally_gap_seconds, rally_gap_method = segment_front_wall_hits_into_rallies(
+        assignable_hits
+    )
+    try:
+        first_server = int(
+            env_float("PLAYER_ASSIGNMENT_FIRST_SERVER", DEFAULT_FIRST_SERVER_PLAYER)
+        )
+    except (OverflowError, ValueError):
+        first_server = DEFAULT_FIRST_SERVER_PLAYER
+    if first_server not in (1, 2):
+        first_server = DEFAULT_FIRST_SERVER_PLAYER
+
     sequence = 0
-    for hit in sorted(hits, key=lambda item: (float(item.get("timestamp_seconds", 0.0)), int(item.get("frame", 0)))):
-        if not (is_front_wall_hit(hit) and hit.get("target_zone") is not None):
-            continue
-        sequence += 1
-        hit["front_wall_sequence"] = sequence
-        hit["player_number"] = 1 if sequence % 2 == 1 else 2
+    server = first_server
+    rally_summaries = []
+    for rally_index, rally_hits in enumerate(rallies, start=1):
+        rally_server = server
+        for rally_sequence, hit in enumerate(rally_hits, start=1):
+            sequence += 1
+            player_number = (
+                rally_server
+                if rally_sequence % 2 == 1
+                else other_player(rally_server)
+            )
+            hit["front_wall_sequence"] = sequence
+            hit["rally_number"] = rally_index
+            hit["rally_hit_sequence"] = rally_sequence
+            hit["server_player_number"] = rally_server
+            hit["player_number"] = player_number
+
+        last_hit = rally_hits[-1]
+        last_player = int(last_hit.get("player_number") or rally_server)
+        last_call = last_hit.get("call")
+        if last_call == "OUT":
+            winner = other_player(last_player)
+            winner_reason = "last_front_wall_hit_out"
+        elif last_call == "IN":
+            winner = last_player
+            winner_reason = "last_front_wall_hit_in_winner"
+        else:
+            winner = None
+            winner_reason = "last_front_wall_hit_unjudged"
+
+        rally_summaries.append({
+            "rally_number": rally_index,
+            "start_frame": int(rally_hits[0].get("frame", 0) or 0),
+            "end_frame": int(rally_hits[-1].get("frame", 0) or 0),
+            "start_time_seconds": float(rally_hits[0].get("timestamp_seconds", 0.0)),
+            "end_time_seconds": float(rally_hits[-1].get("timestamp_seconds", 0.0)),
+            "front_wall_hit_count": len(rally_hits),
+            "server_player_number": rally_server,
+            "winner_player_number": winner,
+            "winner_reason": winner_reason,
+            "last_call": last_call,
+            "last_player_number": last_player,
+        })
+        if winner in (1, 2):
+            server = winner
+
+    return {
+        "method": "rally_gap_server_alternation",
+        "rally_gap_seconds": rally_gap_seconds,
+        "rally_gap_method": rally_gap_method,
+        "first_server_player_number": first_server,
+        "rally_count": len(rally_summaries),
+        "assigned_front_wall_hit_count": len(assignable_hits),
+        "rallies": rally_summaries,
+    }
 
 
 def build_player_target_zone_summaries(hits):
@@ -526,7 +696,8 @@ def judge_hits(run_dir, results, detected, audio_available=None, camera=None, ca
                 try:
                     call, reason, _, _ = judge_ball(point, top_line, bottom_line, wall_corners)
                     # Positive: IN by this many pixels; negative: OUT by |margin|.
-                    margin_px = judge_margin_px(point, top_line, bottom_line, wall_corners)
+                    if call in ("IN", "OUT"):
+                        margin_px = judge_margin_px(point, top_line, bottom_line, wall_corners)
                 except ValueError as error:
                     call, reason, judge_source = "UNKNOWN", str(error), None
 
@@ -573,7 +744,7 @@ def judge_hits(run_dir, results, detected, audio_available=None, camera=None, ca
                 "time": hit.get("impact_time"),
                 "mismatch_px": hit.get("impact_mismatch_px"),
             }
-        if top_line is not None and is_front_wall_hit(entry):
+        if top_line is not None and is_front_wall_hit(entry) and entry.get("call") in ("IN", "OUT"):
             zone_point = None
             if "impact_x" in hit:
                 zone_point = Point(hit["impact_x"], hit["impact_y"])
@@ -621,11 +792,13 @@ def judge_hits(run_dir, results, detected, audio_available=None, camera=None, ca
                         entry["floor_zone"] = court_model.floor_zone_for_point(x_ft, y_ft)
         hits.append(entry)
 
-    assign_front_wall_hit_players(hits)
+    player_assignment = assign_front_wall_hit_players(hits)
     payload = {
         "hits": hits,
         "target_zones": build_target_zone_summary(hits),
         "target_zones_by_player": build_player_target_zone_summaries(hits),
+        "player_assignment": player_assignment,
+        "rallies": player_assignment["rallies"],
     }
     if floor_map is not None:
         payload["floor_zones"] = court_model.build_floor_zone_summary(hits)
@@ -889,11 +1062,15 @@ def run_tracking_job(run_id):
                     camera=camera,
                     camera_info=camera_info,
                 )
+                player_assignment = assign_front_wall_hit_players(hits)
                 target_zones = build_target_zone_summary(hits)
+                target_zones_by_player = build_player_target_zone_summaries(hits)
                 floor_zones = floor_zones_from_run(run_dir)
             except Exception as error:
                 hits_error = str(error)
+                player_assignment = assign_front_wall_hit_players(hits)
                 target_zones = build_target_zone_summary(hits)
+                target_zones_by_player = build_player_target_zone_summaries(hits)
                 floor_zones = None
 
             job = get_job(run_id) or {}
@@ -909,6 +1086,8 @@ def run_tracking_job(run_id):
                 rows=len(results),
                 hits=hits,
                 target_zones=target_zones,
+                target_zones_by_player=target_zones_by_player,
+                player_assignment=player_assignment,
                 hits_error=hits_error,
                 message="Tracking complete.",
                 **extra_fields,

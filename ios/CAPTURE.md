@@ -51,7 +51,13 @@ The two that carry the most weight:
   frame dimensions (`index.html`, `loadProfiles`), so 1080x1920 profiles will
   not match 4K footage and will not be offered. This fails closed rather than
   applying a wrong-space calibration, which is the correct behaviour — but it
-  does mean existing profiles are dead.
+  does mean pre-4K profiles are dead. `clearPre4kProfiles` in `index.html`
+  drops them once per browser, stamped `slc-cal-profiles-reset`; bump
+  `PROFILE_RESET_VERSION` if a future capture change needs the same treatment.
+  Note this is the browser store only — the per-run
+  `ui_runs/*/calibration.json` records are deliberately kept, because
+  `build_eval_set.py` embeds them into every eval case and deleting them
+  would silently zero the judge axes on the next rebuild.
 - **Both phones must run the same build.** `PeerSession`'s Hello advertises
   `CaptureSettings.frameWidth/Height`, and detections cross the wire in those
   pixel units. A 4K phone paired with a 1080p phone skews stereo silently.
