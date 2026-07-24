@@ -74,8 +74,14 @@ final class RecordModel: ObservableObject {
     func attachPeer(_ peer: PeerSession) {
         self.peer = peer
         peer.onRemoteDetections = { [weak self] tuples in
+            // remoteDetections is lock-guarded and latency-sensitive — stays
+            // on the delivery queue. stereoEngine is a plain @MainActor
+            // reference also written (in attachStereo's onCalibration
+            // handler) and read (pump timer, tracker.subscribe) on main, so
+            // only the reference read needs to hop; the engine's own
+            // addRemote is queue-confined internally.
             self?.remoteDetections.append(tuples)
-            self?.stereoEngine?.addRemote(tuples)
+            DispatchQueue.main.async { [weak self] in self?.stereoEngine?.addRemote(tuples) }
         }
         peerPumpTimer?.invalidate()
         peerPumpTimer = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { [weak self, weak peer] _ in

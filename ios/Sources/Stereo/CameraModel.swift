@@ -36,8 +36,11 @@ struct CameraModel {
                   let dc = d["center_px"] as? [Double], dc.count == 2 else {
                 throw DecodeError.malformed("malformed distortion")
             }
+            // Mirrors court_model's `or 1000.0` falsy semantics: nil OR an
+            // explicit non-positive value (e.g. 0) falls back to 1000.0.
+            let rawNorm = d["norm_px"] as? Double
             distortion = Distortion(k1: k1, centerPx: SIMD2(dc[0], dc[1]),
-                                    normPx: d["norm_px"] as? Double ?? 1000.0)
+                                    normPx: (rawNorm.flatMap { $0 > 0 ? $0 : nil }) ?? 1000.0)
         }
         let rotation = simd_double3x3(rows: [
             SIMD3(rows[0][0], rows[0][1], rows[0][2]),
