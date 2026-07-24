@@ -179,12 +179,18 @@ profiles durable). Changes are additive to calibration-v2:
   which is the entire geometric enabler of this project.
 - `/api/calibration/latest` grows a `?camera_id=` filter (unfiltered behavior unchanged
   for Alvin's path and the current iOS fetch).
-- **Cross-camera agreement gate** (extends the calibration health check): given two
-  solved poses, project a grid of shared court landmarks through both models and report
-  the 3D disagreement of triangulated vs. known positions; gate at ≤ 3 cm median before
-  a session may go live. Catches the failure the per-camera residual gate cannot: two
-  individually-plausible solves that disagree about where the court is. Baseline
-  distance between solved camera centers is reported here too (measured, not assumed).
+- **Cross-camera agreement gate** (extends the calibration health check). *Amended
+  2026-07-24 during Plan B1: the original formulation (triangulate synthetic projections
+  of known landmarks) is tautological — `project` and `ray` are exact per-model
+  inverses, so it cannot detect a biased solve.* The implemented gate triangulates each
+  camera's ray through its own **observed** calibration pixels for landmarks shared by
+  both calibrations, measures 3D error vs. the known court positions (gate ≤ 0.1 ft
+  median), and independently checks a pose-plausibility envelope (baseline 1.5–10 ft,
+  camera heights 3–12 ft, both mounts near the back wall). Known limitation, by
+  design: a self-consistent but physically-wrong tap set is unobservable at
+  calibration time; the runtime triangulation gap on live ball detections (StereoEngine
+  reports it per track point) is the catch for that class. Baseline distance between
+  solved camera centers is reported (measured, not assumed).
 - iOS: the wizard stays web-based (unchanged); each phone stores its own fin's profile
   locally and sends it to the primary in the `calibration` control message at pairing.
 
