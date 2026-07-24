@@ -49,13 +49,15 @@ final class RecordModel: ObservableObject {
     let remoteDetections = RemoteDetectionStore()
     private var peer: PeerSession?
     private var peerPumpTimer: Timer?
+    private var peerSubscribed = false
     private var nextDetectionSeq: UInt32 = 0
     private var pendingTuples: [DetectionTuple] = []
     private var lastFlushAt: TimeInterval = 0
     private let peerFrameW = 1080, peerFrameH = 1920   // matches Hello until Phase 4
 
-    /// Wire a paired session. Safe to call once, after init. Subscriber runs
-    /// on the main queue (BallTracker's fan-out queue). The timer pump keeps
+    /// Wire a paired session. Safe to call again with a new session; the
+    /// tracker subscription is registered once. Subscriber runs on the main
+    /// queue (BallTracker's fan-out queue). The timer pump keeps
     /// heartbeats/sync alive even when no ball is detected — a primary with
     /// zero local detections must still tick.
     func attachPeer(_ peer: PeerSession) {
@@ -67,6 +69,12 @@ final class RecordModel: ObservableObject {
         peerPumpTimer = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { [weak peer] _ in
             peer?.tick(now: ClockSync.hostNow())
         }
+        // A new peer session expects a fresh seq space.
+        nextDetectionSeq = 0
+        pendingTuples.removeAll()
+        lastFlushAt = 0
+        guard !peerSubscribed else { return }
+        peerSubscribed = true
         tracker.subscribe { [weak self] observation in
             guard let self, let peer = self.peer, peer.role == .secondary else { return }
             let tuple = DetectionMapper.tuple(seq: self.nextDetectionSeq,
@@ -81,6 +89,10 @@ final class RecordModel: ObservableObject {
                 self.lastFlushAt = now
             }
         }
+    }
+
+    deinit {
+        peerPumpTimer?.invalidate()
     }
 
     func startCamera() async {
