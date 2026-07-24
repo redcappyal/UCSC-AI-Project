@@ -74,3 +74,24 @@ def test_calibration_latest_camera_id_filter():
         shutil.rmtree(run_left, ignore_errors=True)
         shutil.rmtree(run_right, ignore_errors=True)
         shutil.rmtree(run_legacy, ignore_errors=True)
+
+
+def test_calibration_latest_500_on_unreadable_newest():
+    import app as app_module
+
+    client = app_module.app.test_client()
+    run_dir = make_run_with_calibration(
+        app_module, "cal-camera-id-corrupt",
+        {"schema": "squash-calibration-v2"},
+        age_seconds=0)
+    try:
+        # Corrupt the newest run's calibration.json after creation so it
+        # remains the freshest candidate on disk but fails to parse.
+        (run_dir / "calibration.json").write_text(
+            "{not valid json", encoding="utf-8")
+
+        response = client.get("/api/calibration/latest")
+        assert response.status_code == 500
+        assert response.get_json()["ok"] is False
+    finally:
+        shutil.rmtree(run_dir, ignore_errors=True)

@@ -478,15 +478,19 @@ def latest_calibration():
 
     An optional ?camera_id=<id> query param restricts eligibility to
     calibrations whose stored JSON has a matching top-level "camera_id" key;
-    without it, every calibration is eligible (today's behavior)."""
+    without it (including an empty ?camera_id=), every calibration is
+    eligible (today's behavior)."""
     camera_id = request.args.get("camera_id") or None
-    candidates = sorted(
-        RUNS_DIR.glob("*/calibration.json"),
-        key=lambda p: (p.stat().st_mtime_ns, p.parent.name),
-        reverse=True,
-    ) if RUNS_DIR.exists() else []
+    candidates = []
+    if RUNS_DIR.exists():
+        for path in RUNS_DIR.glob("*/calibration.json"):
+            try:
+                candidates.append(((path.stat().st_mtime_ns, path.parent.name), path))
+            except OSError:
+                continue
+    candidates.sort(key=lambda entry: entry[0], reverse=True)
 
-    for path in candidates:
+    for _key, path in candidates:
         try:
             calibration = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
