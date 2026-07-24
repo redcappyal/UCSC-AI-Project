@@ -109,4 +109,38 @@ final class StereoGoldenTests: XCTestCase {
         XCTAssertEqual(StereoMath.surfaces,
                        ["floor", "front_wall", "back_wall", "left_wall", "right_wall"])
     }
+
+    private func trackSamples(_ any: Any) -> [TrackSample] {
+        (any as! [[String: Any]]).map {
+            TrackSample(tS: $0["t_s"] as! Double, px: vec2($0["px"]!))
+        }
+    }
+
+    func testTrajectoryGoldenParityAllCases() {
+        for case_ in Self.goldens["trajectories"] as! [[String: Any]] {
+            let name = case_["name"] as! String
+            let impacts = StereoTrack.detectImpacts(
+                Self.left, trackSamples(case_["samples_a"]!),
+                Self.right, trackSamples(case_["samples_b"]!),
+                timelineS: case_["timeline_s"] as! [Double])
+            let expected = case_["impacts"] as! [[String: Any]]
+            XCTAssertEqual(impacts.count, expected.count, "case \(name)")
+            for (got, want) in zip(impacts, expected) {
+                XCTAssertEqual(got.surface, want["surface"] as! String, "case \(name)")
+                XCTAssertEqual(got.call, want["call"] as! String, "case \(name)")
+                XCTAssertEqual(got.confidence, want["confidence"] as! String, "case \(name)")
+                XCTAssertEqual(got.tS, want["t_s"] as! Double, accuracy: 1e-6, "case \(name)")
+                XCTAssertLessThan(simd_length(got.pointFt - vec3(want["point_ft"]!)),
+                                  1e-3, "case \(name)")
+            }
+        }
+    }
+
+    func testConfidenceTiersCovered() {
+        let trajectories = Self.goldens["trajectories"] as! [[String: Any]]
+        let tiers = Set(trajectories.flatMap {
+            ($0["impacts"] as! [[String: Any]]).map { $0["confidence"] as! String }
+        })
+        XCTAssertTrue(tiers.isSuperset(of: ["high", "one_view", "no_call"]))
+    }
 }
