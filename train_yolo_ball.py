@@ -19,12 +19,19 @@ if load_dotenv is not None:
 
 
 def build_train_kwargs(data_yaml, imgsz=960, epochs=100, batch=-1,
-                       name="ball-yolo11n", device=None):
+                       name="ball-yolo11n", device=None, cache=False):
     """Ultralytics train() kwargs. imgsz=960 matches the pipeline's inference
-    width — the ball is small in frame and 640 measurably hurts recall."""
+    width — the ball is small in frame and 640 measurably hurts recall.
+
+    `cache` defaults OFF: RAM caching costs roughly imgsz^2 * 3 bytes per
+    image (~30 GB for the 11.5k-image v3 dataset at 960 px), which thrashes
+    or OOMs a normal box. It was a safe default only while the dataset was
+    v1-sized (~1.4k images). Pass "ram"/"disk" deliberately if you have the
+    headroom; the dataloader's workers handle JPEG decode fine without it.
+    """
     kwargs = {
         "data": str(data_yaml), "imgsz": imgsz, "epochs": epochs,
-        "batch": batch, "name": name, "cache": True,
+        "batch": batch, "name": name, "cache": cache,
     }
     if device is not None:
         kwargs["device"] = device
@@ -42,8 +49,12 @@ def parse_args():
     parser.add_argument("--model", default="yolo11n.pt")
     parser.add_argument("--imgsz", type=int, default=960)
     parser.add_argument("--epochs", type=int, default=100)
-    parser.add_argument("--batch", type=int, default=-1)
-    parser.add_argument("--device", default=None)
+    parser.add_argument("--batch", type=int, default=-1,
+                        help="-1 auto-sizes to available VRAM (CUDA)")
+    parser.add_argument("--device", default=None,
+                        help='e.g. "0" for the first CUDA GPU, "mps", "cpu"')
+    parser.add_argument("--cache", choices=("off", "ram", "disk"), default="off",
+                        help="image cache; see build_train_kwargs (default off)")
     return parser.parse_args()
 
 
@@ -70,7 +81,8 @@ def main():
     model = YOLO(args.model)
     results = model.train(**build_train_kwargs(
         data_yaml, imgsz=args.imgsz, epochs=args.epochs,
-        batch=args.batch, device=args.device))
+        batch=args.batch, device=args.device,
+        cache=False if args.cache == "off" else args.cache))
     best = Path(results.save_dir) / "weights" / "best.pt"
     print(f"best weights: {best}")
     print("next: score it with yolo_model_eval.py, then export via ios/MODEL.md")
