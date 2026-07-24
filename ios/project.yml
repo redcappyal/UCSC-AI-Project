@@ -24,6 +24,7 @@ targets:
         UILaunchScreen: {}
         NSCameraUsageDescription: Records rallies and runs the live ball tracker.
         NSMicrophoneUsageDescription: Impact sounds help the analyzer find wall hits.
+        NSBluetoothAlwaysUsageDescription: Pairs with the second court camera to sync line calls.
         UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait]
         ITSAppUsesNonExemptEncryption: false
         # Allows the plain-HTTP serverBase override against a LAN Flask
