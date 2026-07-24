@@ -21,6 +21,9 @@ final class CameraController: NSObject {
     /// Every video frame, on the output queue. RecordView wires this to
     /// BallTracker.process.
     var onVideoSample: ((CVPixelBuffer, TimeInterval) -> Void)?
+    /// Every audio sample buffer, on the output queue. The pairing clap
+    /// detector subscribes here; nil costs nothing.
+    var onAudioSample: ((CMSampleBuffer) -> Void)?
 
     private let sessionQueue = DispatchQueue(label: "slc.camera.session")
     // One queue for BOTH outputs: writer state below is queue-confined to it.
@@ -175,6 +178,10 @@ extension CameraController: AVCaptureVideoDataOutputSampleBufferDelegate,
         if output === videoOutput,
            let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) {
             onVideoSample?(pixelBuffer, CMTimeGetSeconds(timestamp))
+        }
+
+        if output === audioOutput {
+            onAudioSample?(sampleBuffer)
         }
 
         guard let writer else { return }
