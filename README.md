@@ -35,16 +35,16 @@ read it before touching HTML/CSS/JS, and update it in the same change if you mus
 ## Running it
 
 ```bash
-python3 -m venv venv
-venv/bin/pip install -r requirements.txt
+python3 -m venv .venv
+.venv/bin/pip install -r requirements.txt
 cp .env.example .env        # add your ROBOFLOW_API_KEY
-venv/bin/python app.py
+.venv/bin/python app.py
 ```
 
 Open http://127.0.0.1:5188. For phone access on the same network:
 
 ```bash
-HOST=0.0.0.0 PORT=5188 venv/bin/python app.py
+HOST=0.0.0.0 PORT=5188 .venv/bin/python app.py
 ```
 
 Useful environment variables:
@@ -61,10 +61,10 @@ Useful environment variables:
 ## Tests
 
 ```bash
-venv/bin/python -m pytest tests/ -q
+.venv/bin/python -m pytest tests/ -q
 ```
 
-117 tests, ~3 seconds. They run without the model runtime — `requirements-test.txt` is the
+259 tests, ~8 seconds. They run without the model runtime — `requirements-test.txt` is the
 light dependency set CI installs, and it deliberately excludes `inference`/torch.
 
 ---
@@ -80,7 +80,7 @@ position, or bounce timing. Written to `ui_runs/<run_id>/corrections.json`.
 **2. Offline labeling** — scrub a video frame by frame and mark every wall hit:
 
 ```bash
-venv/bin/python label_hits.py --video path/to/clip.mp4 --labels myclip_wall_hits.csv
+.venv/bin/python label_hits.py --video path/to/clip.mp4 --labels myclip_wall_hits.csv
 ```
 
 `h` marks a hit · `a`/`d` step frames · `[`/`]` ±10 · `<`/`>` ±100 · `n`/`N` jump between
@@ -93,8 +93,8 @@ be evaluated against anything.
 **Distill and replay:**
 
 ```bash
-venv/bin/python build_eval_set.py     # labels -> eval_set/cases.jsonl
-venv/bin/python eval_line_calls.py    # replay all axes
+.venv/bin/python build_eval_set.py     # labels -> eval_set/cases.jsonl
+.venv/bin/python eval_line_calls.py    # replay all axes
 ```
 
 `eval_set/` is committed; `ui_runs/` is not. The build therefore **merges** into the
@@ -111,21 +111,24 @@ everything."
 
 ### Where the system actually stands
 
-Honest numbers, not flattering ones:
+Honest numbers, not flattering ones. These track `eval_set/BASELINE-2026-07-23.md` — the
+current reference, 113 cases; re-read it rather than this paragraph when they disagree.
 
 - **Recall is the bottleneck.** Of labeled bounces that had a tracking run to compare
-  against, the detector missed **13 of 17** — including 7 of 9 wall hits. The precision
-  metrics all read near-perfect, which is not a contradiction: the system is accurate
-  about the few events it catches and blind to most of the rally.
-- **The corpus is too small to steer on.** Most precision axes resolve to `n=1`.
+  against, the detector missed **71 of 109** — and 65 of those misses are wall hits. The
+  precision metrics all read near-perfect, which is not a contradiction: the system is
+  accurate about the few events it catches and blind to most of the rally.
+- **Recall is now measured at rally scale; precision is not.** The 95 Bay Club label-CSV
+  events give the missed-bounce axis real weight, but every precision axis still resolves
+  to `n=2`–`n=4`, so none of them can be steered on.
 - **There is not a single OUT case in the eval set.** Calling a ball OUT is the entire
-  point of the app, and it is currently unmeasured. Labeling OUT balls is the
-  highest-value thing anyone can do for this project.
+  point of the app, and it is currently unmeasured — the two human calls on record are
+  both IN. Labeling OUT balls is the highest-value thing anyone can do for this project.
 
 ### Training
 
 ```bash
-venv/bin/python train_bounce_classifier.py --labels wall_hits.csv --ball-csv ball_coordinates.csv
+.venv/bin/python train_bounce_classifier.py --labels wall_hits.csv --ball-csv ball_coordinates.csv
 ```
 
 The train/test split is **chronological, not random**. Feature rows are per-frame with
