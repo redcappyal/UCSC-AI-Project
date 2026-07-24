@@ -180,3 +180,9 @@ def test_pair_agreement_envelope_rejects_implausible_pose():
     assert report["envelope_ok"] is False
     assert report["ok_pair"] is False
     assert report["median_err_ft"] < 1e-6
+
+
+def test_surfaces_registry_is_deterministically_ordered():
+    assert isinstance(stereo_engine.SURFACES, tuple)
+    assert stereo_engine.SURFACES == (
+        "floor", "front_wall", "back_wall", "left_wall", "right_wall")

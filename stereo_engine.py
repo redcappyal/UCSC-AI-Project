@@ -56,7 +56,7 @@ _SURFACE_PLANES = {
     "left_wall": (np.zeros(3), np.array([1.0, 0.0, 0.0])),
     "right_wall": (np.array([COURT_WIDTH_FT, 0.0, 0.0]), np.array([-1.0, 0.0, 0.0])),
 }
-SURFACES = set(_SURFACE_PLANES)
+SURFACES = tuple(_SURFACE_PLANES)   # dict insertion order: deterministic across runs
 _BOUNDS_SLACK_FT = 0.5
 
 
@@ -264,7 +264,7 @@ def detect_impacts(model_a, samples_a, model_b, samples_b, track=None):
                 t_s=t_impact, surface=surface, point_ft=point, call=call,
                 margin_ft=margin, confidence=confidence,
                 snap_disagreement_ft=disagreement))
-    impacts.sort(key=lambda imp: imp.t_s)
+    impacts.sort(key=lambda imp: (imp.t_s, imp.surface))
     merged = []
     for imp in impacts:
         if merged and merged[-1].surface == imp.surface and \
