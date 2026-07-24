@@ -133,6 +133,7 @@ final class WiFiP2PTransport: PeerTransport {
             if let data { self.ingestControlChunk(data) }
             if done || error != nil {
                 self.onStateChange?(.disconnected(error?.localizedDescription ?? "control closed"))
+                self.tearDown()
             } else {
                 self.receiveControlLoop(connection)
             }
