@@ -75,4 +75,38 @@ final class StereoGoldenTests: XCTestCase {
         XCTAssertEqual(undistorted.x, 960.0 + 200.0 / (1.0 - 0.1 * 0.04), accuracy: 1e-9)
         XCTAssertEqual(undistorted.y, 540.0, accuracy: 1e-9)
     }
+
+    func testTriangulationGoldenParity() {
+        for case_ in Self.goldens["triangulation_cases"] as! [[String: Any]] {
+            let result = StereoMath.triangulate(Self.left, Self.right,
+                                                pxA: vec2(case_["px_a"]!),
+                                                pxB: vec2(case_["px_b"]!))!
+            let expected = vec3(case_["point_ft"]!)
+            XCTAssertLessThan(simd_length(result.point - expected), 1e-7)
+            XCTAssertEqual(result.gapFt, case_["gap_ft"] as! Double, accuracy: 1e-7)
+        }
+    }
+
+    func testSnapGoldenParity() {
+        for case_ in Self.goldens["snap_cases"] as! [[String: Any]] {
+            let model = (case_["camera"] as! String) == "left" ? Self.left! : Self.right!
+            let snap = StereoMath.snapToPlane(model, px: vec2(case_["px"]!),
+                                              surface: case_["surface"] as! String)!
+            XCTAssertLessThan(simd_length(snap - vec3(case_["point_ft"]!)), 1e-7)
+        }
+    }
+
+    func testCallGoldenParity() {
+        for case_ in Self.goldens["call_cases"] as! [[String: Any]] {
+            let (call, margin) = StereoMath.callForImpact(
+                surface: case_["surface"] as! String, point: vec3(case_["point_ft"]!))
+            XCTAssertEqual(call, case_["call"] as! String)
+            XCTAssertEqual(margin, case_["margin_ft"] as! Double, accuracy: 1e-7)
+        }
+    }
+
+    func testSurfaceOrderMirrorsPython() {
+        XCTAssertEqual(StereoMath.surfaces,
+                       ["floor", "front_wall", "back_wall", "left_wall", "right_wall"])
+    }
 }
