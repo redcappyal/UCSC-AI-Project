@@ -474,35 +474,39 @@ def get_court_model():
 def latest_calibration():
     """Most recent run's calibration so a native client can reuse the court
     setup without redoing the wizard. Recency = calibration.json mtime, which
-    tracks the last time /api/track accepted that calibration."""
-    best = None
-    if RUNS_DIR.exists():
-        for path in RUNS_DIR.glob("*/calibration.json"):
-            try:
-                key = (path.stat().st_mtime_ns, path.parent.name)
-            except OSError:
-                continue
-            if best is None or key > best[0]:
-                best = (key, path)
+    tracks the last time /api/track accepted that calibration.
 
-    if best is None:
-        return error_response(
-            "No saved calibration found. Run a calibrated analysis first.", status=404)
+    An optional ?camera_id=<id> query param restricts eligibility to
+    calibrations whose stored JSON has a matching top-level "camera_id" key;
+    without it, every calibration is eligible (today's behavior)."""
+    camera_id = request.args.get("camera_id") or None
+    candidates = sorted(
+        RUNS_DIR.glob("*/calibration.json"),
+        key=lambda p: (p.stat().st_mtime_ns, p.parent.name),
+        reverse=True,
+    ) if RUNS_DIR.exists() else []
 
-    path = best[1]
-    try:
-        calibration = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return error_response("Latest calibration could not be read.", status=500)
+    for path in candidates:
+        try:
+            calibration = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            if camera_id is None:
+                return error_response(
+                    "Latest calibration could not be read.", status=500)
+            continue
+        if camera_id is not None and calibration.get("camera_id") != camera_id:
+            continue
+        saved_at = time.strftime(
+            "%Y-%m-%dT%H:%M:%SZ", time.gmtime(path.stat().st_mtime))
+        return jsonify({
+            "ok": True,
+            "run_id": path.parent.name,
+            "saved_at": saved_at,
+            "calibration": calibration,
+        })
 
-    saved_at = time.strftime(
-        "%Y-%m-%dT%H:%M:%SZ", time.gmtime(path.stat().st_mtime))
-    return jsonify({
-        "ok": True,
-        "run_id": path.parent.name,
-        "saved_at": saved_at,
-        "calibration": calibration,
-    })
+    return error_response(
+        "No saved calibration found. Run a calibrated analysis first.", status=404)
 
 
 @app.post("/api/camera-check")
