@@ -1,7 +1,5 @@
 import Foundation
 
-struct BenchSample: Codable { var at: Double; var rttMs: Double }
-
 struct BenchReport: Codable {
     var transport: String
     var startedAt: Date

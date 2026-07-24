@@ -64,6 +64,7 @@ final class PeerBenchModel: ObservableObject {
     private var sent = 0, received = 0
     private var benchStart: Date?
     private var thermal: [String] = []
+    private var clapArmed = false
     private let clapDetector = ClapDetector()
     private let camera = CameraController()   // audio-only use for the clap
 
@@ -110,19 +111,25 @@ final class PeerBenchModel: ObservableObject {
             session.goLive()
         }
         if let benchStart, session.phase == .live {
-            // 100 Hz synthetic tuples while the bench runs.
-            let tuple = DetectionTuple(seq: UInt32(sent), ptsNs: UInt64(ClockSync.hostNow() * 1e9),
-                                       x: 0, y: 0, conf: Float16(1), bboxH: Float16(1))
-            session.sendDetections([tuple]); sent += 1
-            let sorted = rtts.sorted()
-            if !sorted.isEmpty {
-                rttText = String(format: "%.0f / %.0f / %.0f ms",
-                                 sorted[sorted.count / 2],
-                                 sorted[min(sorted.count - 1, Int(Double(sorted.count) * 0.95))],
-                                 sorted.last!)
+            // Only the primary originates synthetic traffic and times the
+            // echo — the responder's report is per-device (offset, thermal,
+            // reflected-echo count) with empty rtts / zero sent, per the
+            // task-11 reviewer fix.
+            if isInitiator {
+                // 100 Hz synthetic tuples while the bench runs.
+                let tuple = DetectionTuple(seq: UInt32(sent), ptsNs: UInt64(ClockSync.hostNow() * 1e9),
+                                           x: 0, y: 0, conf: Float16(1), bboxH: Float16(1))
+                session.sendDetections([tuple]); sent += 1
+                let sorted = rtts.sorted()
+                if !sorted.isEmpty {
+                    rttText = String(format: "%.0f / %.0f / %.0f ms",
+                                     sorted[sorted.count / 2],
+                                     sorted[min(sorted.count - 1, Int(Double(sorted.count) * 0.95))],
+                                     sorted.last!)
+                }
+                lossText = String(format: "%.1f %%",
+                                  sent == 0 ? 0 : Double(sent - received) / Double(sent) * 100)
             }
-            lossText = String(format: "%.1f %%",
-                              sent == 0 ? 0 : Double(sent - received) / Double(sent) * 100)
             if Date().timeIntervalSince(benchStart) >= 60 { finishBench() }
         }
         let state = ProcessInfo.processInfo.thermalState
@@ -131,14 +138,22 @@ final class PeerBenchModel: ObservableObject {
 
     func runBench() {
         rtts.removeAll(); sent = 0; received = 0
-        thermal.removeAll(); benchStart = Date()
+        // Start/end thermal timeline: one reading now, one more in
+        // finishBench() — not a 30 s cadence sample.
+        thermal = [thermalText]
+        benchStart = Date()
     }
 
     func armClap() {
+        guard !clapArmed else { return }
+        clapArmed = true
         camera.onAudioSample = { [weak self] buffer in
             guard let self, let onset = self.clapDetector.process(sampleBuffer: buffer) else { return }
             self.session?.sendClapAnchor(localOnset: onset)
-            DispatchQueue.main.async { self.camera.onAudioSample = nil }
+            DispatchQueue.main.async {
+                self.camera.onAudioSample = nil
+                self.clapArmed = false
+            }
         }
         Task { try? await camera.configure(); camera.start() }
     }

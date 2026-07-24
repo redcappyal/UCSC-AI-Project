@@ -10,7 +10,9 @@ clocks sync via min-RTT NTP + clap anchor.
 On BOTH court phones, DEBUG build, mounted on the fins:
 1. Play tab → Peer bench. Phone A: Primary + Bluetooth. Phone B: Secondary + Bluetooth.
 2. Start pairing → confirm codes → wait for `ready`.
-3. Run 60 s datagram bench (players rallying on court for realism).
+3. Primary phone: Run 60 s datagram bench (originates traffic; measures RTT/loss).
+   Secondary phone: also press Run — its report captures sync offset, thermal, and
+   reflected-echo count. Rally on court during the 60 s for realism.
 4. Share both report JSONs (AirDrop) into `hardware/bench/` in the repo.
 5. Repeat with Wi-Fi P2P.
 6. Fill the table below in a PR; pick the primary transport.

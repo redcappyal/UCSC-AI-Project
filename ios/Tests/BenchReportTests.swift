@@ -23,5 +23,8 @@ final class BenchReportTests: XCTestCase {
                                        estimate: nil, anchorDelta: nil, thermal: [])
         XCTAssertEqual(report.rttMedianMs, 0)
         XCTAssertEqual(report.lossPercent, 0)
+        XCTAssertEqual(report.offsetMs, 0)
+        XCTAssertEqual(report.offsetUncertaintyMs, 0)
+        XCTAssertNil(report.clapDeltaMs)
     }
 }
