@@ -589,7 +589,6 @@
     <hr class="hairline">
     <p class="devHead">Dev</p>
     <div class="devRow">
-      <button class="small" id="debugTargetsBtn" type="button">Debug targets</button>
       <button class="small" id="labelModeBtn" type="button">Label mode</button>
     </div>
   </section>
@@ -1262,13 +1261,15 @@ const roadmapSection = p => 'p-' + p.replace('_','-');
 const SECTION_ROOTS = ['load','matches','coach'];
 
 /* The numbered judge flow, in order. The floor-map step only exists when the
-   court model loaded, so the total is 11 with it and 10 without — computed here
+   court model loaded, so the total is 10 with it and 9 without — computed here
    rather than baked into the labels, which go stale whenever a step is added
-   or skipped. Phases not in this list (load, record, label, hubs) get no number. */
+   or skipped. The combined 'target' page is not in the flow: the per-player
+   report pages replace it (Call -> Player 1 -> Player 2). Phases not in this
+   list (load, record, label, target, hubs) get no number. */
 function stepSequence(){
   const seq = ['frame','tap_out','tap_tin','review','tap_wall'];
   if(COURT) seq.push('tap_floor');
-  return [...seq, 'clip','track','target','player1_report','player2_report'];
+  return [...seq, 'clip','track','player1_report','player2_report'];
 }
 function stepLabelFor(p){
   const seq = stepSequence();
@@ -4819,10 +4820,6 @@ $('player1ReportBtn').onclick = () => setPhase('player1_report');
 $('player2ReportBtn').onclick = () => setPhase('player2_report');
 $('player2NextBtn').onclick = () => setPhase('player2_report');
 
-$('debugTargetsBtn').onclick = () => {
-  S.debugTargetZones = makeDebugTargetZones();
-  setPhase('target');
-};
 
 function frameToRunPct(frame){
   const span = Math.max(1, S.run.end_frame - S.run.start_frame);
