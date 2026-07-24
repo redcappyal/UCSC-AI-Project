@@ -3047,6 +3047,24 @@ function drawFloorOverlay(){
    A fixed camera mount means the same lines + floor map apply to every clip
    with the same frame size, so a saved profile skips re-tapping. --- */
 const PROFILE_KEY = 'slc-cal-profiles';
+
+/* One-time clear of pre-4K profiles. Capture moved to 4K on 2026-07-24
+   (ios/CAPTURE.md), so every profile saved before then is in a dead pixel
+   space: matchingProfile() keys on frame_width/frame_height and would never
+   offer them again, leaving them as permanent clutter behind the picker.
+   Stamped with a version so it fires exactly once per browser and never
+   touches a profile saved afterwards — an unguarded clear here would wipe
+   every new 4K profile on the next reload. Bump the version to reset again. */
+const PROFILE_RESET_KEY = 'slc-cal-profiles-reset';
+const PROFILE_RESET_VERSION = '2026-07-24-4k';
+(function clearPre4kProfiles(){
+  try{
+    if(localStorage.getItem(PROFILE_RESET_KEY) === PROFILE_RESET_VERSION) return;
+    localStorage.removeItem(PROFILE_KEY);
+    localStorage.setItem(PROFILE_RESET_KEY, PROFILE_RESET_VERSION);
+  } catch(_){ }
+})();
+
 function loadProfiles(){
   try{
     const v = JSON.parse(localStorage.getItem(PROFILE_KEY) || '[]');
