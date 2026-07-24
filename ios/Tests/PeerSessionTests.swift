@@ -87,4 +87,17 @@ final class PeerSessionTests: XCTestCase {
         XCTAssertEqual(primary.clockSync.remoteToLocal(20.4) ?? -1, 20.0, accuracy: 1e-9)
         XCTAssertEqual(secondary.clockSync.remoteToLocal(20.0) ?? -1, 20.4, accuracy: 1e-9)
     }
+
+    func testDoubleDisconnectStillRecoversToReady() {
+        startBoth()
+        primary.confirmPairing(); secondary.confirmPairing()
+        var t = 0.0
+        for _ in 0..<40 { t += 0.1; primary.tick(now: t); secondary.tick(now: t) }
+        XCTAssertEqual(primary.phase, .ready)
+        pair.0.onStateChange?(.disconnected("blip 1"))
+        pair.0.onStateChange?(.disconnected("blip 2"))
+        guard case .degraded = primary.phase else { return XCTFail("expected degraded, got \(primary.phase)") }
+        for _ in 0..<10 { t += 0.5; primary.tick(now: t); secondary.tick(now: t) }
+        XCTAssertEqual(primary.phase, .ready)
+    }
 }

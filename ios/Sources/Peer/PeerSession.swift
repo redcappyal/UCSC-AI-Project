@@ -152,7 +152,7 @@ final class PeerSession: ObservableObject {
                 sendPing(at: t); burstPingsRemaining -= 1
             }
             if let estimate = clockSync.estimate, estimate.uncertainty <= PeerSession.readyUncertainty {
-                sendControl(.heartbeat(seq: nextHeartbeatSeq)); nextHeartbeatSeq += 1
+                sendHeartbeat()
                 lastPeerActivityAt = t
                 lastHeartbeatSentAt = t
                 setPhase(.ready)
@@ -160,7 +160,7 @@ final class PeerSession: ObservableObject {
         case .ready, .live:
             if t - lastPingAt >= PeerSession.steadyInterval { sendPing(at: t) }
             if t - lastHeartbeatSentAt > heartbeatTimeout / 2 {
-                sendControl(.heartbeat(seq: nextHeartbeatSeq)); nextHeartbeatSeq += 1
+                sendHeartbeat()
                 lastHeartbeatSentAt = t
             }
             if t - lastPeerActivityAt > heartbeatTimeout {
@@ -168,7 +168,7 @@ final class PeerSession: ObservableObject {
                 setPhase(.degraded("link lost"))
             }
         case .degraded:
-            sendControl(.heartbeat(seq: nextHeartbeatSeq)); nextHeartbeatSeq += 1
+            sendHeartbeat()
             if t - lastPeerActivityAt <= heartbeatTimeout {
                 setPhase(phaseBeforeDegraded ?? .ready)
             }
@@ -193,7 +193,15 @@ final class PeerSession: ObservableObject {
             switch internalPhase {
             case .ended, .idle, .failed: break
             default:
-                phaseBeforeDegraded = internalPhase
+                // Reviewer fix: a second .disconnected while already
+                // .degraded(reasonA) must not capture .degraded(reasonA) as
+                // the "before" phase — recovery would then restore
+                // .degraded(reasonA) forever. Only capture a non-degraded
+                // phase; the tick degrade branch is already safe by
+                // construction (it only runs from .ready/.live).
+                if case .degraded = internalPhase {} else {
+                    phaseBeforeDegraded = internalPhase
+                }
                 setPhase(.degraded(reason))
             }
         case .idle, .searching: break
@@ -251,6 +259,15 @@ final class PeerSession: ObservableObject {
         pendingPings[ping.pingID] = ping.t1
         nextPingID += 1
         sendControl(.syncPing(ping))
+    }
+
+    // Reviewer fold-in: was duplicated at all three tick call sites
+    // (.syncing's ready transition, .ready/.live's periodic send, .degraded's
+    // unconditional send). Unlocked like the other helpers — only ever
+    // called from tick, an already-locked entry point.
+    private func sendHeartbeat() {
+        sendControl(.heartbeat(seq: nextHeartbeatSeq))
+        nextHeartbeatSeq += 1
     }
 
     private func tryApplyAnchor() {
