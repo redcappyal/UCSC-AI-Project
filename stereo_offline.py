@@ -11,6 +11,7 @@ seams, never touches them.
 
 import argparse
 import json
+import math
 from pathlib import Path
 
 import court_model
@@ -75,7 +76,11 @@ def detections_to_track_samples(video_path, model=None, *, confidence=0.4,
     """Run the ball detector over a clip -> [stereo_engine.TrackSample].
 
     t_s = frame_index / fps + offset_s (fps from cv2 metadata; raises
-    ValueError if fps <= 0). `infer` is an injection seam for tests:
+    ValueError unless fps is finite and positive, and unless stride >= 1).
+    Bad fps is fatal here on purpose: unlike app.py's `or 30.0` fallback for
+    playback metadata, inventing a frame rate would silently shift every
+    timestamp and hence every triangulated 3D position. `infer` is an
+    injection seam for tests:
     callable(frame_bgr) -> list of prediction dicts in
     inference_engine.infer_frame_predictions' normalized shape
     ({"x","y","width","height","confidence","class"}); default None means
@@ -88,8 +93,14 @@ def detections_to_track_samples(video_path, model=None, *, confidence=0.4,
     """
     from tracking_common import select_ball_prediction  # lazy: cv2 at its top
 
+    if stride < 1:
+        raise ValueError(f"stride must be >= 1, got {stride!r}")
+
     fps = _video_fps(video_path)
-    if not fps or fps <= 0:
+    # math.isfinite first: NaN is truthy and every NaN comparison is False,
+    # so `not fps or fps <= 0` alone lets NaN through and every t_s becomes
+    # NaN, surfacing much later as an opaque numpy error.
+    if fps is None or not math.isfinite(fps) or fps <= 0:
         raise ValueError(f"Invalid fps ({fps!r}) reading {video_path}")
 
     samples = []

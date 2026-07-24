@@ -91,6 +91,31 @@ def test_detections_to_track_samples_raises_on_bad_fps(monkeypatch):
         stereo_offline.detections_to_track_samples("video-a.mp4", infer=lambda frame: [])
 
 
+@pytest.mark.parametrize("bad_fps", [float("nan"), float("inf"), -30.0])
+def test_detections_to_track_samples_raises_on_nonfinite_fps(monkeypatch, bad_fps):
+    """NaN is truthy and every NaN comparison is False, so a `not fps or
+    fps <= 0` guard alone lets it through and every t_s silently becomes
+    NaN -- which only blows up later, deep inside stereo_engine."""
+    monkeypatch.setattr(stereo_offline, "_video_fps", lambda video_path: bad_fps)
+    monkeypatch.setattr(
+        stereo_offline, "_iter_frames", lambda video_path: iter(_fake_frames(1)))
+
+    with pytest.raises(ValueError, match="Invalid fps"):
+        stereo_offline.detections_to_track_samples("video-a.mp4", infer=lambda frame: [])
+
+
+def test_detections_to_track_samples_rejects_stride_below_one(monkeypatch):
+    """stride=0 would otherwise raise a raw ZeroDivisionError from the
+    `frame_index % stride` guard on the very first frame."""
+    monkeypatch.setattr(stereo_offline, "_video_fps", lambda video_path: 60.0)
+    monkeypatch.setattr(
+        stereo_offline, "_iter_frames", lambda video_path: iter(_fake_frames(1)))
+
+    with pytest.raises(ValueError, match="stride"):
+        stereo_offline.detections_to_track_samples(
+            "video-a.mp4", stride=0, infer=lambda frame: [])
+
+
 # --- fuse_clips: synthetic end-to-end geometry ------------------------------
 
 
