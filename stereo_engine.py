@@ -276,3 +276,111 @@ def detect_impacts(model_a, samples_a, model_b, samples_b, track=None):
             continue
         merged.append(imp)
     return merged
+
+
+PAIR_GATE_MAX_MEDIAN_FT = 0.1   # ~3 cm agreement gate (spec Component 3)
+PAIR_BASELINE_RANGE_FT = (1.5, 10.0)
+PAIR_CAMERA_HEIGHT_RANGE_FT = (3.0, 12.0)
+PAIR_CAMERA_Y_RANGE_FT = (24.0, 34.0)   # both mounted near the back wall
+_LANDMARK_MATCH_TOL_FT = 0.05
+
+
+def _match_landmark_observations(obs_a, obs_b, tol_ft=_LANDMARK_MATCH_TOL_FT):
+    """Pair up (court_ft, px) observations that both cameras recorded.
+
+    Greedy nearest-match on court_ft (each side solves from its own
+    calibration, so the same physical landmark's recorded court_ft can carry
+    slightly different rounding on each side). Each obs_b entry is consumed
+    at most once. Returns (court_true, px_a, px_b) triples, court_true being
+    the midpoint of the two recorded positions.
+    """
+    remaining_b = list(obs_b)
+    matches = []
+    for court_a, px_a in obs_a:
+        court_a = np.asarray(court_a, dtype=float)
+        best_index, best_dist = None, tol_ft
+        for index, (court_b, _px_b) in enumerate(remaining_b):
+            dist = float(np.linalg.norm(np.asarray(court_b, dtype=float) - court_a))
+            if dist < best_dist:
+                best_dist = dist
+                best_index = index
+        if best_index is None:
+            continue
+        court_b, px_b = remaining_b.pop(best_index)
+        court_true = (court_a + np.asarray(court_b, dtype=float)) / 2.0
+        matches.append((court_true, px_a, px_b))
+    return matches
+
+
+def _pose_envelope_ok(model_a, model_b, baseline_ft):
+    lo, hi = PAIR_BASELINE_RANGE_FT
+    if not (lo <= baseline_ft <= hi):
+        return False
+    for model in (model_a, model_b):
+        _x, y, z = (float(v) for v in model.camera_center_ft)
+        h_lo, h_hi = PAIR_CAMERA_HEIGHT_RANGE_FT
+        if not (h_lo <= z <= h_hi):
+            return False
+        y_lo, y_hi = PAIR_CAMERA_Y_RANGE_FT
+        if not (y_lo <= y <= y_hi):
+            return False
+    return True
+
+
+def pair_agreement(model_a, obs_a, model_b, obs_b):
+    """Cross-camera consistency from OBSERVED correspondences.
+
+    obs_a/obs_b: list of (court_ft (3,), px_observed (2,)) -- each camera's
+    own calibration observations. px_observed is RAW pixel space, the same
+    convention `triangulate` uses (undistorted internally, per-model).
+
+    For each landmark court position seen by BOTH cameras (matched by
+    court_ft proximity, see `_match_landmark_observations`), triangulates
+    camera A's ray through A's *observed* pixel with camera B's ray through
+    B's *observed* pixel, and measures the 3D error against the known court
+    position. Anchoring the rays to independently recorded observations
+    (rather than each model's own self-projection) is what makes this
+    non-tautological: `model.ray(model.project(X))` recovers X exactly for
+    *any* valid single camera model regardless of its parameters (project
+    and ray are exact inverses of one another), so a synthetic round-trip
+    through the model under test can never expose a biased/mis-solved
+    model. Using a fixed, independently-sourced pixel breaks that symmetry
+    -- if the reconstructing model's assumed geometry doesn't match the
+    geometry that produced the observation, the ray misses.
+
+    Also enforces a plausible-pose envelope (baseline distance, and each
+    camera's height and depth) because two solves can still round-trip
+    their own (matching) observations into perfect agreement while
+    describing a physically implausible pair -- e.g. one phone solved as
+    sitting on the floor. Baseline/height/depth ranges are the fin-mount
+    geometry's plausible envelope, not a tight tolerance.
+
+    Returns {"median_err_ft", "max_err_ft", "baseline_ft", "point_count",
+    "envelope_ok", "ok_pair"}. ok_pair requires envelope_ok, at least one
+    matched point, and median_err_ft within PAIR_GATE_MAX_MEDIAN_FT.
+
+    Known limitation: a self-consistent but physically-wrong tap set --
+    both cameras independently solved from correspondences that agree with
+    each other but not with reality -- is unobservable here; this only
+    catches disagreement *between* the two independent solves. The runtime
+    triangulation gap on live ball detections (`triangulate`'s returned
+    gap_ft) is the catch for that class.
+    """
+    matches = _match_landmark_observations(obs_a, obs_b)
+    errors = []
+    for court_true, px_a, px_b in matches:
+        recovered, _gap = triangulate(model_a, model_b, px_a, px_b)
+        if recovered is None:
+            continue
+        errors.append(float(np.linalg.norm(recovered - court_true)))
+    baseline = float(np.linalg.norm(model_a.camera_center_ft - model_b.camera_center_ft))
+    envelope_ok = _pose_envelope_ok(model_a, model_b, baseline)
+    if not errors:
+        return {"median_err_ft": np.inf, "max_err_ft": np.inf,
+                "baseline_ft": baseline, "point_count": 0,
+                "envelope_ok": envelope_ok, "ok_pair": False}
+    median = float(np.median(errors))
+    ok_pair = envelope_ok and median <= PAIR_GATE_MAX_MEDIAN_FT
+    return {"median_err_ft": median, "max_err_ft": float(max(errors)),
+            "baseline_ft": baseline, "point_count": len(errors),
+            "envelope_ok": envelope_ok, "ok_pair": ok_pair}

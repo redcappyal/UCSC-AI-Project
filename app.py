@@ -12,6 +12,7 @@ from flask import Flask, jsonify, request, send_file, send_from_directory
 from werkzeug.utils import secure_filename
 
 import court_model
+import stereo_engine
 from judge_call import (
     Point,
     judge_ball,
@@ -551,6 +552,48 @@ def camera_model():
     if model is not None and info.get("status") == "ok":
         response["camera_model"] = model.to_dict()
     return jsonify(response)
+
+
+@app.post("/api/camera-pair-check")
+def camera_pair_check():
+    """Cross-camera agreement gate: do two independently solved cameras agree
+    on where the court is?
+
+    Same input contract and always-200 convention as /api/camera-check, but
+    takes a "calibration_a"/"calibration_b" pair. Each side solves
+    independently and reports its own status under "status_a"/"status_b".
+    When both solve, also extracts each side's own calibration observations
+    (court_model._camera_correspondences -- the same raw taps the solve was
+    fit against) and feeds them to stereo_engine.pair_agreement, which
+    triangulates through the OBSERVED pixels rather than re-projecting
+    through the solved models themselves -- a same-model round trip cannot
+    expose a biased solve (see stereo_engine.pair_agreement's docstring).
+    Adds that report (median/max error, baseline, point count, envelope_ok,
+    ok_pair) under status "ok"; otherwise "solve_failed".
+    """
+    payload = request.get_json(silent=True) or {}
+    models = {}
+    observations = {}
+    statuses = {}
+    for key in ("a", "b"):
+        calibration = payload.get(f"calibration_{key}")
+        if calibration is None:
+            try:
+                calibration = json.loads(payload.get(f"calibration_{key}_json") or "")
+            except (json.JSONDecodeError, TypeError):
+                statuses[f"status_{key}"] = "invalid_json"
+                continue
+        model, info = court_model.solve_camera_model(calibration)
+        statuses[f"status_{key}"] = info.get("status")
+        if model is not None and info.get("status") == "ok":
+            models[key] = model
+            image_px, court_xyz, _labels = court_model._camera_correspondences(calibration)
+            observations[key] = list(zip(court_xyz, image_px))
+    if len(models) < 2:
+        return jsonify({"ok": True, "status": "solve_failed", **statuses})
+    report = stereo_engine.pair_agreement(
+        models["a"], observations["a"], models["b"], observations["b"])
+    return jsonify({"ok": True, "status": "ok", **statuses, **report})
 
 
 def validate_floor_calibration(calibration):
