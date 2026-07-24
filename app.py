@@ -523,6 +523,28 @@ def camera_check():
     return jsonify({"ok": True, **info})
 
 
+@app.post("/api/camera-model")
+def camera_model():
+    """Solve the full camera model for a calibration and return it as JSON.
+
+    Same input contract and always-200 convention as /api/camera-check; adds
+    the solved model (court_model.CameraModel.to_dict) under "camera_model"
+    when the solve succeeds. Phones exchange these solved models at pairing.
+    """
+    payload = request.get_json(silent=True) or {}
+    calibration = payload.get("calibration")
+    if calibration is None:
+        try:
+            calibration = json.loads(payload.get("calibration_json") or "")
+        except (json.JSONDecodeError, TypeError):
+            return jsonify({"ok": True, "status": "invalid_json"})
+    model, info = court_model.solve_camera_model(calibration)
+    response = {"ok": True, **info}
+    if model is not None and info.get("status") == "ok":
+        response["camera_model"] = model.to_dict()
+    return jsonify(response)
+
+
 def validate_floor_calibration(calibration):
     """Return a warning string (and strip the floor plane) if it cannot be used.
 
