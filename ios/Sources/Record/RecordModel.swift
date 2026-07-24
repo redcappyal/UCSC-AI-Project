@@ -55,6 +55,17 @@ final class RecordModel: ObservableObject {
     private var lastFlushAt: TimeInterval = 0
     private let peerFrameW = 1080, peerFrameH = 1920   // matches Hello until Phase 4
 
+    // MARK: stereo (Phase 3, Plan B2)
+
+    private var localModel: CameraModel?
+    private var stereoEngine: StereoEngine?
+    /// Newest-first, capped at 20. Populated on the primary as its engine
+    /// emits impacts, and mirrored on the secondary from relayed .event
+    /// messages — same list either way, so the UI doesn't need to know
+    /// which role it's running as.
+    @Published var stereoEvents: [String] = []
+    private static let stereoEventsCap = 20
+
     /// Wire a paired session. Safe to call again with a new session; the
     /// tracker subscription is registered once. Subscriber runs on the main
     /// queue (BallTracker's fan-out queue). The timer pump keeps
@@ -64,10 +75,12 @@ final class RecordModel: ObservableObject {
         self.peer = peer
         peer.onRemoteDetections = { [weak self] tuples in
             self?.remoteDetections.append(tuples)
+            self?.stereoEngine?.addRemote(tuples)
         }
         peerPumpTimer?.invalidate()
-        peerPumpTimer = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { [weak peer] _ in
+        peerPumpTimer = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { [weak self, weak peer] _ in
             peer?.tick(now: ClockSync.hostNow())
+            self?.stereoEngine?.processIfDue(now: ClockSync.hostNow())
         }
         // A new peer session expects a fresh seq space.
         nextDetectionSeq = 0
@@ -76,18 +89,89 @@ final class RecordModel: ObservableObject {
         guard !peerSubscribed else { return }
         peerSubscribed = true
         tracker.subscribe { [weak self] observation in
-            guard let self, let peer = self.peer, peer.role == .secondary else { return }
-            let tuple = DetectionMapper.tuple(seq: self.nextDetectionSeq,
-                                              observation: observation,
-                                              frameW: self.peerFrameW, frameH: self.peerFrameH)
-            self.nextDetectionSeq += 1
-            self.pendingTuples.append(tuple)
-            let now = observation.timestamp
-            if self.pendingTuples.count >= 2 || now - self.lastFlushAt >= 0.030 {
-                peer.sendDetections(self.pendingTuples)
-                self.pendingTuples.removeAll(keepingCapacity: true)
-                self.lastFlushAt = now
+            guard let self, let peer = self.peer else { return }
+            if peer.role == .secondary {
+                let tuple = DetectionMapper.tuple(seq: self.nextDetectionSeq,
+                                                  observation: observation,
+                                                  frameW: self.peerFrameW, frameH: self.peerFrameH)
+                self.nextDetectionSeq += 1
+                self.pendingTuples.append(tuple)
+                let now = observation.timestamp
+                if self.pendingTuples.count >= 2 || now - self.lastFlushAt >= 0.030 {
+                    peer.sendDetections(self.pendingTuples)
+                    self.pendingTuples.removeAll(keepingCapacity: true)
+                    self.lastFlushAt = now
+                }
+            } else if peer.role == .primary, let engine = self.stereoEngine {
+                engine.addLocalObservation(observation, frameW: self.peerFrameW, frameH: self.peerFrameH)
             }
+        }
+    }
+
+    /// Decodes this device's own solved camera model and arms the peer's
+    /// calibration handler to build the live StereoEngine once the remote
+    /// model arrives. Primary-only: the secondary never owns an engine — it
+    /// streams local detections to the primary (see `attachPeer` above) and
+    /// mirrors emitted events for display via `peer.onEvent` below.
+    func attachStereo(localModelJSON: String) {
+        guard let data = localModelJSON.data(using: .utf8),
+              let model = try? CameraModel.fromJSON(data) else {
+            errorText = "stereo: malformed local camera model"
+            return
+        }
+        localModel = model
+        // onCalibration fires on the transport delivery context, not main
+        // (like onRemoteDetections) — hop before touching any RecordModel
+        // state (self.peer, self.localModel, self.stereoEngine), all of
+        // which the pump timer and tracker.subscribe also read/write, on
+        // main, elsewhere.
+        peer?.onCalibration = { [weak self] _, payloadJSON in
+            DispatchQueue.main.async {
+                guard let self, let peer = self.peer, peer.role == .primary,
+                      let localModel = self.localModel,
+                      let remoteData = payloadJSON.data(using: .utf8),
+                      let remoteModel = try? CameraModel.fromJSON(remoteData) else { return }
+                let engine = StereoEngine(localModel: localModel, remoteModel: remoteModel,
+                                          remoteToLocal: { [weak peer] in peer?.clockSync.remoteToLocal($0) })
+                engine.onEvent = { [weak self, weak peer] event in
+                    guard case .impact(let impact) = event else { return }
+                    let payload: [String: Any] = [
+                        "surface": impact.surface,
+                        "call": impact.call,
+                        "margin_ft": impact.marginFt,
+                        "confidence": impact.confidence,
+                        "t_s": impact.tS,
+                    ]
+                    guard let data = try? JSONSerialization.data(withJSONObject: payload),
+                          let json = String(data: data, encoding: .utf8) else { return }
+                    // Rally segmentation is Phase 4; Plan B2 has one
+                    // implicit rally per session, so rallyID stays a
+                    // constant 0.
+                    let rallyID: UInt32 = 0
+                    // engine.onEvent fires on StereoEngine's own private
+                    // queue — sendEvent is lock-guarded (safe off-main, same
+                    // convention as PeerSession's other send* methods), but
+                    // the @Published append still needs the main hop.
+                    peer?.sendEvent(rallyID: rallyID, json: json)
+                    DispatchQueue.main.async { self?.appendStereoEvent(json) }
+                }
+                self.stereoEngine = engine
+            }
+        }
+        // Secondary-side mirror: relayed events land here (never fires on
+        // the primary — it never receives .event, only sends it). Also
+        // fires off-main; only touches stereoEvents, already hopped.
+        peer?.onEvent = { [weak self] _, json in
+            DispatchQueue.main.async { self?.appendStereoEvent(json) }
+        }
+    }
+
+    /// Newest-first insert with the 20-entry cap. Main-thread only; callers
+    /// hop before calling.
+    private func appendStereoEvent(_ json: String) {
+        stereoEvents.insert(json, at: 0)
+        if stereoEvents.count > Self.stereoEventsCap {
+            stereoEvents.removeLast(stereoEvents.count - Self.stereoEventsCap)
         }
     }
 

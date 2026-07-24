@@ -30,4 +30,20 @@ final class StereoWiringTests: XCTestCase {
         primary.sendCalibration(profileID: "x", payloadJSON: "{}")
         XCTAssertFalse(fired)
     }
+
+    func testEventMessageRoundTripsThroughSessions() {
+        let pair = LoopbackTransport.pair()
+        let primary = PeerSession(transport: pair.0, isInitiator: true, now: { 0 })
+        let secondary = PeerSession(transport: pair.1, isInitiator: false, now: { 0 })
+        secondary.start(); primary.start()
+        primary.confirmPairing(); secondary.confirmPairing()
+        var t = 0.0
+        for _ in 0..<40 { t += 0.1; primary.tick(now: t); secondary.tick(now: t) }
+
+        var received: (UInt32, String)?
+        secondary.onEvent = { received = ($0, $1) }
+        primary.sendEvent(rallyID: 7, json: "{\"surface\":\"front_wall\"}")
+        XCTAssertEqual(received?.0, 7)
+        XCTAssertEqual(received?.1, "{\"surface\":\"front_wall\"}")
+    }
 }

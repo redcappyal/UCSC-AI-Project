@@ -25,6 +25,10 @@ final class PeerSession: ObservableObject {
     /// the SOLVED camera-model JSON (CameraModel.fromJSON-parseable), not
     /// raw wizard taps.
     var onCalibration: ((_ profileID: String, _ payloadJSON: String) -> Void)?
+    /// Fired on the transport delivery context (like onCalibration) when a
+    /// .event control message arrives — carries a stereo-engine event
+    /// (impact JSON, Phase 3) relayed from the primary.
+    var onEvent: ((_ rallyID: UInt32, _ json: String) -> Void)?
 
     private let transport: PeerTransport
     private let isInitiator: Bool
@@ -148,6 +152,12 @@ final class PeerSession: ObservableObject {
         sendControl(.calibration(profileID: profileID, calibrationJSON: payloadJSON))
     }
 
+    func sendEvent(rallyID: UInt32, json: String) {
+        stateLock.lock(); defer { stateLock.unlock() }
+        guard internalPhase == .live || internalPhase == .ready else { return }
+        sendControl(.event(rallyID: rallyID, json: json))
+    }
+
     func sendClapAnchor(localOnset: TimeInterval) {
         stateLock.lock(); defer { stateLock.unlock() }
         myClapOnset = localOnset
@@ -257,7 +267,9 @@ final class PeerSession: ObservableObject {
             // Phase 3: the payload carries the SOLVED camera-model JSON
             // (CameraModel.fromJSON-parseable), not raw wizard taps.
             onCalibration?(profileID, calibrationJSON)
-        case .record, .event, .sessionManifest:
+        case .event(let rallyID, let json):
+            onEvent?(rallyID, json)
+        case .record, .sessionManifest:
             break   // consumed by Phase 4/5 code; parsing is already validated
         }
     }

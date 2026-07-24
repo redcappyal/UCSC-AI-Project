@@ -31,6 +31,7 @@ struct PeerBenchView: View {
                 Text("RTT median/p95/max: \(model.rttText)")
                 Text("Datagram loss: \(model.lossText)")
                 Text("Thermal: \(model.thermalText)")
+                Text("Last stereo event: \(model.stereoStatusText)")
             }
             Section("Bench") {
                 Button("Run 60 s datagram bench (120 Hz)") { model.runBench() }
@@ -61,6 +62,10 @@ final class PeerBenchModel: ObservableObject {
     @Published var lossText = "—"
     @Published var thermalText = "nominal"
     @Published var reportURL: URL?
+    /// Last .event JSON received by this session, whichever role it's
+    /// running as — exercises the sendEvent/onEvent relay end-to-end on
+    /// hardware without the bench owning a StereoEngine.
+    @Published var stereoStatusText = "—"
     var canBench: Bool { running && (phaseText.hasPrefix("ready") || phaseText.hasPrefix("live")) }
 
     private var session: PeerSession?
@@ -112,6 +117,9 @@ final class PeerBenchModel: ObservableObject {
                     self.received += tuples.count
                 }
             }
+        }
+        session.onEvent = { [weak self] _, json in
+            DispatchQueue.main.async { self?.stereoStatusText = json }
         }
         session.start()
         running = true
