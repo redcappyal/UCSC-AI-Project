@@ -6,6 +6,7 @@ protocol APIClientProtocol: Sendable {
     func startTrack(videoID: String, calibrationJSON: String,
                     duration: Double) async throws -> JobStatus
     func trackStatus(runID: String) async throws -> JobStatus
+    func fetchSolvedCameraModel(calibrationJSON: String) async throws -> String
 }
 
 struct APIClient: APIClientProtocol {
@@ -70,6 +71,28 @@ struct APIClient: APIClientProtocol {
         let (data, response) = try await session.data(for: request)
         try Self.checkHTTP(response, data: data)
         return try JSONDecoder().decode(JobStatus.self, from: data)
+    }
+
+    /// Phase 3: solves the calibration server-side and hands back the
+    /// camera model as JSON. As of Phase 3 this is what phones exchange over
+    /// the peer layer's `.calibration` message — the SOLVED model, not raw
+    /// wizard taps.
+    func fetchSolvedCameraModel(calibrationJSON: String) async throws -> String {
+        var request = URLRequest(url: baseURL.appending(path: "api/camera-model"))
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONSerialization.data(
+            withJSONObject: ["calibration_json": calibrationJSON])
+        let (data, response) = try await session.data(for: request)
+        try Self.checkHTTP(response, data: data)
+        guard let object = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+              object["status"] as? String == "ok",
+              let cameraModel = object["camera_model"],
+              JSONSerialization.isValidJSONObject(cameraModel) else {
+            throw APIError.badResponse
+        }
+        let modelData = try JSONSerialization.data(withJSONObject: cameraModel)
+        return String(decoding: modelData, as: UTF8.self)
     }
 
     private struct ErrorBody: Decodable {
