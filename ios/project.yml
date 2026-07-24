@@ -13,13 +13,13 @@ settings:
     # Date-based so every day's upload outranks the last; bump the trailing
     # digit for a second same-day TestFlight build.
     CURRENT_PROJECT_VERSION: "202607241"
-    ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
 targets:
   SquashLineCalling:
     type: application
     platform: iOS
     sources:
       - path: Sources
+      - path: Resources
       - path: Model
         optional: true
         type: folder
@@ -27,6 +27,7 @@ targets:
     info:
       path: Generated/Info.plist
       properties:
+        CFBundleDisplayName: Crosscourt
         # xcodegen writes literal "1"s otherwise; route through the build
         # settings so CURRENT_PROJECT_VERSION bumps reach TestFlight.
         CFBundleShortVersionString: $(MARKETING_VERSION)
@@ -50,6 +51,7 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: app.crosscourt
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
   SquashLineCallingTests:
     type: bundle.unit-test
     platform: iOS

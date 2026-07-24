@@ -61,6 +61,8 @@
     white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
   #hdrBack{width:44px; min-width:44px; min-height:44px; padding:0 8px 3px 0;
     background:none; border:none; font-size:30px; font-weight:400; line-height:1; color:var(--text)}
+  #hdrHome{width:44px; min-width:44px; min-height:44px; padding:0; display:flex;
+    align-items:center; justify-content:center; background:none; border:none; color:var(--text)}
   .pill{width:auto; min-height:40px; padding:0 18px; border:none; border-radius:999px;
     background:var(--accent-bg); color:var(--accent-text); font-size:15px; font-weight:700;
     white-space:nowrap}
@@ -336,7 +338,8 @@
     padding:12px 14px; border-bottom:1px solid var(--line)}
   .targetHead strong{font-size:18px}
   .targetHead span{color:var(--dim); font-size:13px}
-  .targetCourt{--service-y:61.1%; --tin-y:89.5%; position:relative; margin:14px; min-height:500px;
+  .targetCourt{--service-y:61.1%; --tin-y:89.5%; position:relative; margin:14px auto;
+    width:min(calc(100% - 28px), calc(70vh * 1.3004), 920px); aspect-ratio:1.3004; min-height:0;
     overflow:hidden; border:1px solid color-mix(in srgb, var(--line) 78%, transparent); border-radius:8px;
     background:
       linear-gradient(115deg, rgba(38,55,72,.86), rgba(16,22,30,.94) 58%, rgba(10,13,18,.98)),
@@ -451,6 +454,7 @@
   #floorMapSvg .bounceDot{fill:#f5c518; stroke:rgba(0,0,0,.5); stroke-width:.14}
 
   @media (max-width: 560px){
+    .targetCourt{width:calc(100% - 16px)}
     .coachMetrics{grid-template-columns:1fr}
   }
 
@@ -476,6 +480,13 @@
 
 <header>
   <button class="hidden" id="hdrBack" type="button" aria-label="Back">&#8249;</button>
+  <button class="hidden" id="hdrHome" type="button" aria-label="Home">
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <path d="M3 11l9-7 9 7"/>
+      <path d="M5 10v9h5v-6h4v6h5v-9"/>
+    </svg>
+  </button>
   <div id="stepLabel">Squash Line Calling</div>
   <button class="small" id="themeBtn" type="button" aria-label="Toggle light or dark theme">
     <svg class="sun-and-moon" width="24" height="24" viewBox="0 0 24 24" aria-hidden="true">
@@ -877,16 +888,37 @@
         <div><strong>Untouched zones</strong><span id="floorMissing"></span></div>
       </div>
     </div>
-    <div class="targetZones hidden" id="coachPanel">
-      <div class="targetHead">
-        <strong>Coaching report</strong>
-        <span id="coachSource"></span>
-      </div>
-      <div class="coachIntro" id="coachIntro"></div>
-      <div class="coachMetrics" id="coachMetrics"></div>
-      <div class="coachFeedback" id="coachFeedback"></div>
+    <div class="row">
+      <button id="player1ReportBtn" type="button">Player 1 report</button>
+      <button id="player2ReportBtn" type="button">Player 2 report</button>
     </div>
     <p class="status" id="targetStatus"></p>
+  </section>
+
+  <!-- PHASE: player 1 coaching report -->
+  <section class="hidden" id="p-player1-report">
+    <div class="targetZones hidden coachPlayerPanel" id="coachPanelP1">
+      <div class="targetHead">
+        <strong>Player 1 report</strong>
+        <span id="coachSourceP1"></span>
+      </div>
+      <div class="coachIntro" id="coachIntroP1"></div>
+      <div class="coachMetrics" id="coachMetricsP1"></div>
+      <div class="coachFeedback" id="coachFeedbackP1"></div>
+    </div>
+  </section>
+
+  <!-- PHASE: player 2 coaching report -->
+  <section class="hidden" id="p-player2-report">
+    <div class="targetZones hidden coachPlayerPanel" id="coachPanelP2">
+      <div class="targetHead">
+        <strong>Player 2 report</strong>
+        <span id="coachSourceP2"></span>
+      </div>
+      <div class="coachIntro" id="coachIntroP2"></div>
+      <div class="coachMetrics" id="coachMetricsP2"></div>
+      <div class="coachFeedback" id="coachFeedbackP2"></div>
+    </div>
   </section>
 
   <!-- PHASE: live match (roadmap placeholder, reached from the Play hero) -->
@@ -1097,21 +1129,23 @@ const S = {
 const STEP_META = {
   load:   {label:'Squash Line Calling', instr:''},
   record: {label:'Record', instr:'', action:{btn:'recBtn', label:'Record'}},
-  frame:  {label:'1/8 · Pick frame', instr:'Drag the film strip under the playhead to a frame where both red lines are fully visible and unblocked.',
+  frame:  {label:'Pick frame', instr:'Drag the film strip under the playhead to a frame where both red lines are fully visible and unblocked.',
            action:{btn:'useFrame', label:'Use frame'}},
-  tap_out:{label:'2/9 · Out line', instr:'', action:{btn:'confirmBtn', label:'Looks right'}},
-  tap_tin:{label:'3/9 · Tin', instr:'', action:{btn:'confirmBtn', label:'Looks right'}},
-  review: {label:'4/9 · Review', instr:'Check that each fitted edge hugs the real paint edge across the whole line.',
+  tap_out:{label:'Out line', instr:'', action:{btn:'confirmBtn', label:'Looks right'}},
+  tap_tin:{label:'Tin', instr:'', action:{btn:'confirmBtn', label:'Looks right'}},
+  review: {label:'Review', instr:'Check that each fitted edge hugs the real paint edge across the whole line.',
            action:{btn:'chooseClipBtn', label:'Use lines'}},
-  tap_wall:{label:'5/9 · Wall corners', instr:'', action:{btn:'wallDoneBtn', label:'Use corners'}},
-  tap_floor:{label:'6/9 · Floor map', instr:'', action:{btn:'floorDoneBtn', label:'Use floor map'}},
-  clip:   {label:'7/9 · Clip', instr:'Drag the top strip to slide the clip along the video, then drag the handles to trim it tight around the shot.',
+  tap_wall:{label:'Wall corners', instr:'', action:{btn:'wallDoneBtn', label:'Use corners'}},
+  tap_floor:{label:'Floor map', instr:'', action:{btn:'floorDoneBtn', label:'Use floor map'}},
+  clip:   {label:'Clip', instr:'Drag the top strip to slide the clip along the video, then drag the handles to trim it tight around the shot.',
            action:{btn:'runTrackBtn', label:'Track ball'}},
   analyze:{label:'Analyzing', instr:''},
-  track:  {label:'8/9 · Call', instr:'Tap a bar to jump to the bounce frame, or drag anywhere on the strip to scrub.',
+  track:  {label:'Call', instr:'Tap a bar to jump to the bounce frame, or drag anywhere on the strip to scrub.',
            action:{btn:'judgeBtn', label:'Judge'}},
   label:  {label:'Label bounces', instr:'Drag the strip to the exact impact frame, then tap its bounce type. Tap a marker to revisit it — labels save automatically.'},
-  target: {label:'9/9 · Targets', instr:''},
+  target: {label:'Targets', instr:''},
+  player1_report: {label:'Player 1', instr:''},
+  player2_report: {label:'Player 2', instr:''},
   // Section roots (Matches, Coach hub) + roadmap placeholder pages. No action key (no
   // primary yet) and no instr — production screens carry no guidance copy; the UX leads.
   matches: {label:'Matches', instr:''},
@@ -1126,6 +1160,22 @@ const ROADMAP_PHASES = ['live','matches','coach','stats','shot_bot','sharing'];
 const roadmapSection = p => 'p-' + p.replace('_','-');
 /* Section roots: the nav pill switches between them, so they get no back chevron */
 const SECTION_ROOTS = ['load','matches','coach'];
+
+/* The numbered judge flow, in order. The floor-map step only exists when the
+   court model loaded, so the total is 11 with it and 10 without — computed here
+   rather than baked into the labels, which go stale whenever a step is added
+   or skipped. Phases not in this list (load, record, label, hubs) get no number. */
+function stepSequence(){
+  const seq = ['frame','tap_out','tap_tin','review','tap_wall'];
+  if(COURT) seq.push('tap_floor');
+  return [...seq, 'clip','track','target','player1_report','player2_report'];
+}
+function stepLabelFor(p){
+  const seq = stepSequence();
+  const idx = seq.indexOf(p);
+  return idx === -1 ? STEP_META[p].label
+                    : `${idx + 1}/${seq.length} · ${STEP_META[p].label}`;
+}
 
 /* Header action pill: proxies the current phase's primary button, which stays
    the source of truth for behavior and disabled state. */
@@ -1149,15 +1199,18 @@ function setPhase(p){
   transportStop();
   S.phase = p;
   resetZoom();
-  stage.classList.toggle('hidden', p === 'load' || p === 'target' || ROADMAP_PHASES.includes(p));
+  const reportPhase = p === 'target' || p === 'player1_report' || p === 'player2_report';
+  stage.classList.toggle('hidden', p === 'load' || reportPhase || ROADMAP_PHASES.includes(p));
   document.body.classList.toggle('phase-load', p === 'load');
-  document.body.classList.toggle('phase-target', p === 'target');
+  document.body.classList.toggle('phase-target', reportPhase);
   for(const id of ['p-load','p-record','p-frame','p-tap','p-review','p-wall-corners','p-tap-floor','p-clip','p-analyze','p-track','p-label','p-target',
+                   'p-player1-report','p-player2-report',
                    'p-live','p-matches','p-coach','p-stats','p-shot-bot','p-sharing']) $(id).classList.add('hidden');
   $('camVid').classList.toggle('hidden', p !== 'record');   // live preview only on the record screen
   $('analyzeOverlay').classList.toggle('hidden', p !== 'analyze');
-  $('stepLabel').textContent = STEP_META[p].label;
+  $('stepLabel').textContent = stepLabelFor(p);
   $('hdrBack').classList.toggle('hidden', SECTION_ROOTS.includes(p));
+  $('hdrHome').classList.toggle('hidden', p === 'load');   // shortcut to the load screen from anywhere else
   syncHeaderAction(STEP_META[p].action);
 
   $('instr').classList.remove('warn');
@@ -1195,6 +1248,8 @@ function setPhase(p){
   if(p === 'track'){ $('p-track').classList.remove('hidden'); buildTrackView(); }
   if(p === 'label'){ $('p-label').classList.remove('hidden'); buildLabelView(); }
   if(p === 'target'){ $('p-target').classList.remove('hidden'); buildTargetView(); }
+  if(p === 'player1_report'){ $('p-player1-report').classList.remove('hidden'); buildPlayerReportView(1); }
+  if(p === 'player2_report'){ $('p-player2-report').classList.remove('hidden'); buildPlayerReportView(2); }
   if(ROADMAP_PHASES.includes(p)){ $(roadmapSection(p)).classList.remove('hidden'); }
   // Tab bar: visible on the three section roots only, hidden inside flows
   // and sub-pages; the active capsule tracks the current section.
@@ -1744,12 +1799,30 @@ $('hdrBack').onclick = () => {
     vid.pause(); S.base = null; $('fileIn').value = ''; setPhase('load');
   } else if(S.phase === 'target'){
     setPhase(S.run ? 'track' : 'load');
+  } else if(S.phase === 'player1_report'){
+    setPhase('target');
+  } else if(S.phase === 'player2_report'){
+    setPhase('player1_report');
   } else if(ROADMAP_PHASES.includes(S.phase)){
     // Sub-pages hold no video/calibration state: Live sits under Play,
     // the rest under the Coach hub. (Section roots have no back chevron.)
     setPhase(S.phase === 'live' ? 'load' : 'coach');
   }
 };
+
+/* Header home button: one tap back to the load screen from any phase, instead
+   of stepping back through the flow. Mirrors the teardown the back chevron
+   already runs on the branches that land on 'load'. */
+function goHome(){
+  if(S.phase === 'load') return;
+  if(S.phase === 'record') stopRecordSession();
+  else vid.pause();
+  S.base = null;
+  $('fileIn').value = '';
+  if(S.restoredSession){ S.restoredSession = false; clearRestoreStash(); }
+  setPhase('load');
+}
+$('hdrHome').onclick = goHome;
 
 /* drill-down cards (Coach hub) + the Live hero open their phase directly */
 for(const card of document.querySelectorAll('button[data-phase]'))
@@ -4159,7 +4232,7 @@ function targetZoneFill(percentage){
 }
 
 function makeDebugTargetZones(){
-  const counts = [0, 0, 0, 0, 0].map(() => 3 + Math.floor(Math.random() * 24));
+  const counts = Array.from({length: 8}, () => 3 + Math.floor(Math.random() * 24));
   const total = counts.reduce((sum, n) => sum + n, 0);
   const zones = counts.map((count, idx) => ({
     zone: idx + 1,
@@ -4168,7 +4241,7 @@ function makeDebugTargetZones(){
   }));
   const used = zones.filter(zone => zone.count > 0).sort((a, b) => b.count - a.count);
   return {
-    layout: 'front_wall_5_target_debug',
+    layout: 'front_wall_8_target_debug',
     total_wall_hits: total,
     zones,
     common_zones: used.slice(0, 3),
@@ -4183,9 +4256,9 @@ const TARGET_LAYOUT = {
   serviceY: 61.1,
   tinY: 89.5,
   sideBands: [
-    {zone:1, top:0, height:29},
-    {zone:2, top:29, height:32.1},
-    {zone:3, top:61.1, height:28.4},
+    {leftZone:1, rightZone:6, top:0, height:29},
+    {leftZone:2, rightZone:7, top:29, height:32.1},
+    {leftZone:3, rightZone:8, top:61.1, height:28.4},
   ],
 };
 
@@ -4197,12 +4270,10 @@ function targetCellPlacements(zone){
   if(z === 5){
     return [{left:TARGET_LAYOUT.centerLeft, top:TARGET_LAYOUT.serviceY, width:TARGET_LAYOUT.centerW, height:TARGET_LAYOUT.tinY - TARGET_LAYOUT.serviceY}];
   }
-  const band = TARGET_LAYOUT.sideBands.find(item => item.zone === z);
+  const band = TARGET_LAYOUT.sideBands.find(item => item.leftZone === z || item.rightZone === z);
   if(!band) return [];
-  return [
-    {left:0, top:band.top, width:TARGET_LAYOUT.sideW, height:band.height},
-    {left:TARGET_LAYOUT.centerLeft + TARGET_LAYOUT.centerW, top:band.top, width:TARGET_LAYOUT.sideW, height:band.height, mirror:true},
-  ];
+  const left = band.leftZone === z ? 0 : TARGET_LAYOUT.centerLeft + TARGET_LAYOUT.centerW;
+  return [{left, top:band.top, width:TARGET_LAYOUT.sideW, height:band.height}];
 }
 
 function placeTargetCell(cell, placement){
@@ -4274,109 +4345,152 @@ function coachMetric(label, value, description=''){
   return `<div class="coachMetric"><strong>${label}</strong><span>${value}</span>${help}</div>`;
 }
 
-function renderCoachReport(data){
-  const panel = $('coachPanel');
-  const metrics = $('coachMetrics');
-  const analytics = data && data.analytics;
-  if(!analytics){
-    panel.classList.add('hidden');
-    metrics.innerHTML = '';
-    $('coachFeedback').textContent = '';
-    return;
+function hidePlayerCoachPanels(){
+  for(const num of [1, 2]){
+    $(`coachPanelP${num}`).classList.add('hidden');
+    $(`coachSourceP${num}`).textContent = '';
+    $(`coachIntroP${num}`).textContent = '';
+    $(`coachMetricsP${num}`).innerHTML = '';
+    $(`coachFeedbackP${num}`).textContent = '';
   }
+}
 
-  panel.classList.remove('hidden');
+function coachingSourceText(data){
   const source = data.feedback_source === 'llm' ? 'LLM feedback' : 'Local feedback';
   const statusText = {
     missing_api_key: 'LLM not configured',
     request_failed: 'LLM unavailable',
     empty_response: 'LLM unavailable',
   }[data.llm_status] || String(data.llm_status).replaceAll('_', ' ');
-  $('coachSource').textContent = data.llm_status && data.llm_status !== 'ok'
+  return data.llm_status && data.llm_status !== 'ok'
     ? `${source} · ${statusText}`
     : source;
-  $('coachIntro').textContent =
-    'This report uses the shots where the app found the ball hitting the front wall. Treat the numbers as patterns to review, not official match stats.';
-  metrics.innerHTML = [
+}
+
+function playerAssignmentText(playerNumber){
+  return playerNumber === 1
+    ? 'Player 1 uses the 1st, 3rd, 5th, and other odd-numbered detected front-wall contacts.'
+    : 'Player 2 uses the 2nd, 4th, 6th, and other even-numbered detected front-wall contacts.';
+}
+
+function renderPlayerCoachPanel(data, playerNumber, sourceText){
+  const analytics = data.analytics || {};
+  const player = (analytics.players || []).find(item => Number(item.player_number) === playerNumber) || {
+    player_number: playerNumber,
+    label: `Player ${playerNumber}`,
+    total_wall_hits: 0,
+    common_target_zones: [],
+    average_wall_height_ft: null,
+    average_incoming_speed_mph: null,
+    average_exit_speed_mph: null,
+    center_target_rate: null,
+    side_target_rate: null,
+    low_target_rate: null,
+  };
+  $(`coachPanelP${playerNumber}`).classList.remove('hidden');
+  $(`coachSourceP${playerNumber}`).textContent = sourceText;
+  $(`coachIntroP${playerNumber}`).textContent = playerAssignmentText(playerNumber);
+  $(`coachMetricsP${playerNumber}`).innerHTML = [
     coachMetric(
       'Shots analyzed',
-      metricValue(analytics.total_wall_hits),
-      'How many front-wall contacts were reliable enough to include.'
+      metricValue(player.total_wall_hits),
+      `How many of ${player.label}'s front-wall contacts were reliable enough to include.`
     ),
     coachMetric(
       'Main targets',
-      formatZoneList(analytics.common_target_zones, 3),
-      'The wall areas you used most often.'
+      formatZoneList(player.common_target_zones, 3),
+      `The wall areas ${player.label} used most often.`
     ),
     coachMetric(
       'Typical shot height',
-      metricValue(analytics.average_wall_height_ft, ' ft'),
-      'Where your shots usually struck the front wall, measured from the floor.'
+      metricValue(player.average_wall_height_ft, ' ft'),
+      `Where ${player.label}'s shots usually struck the front wall, measured from the floor.`
     ),
     coachMetric(
       'Pace before contact',
-      metricValue(analytics.average_incoming_speed_mph, ' mph'),
-      'Estimated speed as the ball reached the front wall.'
+      metricValue(player.average_incoming_speed_mph, ' mph'),
+      `Estimated speed as ${player.label}'s ball reached the front wall.`
     ),
     coachMetric(
       'Pace after contact',
-      metricValue(analytics.average_exit_speed_mph, ' mph'),
-      'Estimated speed as the ball came off the front wall.'
+      metricValue(player.average_exit_speed_mph, ' mph'),
+      `Estimated speed as ${player.label}'s ball came off the front wall.`
     ),
     coachMetric(
       'Middle usage',
-      metricValue(analytics.center_target_rate, '%'),
-      'Higher means more shots fed the center instead of making the opponent move wide.'
+      metricValue(player.center_target_rate, '%'),
+      `Higher means ${player.label} fed more balls through the center instead of making the opponent move wide.`
+    ),
+    coachMetric(
+      'Wide usage',
+      metricValue(player.side_target_rate, '%'),
+      `How often ${player.label} used the left and right target areas.`
     ),
     coachMetric(
       'Low attacking rate',
-      metricValue(analytics.low_target_rate, '%'),
-      'Lower wall contact often means drives, drops, and more attacking shots.'
-    ),
-    coachMetric(
-      'Court bounces mapped',
-      metricValue(analytics.total_floor_bounces),
-      'How many ball bounces were placed on the court map.'
+      metricValue(player.low_target_rate, '%'),
+      `How often ${player.label} hit lower front-wall targets.`
     ),
   ].join('');
-  $('coachFeedback').textContent = data.feedback || 'No coaching feedback is available yet.';
+  const feedback = data.player_feedback && data.player_feedback[String(playerNumber)];
+  $(`coachFeedbackP${playerNumber}`).textContent =
+    feedback || `${player.label}: no player-specific coaching feedback is available yet.`;
 }
 
-function setCoachLoading(){
-  $('coachPanel').classList.remove('hidden');
-  $('coachSource').textContent = 'Loading';
-  $('coachIntro').textContent = 'Reading the target map and summarizing the patterns.';
-  $('coachMetrics').innerHTML = [
+function renderCoachReport(data, playerNumber){
+  if(!(data && data.analytics)){
+    hidePlayerCoachPanels();
+    return;
+  }
+  const sourceText = coachingSourceText(data);
+  hidePlayerCoachPanels();
+  renderPlayerCoachPanel(data, playerNumber, sourceText);
+}
+
+function setCoachLoading(playerNumber){
+  hidePlayerCoachPanels();
+  $(`coachPanelP${playerNumber}`).classList.remove('hidden');
+  $(`coachSourceP${playerNumber}`).textContent = 'Loading';
+  $(`coachIntroP${playerNumber}`).textContent = `Building the Player ${playerNumber} report from detected front-wall contacts.`;
+  $(`coachMetricsP${playerNumber}`).innerHTML = [
     coachMetric('Shots analyzed', '—', 'Reliable front-wall contacts included in the report.'),
     coachMetric('Main targets', '—', 'The wall areas you used most often.'),
     coachMetric('Typical shot height', '—', 'Where your shots usually struck the front wall.'),
     coachMetric('Pace before contact', '—', 'Estimated speed as the ball reached the front wall.'),
   ].join('');
-  $('coachFeedback').textContent = 'Building player feedback from the target map...';
+  $(`coachFeedbackP${playerNumber}`).textContent = 'Building player feedback from the target map...';
 }
 
-async function loadCoachReport(){
+async function loadCoachReport(playerNumber){
   const runId = S.run && S.run.run_id;
   if(S.debugTargetZones || !runId){
-    $('coachPanel').classList.add('hidden');
+    hidePlayerCoachPanels();
     return;
   }
   if(S.coachReports[runId]){
-    renderCoachReport(S.coachReports[runId]);
+    renderCoachReport(S.coachReports[runId], playerNumber);
     return;
   }
-  setCoachLoading();
+  setCoachLoading(playerNumber);
   try{
     const response = await fetch(`/api/runs/${encodeURIComponent(runId)}/coach`, {cache:'no-store'});
     const data = await response.json();
     if(!response.ok || data.ok === false) throw new Error(data.error || 'Coaching report failed.');
     S.coachReports[runId] = data;
-    renderCoachReport(data);
+    renderCoachReport(data, playerNumber);
   } catch(error){
-    $('coachSource').textContent = 'Unavailable';
-    $('coachMetrics').innerHTML = '';
-    $('coachFeedback').textContent = error.message || 'Coaching report failed.';
+    hidePlayerCoachPanels();
+    $(`coachPanelP${playerNumber}`).classList.remove('hidden');
+    $(`coachSourceP${playerNumber}`).textContent = 'Unavailable';
+    $(`coachIntroP${playerNumber}`).textContent = playerAssignmentText(playerNumber);
+    $(`coachMetricsP${playerNumber}`).innerHTML = '';
+    $(`coachFeedbackP${playerNumber}`).textContent = error.message || 'Coaching report failed.';
   }
+}
+
+function buildPlayerReportView(playerNumber){
+  hidePlayerCoachPanels();
+  loadCoachReport(playerNumber);
 }
 
 function buildTargetView(){
@@ -4384,6 +4498,9 @@ function buildTargetView(){
   renderTargetZones(summary);
   const hasFloor = renderFloorMap();
   const total = summary ? summary.total_wall_hits : 0;
+  const canReport = !!(!S.debugTargetZones && S.run && total);
+  $('player1ReportBtn').disabled = !canReport;
+  $('player2ReportBtn').disabled = !canReport;
   if(total){
     $('targetStatus').textContent = S.debugTargetZones
       ? 'Debug target data is random and temporary.'
@@ -4397,7 +4514,6 @@ function buildTargetView(){
     $('targetStatus').textContent = 'No target-zone data is available for this clip.';
     $('targetStatus').className = 'status warn';
   }
-  loadCoachReport();
 }
 
 function buildTrackView(){
@@ -4421,6 +4537,9 @@ $('targetBtn').onclick = () => {
   S.debugTargetZones = null;
   setPhase('target');
 };
+
+$('player1ReportBtn').onclick = () => setPhase('player1_report');
+$('player2ReportBtn').onclick = () => setPhase('player2_report');
 
 $('debugTargetsBtn').onclick = () => {
   S.debugTargetZones = makeDebugTargetZones();
