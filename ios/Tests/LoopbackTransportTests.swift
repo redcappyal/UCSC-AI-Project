@@ -34,4 +34,16 @@ final class LoopbackTransportTests: XCTestCase {
         a.stop()
         XCTAssertEqual(states, [.connected, .disconnected("stopped")])
     }
+
+    func testPairDoesNotLeakWhenReferencesDrop() {
+        weak var weakA: LoopbackTransport?
+        weak var weakB: LoopbackTransport?
+        autoreleasepool {
+            let (a, b) = LoopbackTransport.pair()
+            weakA = a; weakB = b
+            a.sendControl(Data([1]))   // exercise delivery before release
+        }
+        XCTAssertNil(weakA)
+        XCTAssertNil(weakB)
+    }
 }

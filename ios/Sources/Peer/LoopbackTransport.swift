@@ -12,15 +12,16 @@ final class LoopbackTransport: PeerTransport {
 
     private weak var peer: LoopbackTransport?
 
+    /// Ownership contract: the caller owns both returned ends and must retain
+    /// them for as long as the link is needed — `pair()` returns both
+    /// precisely so the caller can hold them. `peer` is weak on both sides so
+    /// pairing itself creates no reference cycle; if one end deallocates,
+    /// deliveries to it silently no-op via the weak reference.
     static func pair() -> (LoopbackTransport, LoopbackTransport) {
         let a = LoopbackTransport(), b = LoopbackTransport()
         a.peer = b; b.peer = a
-        // Hold strong references through captured closures so `weak var peer`
-        // stays alive as long as either end is.
-        a.retainedPeer = b; b.retainedPeer = a
         return (a, b)
     }
-    private var retainedPeer: LoopbackTransport?
 
     func startInitiator() { onStateChange?(.connected) }
     func startResponder() { onStateChange?(.connected) }
