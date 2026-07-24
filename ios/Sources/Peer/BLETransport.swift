@@ -4,8 +4,9 @@ import Foundation
 
 enum BLEChunker {
     static func chunks(_ frame: Data, maxWriteLength: Int) -> [Data] {
-        stride(from: 0, to: frame.count, by: maxWriteLength).map {
-            frame.subdata(in: frame.startIndex + $0 ..< frame.startIndex + min($0 + maxWriteLength, frame.count))
+        let step = max(1, maxWriteLength)
+        return stride(from: 0, to: frame.count, by: step).map {
+            frame.subdata(in: frame.startIndex + $0 ..< frame.startIndex + min($0 + step, frame.count))
         }
     }
 }
@@ -25,7 +26,7 @@ final class BLETransport: NSObject, PeerTransport {
     var onStateChange: ((TransportState) -> Void)?
 
     private let queue: DispatchQueue
-    private let reassembler = FrameReassembler()
+    private var reassembler = FrameReassembler()
 
     // Central (initiator) state
     private var central: CBCentralManager?
@@ -38,6 +39,9 @@ final class BLETransport: NSObject, PeerTransport {
     private var localControl: CBMutableCharacteristic?
     private var localDatagram: CBMutableCharacteristic?
     private var subscribedCentral: CBCentral?
+    /// Control chunks that hit a queue-full (`updateValue` returned false)
+    /// indicate; drained in order from `peripheralManagerIsReady`.
+    private var pendingIndications: [Data] = []
 
     init(queue: DispatchQueue = DispatchQueue(label: "slc.peer.ble")) {
         self.queue = queue
@@ -45,12 +49,12 @@ final class BLETransport: NSObject, PeerTransport {
     }
 
     func startInitiator() {
-        onStateChange?(.searching)
+        queue.async { [weak self] in self?.onStateChange?(.searching) }
         central = CBCentralManager(delegate: self, queue: queue)
     }
 
     func startResponder() {
-        onStateChange?(.searching)
+        queue.async { [weak self] in self?.onStateChange?(.searching) }
         peripheralManager = CBPeripheralManager(delegate: self, queue: queue)
     }
 
@@ -63,9 +67,8 @@ final class BLETransport: NSObject, PeerTransport {
             }
         } else if let manager = peripheralManager, let characteristic = localControl {
             let maxLength = subscribedCentral?.maximumUpdateValueLength ?? 180
-            for chunk in BLEChunker.chunks(encoded, maxWriteLength: maxLength) {
-                _ = manager.updateValue(chunk, for: characteristic, onSubscribedCentrals: nil)
-            }
+            enqueueIndications(BLEChunker.chunks(encoded, maxWriteLength: maxLength),
+                               manager: manager, characteristic: characteristic)
         }
     }
 
@@ -80,16 +83,47 @@ final class BLETransport: NSObject, PeerTransport {
     }
 
     func stop() {
+        tearDown()
+        onStateChange?(.disconnected("stopped"))
+    }
+
+    /// Sends `chunks` via `updateValue` in order; on the first queue-full
+    /// (false) return, stops and queues that chunk plus everything after it
+    /// in `pendingIndications` for `peripheralManagerIsReady` to drain.
+    /// Only used for the control channel — datagrams stay fire-and-forget.
+    private func enqueueIndications(_ chunks: [Data], manager: CBPeripheralManager,
+                                    characteristic: CBMutableCharacteristic) {
+        for (index, chunk) in chunks.enumerated() {
+            if !manager.updateValue(chunk, for: characteristic, onSubscribedCentrals: nil) {
+                pendingIndications.append(contentsOf: chunks[index...])
+                return
+            }
+        }
+    }
+
+    /// Full connection-state reset, shared by `stop()` and the corruption
+    /// path in `ingestControlChunk`. Callers are responsible for emitting
+    /// their own `onStateChange` event around this call.
+    private func tearDown() {
         if let remotePeripheral { central?.cancelPeripheralConnection(remotePeripheral) }
         central?.stopScan()
         peripheralManager?.stopAdvertising()
-        central = nil; peripheralManager = nil
-        onStateChange?(.disconnected("stopped"))
+        central = nil
+        peripheralManager = nil
+        remotePeripheral = nil
+        remoteControl = nil
+        remoteDatagram = nil
+        subscribedCentral = nil
+        localControl = nil
+        localDatagram = nil
+        reassembler = FrameReassembler()
+        pendingIndications = []
     }
 
     private func ingestControlChunk(_ chunk: Data) {
         guard let frames = try? reassembler.ingest(chunk) else {
             onStateChange?(.disconnected("control stream corrupted"))
+            tearDown()
             return
         }
         for frame in frames { onControl?(frame) }
@@ -98,8 +132,16 @@ final class BLETransport: NSObject, PeerTransport {
 
 extension BLETransport: CBCentralManagerDelegate, CBPeripheralDelegate {
     func centralManagerDidUpdateState(_ central: CBCentralManager) {
-        guard central.state == .poweredOn else { return }
-        central.scanForPeripherals(withServices: [Self.serviceUUID])
+        switch central.state {
+        case .poweredOn:
+            central.scanForPeripherals(withServices: [Self.serviceUUID])
+        case .poweredOff, .unauthorized, .unsupported:
+            onStateChange?(.disconnected("bluetooth unavailable: \(central.state)"))
+        case .resetting, .unknown:
+            break
+        @unknown default:
+            break
+        }
     }
 
     func centralManager(_ central: CBCentralManager, didDiscover peripheral: CBPeripheral,
@@ -112,6 +154,11 @@ extension BLETransport: CBCentralManagerDelegate, CBPeripheralDelegate {
 
     func centralManager(_ central: CBCentralManager, didConnect peripheral: CBPeripheral) {
         peripheral.discoverServices([Self.serviceUUID])
+    }
+
+    func centralManager(_ central: CBCentralManager, didFailToConnect peripheral: CBPeripheral,
+                        error: Error?) {
+        onStateChange?(.disconnected(error?.localizedDescription ?? "connect failed"))
     }
 
     func centralManager(_ central: CBCentralManager, didDisconnectPeripheral peripheral: CBPeripheral,
@@ -138,6 +185,12 @@ extension BLETransport: CBCentralManagerDelegate, CBPeripheralDelegate {
         if remoteControl != nil, remoteDatagram != nil { onStateChange?(.connected) }
     }
 
+    func peripheral(_ peripheral: CBPeripheral, didUpdateNotificationStateFor characteristic: CBCharacteristic,
+                    error: Error?) {
+        guard let error else { return }
+        onStateChange?(.disconnected("subscribe failed: \(error.localizedDescription)"))
+    }
+
     func peripheral(_ peripheral: CBPeripheral,
                     didUpdateValueFor characteristic: CBCharacteristic, error: Error?) {
         guard let value = characteristic.value else { return }
@@ -148,17 +201,32 @@ extension BLETransport: CBCentralManagerDelegate, CBPeripheralDelegate {
 
 extension BLETransport: CBPeripheralManagerDelegate {
     func peripheralManagerDidUpdateState(_ manager: CBPeripheralManager) {
-        guard manager.state == .poweredOn else { return }
-        let control = CBMutableCharacteristic(type: Self.controlUUID,
-                                              properties: [.write, .indicate],
-                                              value: nil, permissions: [.writeable])
-        let datagram = CBMutableCharacteristic(type: Self.datagramUUID,
-                                               properties: [.writeWithoutResponse, .notify],
-                                               value: nil, permissions: [.writeable])
-        localControl = control; localDatagram = datagram
-        let service = CBMutableService(type: Self.serviceUUID, primary: true)
-        service.characteristics = [control, datagram]
-        manager.add(service)
+        switch manager.state {
+        case .poweredOn:
+            let control = CBMutableCharacteristic(type: Self.controlUUID,
+                                                  properties: [.write, .indicate],
+                                                  value: nil, permissions: [.writeable])
+            let datagram = CBMutableCharacteristic(type: Self.datagramUUID,
+                                                   properties: [.writeWithoutResponse, .notify],
+                                                   value: nil, permissions: [.writeable])
+            localControl = control; localDatagram = datagram
+            let service = CBMutableService(type: Self.serviceUUID, primary: true)
+            service.characteristics = [control, datagram]
+            manager.add(service)
+        case .poweredOff, .unauthorized, .unsupported:
+            onStateChange?(.disconnected("bluetooth unavailable: \(manager.state)"))
+        case .resetting, .unknown:
+            break
+        @unknown default:
+            break
+        }
+    }
+
+    func peripheralManager(_ manager: CBPeripheralManager, didAdd service: CBService, error: Error?) {
+        if let error {
+            onStateChange?(.disconnected("service add failed: \(error.localizedDescription)"))
+            return
+        }
         manager.startAdvertising([CBAdvertisementDataServiceUUIDsKey: [Self.serviceUUID]])
     }
 
@@ -179,5 +247,12 @@ extension BLETransport: CBPeripheralManagerDelegate {
                 onDatagram?(value)
             }
         }
+    }
+
+    func peripheralManagerIsReady(toUpdateSubscribers manager: CBPeripheralManager) {
+        guard let characteristic = localControl else { return }
+        let queued = pendingIndications
+        pendingIndications = []
+        enqueueIndications(queued, manager: manager, characteristic: characteristic)
     }
 }

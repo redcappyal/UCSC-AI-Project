@@ -18,4 +18,8 @@ final class BLEChunkerTests: XCTestCase {
     func testSmallFrameIsSingleChunk() {
         XCTAssertEqual(BLEChunker.chunks(Data([1, 2, 3]), maxWriteLength: 180).count, 1)
     }
+
+    func testNonPositiveMaxWriteLengthDoesNotTrap() {
+        XCTAssertEqual(BLEChunker.chunks(Data([1, 2]), maxWriteLength: 0).count, 2)
+    }
 }
