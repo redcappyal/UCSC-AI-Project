@@ -2,7 +2,8 @@
 
 Runs the production RF-DETR ball detector (via inference_engine) over two
 calibrated, clock-offset squash clips and produces 3D impact calls through
-stereo_engine. Heavy deps (cv2 video I/O, the `inference` package) import
+stereo_engine. Heavy deps (cv2 video I/O, the `inference` package, and
+tracking_common -- which imports cv2 unconditionally at its own top) import
 lazily inside functions -- mirroring inference_engine.py / train_yolo_ball.py's
 convention -- so importing this module, or exercising its test injection
 seams, never touches them.
@@ -15,7 +16,6 @@ from pathlib import Path
 import court_model
 import stereo_engine
 from stereo_engine import TrackSample
-from tracking_common import select_ball_prediction
 
 
 def _video_fps(video_path):
@@ -86,6 +86,8 @@ def detections_to_track_samples(video_path, model=None, *, confidence=0.4,
     select_ball_prediction; frames with no accepted ball produce no
     sample. px = (x, y) center in RAW pixels.
     """
+    from tracking_common import select_ball_prediction  # lazy: cv2 at its top
+
     fps = _video_fps(video_path)
     if not fps or fps <= 0:
         raise ValueError(f"Invalid fps ({fps!r}) reading {video_path}")
