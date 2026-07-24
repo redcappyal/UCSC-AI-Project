@@ -130,7 +130,17 @@ final class RecordModel: ObservableObject {
             errorText = "stereo: malformed local camera model"
             return
         }
-        localModel = model
+        // A solved model is only meaningful in the pixel space it was solved
+        // in. Everything downstream (detections, StereoEngine) works in
+        // CaptureSettings' space, so re-express it here or refuse: a model
+        // of unknown or differently-cropped origin cannot be scaled, and a
+        // wrong-but-silent line call is worse than no call.
+        do {
+            localModel = try model.adoptedForCapture()
+        } catch {
+            errorText = "stereo: local camera model — \(error.localizedDescription)"
+            return
+        }
         // onCalibration fires on the transport delivery context, not main
         // (like onRemoteDetections) — hop before touching any RecordModel
         // state (self.peer, self.localModel, self.stereoEngine), all of
@@ -142,7 +152,18 @@ final class RecordModel: ObservableObject {
                       let localModel = self.localModel,
                       let remoteData = payloadJSON.data(using: .utf8),
                       let remoteModel = try? CameraModel.fromJSON(remoteData) else { return }
-                let engine = StereoEngine(localModel: localModel, remoteModel: remoteModel,
+                // Same adoption as the local model above — the peer sends
+                // whatever space its own calibration was solved in. Refusing
+                // to go live is the correct outcome when it can't be scaled.
+                let adoptedRemote: CameraModel
+                do {
+                    adoptedRemote = try remoteModel.adoptedForCapture()
+                } catch {
+                    self.errorText =
+                        "stereo: remote camera model — \(error.localizedDescription)"
+                    return
+                }
+                let engine = StereoEngine(localModel: localModel, remoteModel: adoptedRemote,
                                           remoteToLocal: { [weak peer] in peer?.clockSync.remoteToLocal($0) })
                 engine.onEvent = { [weak self, weak peer] event in
                     guard case .impact(let impact) = event else { return }
