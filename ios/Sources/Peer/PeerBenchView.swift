@@ -86,7 +86,7 @@ final class PeerBenchModel: ObservableObject {
         let transport: PeerTransport = transportName == "ble" ? BLETransport() : WiFiP2PTransport()
         let session = PeerSession(transport: transport, isInitiator: isInitiator)
         self.transport = transport; self.session = session
-        session.onRemoteDetections = { [weak self] tuples in
+        session.onRemoteDetections = { [weak self, weak session] tuples in
             guard let self else { return }
             // Fires on the transport's delivery queue, not main — pump()
             // (Timer-driven, main thread) also reads/mutates `received` and
@@ -99,7 +99,11 @@ final class PeerBenchModel: ObservableObject {
                 // Reflecting stays on the delivery queue — PeerSession is
                 // internally lock-guarded, so calling sendDetections here
                 // (off main) is safe. Only the counter needs main.
-                session.sendDetections(tuples)
+                // `session` is captured weakly: this closure is retained by
+                // the session itself (`session.onRemoteDetections = ...`),
+                // so a strong capture here would be a retain cycle — one
+                // PeerSession+transport pair leaked per bench run.
+                session?.sendDetections(tuples)
                 DispatchQueue.main.async { self.received += tuples.count }
             } else {
                 let localRtts = tuples.map { (now - Double($0.ptsNs) / 1e9) * 1000 }
