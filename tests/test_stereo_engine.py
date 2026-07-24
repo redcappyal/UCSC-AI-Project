@@ -51,12 +51,59 @@ def test_triangulate_parallel_rays_returns_none():
 
 def test_triangulate_behind_camera_rejected():
     left, right = make_fin_pair()
-    # A point BEHIND the cameras (y > camera y): project() would raise, so
-    # build pixels from a valid point but flip one ray by picking pixels
-    # whose closest approach lands behind: use crossing rays aimed away.
-    # Construct directly: pixel far left on one camera, far right on the
-    # other, so rays diverge and closest approach is at negative s/t.
     # Extreme opposite-side pixels: rays diverge, closest approach is behind both cameras.
     point_ft, gap_ft = stereo_engine.triangulate(
         left, right, (5900.0, 540.0), (-4000.0, 540.0))
     assert point_ft is None
+    assert gap_ft == np.inf
+
+
+def test_surface_planes_and_side_out_slope():
+    point, normal = stereo_engine.surface_plane("front_wall")
+    assert point[1] == 0.0 and np.allclose(normal, [0.0, 1.0, 0.0])
+    point, normal = stereo_engine.surface_plane("floor")
+    assert point[2] == 0.0 and np.allclose(normal, [0.0, 0.0, 1.0])
+    assert stereo_engine.side_wall_out_height_ft(0.0) == 15.0
+    assert stereo_engine.side_wall_out_height_ft(32.0) == 7.0
+    assert stereo_engine.side_wall_out_height_ft(16.0) == 11.0
+
+
+def test_calls_front_wall():
+    out_call = stereo_engine.call_for_impact("front_wall", np.array([10.0, 0.0, 15.4]))
+    assert out_call == ("out", 0.3999999999999986) or (
+        out_call[0] == "out" and abs(out_call[1] - 0.4) < 1e-9)
+    call, margin = stereo_engine.call_for_impact("front_wall", np.array([10.0, 0.0, 1.0]))
+    assert call == "down" and abs(margin - (19.0 / 12.0 - 1.0)) < 1e-9
+    call, margin = stereo_engine.call_for_impact("front_wall", np.array([10.0, 0.0, 8.0]))
+    # Nearest deciding line here is the tin (8 - 19/12), not the out line
+    # (15 - 8 = 7): 19/12 ~= 1.583, so the tin distance (~6.417) is smaller.
+    assert call == "in" and abs(margin - (8.0 - 19.0 / 12.0)) < 1e-9
+
+
+def test_calls_side_and_back_walls_and_floor():
+    call, margin = stereo_engine.call_for_impact("left_wall", np.array([0.0, 16.0, 11.5]))
+    assert call == "out" and abs(margin - 0.5) < 1e-9
+    call, margin = stereo_engine.call_for_impact("right_wall", np.array([21.0, 16.0, 10.0]))
+    assert call == "in" and abs(margin - 1.0) < 1e-9
+    call, margin = stereo_engine.call_for_impact("back_wall", np.array([5.0, 32.0, 7.5]))
+    assert call == "out" and abs(margin - 0.5) < 1e-9
+    assert stereo_engine.call_for_impact("floor", np.array([5.0, 20.0, 0.0])) == ("bounce", 0.0)
+
+
+def test_snap_to_plane_recovers_wall_point():
+    left, right = make_fin_pair()
+    impact = np.array([13.0, 0.0, 12.0])   # on the front wall
+    snap_a = stereo_engine.snap_to_plane(left, left.project(impact), "front_wall")
+    snap_b = stereo_engine.snap_to_plane(right, right.project(impact), "front_wall")
+    assert np.allclose(snap_a, impact, atol=1e-9)
+    assert np.allclose(snap_b, impact, atol=1e-9)
+    fused = stereo_engine.fuse_snaps(snap_a, snap_b)
+    assert np.allclose(fused, impact, atol=1e-9)
+    assert stereo_engine.fuse_snaps(None, snap_b) is snap_b
+    assert stereo_engine.fuse_snaps(None, None) is None
+
+
+def test_snap_rejects_out_of_bounds_and_parallel():
+    left, _ = make_fin_pair()
+    # A pixel whose floor intersection lies far outside the court.
+    assert stereo_engine.snap_to_plane(left, (100000.0, 540.0), "floor") is None
