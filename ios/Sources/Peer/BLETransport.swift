@@ -42,6 +42,12 @@ final class BLETransport: NSObject, PeerTransport {
     /// Control chunks that hit a queue-full (`updateValue` returned false)
     /// indicate; drained in order from `peripheralManagerIsReady`.
     private var pendingIndications: [Data] = []
+    /// Set once `tearDown()` runs; stays true for the life of the instance
+    /// (a torn-down transport is dead — new sessions create new transports).
+    /// Lets delegate callbacks distinguish a stale, already-handled
+    /// completion (e.g. CoreBluetooth's async cancel finishing after we've
+    /// already emitted our own `.disconnected`) from a live one.
+    private var isTearingDown = false
 
     init(queue: DispatchQueue = DispatchQueue(label: "slc.peer.ble")) {
         self.queue = queue
@@ -49,42 +55,57 @@ final class BLETransport: NSObject, PeerTransport {
     }
 
     func startInitiator() {
-        queue.async { [weak self] in self?.onStateChange?(.searching) }
-        central = CBCentralManager(delegate: self, queue: queue)
+        queue.async { [weak self] in
+            guard let self else { return }
+            self.onStateChange?(.searching)
+            self.central = CBCentralManager(delegate: self, queue: self.queue)
+        }
     }
 
     func startResponder() {
-        queue.async { [weak self] in self?.onStateChange?(.searching) }
-        peripheralManager = CBPeripheralManager(delegate: self, queue: queue)
+        queue.async { [weak self] in
+            guard let self else { return }
+            self.onStateChange?(.searching)
+            self.peripheralManager = CBPeripheralManager(delegate: self, queue: self.queue)
+        }
     }
 
     func sendControl(_ frame: Data) {
-        let encoded = FrameCodec.encode(frame)
-        if let peripheral = remotePeripheral, let characteristic = remoteControl {
-            let maxLength = peripheral.maximumWriteValueLength(for: .withResponse)
-            for chunk in BLEChunker.chunks(encoded, maxWriteLength: maxLength) {
-                peripheral.writeValue(chunk, for: characteristic, type: .withResponse)
+        queue.async { [weak self] in
+            guard let self else { return }
+            let encoded = FrameCodec.encode(frame)
+            if let peripheral = self.remotePeripheral, let characteristic = self.remoteControl {
+                let maxLength = peripheral.maximumWriteValueLength(for: .withResponse)
+                for chunk in BLEChunker.chunks(encoded, maxWriteLength: maxLength) {
+                    peripheral.writeValue(chunk, for: characteristic, type: .withResponse)
+                }
+            } else if let manager = self.peripheralManager, let characteristic = self.localControl {
+                let maxLength = self.subscribedCentral?.maximumUpdateValueLength ?? 180
+                self.enqueueIndications(BLEChunker.chunks(encoded, maxWriteLength: maxLength),
+                                        manager: manager, characteristic: characteristic)
             }
-        } else if let manager = peripheralManager, let characteristic = localControl {
-            let maxLength = subscribedCentral?.maximumUpdateValueLength ?? 180
-            enqueueIndications(BLEChunker.chunks(encoded, maxWriteLength: maxLength),
-                               manager: manager, characteristic: characteristic)
         }
     }
 
     func sendDatagram(_ datagram: Data) {
-        if let peripheral = remotePeripheral, let characteristic = remoteDatagram {
-            guard datagram.count <= peripheral.maximumWriteValueLength(for: .withoutResponse) else { return }
-            peripheral.writeValue(datagram, for: characteristic, type: .withoutResponse)
-        } else if let manager = peripheralManager, let characteristic = localDatagram {
-            guard datagram.count <= (subscribedCentral?.maximumUpdateValueLength ?? 180) else { return }
-            _ = manager.updateValue(datagram, for: characteristic, onSubscribedCentrals: nil)
+        queue.async { [weak self] in
+            guard let self else { return }
+            if let peripheral = self.remotePeripheral, let characteristic = self.remoteDatagram {
+                guard datagram.count <= peripheral.maximumWriteValueLength(for: .withoutResponse) else { return }
+                peripheral.writeValue(datagram, for: characteristic, type: .withoutResponse)
+            } else if let manager = self.peripheralManager, let characteristic = self.localDatagram {
+                guard datagram.count <= (self.subscribedCentral?.maximumUpdateValueLength ?? 180) else { return }
+                _ = manager.updateValue(datagram, for: characteristic, onSubscribedCentrals: nil)
+            }
         }
     }
 
     func stop() {
-        tearDown()
-        onStateChange?(.disconnected("stopped"))
+        queue.async { [weak self] in
+            guard let self else { return }
+            self.tearDown()
+            self.onStateChange?(.disconnected("stopped"))
+        }
     }
 
     /// Sends `chunks` via `updateValue` in order; on the first queue-full
@@ -105,6 +126,7 @@ final class BLETransport: NSObject, PeerTransport {
     /// path in `ingestControlChunk`. Callers are responsible for emitting
     /// their own `onStateChange` event around this call.
     private func tearDown() {
+        isTearingDown = true
         if let remotePeripheral { central?.cancelPeripheralConnection(remotePeripheral) }
         central?.stopScan()
         peripheralManager?.stopAdvertising()
@@ -137,6 +159,7 @@ extension BLETransport: CBCentralManagerDelegate, CBPeripheralDelegate {
             central.scanForPeripherals(withServices: [Self.serviceUUID])
         case .poweredOff, .unauthorized, .unsupported:
             onStateChange?(.disconnected("bluetooth unavailable: \(central.state)"))
+            tearDown()
         case .resetting, .unknown:
             break
         @unknown default:
@@ -158,11 +181,14 @@ extension BLETransport: CBCentralManagerDelegate, CBPeripheralDelegate {
 
     func centralManager(_ central: CBCentralManager, didFailToConnect peripheral: CBPeripheral,
                         error: Error?) {
+        guard !isTearingDown else { return }
         onStateChange?(.disconnected(error?.localizedDescription ?? "connect failed"))
+        tearDown()
     }
 
     func centralManager(_ central: CBCentralManager, didDisconnectPeripheral peripheral: CBPeripheral,
                         error: Error?) {
+        guard !isTearingDown else { return }
         onStateChange?(.disconnected(error?.localizedDescription ?? "peer disconnected"))
     }
 
@@ -187,7 +213,7 @@ extension BLETransport: CBCentralManagerDelegate, CBPeripheralDelegate {
 
     func peripheral(_ peripheral: CBPeripheral, didUpdateNotificationStateFor characteristic: CBCharacteristic,
                     error: Error?) {
-        guard let error else { return }
+        guard !isTearingDown, let error else { return }
         onStateChange?(.disconnected("subscribe failed: \(error.localizedDescription)"))
     }
 
@@ -215,6 +241,7 @@ extension BLETransport: CBPeripheralManagerDelegate {
             manager.add(service)
         case .poweredOff, .unauthorized, .unsupported:
             onStateChange?(.disconnected("bluetooth unavailable: \(manager.state)"))
+            tearDown()
         case .resetting, .unknown:
             break
         @unknown default:
@@ -225,8 +252,10 @@ extension BLETransport: CBPeripheralManagerDelegate {
     func peripheralManager(_ manager: CBPeripheralManager, didAdd service: CBService, error: Error?) {
         if let error {
             onStateChange?(.disconnected("service add failed: \(error.localizedDescription)"))
+            tearDown()
             return
         }
+        guard manager.state == .poweredOn else { return }
         manager.startAdvertising([CBAdvertisementDataServiceUUIDsKey: [Self.serviceUUID]])
     }
 
