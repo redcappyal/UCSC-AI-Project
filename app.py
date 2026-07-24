@@ -635,6 +635,11 @@ def camera_model():
     Same input contract and always-200 convention as /api/camera-check; adds
     the solved model (court_model.CameraModel.to_dict) under "camera_model"
     when the solve succeeds. Phones exchange these solved models at pairing.
+
+    The solved frame size is echoed at the top level as well as inside the
+    model: every px-valued field is only meaningful in that pixel space, and
+    a client running a different capture resolution has to scale the model
+    (court_model.scale_camera_model) before casting rays through it.
     """
     payload = request.get_json(silent=True) or {}
     calibration = payload.get("calibration")
@@ -647,6 +652,8 @@ def camera_model():
     response = {"ok": True, **info}
     if model is not None and info.get("status") == "ok":
         response["camera_model"] = model.to_dict()
+        response["frame_width"] = model.frame_width
+        response["frame_height"] = model.frame_height
     return jsonify(response)
 
 
