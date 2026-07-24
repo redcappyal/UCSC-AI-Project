@@ -26,6 +26,14 @@ struct RecordView: View {
                         .background(Theme.surface, in: Capsule())
                         .padding(.top, 8)
                 }
+                if let exposureNote = model.exposureNote {
+                    Text(exposureNote)
+                        .font(.footnote)
+                        .foregroundStyle(Theme.dim)
+                        .padding(.horizontal, 12).padding(.vertical, 6)
+                        .background(Theme.surface, in: Capsule())
+                        .padding(.top, 8)
+                }
                 Spacer()
                 recordControls
             }
