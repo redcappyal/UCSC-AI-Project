@@ -15,6 +15,13 @@ trimesh
 manifold3d
 shapely
 
-# docs/mount-spec.pdf build (docs/build_spec_pdf.py; also needs rsvg-convert on PATH)
+# docs/*.pdf builds (docs/build_spec_pdf.py, docs/build_annotation_pdf.py).
+# The mount spec additionally needs rsvg-convert on PATH for its figure pages;
+# the annotation guide is text-only and needs neither.
 reportlab
 pypdf
+
+# Roboflow dataset pull (train_yolo_ball.py). Lazy-imported, so the test suite
+# and prepare_ball_dataset.py — which reads an already-exported COCO tree — both
+# run without it.
+roboflow

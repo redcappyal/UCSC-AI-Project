@@ -1,0 +1,173 @@
+"""prepare_ball_dataset: geometry, splitting and crop planning (no cv2 needed)."""
+
+import random
+import sys
+from pathlib import Path
+
+import pytest
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from prepare_ball_dataset import (
+    _clip_box, burst_count, clip_and_frame, clip_scale_factors, plan_crops,
+    polygon_aabb, polygon_points, split_by_clip, streak_metrics, thin_bursts,
+)
+
+
+def frame(clip="A", number=0, balls=(), width=1920, height=1080):
+    return {"path": Path(f"{clip}_mov-{number:04d}_jpg.jpg"), "clip": clip,
+            "frame": number, "width": width, "height": height,
+            "balls": [{"bbox": list(b), "streak": None} for b in balls]}
+
+
+def test_clip_and_frame_splits_roboflow_names():
+    assert clip_and_frame("Bay-Club-1_mov-0042_jpg.rf.abc.jpg") == ("Bay-Club-1", 42)
+    assert clip_and_frame("SQUASHCLIP_MOV-0158_jpg.rf.d.jpg") == ("SQUASHCLIP", 158)
+    # Unparseable names still yield a stable clip so they can't silently
+    # scatter across splits.
+    assert clip_and_frame("loose.rf.hash.jpg") == ("loose", None)
+
+
+def test_polygon_aabb_bounds_the_ring():
+    points = polygon_points([[10, 20, 30, 20, 30, 50, 10, 50]])
+    assert polygon_aabb(points) == (10, 20, 20, 30)
+
+
+def test_streak_metrics_separates_round_from_streaked():
+    round_ball = streak_metrics([(0, 0), (10, 0), (10, 10), (0, 10)])
+    assert round_ball["aspect"] == pytest.approx(1.0, abs=0.45)
+
+    streak = streak_metrics([(0, 0), (100, 0), (100, 10), (0, 10)])
+    assert streak["aspect"] > 4
+    assert streak["length"] == pytest.approx(100.5, abs=1.0)
+    # Endpoints are the exposure path, which is what judge_call.py wants. Both
+    # diagonals of this rectangle are equally the major axis, so assert the
+    # span rather than which one was picked.
+    (ax, ay), (bx, by) = streak["endpoints"]
+    assert {ax, bx} == {0, 100} and {ay, by} == {0, 10}
+
+
+def test_streak_metrics_needs_two_points():
+    assert streak_metrics([(1, 1)]) is None
+
+
+def test_burst_count_collapses_consecutive_runs():
+    # 20 consecutive frames are one moment, not twenty.
+    run = [frame(number=n) for n in range(20)]
+    assert burst_count(run) == 1
+    spread = [frame(number=n * 30) for n in range(20)]
+    assert burst_count(spread) == 20
+
+
+def test_thin_bursts_keeps_one_frame_per_gap():
+    kept, dropped = thin_bursts([frame(number=n) for n in range(10)], min_gap=5)
+    assert [r["frame"] for r in kept] == [0, 5]
+    assert dropped == 8
+
+
+def test_thin_bursts_is_a_noop_at_gap_one():
+    records = [frame(number=n) for n in range(4)]
+    kept, dropped = thin_bursts(records, min_gap=1)
+    assert kept == records and dropped == 0
+
+
+def test_thin_bursts_counts_per_clip():
+    records = [frame(clip="A", number=0), frame(clip="B", number=1),
+               frame(clip="A", number=1)]
+    kept, _ = thin_bursts(records, min_gap=5)
+    # B's frame 1 is its own clip's first, so the gap is not shared with A.
+    assert {(r["clip"], r["frame"]) for r in kept} == {("A", 0), ("B", 1)}
+
+
+def test_split_by_clip_never_lets_a_clip_span_splits():
+    records = [frame(clip="A"), frame(clip="B"), frame(clip="C")]
+    splits = split_by_clip(records, val_clips=["B"], test_clips=["C"])
+    assert [r["clip"] for r in splits["train"]] == ["A"]
+    assert [r["clip"] for r in splits["val"]] == ["B"]
+    assert [r["clip"] for r in splits["test"]] == ["C"]
+
+
+def test_split_by_clip_rejects_a_clip_in_two_splits():
+    with pytest.raises(SystemExit):
+        split_by_clip([frame(clip="A")], val_clips=["A"], test_clips=["A"])
+
+
+def test_clip_scale_factors_normalise_median_ball_and_clamp():
+    records = [frame(clip="A", balls=[(0, 0, 10, 10)]),
+               frame(clip="A", balls=[(0, 0, 20, 20)])]
+    assert clip_scale_factors(records, target_ball_px=30)["A"] == pytest.approx(2.0)
+    # A clip needing 100x to reach the target is out of domain, not rescalable.
+    tiny = [frame(clip="B", balls=[(0, 0, 1, 1)])]
+    assert clip_scale_factors(tiny, target_ball_px=100)["B"] == 4.0
+    assert clip_scale_factors(records, target_ball_px=0) == {}
+
+
+def test_clip_box_drops_a_ball_mostly_outside_the_window():
+    # Fully inside.
+    assert _clip_box([10, 10, 20, 20], 0, 0, 416, 0.6) == [10, 10, 20, 20]
+    # Only a sliver survives -> dropped rather than taught as a whole ball.
+    assert _clip_box([-18, 10, 20, 20], 0, 0, 416, 0.6) is None
+    # Entirely outside.
+    assert _clip_box([500, 500, 20, 20], 0, 0, 416, 0.6) is None
+
+
+def test_plan_crops_keeps_the_ball_inside_every_positive():
+    record = frame(balls=[(900, 500, 12, 12)])
+    plans = plan_crops(record, crop=416, scale=1.0, rng=random.Random(0),
+                       positives=8, negatives=0, jitter=0.8, min_visible=0.6)
+    assert len(plans) == 8
+    for plan in plans:
+        assert plan["boxes"], "a positive crop must contain its ball"
+        for box in plan["boxes"]:
+            x, y, w, h = box["bbox"]
+            assert 0 <= x and 0 <= y and x + w <= 416 and y + h <= 416
+
+
+def test_plan_crops_jitter_moves_the_ball_off_centre():
+    record = frame(balls=[(900, 500, 12, 12)])
+    plans = plan_crops(record, crop=416, scale=1.0, rng=random.Random(1),
+                       positives=12, negatives=0, jitter=0.8, min_visible=0.6)
+    centres = {round(plan["boxes"][0]["bbox"][0], 1) for plan in plans}
+    assert len(centres) > 1, "a centred ball teaches the head to predict the centre"
+
+
+def test_plan_crops_zero_jitter_centres_every_crop():
+    record = frame(balls=[(900, 500, 12, 12)])
+    plans = plan_crops(record, crop=416, scale=1.0, rng=random.Random(2),
+                       positives=3, negatives=0, jitter=0.0, min_visible=0.6)
+    assert len({tuple(p["origin"]) for p in plans}) == 1
+
+
+def test_plan_crops_negatives_contain_no_ball():
+    record = frame(balls=[(900, 500, 12, 12)])
+    plans = plan_crops(record, crop=416, scale=1.0, rng=random.Random(3),
+                       positives=1, negatives=20, jitter=0.8, min_visible=0.6)
+    negatives = [p for p in plans if not p["boxes"]]
+    assert negatives, "hard negatives are where wall ball-marks come from"
+    for plan in negatives:
+        ox, oy = plan["origin"]
+        assert _clip_box([900, 500, 12, 12], ox, oy, 416, 0.6) is None
+
+
+def test_plan_crops_skips_frames_smaller_than_the_window():
+    record = frame(balls=[(10, 10, 5, 5)], width=480, height=272)
+    assert plan_crops(record, crop=416, scale=1.0, rng=random.Random(0),
+                      positives=4, negatives=1, jitter=0.8, min_visible=0.6) == []
+
+
+def test_plan_crops_scale_rescales_boxes_with_the_frame():
+    record = frame(balls=[(900, 500, 10, 10)])
+    plans = plan_crops(record, crop=416, scale=2.0, rng=random.Random(0),
+                       positives=4, negatives=0, jitter=0.0, min_visible=0.6)
+    for plan in plans:
+        width = plan["boxes"][0]["bbox"][2]
+        assert width == pytest.approx(20.0)
+
+
+def test_plan_crops_is_deterministic_for_a_seed():
+    record = frame(balls=[(900, 500, 12, 12)])
+    args = dict(crop=416, scale=1.0, positives=5, negatives=3,
+                jitter=0.8, min_visible=0.6)
+    first = plan_crops(record, rng=random.Random(7), **args)
+    second = plan_crops(record, rng=random.Random(7), **args)
+    assert [p["origin"] for p in first] == [p["origin"] for p in second]
