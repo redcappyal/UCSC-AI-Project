@@ -23,7 +23,23 @@ final class RecordModel: ObservableObject {
 
     var detectorMissing: Bool { !tracker.isEnabled }
 
+    enum DetectorKind: Equatable { case none, synthetic, model }
+
+    /// `detectorMissing` only knows nil-vs-non-nil, so it cannot tell a real
+    /// model from the DEBUG stand-in. The UI must never imply a real detection
+    /// when the source is synthetic.
+    @Published private(set) var detectorKind: DetectorKind
+
     init(detector: BallDetecting? = CoreMLBallDetector()) {
+        if detector == nil {
+            detectorKind = .none
+        } else {
+            #if DEBUG
+            detectorKind = detector is SyntheticBallDetector ? .synthetic : .model
+            #else
+            detectorKind = .model
+            #endif
+        }
         tracker = BallTracker(detector: detector)
         tracker.subscribe { [weak self] observation in
             guard let self else { return }
