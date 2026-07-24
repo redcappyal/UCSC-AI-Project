@@ -44,6 +44,45 @@ final class RecordModel: ObservableObject {
         }
     }
 
+    // MARK: peer streaming
+
+    let remoteDetections = RemoteDetectionStore()
+    private var peer: PeerSession?
+    private var peerPumpTimer: Timer?
+    private var nextDetectionSeq: UInt32 = 0
+    private var pendingTuples: [DetectionTuple] = []
+    private var lastFlushAt: TimeInterval = 0
+    private let peerFrameW = 1080, peerFrameH = 1920   // matches Hello until Phase 4
+
+    /// Wire a paired session. Safe to call once, after init. Subscriber runs
+    /// on the main queue (BallTracker's fan-out queue). The timer pump keeps
+    /// heartbeats/sync alive even when no ball is detected — a primary with
+    /// zero local detections must still tick.
+    func attachPeer(_ peer: PeerSession) {
+        self.peer = peer
+        peer.onRemoteDetections = { [weak self] tuples in
+            self?.remoteDetections.append(tuples)
+        }
+        peerPumpTimer?.invalidate()
+        peerPumpTimer = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { [weak peer] _ in
+            peer?.tick(now: ClockSync.hostNow())
+        }
+        tracker.subscribe { [weak self] observation in
+            guard let self, let peer = self.peer, peer.role == .secondary else { return }
+            let tuple = DetectionMapper.tuple(seq: self.nextDetectionSeq,
+                                              observation: observation,
+                                              frameW: self.peerFrameW, frameH: self.peerFrameH)
+            self.nextDetectionSeq += 1
+            self.pendingTuples.append(tuple)
+            let now = observation.timestamp
+            if self.pendingTuples.count >= 2 || now - self.lastFlushAt >= 0.030 {
+                peer.sendDetections(self.pendingTuples)
+                self.pendingTuples.removeAll(keepingCapacity: true)
+                self.lastFlushAt = now
+            }
+        }
+    }
+
     func startCamera() async {
         do {
             try await camera.configure()
@@ -78,5 +117,35 @@ final class RecordModel: ObservableObject {
                 errorText = error.localizedDescription
             }
         }
+    }
+}
+
+final class RemoteDetectionStore {
+    private let lock = NSLock()
+    private var buffer = RingBuffer<DetectionTuple>(capacity: BallTracker.bufferCapacity)
+
+    func append(_ tuples: [DetectionTuple]) {
+        lock.lock(); defer { lock.unlock() }
+        for tuple in tuples { buffer.append(tuple) }
+    }
+
+    var recent: [DetectionTuple] {
+        lock.lock(); defer { lock.unlock() }
+        return buffer.elements
+    }
+}
+
+enum DetectionMapper {
+    /// Vision-normalized (bottom-left) rect → pixel tuple in the LOCAL
+    /// frame (frameW/frameH). y flips to top-left row for rolling shutter.
+    static func tuple(seq: UInt32, observation: BallObservation,
+                      frameW: Int, frameH: Int) -> DetectionTuple {
+        DetectionTuple(
+            seq: seq,
+            ptsNs: UInt64(observation.timestamp * 1_000_000_000),
+            x: Float(observation.rect.midX) * Float(frameW),
+            y: Float(1 - observation.rect.midY) * Float(frameH),
+            conf: Float16(observation.confidence),
+            bboxH: Float16(Float(observation.rect.height) * Float(frameH)))
     }
 }
