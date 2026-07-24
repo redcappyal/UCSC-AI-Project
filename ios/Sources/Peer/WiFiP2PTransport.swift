@@ -47,12 +47,24 @@ final class WiFiP2PTransport: PeerTransport {
         queue.async { [weak self] in
             guard let self else { return }
             self.onStateChange?(.searching)
-            self.startUDPListener()
+            guard self.startUDPListener() else { return }
             do {
                 let listener = try NWListener(using: Self.p2pParameters(.tcp))
                 listener.service = NWListener.Service(name: UUID().uuidString, type: Self.bonjourType)
+                listener.stateUpdateHandler = { [weak self] state in
+                    guard let self else { return }
+                    switch state {
+                    case .failed(let error):
+                        guard !self.isTearingDown else { return }
+                        self.onStateChange?(.disconnected("tcp listener: \(error.localizedDescription)"))
+                        self.tearDown()
+                    default:
+                        break
+                    }
+                }
                 listener.newConnectionHandler = { [weak self] connection in
-                    self?.adoptControl(connection)
+                    guard let self, !self.isTearingDown else { return }
+                    self.adoptControl(connection)
                 }
                 listener.start(queue: self.queue)
                 self.tcpListener = listener
@@ -67,11 +79,22 @@ final class WiFiP2PTransport: PeerTransport {
         queue.async { [weak self] in
             guard let self else { return }
             self.onStateChange?(.searching)
-            self.startUDPListener()
+            guard self.startUDPListener() else { return }
             let browser = NWBrowser(for: .bonjour(type: Self.bonjourType, domain: nil),
                                     using: Self.p2pParameters(.tcp))
+            browser.stateUpdateHandler = { [weak self] state in
+                guard let self else { return }
+                switch state {
+                case .failed(let error):
+                    guard !self.isTearingDown else { return }
+                    self.onStateChange?(.disconnected("browser: \(error.localizedDescription)"))
+                    self.tearDown()
+                default:
+                    break
+                }
+            }
             browser.browseResultsChangedHandler = { [weak self] results, _ in
-                guard let self, self.control == nil, let first = results.first else { return }
+                guard let self, !self.isTearingDown, self.control == nil, let first = results.first else { return }
                 self.browser?.cancel()
                 self.adoptControl(NWConnection(to: first.endpoint, using: Self.p2pParameters(.tcp)))
             }
@@ -103,19 +126,40 @@ final class WiFiP2PTransport: PeerTransport {
         connection.start(queue: queue)
     }
 
-    private func startUDPListener() {
+    /// Returns `false` (and has already torn the instance down) if the UDP
+    /// listener could not be constructed — callers must bail immediately
+    /// rather than go on to build a TCP listener/browser on a dead instance.
+    private func startUDPListener() -> Bool {
         do {
             let listener = try NWListener(using: Self.p2pParameters(.udp))
+            listener.stateUpdateHandler = { [weak self] state in
+                guard let self else { return }
+                switch state {
+                case .failed(let error):
+                    guard !self.isTearingDown else { return }
+                    self.onStateChange?(.disconnected("udp listener: \(error.localizedDescription)"))
+                    self.tearDown()
+                default:
+                    break
+                }
+            }
             listener.newConnectionHandler = { [weak self] connection in
-                self?.datagramIn = connection
-                self?.receiveDatagramLoop(connection)
-                connection.start(queue: self?.queue ?? .main)
+                guard let self, !self.isTearingDown else { return }
+                self.datagramIn = connection
+                connection.stateUpdateHandler = { [weak self] state in
+                    guard let self else { return }
+                    if case .failed(let error) = state { self.handleDatagramFailure(error) }
+                }
+                self.receiveDatagramLoop(connection)
+                connection.start(queue: self.queue)
             }
             listener.start(queue: queue)
             udpListener = listener
+            return true
         } catch {
             onStateChange?(.disconnected("udp listener failed: \(error.localizedDescription)"))
             tearDown()
+            return false
         }
     }
 
@@ -123,6 +167,15 @@ final class WiFiP2PTransport: PeerTransport {
         guard !announcedLocalUDPPort, let port = udpListener?.port else { return }
         announcedLocalUDPPort = true
         rawSendControl(FrameCodec.encode(Data("UDP:\(port.rawValue)".utf8)))
+    }
+
+    /// Shared by the outbound (`datagramOut`) and inbound (`datagramIn`)
+    /// datagram connections: a mid-session drop must not leave a
+    /// "connected" session silently carrying no detections.
+    private func handleDatagramFailure(_ error: Error) {
+        guard !isTearingDown else { return }
+        onStateChange?(.disconnected("datagram path failed: \(error.localizedDescription)"))
+        tearDown()
     }
 
     // MARK: receive
@@ -160,10 +213,22 @@ final class WiFiP2PTransport: PeerTransport {
               let rawPort = UInt16(text.dropFirst(4)),
               let port = NWEndpoint.Port(rawValue: rawPort),
               let control = control,
-              case .hostPort(let host, _)? = control.currentPath?.remoteEndpoint else { return }
+              case .hostPort(let host, _)? = control.currentPath?.remoteEndpoint else {
+            onStateChange?(.disconnected("datagram path setup failed"))
+            tearDown()
+            return
+        }
         let connection = NWConnection(host: host, port: port, using: Self.p2pParameters(.udp))
         connection.stateUpdateHandler = { [weak self] state in
-            if case .ready = state { self?.onStateChange?(.connected) }
+            guard let self else { return }
+            switch state {
+            case .ready:
+                self.onStateChange?(.connected)
+            case .failed(let error):
+                self.handleDatagramFailure(error)
+            default:
+                break
+            }
         }
         connection.start(queue: queue)
         datagramOut = connection
