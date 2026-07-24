@@ -125,6 +125,58 @@ def test_judge_hits_wall_events_judged_as_before(tmp_path):
     assert payload["target_zones"]["common_zones"][0]["zone"] == 4
 
 
+def test_judge_hits_does_not_call_horizontal_sidewall_out(tmp_path):
+    import json as json_module
+
+    from job_runner import judge_hits
+
+    (tmp_path / "calibration.json").write_text(json_module.dumps({
+        "lines": [
+            {"name": "out_line_lower_edge", "endpoints": [[100, 100], [1100, 100]]},
+            {"name": "tin_top_edge", "endpoints": [[100, 700], [1100, 700]]},
+        ],
+        "planes": {
+            "wall": {
+                "corners": [
+                    {"id": "top_left", "tap_px": [200, 50]},
+                    {"id": "top_right", "tap_px": [1000, 80]},
+                    {"id": "bottom_right", "tap_px": [940, 760]},
+                    {"id": "bottom_left", "tap_px": [260, 730]},
+                ]
+            }
+        },
+    }))
+    results = {
+        60: {
+            "source_frame": 60,
+            "timestamp_seconds": "2.000000",
+            "detected": "True",
+            "x_center": "160.000",
+            "y_center": "400.000",
+        }
+    }
+    hit = {
+        "hit_frame": 60,
+        "timestamp_seconds": 2.0,
+        "dv_magnitude": 400.0,
+        "speed_before": 400.0,
+        "speed_after": 380.0,
+        "after_gap": False,
+        "event_type": "wall",
+    }
+
+    judged = judge_hits(tmp_path, results, [hit])
+
+    entry = judged[0]
+    assert entry["call"] is None
+    assert entry["reason"] == "outside_wall_x_bounds"
+    assert entry["margin_px"] is None
+    assert "target_zone" not in entry
+
+    payload = json.loads((tmp_path / "detected_hits.json").read_text())
+    assert payload["target_zones"]["total_wall_hits"] == 0
+
+
 def test_target_zone_layout_matches_front_wall_sketch():
     from job_runner import target_zone_for_diagram
 
@@ -138,21 +190,23 @@ def test_target_zone_layout_matches_front_wall_sketch():
     assert target_zone_for_diagram({"x": 0.92, "y": 0.95})["zone"] == 8
 
 
-def test_target_zones_are_split_by_alternating_players():
+def test_target_zones_are_split_by_players_within_one_rally(monkeypatch):
     from job_runner import assign_front_wall_hit_players, build_player_target_zone_summaries
 
+    monkeypatch.setenv("PLAYER_ASSIGNMENT_RALLY_GAP_SECONDS", "5")
     hits = [
-        {"frame": 10, "timestamp_seconds": 1.0, "event_type": "wall", "target_zone": {"zone": 1}},
-        {"frame": 20, "timestamp_seconds": 2.0, "event_type": "wall", "target_zone": {"zone": 4}},
+        {"frame": 10, "timestamp_seconds": 1.0, "event_type": "wall", "call": "IN", "target_zone": {"zone": 1}},
+        {"frame": 20, "timestamp_seconds": 2.0, "event_type": "wall", "call": "IN", "target_zone": {"zone": 4}},
         {"frame": 30, "timestamp_seconds": 3.0, "event_type": "floor", "target_zone": {"zone": 5}},
-        {"frame": 40, "timestamp_seconds": 4.0, "event_type": "wall", "target_zone": {"zone": 5}},
-        {"frame": 50, "timestamp_seconds": 5.0, "event_type": "wall", "target_zone": {"zone": 2}},
+        {"frame": 40, "timestamp_seconds": 4.0, "event_type": "wall", "call": "IN", "target_zone": {"zone": 5}},
+        {"frame": 50, "timestamp_seconds": 5.0, "event_type": "wall", "call": "IN", "target_zone": {"zone": 2}},
     ]
 
-    assign_front_wall_hit_players(hits)
+    assignment = assign_front_wall_hit_players(hits)
     summaries = build_player_target_zone_summaries(hits)
 
     assert [hit.get("player_number") for hit in hits if hit.get("event_type") == "wall"] == [1, 2, 1, 2]
+    assert assignment["rally_count"] == 1
     assert hits[0]["front_wall_sequence"] == 1
     assert hits[1]["front_wall_sequence"] == 2
     assert summaries["1"]["total_wall_hits"] == 2
@@ -161,6 +215,27 @@ def test_target_zones_are_split_by_alternating_players():
     assert summaries["2"]["total_wall_hits"] == 2
     assert summaries["2"]["zones"][1]["count"] == 1
     assert summaries["2"]["zones"][3]["count"] == 1
+
+
+def test_player_assignment_resets_each_rally_from_previous_winner(monkeypatch):
+    from job_runner import assign_front_wall_hit_players
+
+    monkeypatch.setenv("PLAYER_ASSIGNMENT_RALLY_GAP_SECONDS", "5")
+    hits = [
+        {"frame": 10, "timestamp_seconds": 1.0, "event_type": "wall", "call": "IN", "target_zone": {"zone": 1}},
+        {"frame": 20, "timestamp_seconds": 2.0, "event_type": "wall", "call": "OUT", "target_zone": {"zone": 4}},
+        {"frame": 80, "timestamp_seconds": 8.0, "event_type": "wall", "call": "IN", "target_zone": {"zone": 6}},
+        {"frame": 90, "timestamp_seconds": 9.0, "event_type": "wall", "call": "IN", "target_zone": {"zone": 7}},
+        {"frame": 150, "timestamp_seconds": 15.0, "event_type": "wall", "call": "IN", "target_zone": {"zone": 8}},
+    ]
+
+    assignment = assign_front_wall_hit_players(hits)
+
+    assert assignment["rally_count"] == 3
+    assert [rally["server_player_number"] for rally in assignment["rallies"]] == [1, 1, 2]
+    assert [rally["winner_player_number"] for rally in assignment["rallies"]] == [1, 2, 2]
+    assert [hit["rally_number"] for hit in hits] == [1, 1, 2, 2, 3]
+    assert [hit["player_number"] for hit in hits] == [1, 2, 1, 2, 2]
 
 
 def test_job_restart_recovery(tmp_path, monkeypatch):

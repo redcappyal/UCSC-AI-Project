@@ -29,6 +29,8 @@ DEFAULT_STATIONARY_WINDOW_FRAMES = 8
 DEFAULT_STATIONARY_MIN_DETECTIONS = 4
 DEFAULT_STATIONARY_MIN_SPAN_PX = 12.0
 DEFAULT_STATIONARY_MIN_PATH_PX = 18.0
+DEFAULT_MAX_BALL_JUMP_BASE_PX = 90.0
+DEFAULT_MAX_BALL_JUMP_PX_PER_FRAME = 55.0
 
 _ARTIFACT_CACHE = {}
 
@@ -391,6 +393,22 @@ def collapse_wall_area_duplicates(candidates, max_gap=DEFAULT_WALL_VISIT_GAP_FRA
     return sorted(picked, key=lambda item: item["hit_frame"])
 
 
+def is_plausible_ball_step(prev_frame, prev_x, prev_y, frame, x, y):
+    if prev_frame is None:
+        return True
+
+    frame_gap = max(1, abs(int(frame) - int(prev_frame)))
+    max_jump = (
+        env_float("BOUNCE_GB_MAX_BALL_JUMP_BASE_PX", DEFAULT_MAX_BALL_JUMP_BASE_PX)
+        + env_float(
+            "BOUNCE_GB_MAX_BALL_JUMP_PX_PER_FRAME",
+            DEFAULT_MAX_BALL_JUMP_PX_PER_FRAME,
+        ) * frame_gap
+    )
+    distance = ((float(x) - float(prev_x)) ** 2 + (float(y) - float(prev_y)) ** 2) ** 0.5
+    return distance <= max_jump
+
+
 def collapse_front_wall_chunks(
     candidates,
     parsed_rows,
@@ -410,10 +428,23 @@ def collapse_front_wall_chunks(
     chunks = []
     current_candidates = []
     current_frames = []
+    last_accepted_frame = None
+    last_accepted_x = None
+    last_accepted_y = None
 
     for frame in sorted(parsed_rows):
         row = parsed_rows[frame]
         if not finite_point(row):
+            continue
+
+        if not is_plausible_ball_step(
+            last_accepted_frame,
+            last_accepted_x,
+            last_accepted_y,
+            frame,
+            row["x"],
+            row["y"],
+        ):
             continue
 
         inside_front_wall = inside_front_wall_chunk_gate(
@@ -427,9 +458,15 @@ def collapse_front_wall_chunks(
                 chunks.append((current_frames, current_candidates))
                 current_frames = []
                 current_candidates = []
+                last_accepted_frame = None
+                last_accepted_x = None
+                last_accepted_y = None
             continue
 
         current_frames.append(int(frame))
+        last_accepted_frame = int(frame)
+        last_accepted_x = float(row["x"])
+        last_accepted_y = float(row["y"])
         candidate = candidates_by_frame.get(int(frame))
         if candidate is not None:
             current_candidates.append(candidate)

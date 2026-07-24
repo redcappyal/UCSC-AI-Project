@@ -5,7 +5,54 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from app import build_coaching_analytics, local_coaching_feedback
+from app import build_coaching_analytics, local_coaching_feedback, player_error_metrics
+
+
+def test_player_error_metrics_classifies_lost_rallies_and_calculates_percentage():
+    rallies = [
+        {
+            "winner_player_number": 1,
+            "last_player_number": 2,
+            "last_call": "OUT",
+        },
+        {
+            "winner_player_number": 2,
+            "last_player_number": 2,
+            "last_call": "IN",
+        },
+        {
+            "winner_player_number": 2,
+            "last_player_number": 1,
+            "last_call": "OUT",
+        },
+        {
+            "winner_player_number": None,
+            "last_player_number": 1,
+            "last_call": None,
+        },
+    ]
+
+    assert player_error_metrics(rallies, 1) == {
+        "unforced_errors": 1,
+        "forced_errors": 1,
+        "total_errors": 2,
+        "unforced_error_percentage": 50.0,
+    }
+    assert player_error_metrics(rallies, 2) == {
+        "unforced_errors": 1,
+        "forced_errors": 0,
+        "total_errors": 1,
+        "unforced_error_percentage": 100.0,
+    }
+
+
+def test_player_error_metrics_has_no_percentage_without_a_rally_loss():
+    assert player_error_metrics([], 1) == {
+        "unforced_errors": 0,
+        "forced_errors": 0,
+        "total_errors": 0,
+        "unforced_error_percentage": None,
+    }
 
 
 def test_coaching_analytics_summarizes_target_and_speed_data():
@@ -101,6 +148,18 @@ def test_coaching_analytics_summarizes_target_and_speed_data():
             "common_zones": [{"zone": "middle", "count": 1, "percentage": 100.0}],
             "missing_zones": [],
         },
+        "rallies": [
+            {
+                "winner_player_number": 1,
+                "last_player_number": 2,
+                "last_call": "OUT",
+            },
+            {
+                "winner_player_number": 2,
+                "last_player_number": 2,
+                "last_call": "IN",
+            },
+        ],
     }
 
     analytics = build_coaching_analytics(payload)
@@ -118,9 +177,15 @@ def test_coaching_analytics_summarizes_target_and_speed_data():
     assert analytics["players"][0]["player_number"] == 1
     assert analytics["players"][0]["total_wall_hits"] == 1
     assert analytics["players"][0]["common_target_zones"][0]["zone"] == 4
+    assert analytics["players"][0]["unforced_errors"] == 0
+    assert analytics["players"][0]["forced_errors"] == 1
+    assert analytics["players"][0]["unforced_error_percentage"] == 0.0
     assert analytics["players"][1]["player_number"] == 2
     assert analytics["players"][1]["total_wall_hits"] == 1
     assert analytics["players"][1]["common_target_zones"][0]["zone"] == 5
+    assert analytics["players"][1]["unforced_errors"] == 1
+    assert analytics["players"][1]["forced_errors"] == 0
+    assert analytics["players"][1]["unforced_error_percentage"] == 100.0
 
     feedback = local_coaching_feedback(analytics)
     assert "Player 1" in feedback

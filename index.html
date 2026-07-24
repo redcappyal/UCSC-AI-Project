@@ -103,6 +103,12 @@
     padding:12px 14px calc(70px + env(safe-area-inset-bottom))}
   body.phase-load main{flex:1; display:flex; flex-direction:column; justify-content:center}
   body.phase-target main{flex:1 1 auto; min-height:0; overflow-y:auto; -webkit-overflow-scrolling:touch}
+  /* Keep the stage at its pre-rally-visualization size. JS measures the
+     original track controls (with the rally card hidden) into this variable;
+     the added card then scrolls inside the same control footprint. */
+  body.phase-track main{height:var(--track-main-height,55dvh);
+    flex:0 0 var(--track-main-height,55dvh);
+    overflow-y:auto; -webkit-overflow-scrolling:touch}
   main section{display:flex; flex-direction:column; gap:10px}
 
   h2{font-size:21px; text-align:center}
@@ -210,6 +216,37 @@
   .hitBar.side::before{--mk:var(--mk-side)}
   .hitBar.selected::before{box-shadow:0 0 0 2px var(--text),
     0 0 12px 1px color-mix(in srgb, var(--mk,#fff) 85%, transparent)}
+
+  /* Rally segmentation: one proportional ribbon for the model's inferred
+     boundaries, plus a text chip for every winner so color is never the only
+     carrier of meaning. */
+  .rallyViz{background:var(--surface); border:1px solid var(--line); border-radius:8px;
+    overflow:hidden}
+  .rallyVizHead{display:flex; align-items:baseline; justify-content:space-between; gap:10px;
+    padding:8px 12px 6px; border-bottom:1px solid var(--line)}
+  .rallyVizHead strong{font-size:15px; font-weight:700}
+  .rallyVizHead span{font-size:12px; color:var(--dim); white-space:nowrap;
+    font-variant-numeric:tabular-nums}
+  .rallyRibbon{position:relative; height:44px; margin:8px 12px 6px; overflow:hidden;
+    border:1px solid var(--line); border-radius:8px; background:var(--bg)}
+  .rallySegment{position:absolute; top:0; bottom:0; min-width:2px; overflow:hidden;
+    display:flex; align-items:center; justify-content:center; flex-direction:column;
+    border-right:2px solid var(--bg); background:var(--line); color:var(--text);
+    font-variant-numeric:tabular-nums}
+  .rallySegment:last-child{border-right:0}
+  .rallySegment strong{font-size:13px; line-height:1.1; white-space:nowrap}
+  .rallySegment span{max-width:100%; overflow:hidden; text-overflow:ellipsis;
+    font-size:11px; line-height:1.2; white-space:nowrap}
+  .rallySegment.active{background:var(--accent-bg); color:var(--accent-text)}
+  .rallyWinners{display:flex; gap:8px; overflow-x:auto; padding:0 12px 8px;
+    scrollbar-width:none; -webkit-overflow-scrolling:touch}
+  .rallyWinners::-webkit-scrollbar{display:none}
+  button.rallyWinner{flex:0 0 auto; width:auto; min-height:44px; padding:6px 12px;
+    border:1px solid var(--line); background:var(--bg); color:var(--text);
+    font-size:12px; font-weight:600; text-transform:none; letter-spacing:0;
+    font-variant-numeric:tabular-nums}
+  button.rallyWinner.active{background:var(--accent-bg); border-color:var(--accent-bg);
+    color:var(--accent-text)}
 
   /* Floating liquid-glass mode switchers: Judge/Label on the home page and
      Review/Challenge on the call page share one look. */
@@ -731,6 +768,15 @@
 
   <!-- PHASE: track + judge -->
   <section class="hidden" id="p-track">
+    <div class="rallyViz hidden" id="rallyViz">
+      <div class="rallyVizHead">
+        <strong>Rally segmentation</strong>
+        <span id="rallyVizMeta"></span>
+      </div>
+      <div class="rallyRibbon" id="rallyRibbon"
+           role="img" aria-label="Model-inferred rally boundaries"></div>
+      <div class="rallyWinners" id="rallyWinners" aria-label="Winner for every rally"></div>
+    </div>
     <div class="clipOverview hidden" id="trackOverview">
       <canvas id="trackOverviewStrip"></canvas>
       <div id="trackOverviewBars"></div>
@@ -762,7 +808,7 @@
       <div class="sliderlabel"><span>Frame to judge</span><output id="judgeFrameOut"></output></div>
       <div class="row">
         <input type="number" id="judgeFrame" step="1">
-        <button id="targetBtn" type="button">Target zones</button>
+        <button id="targetBtn" type="button">Player maps</button>
         <button class="primary proxied" id="judgeBtn">Judge frame</button>
       </div>
       <div class="verdict blank" id="judgeResult"><div>No line call yet</div></div>
@@ -897,6 +943,30 @@
 
   <!-- PHASE: player 1 coaching report -->
   <section class="hidden" id="p-player1-report">
+    <div class="targetZones hidden" id="targetZonesP1">
+      <div class="targetHead">
+        <strong>Player 1 front-wall map</strong>
+        <span id="targetTotalP1"></span>
+      </div>
+      <div class="targetCourt" aria-label="Player 1 squash front wall target zone chart">
+        <div class="courtSide left"></div>
+        <div class="courtSide right"></div>
+        <div class="courtFloor"></div>
+        <div class="courtWall">
+          <div class="targetGrid" id="targetGridP1"></div>
+          <div class="courtLine out"></div>
+          <div class="courtLine service"></div>
+          <div class="courtLine tin"></div>
+          <span class="courtText out">Out line</span>
+          <span class="courtText service">Service line</span>
+          <span class="courtText tin">Tin</span>
+        </div>
+      </div>
+      <div class="targetMeta">
+        <div><strong>Most used</strong><span id="targetCommonP1"></span></div>
+        <div><strong>Unused</strong><span id="targetMissingP1"></span></div>
+      </div>
+    </div>
     <div class="targetZones hidden coachPlayerPanel" id="coachPanelP1">
       <div class="targetHead">
         <strong>Player 1 report</strong>
@@ -906,10 +976,37 @@
       <div class="coachMetrics" id="coachMetricsP1"></div>
       <div class="coachFeedback" id="coachFeedbackP1"></div>
     </div>
+    <div class="row">
+      <button id="player2NextBtn" type="button">Player 2 report</button>
+    </div>
   </section>
 
   <!-- PHASE: player 2 coaching report -->
   <section class="hidden" id="p-player2-report">
+    <div class="targetZones hidden" id="targetZonesP2">
+      <div class="targetHead">
+        <strong>Player 2 front-wall map</strong>
+        <span id="targetTotalP2"></span>
+      </div>
+      <div class="targetCourt" aria-label="Player 2 squash front wall target zone chart">
+        <div class="courtSide left"></div>
+        <div class="courtSide right"></div>
+        <div class="courtFloor"></div>
+        <div class="courtWall">
+          <div class="targetGrid" id="targetGridP2"></div>
+          <div class="courtLine out"></div>
+          <div class="courtLine service"></div>
+          <div class="courtLine tin"></div>
+          <span class="courtText out">Out line</span>
+          <span class="courtText service">Service line</span>
+          <span class="courtText tin">Tin</span>
+        </div>
+      </div>
+      <div class="targetMeta">
+        <div><strong>Most used</strong><span id="targetCommonP2"></span></div>
+        <div><strong>Unused</strong><span id="targetMissingP2"></span></div>
+      </div>
+    </div>
     <div class="targetZones hidden coachPlayerPanel" id="coachPanelP2">
       <div class="targetHead">
         <strong>Player 2 report</strong>
@@ -1203,6 +1300,7 @@ function setPhase(p){
   stage.classList.toggle('hidden', p === 'load' || reportPhase || ROADMAP_PHASES.includes(p));
   document.body.classList.toggle('phase-load', p === 'load');
   document.body.classList.toggle('phase-target', reportPhase);
+  document.body.classList.toggle('phase-track', p === 'track');
   for(const id of ['p-load','p-record','p-frame','p-tap','p-review','p-wall-corners','p-tap-floor','p-clip','p-analyze','p-track','p-label','p-target',
                    'p-player1-report','p-player2-report',
                    'p-live','p-matches','p-coach','p-stats','p-shot-bot','p-sharing']) $(id).classList.add('hidden');
@@ -1800,7 +1898,7 @@ $('hdrBack').onclick = () => {
   } else if(S.phase === 'target'){
     setPhase(S.run ? 'track' : 'load');
   } else if(S.phase === 'player1_report'){
-    setPhase('target');
+    setPhase(S.run ? 'track' : 'load');
   } else if(S.phase === 'player2_report'){
     setPhase('player1_report');
   } else if(ROADMAP_PHASES.includes(S.phase)){
@@ -4318,20 +4416,44 @@ function placeTargetCell(cell, placement){
   cell.classList.toggle('mirror', !!placement.mirror);
 }
 
-function renderTargetZones(summary){
-  const panel = $('targetZones');
+const TARGET_MAP_IDS = {
+  aggregate: {
+    panel:'targetZones',
+    grid:'targetGrid',
+    total:'targetTotal',
+    common:'targetCommon',
+    missing:'targetMissing',
+  },
+  1: {
+    panel:'targetZonesP1',
+    grid:'targetGridP1',
+    total:'targetTotalP1',
+    common:'targetCommonP1',
+    missing:'targetMissingP1',
+  },
+  2: {
+    panel:'targetZonesP2',
+    grid:'targetGridP2',
+    total:'targetTotalP2',
+    common:'targetCommonP2',
+    missing:'targetMissingP2',
+  },
+};
+
+function renderTargetZones(summary, ids = TARGET_MAP_IDS.aggregate){
+  const panel = $(ids.panel);
   if(!summary || !summary.total_wall_hits || !summary.zones || !summary.zones.length){
     panel.classList.add('hidden');
-    $('targetGrid').innerHTML = '';
+    $(ids.grid).innerHTML = '';
     return;
   }
 
   panel.classList.remove('hidden');
-  $('targetTotal').textContent = `${summary.total_wall_hits} wall hit${summary.total_wall_hits === 1 ? '' : 's'}`;
-  $('targetCommon').textContent = formatZoneList(summary.common_zones, 3);
-  $('targetMissing').textContent = formatZoneList(summary.missing_zones, 8);
+  $(ids.total).textContent = `${summary.total_wall_hits} wall hit${summary.total_wall_hits === 1 ? '' : 's'}`;
+  $(ids.common).textContent = formatZoneList(summary.common_zones, 3);
+  $(ids.missing).textContent = formatZoneList(summary.missing_zones, 8);
 
-  const grid = $('targetGrid');
+  const grid = $(ids.grid);
   grid.innerHTML = '';
   for(const zone of summary.zones){
     const placements = targetCellPlacements(zone);
@@ -4369,6 +4491,33 @@ function renderFloorMap(){
   return true;
 }
 
+function summaryFromPlayerAnalytics(player){
+  if(!player) return null;
+  const zones = (player.target_zone_percentages || []).map(zone => ({
+    zone: Number(zone.zone),
+    count: Number(zone.count || 0),
+    percentage: Number(zone.percentage || 0),
+  }));
+  return {
+    layout: 'front_wall_8_target_player',
+    total_wall_hits: Number(player.total_wall_hits || 0),
+    zones,
+    common_zones: player.common_target_zones || zones.filter(zone => zone.count > 0),
+    missing_zones: player.missing_target_zones || zones.filter(zone => zone.count === 0),
+  };
+}
+
+function playerTargetSummary(playerNumber){
+  const key = String(playerNumber);
+  const runSummary = S.run && S.run.target_zones_by_player && S.run.target_zones_by_player[key];
+  if(runSummary) return runSummary;
+  const runId = S.run && S.run.run_id;
+  const report = runId && S.coachReports[runId];
+  const player = report && report.analytics && (report.analytics.players || [])
+    .find(item => Number(item.player_number) === Number(playerNumber));
+  return summaryFromPlayerAnalytics(player);
+}
+
 function metricValue(value, suffix = ''){
   if(value === null || value === undefined || Number.isNaN(Number(value))) return '—';
   return `${value}${suffix}`;
@@ -4401,7 +4550,13 @@ function coachingSourceText(data){
     : source;
 }
 
-function playerAssignmentText(playerNumber){
+function playerAssignmentText(playerNumber, assignment=null){
+  const source = assignment || (S.run && S.run.player_assignment);
+  if(source && source.method === 'rally_gap_server_alternation'){
+    const rallies = Number(source.rally_count || 0);
+    const rallyText = rallies === 1 ? '1 rally' : `${rallies} rallies`;
+    return `Player ${playerNumber} uses rally-aware assignments from ${rallyText}: each rally starts with the inferred server, then alternates front-wall contacts.`;
+  }
   return playerNumber === 1
     ? 'Player 1 uses the 1st, 3rd, 5th, and other odd-numbered detected front-wall contacts.'
     : 'Player 2 uses the 2nd, 4th, 6th, and other even-numbered detected front-wall contacts.';
@@ -4423,12 +4578,18 @@ function renderPlayerCoachPanel(data, playerNumber, sourceText){
   };
   $(`coachPanelP${playerNumber}`).classList.remove('hidden');
   $(`coachSourceP${playerNumber}`).textContent = sourceText;
-  $(`coachIntroP${playerNumber}`).textContent = playerAssignmentText(playerNumber);
+  $(`coachIntroP${playerNumber}`).textContent =
+    playerAssignmentText(playerNumber, analytics.player_assignment);
   $(`coachMetricsP${playerNumber}`).innerHTML = [
     coachMetric(
       'Shots analyzed',
       metricValue(player.total_wall_hits),
       `How many of ${player.label}'s front-wall contacts were reliable enough to include.`
+    ),
+    coachMetric(
+      'Unforced errors',
+      metricValue(player.unforced_error_percentage, '%'),
+      `${player.label}'s unforced errors as a percentage of all rally losses: unforced errors ÷ (unforced + forced errors).`
     ),
     coachMetric(
       'Main targets',
@@ -4478,6 +4639,7 @@ function renderCoachReport(data, playerNumber){
   }
   const sourceText = coachingSourceText(data);
   hidePlayerCoachPanels();
+  renderTargetZones(playerTargetSummary(playerNumber), TARGET_MAP_IDS[playerNumber]);
   renderPlayerCoachPanel(data, playerNumber, sourceText);
 }
 
@@ -4488,6 +4650,7 @@ function setCoachLoading(playerNumber){
   $(`coachIntroP${playerNumber}`).textContent = `Building the Player ${playerNumber} report from detected front-wall contacts.`;
   $(`coachMetricsP${playerNumber}`).innerHTML = [
     coachMetric('Shots analyzed', '—', 'Reliable front-wall contacts included in the report.'),
+    coachMetric('Unforced errors', '—', 'Unforced errors as a percentage of all rally losses.'),
     coachMetric('Main targets', '—', 'The wall areas you used most often.'),
     coachMetric('Typical shot height', '—', 'Where your shots usually struck the front wall.'),
     coachMetric('Pace before contact', '—', 'Estimated speed as the ball reached the front wall.'),
@@ -4524,6 +4687,7 @@ async function loadCoachReport(playerNumber){
 
 function buildPlayerReportView(playerNumber){
   hidePlayerCoachPanels();
+  renderTargetZones(playerTargetSummary(playerNumber), TARGET_MAP_IDS[playerNumber]);
   loadCoachReport(playerNumber);
 }
 
@@ -4560,20 +4724,45 @@ function buildTrackView(){
   $('judgeFrame').value = initialFrame;
   $('judgeFrameOut').textContent = `${S.run.start_frame}–${S.run.end_frame}`;
   clearJudgeResult();
+  buildRallyVisualization(initialFrame);
   buildHitTimeline(hits, initialFrame);
+  preserveTrackStageHeight();
+  const playerSummaries = (S.run && S.run.target_zones_by_player) || {};
+  const hasPlayerTargets = Object.values(playerSummaries)
+    .some(summary => summary && summary.total_wall_hits);
   $('targetBtn').disabled = !(
-    (S.run.target_zones && S.run.target_zones.total_wall_hits) ||
-    (S.run.floor_zones && S.run.floor_zones.total_floor_bounces)
+    hasPlayerTargets ||
+    (S.run && S.run.target_zones && S.run.target_zones.total_wall_hits)
   );
+}
+
+function preserveTrackStageHeight(){
+  const main = document.querySelector('main');
+  const section = $('p-track');
+  const rallyPanel = $('rallyViz');
+  const rallyWasHidden = rallyPanel.classList.contains('hidden');
+  if(!rallyWasHidden) rallyPanel.classList.add('hidden');
+
+  const mainStyle = getComputedStyle(main);
+  const padding = parseFloat(mainStyle.paddingTop) + parseFloat(mainStyle.paddingBottom);
+  const originalControlsHeight = Math.ceil(section.scrollHeight + padding);
+  main.style.setProperty('--track-main-height', `${originalControlsHeight}px`);
+
+  if(!rallyWasHidden) rallyPanel.classList.remove('hidden');
 }
 
 $('targetBtn').onclick = () => {
   S.debugTargetZones = null;
-  setPhase('target');
+  setPhase('player1_report');
 };
+
+addEventListener('resize', () => {
+  if(S.phase === 'track') preserveTrackStageHeight();
+});
 
 $('player1ReportBtn').onclick = () => setPhase('player1_report');
 $('player2ReportBtn').onclick = () => setPhase('player2_report');
+$('player2NextBtn').onclick = () => setPhase('player2_report');
 
 $('debugTargetsBtn').onclick = () => {
   S.debugTargetZones = makeDebugTargetZones();
@@ -4583,6 +4772,112 @@ $('debugTargetsBtn').onclick = () => {
 function frameToRunPct(frame){
   const span = Math.max(1, S.run.end_frame - S.run.start_frame);
   return Math.min(100, Math.max(0, (frame - S.run.start_frame) / span * 100));
+}
+
+function runRallies(){
+  const direct = S.run && S.run.rallies;
+  const nested = S.run && S.run.player_assignment && S.run.player_assignment.rallies;
+  return (Array.isArray(direct) ? direct : Array.isArray(nested) ? nested : [])
+    .slice()
+    .sort((a, b) => Number(a.rally_number || 0) - Number(b.rally_number || 0));
+}
+
+function rallyWinnerText(rally){
+  const winner = Number(rally.winner_player_number);
+  return winner === 1 || winner === 2 ? `Player ${winner} wins` : 'Winner TBD';
+}
+
+function rallyWinnerDetail(rally){
+  const winner = rallyWinnerText(rally);
+  const lastPlayer = Number(rally.last_player_number);
+  if(rally.last_call === 'OUT' && (lastPlayer === 1 || lastPlayer === 2))
+    return `${winner}; Player ${lastPlayer}'s final front-wall hit was OUT`;
+  if(rally.last_call === 'IN') return `${winner}; final front-wall hit was IN`;
+  return `${winner}; final front-wall hit was not judged`;
+}
+
+function rallyDisplayBounds(rallies){
+  const runStart = Number(S.run.start_frame || 0);
+  const runEnd = Math.max(runStart + 1, Number(S.run.end_frame || runStart) + 1);
+  return rallies.map((rally, index) => {
+    const previous = rallies[index - 1];
+    const next = rallies[index + 1];
+    const start = previous
+      ? (Number(previous.end_frame) + Number(rally.start_frame)) / 2
+      : runStart;
+    const end = next
+      ? (Number(rally.end_frame) + Number(next.start_frame)) / 2
+      : runEnd;
+    return {
+      rally,
+      start:Math.min(runEnd, Math.max(runStart, start)),
+      end:Math.min(runEnd, Math.max(runStart, end)),
+    };
+  });
+}
+
+function syncActiveRally(frame){
+  for(const el of document.querySelectorAll('#rallyRibbon .rallySegment, #rallyWinners .rallyWinner')){
+    const start = Number(el.dataset.start);
+    const end = Number(el.dataset.end);
+    el.classList.toggle('active', frame >= start && frame < end);
+  }
+}
+
+function buildRallyVisualization(initialFrame){
+  const panel = $('rallyViz');
+  const ribbon = $('rallyRibbon');
+  const winners = $('rallyWinners');
+  ribbon.innerHTML = '';
+  winners.innerHTML = '';
+  const rallies = runRallies();
+  if(!rallies.length){
+    panel.classList.add('hidden');
+    return;
+  }
+
+  panel.classList.remove('hidden');
+  const assignment = S.run.player_assignment || {};
+  const gap = Number(assignment.rally_gap_seconds);
+  const countText = rallies.length === 1 ? '1 rally' : `${rallies.length} rallies`;
+  $('rallyVizMeta').textContent =
+    Number.isFinite(gap) ? `${countText} · ≥${gap.toFixed(1)}s gap` : countText;
+
+  const bounds = rallyDisplayBounds(rallies);
+  const runStart = Number(S.run.start_frame || 0);
+  const runEnd = Math.max(runStart + 1, Number(S.run.end_frame || runStart) + 1);
+  const runSpan = runEnd - runStart;
+  for(const {rally, start, end} of bounds){
+    const number = Number(rally.rally_number);
+    const winner = rallyWinnerText(rally);
+    const segment = document.createElement('div');
+    segment.className = 'rallySegment';
+    segment.dataset.start = start;
+    segment.dataset.end = end;
+    segment.style.left = `${(start - runStart) / runSpan * 100}%`;
+    segment.style.width = `${Math.max(0, end - start) / runSpan * 100}%`;
+    segment.setAttribute('aria-label',
+      `Rally ${number}, ${winner}, frames ${rally.start_frame} to ${rally.end_frame}`);
+    segment.title = segment.getAttribute('aria-label');
+    segment.innerHTML = `<strong>R${number}</strong><span>${winner.replace('Player ', 'P')}</span>`;
+    ribbon.appendChild(segment);
+
+    const chip = document.createElement('button');
+    chip.type = 'button';
+    chip.className = 'rallyWinner';
+    chip.dataset.start = start;
+    chip.dataset.end = end;
+    chip.textContent = `R${number} · ${winner}`;
+    const hitCount = Number(rally.front_wall_hit_count || 0);
+    chip.title = `${rallyWinnerDetail(rally)} · ${hitCount} front-wall hit${hitCount === 1 ? '' : 's'}`;
+    chip.setAttribute('aria-label', `Rally ${number}: ${rallyWinnerDetail(rally)}. Jump to rally.`);
+    chip.onclick = () => {
+      transportStop();
+      seekSourceFrameToCanvas(Number(rally.start_frame));
+    };
+    winners.appendChild(chip);
+  }
+  syncActiveRally(initialFrame);
 }
 
 /* Coarse-fine timeline (same pattern as the clip page): the overview strip
@@ -4604,6 +4899,7 @@ function updateTrackReadout(frame){
   const fps = runFps();
   $('trackReadout').textContent =
     `${fmtClock(frame / fps)} / ${fmtClock((S.run.end_frame + 1) / fps)} · frame ${frame}`;
+  syncActiveRally(frame);
 }
 
 function setTrackView(centerF, render = true){

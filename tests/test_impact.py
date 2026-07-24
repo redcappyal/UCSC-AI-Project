@@ -256,7 +256,7 @@ def test_tilted_wall_diagram_coordinates_follow_line_tilt():
     assert diagram["y"] == pytest.approx(0.4, abs=0.002)
 
 
-def test_wall_corners_override_line_span_for_judge_bounds():
+def test_horizontal_outside_wall_bounds_are_unjudged_sidewall_points():
     top = Line(Point(100, 100), Point(1100, 100))
     bottom = Line(Point(100, 700), Point(1100, 700))
     wall = WallCorners(
@@ -269,8 +269,25 @@ def test_wall_corners_override_line_span_for_judge_bounds():
     ball = Point(160, 400)
     call, reason, _, _ = judge_ball(ball, top, bottom, wall)
 
+    assert call is None
+    assert reason == "outside_wall_x_bounds"
+
+
+def test_wall_corners_keep_vertical_out_calls():
+    top = Line(Point(100, 100), Point(1100, 100))
+    bottom = Line(Point(100, 700), Point(1100, 700))
+    wall = WallCorners(
+        top_left=Point(200, 50),
+        top_right=Point(1000, 80),
+        bottom_right=Point(940, 760),
+        bottom_left=Point(260, 730),
+    )
+
+    ball = Point(500, 40)
+    call, reason, _, _ = judge_ball(ball, top, bottom, wall)
+
     assert call == "OUT"
-    assert reason == "outside_wall_bounds"
+    assert reason == "above_or_on_top_line"
     assert judge_margin_px(ball, top, bottom, wall) < 0
 
 

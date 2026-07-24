@@ -28,7 +28,13 @@ import json
 import sys
 from pathlib import Path
 
-from judge_call import Point, judge_ball, judge_margin_px, load_calibration_lines
+from judge_call import (
+    Point,
+    judge_ball,
+    judge_margin_px,
+    load_calibration_lines,
+    load_wall_corners,
+)
 
 HIT_TYPES = ("wall", "side_wall", "floor", "racket")
 
@@ -41,9 +47,13 @@ def replay_judge(ball, calibration):
         return None, "no calibration in run dir"
     try:
         top_line, bottom_line = load_calibration_lines(calibration)
+        wall_corners = load_wall_corners(calibration)
         point = Point(float(ball["x"]), float(ball["y"]))
-        call, _reason, _top_y, _bottom_y = judge_ball(point, top_line, bottom_line)
-        margin = judge_margin_px(point, top_line, bottom_line)
+        call, reason, _top_y, _bottom_y = judge_ball(
+            point, top_line, bottom_line, wall_corners)
+        if call is None:
+            return None, reason
+        margin = judge_margin_px(point, top_line, bottom_line, wall_corners)
     except (ValueError, KeyError, TypeError) as error:
         return None, str(error)
     return call, margin
