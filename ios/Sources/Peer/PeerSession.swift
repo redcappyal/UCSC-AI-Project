@@ -101,7 +101,8 @@ final class PeerSession: ObservableObject {
                              appVersion: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "dev",
                              deviceModel: ProcessInfo.processInfo.hostName,
                              nonce: UInt32.random(in: .min ... .max),
-                             frameW: 1080, frameH: 1920)
+                             frameW: CaptureSettings.frameWidth,
+                             frameH: CaptureSettings.frameHeight)
         transport.onControl = { [weak self] in self?.handleControl($0) }
         transport.onDatagram = { [weak self] in self?.handleDatagram($0) }
         transport.onStateChange = { [weak self] in self?.handleTransportState($0) }

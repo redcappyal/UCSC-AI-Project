@@ -15,6 +15,8 @@ final class RecordModel: ObservableObject {
     @Published var isRecording = false
     @Published var recordingStartedAt: Date?
     @Published var errorText: String?
+    /// Resolved capture exposure, shown once the court lock lands.
+    @Published var exposureNote: String?
     @Published var finishedClip: FinishedClip?   // non-nil presents ResultsView
 
     private static let trailLength = 15
@@ -53,7 +55,10 @@ final class RecordModel: ObservableObject {
     private var nextDetectionSeq: UInt32 = 0
     private var pendingTuples: [DetectionTuple] = []
     private var lastFlushAt: TimeInterval = 0
-    private let peerFrameW = 1080, peerFrameH = 1920   // matches Hello until Phase 4
+    // Must match the Hello this device advertises (PeerSession) — the peer
+    // reads detections in these pixel units, so a mismatch skews stereo.
+    private let peerFrameW = CaptureSettings.frameWidth
+    private let peerFrameH = CaptureSettings.frameHeight
 
     // MARK: stereo (Phase 3, Plan B2)
 
@@ -189,6 +194,11 @@ final class RecordModel: ObservableObject {
         do {
             try await camera.configure()
             camera.start()
+            // Meter the court once from the mounted position, then freeze
+            // exposure/WB/focus for the session. Everything after this point
+            // is shot under identical conditions, which is what keeps the
+            // footage usable as training data.
+            exposureNote = CaptureSettings.summary(for: try await camera.lockForCourt())
         } catch {
             errorText = error.localizedDescription
         }
