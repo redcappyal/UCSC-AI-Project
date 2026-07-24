@@ -1129,23 +1129,23 @@ const S = {
 const STEP_META = {
   load:   {label:'Squash Line Calling', instr:''},
   record: {label:'Record', instr:'', action:{btn:'recBtn', label:'Record'}},
-  frame:  {label:'1/11 · Pick frame', instr:'Drag the film strip under the playhead to a frame where both red lines are fully visible and unblocked.',
+  frame:  {label:'Pick frame', instr:'Drag the film strip under the playhead to a frame where both red lines are fully visible and unblocked.',
            action:{btn:'useFrame', label:'Use frame'}},
-  tap_out:{label:'2/11 · Out line', instr:'', action:{btn:'confirmBtn', label:'Looks right'}},
-  tap_tin:{label:'3/11 · Tin', instr:'', action:{btn:'confirmBtn', label:'Looks right'}},
-  review: {label:'4/11 · Review', instr:'Check that each fitted edge hugs the real paint edge across the whole line.',
+  tap_out:{label:'Out line', instr:'', action:{btn:'confirmBtn', label:'Looks right'}},
+  tap_tin:{label:'Tin', instr:'', action:{btn:'confirmBtn', label:'Looks right'}},
+  review: {label:'Review', instr:'Check that each fitted edge hugs the real paint edge across the whole line.',
            action:{btn:'chooseClipBtn', label:'Use lines'}},
-  tap_wall:{label:'5/11 · Wall corners', instr:'', action:{btn:'wallDoneBtn', label:'Use corners'}},
-  tap_floor:{label:'6/11 · Floor map', instr:'', action:{btn:'floorDoneBtn', label:'Use floor map'}},
-  clip:   {label:'7/11 · Clip', instr:'Drag the top strip to slide the clip along the video, then drag the handles to trim it tight around the shot.',
+  tap_wall:{label:'Wall corners', instr:'', action:{btn:'wallDoneBtn', label:'Use corners'}},
+  tap_floor:{label:'Floor map', instr:'', action:{btn:'floorDoneBtn', label:'Use floor map'}},
+  clip:   {label:'Clip', instr:'Drag the top strip to slide the clip along the video, then drag the handles to trim it tight around the shot.',
            action:{btn:'runTrackBtn', label:'Track ball'}},
   analyze:{label:'Analyzing', instr:''},
-  track:  {label:'8/11 · Call', instr:'Tap a bar to jump to the bounce frame, or drag anywhere on the strip to scrub.',
+  track:  {label:'Call', instr:'Tap a bar to jump to the bounce frame, or drag anywhere on the strip to scrub.',
            action:{btn:'judgeBtn', label:'Judge'}},
   label:  {label:'Label bounces', instr:'Drag the strip to the exact impact frame, then tap its bounce type. Tap a marker to revisit it — labels save automatically.'},
-  target: {label:'9/11 · Targets', instr:''},
-  player1_report: {label:'10/11 · Player 1', instr:''},
-  player2_report: {label:'11/11 · Player 2', instr:''},
+  target: {label:'Targets', instr:''},
+  player1_report: {label:'Player 1', instr:''},
+  player2_report: {label:'Player 2', instr:''},
   // Section roots (Matches, Coach hub) + roadmap placeholder pages. No action key (no
   // primary yet) and no instr — production screens carry no guidance copy; the UX leads.
   matches: {label:'Matches', instr:''},
@@ -1160,6 +1160,22 @@ const ROADMAP_PHASES = ['live','matches','coach','stats','shot_bot','sharing'];
 const roadmapSection = p => 'p-' + p.replace('_','-');
 /* Section roots: the nav pill switches between them, so they get no back chevron */
 const SECTION_ROOTS = ['load','matches','coach'];
+
+/* The numbered judge flow, in order. The floor-map step only exists when the
+   court model loaded, so the total is 11 with it and 10 without — computed here
+   rather than baked into the labels, which go stale whenever a step is added
+   or skipped. Phases not in this list (load, record, label, hubs) get no number. */
+function stepSequence(){
+  const seq = ['frame','tap_out','tap_tin','review','tap_wall'];
+  if(COURT) seq.push('tap_floor');
+  return [...seq, 'clip','track','target','player1_report','player2_report'];
+}
+function stepLabelFor(p){
+  const seq = stepSequence();
+  const idx = seq.indexOf(p);
+  return idx === -1 ? STEP_META[p].label
+                    : `${idx + 1}/${seq.length} · ${STEP_META[p].label}`;
+}
 
 /* Header action pill: proxies the current phase's primary button, which stays
    the source of truth for behavior and disabled state. */
@@ -1192,7 +1208,7 @@ function setPhase(p){
                    'p-live','p-matches','p-coach','p-stats','p-shot-bot','p-sharing']) $(id).classList.add('hidden');
   $('camVid').classList.toggle('hidden', p !== 'record');   // live preview only on the record screen
   $('analyzeOverlay').classList.toggle('hidden', p !== 'analyze');
-  $('stepLabel').textContent = STEP_META[p].label;
+  $('stepLabel').textContent = stepLabelFor(p);
   $('hdrBack').classList.toggle('hidden', SECTION_ROOTS.includes(p));
   $('hdrHome').classList.toggle('hidden', p === 'load');   // shortcut to the load screen from anywhere else
   syncHeaderAction(STEP_META[p].action);
