@@ -22,13 +22,18 @@ struct PeerBenchView: View {
             }
             Section("Status") {
                 Text("Phase: \(model.phaseText)")
+                if let code = model.pairingCode {
+                    Text("Pairing code: \(code)")
+                        .font(.title2.monospacedDigit())
+                    Button("Codes match — confirm") { model.confirm() }
+                }
                 Text("Offset: \(model.offsetText)")
                 Text("RTT median/p95/max: \(model.rttText)")
                 Text("Datagram loss: \(model.lossText)")
                 Text("Thermal: \(model.thermalText)")
             }
             Section("Bench") {
-                Button("Run 60 s datagram bench") { model.runBench() }
+                Button("Run 60 s datagram bench (120 Hz)") { model.runBench() }
                     .disabled(!model.canBench)
                 Button("Arm clap anchor") { model.armClap() }
                     .disabled(!model.canBench)
@@ -50,6 +55,7 @@ final class PeerBenchModel: ObservableObject {
     @Published var isInitiator = true
     @Published var running = false
     @Published var phaseText = "idle"
+    @Published var pairingCode: String?
     @Published var offsetText = "—"
     @Published var rttText = "—"
     @Published var lossText = "—"
@@ -70,19 +76,36 @@ final class PeerBenchModel: ObservableObject {
 
     func toggle() { running ? stop() : start() }
 
+    /// Called from the "Codes match — confirm" button once the human has
+    /// visually compared the pairing code on both phones. Without this the
+    /// bench (and real usage) wedges forever in `.confirming` — PeerSession
+    /// only advances past it via an explicit confirmPairing() call.
+    func confirm() { session?.confirmPairing() }
+
     func start() {
         let transport: PeerTransport = transportName == "ble" ? BLETransport() : WiFiP2PTransport()
         let session = PeerSession(transport: transport, isInitiator: isInitiator)
         self.transport = transport; self.session = session
         session.onRemoteDetections = { [weak self] tuples in
             guard let self else { return }
-            self.received += tuples.count
+            // Fires on the transport's delivery queue, not main — pump()
+            // (Timer-driven, main thread) also reads/mutates `received` and
+            // `rtts`, so all counter state must be confined to main. Capture
+            // the receive timestamp here, first, so RTT isn't inflated by
+            // queue-hop latency before the async hop.
+            let now = ClockSync.hostNow()
             // Echo bench: initiator sends, responder reflects, initiator times.
-            if !self.isInitiator { session.sendDetections(tuples) }
-            else {
-                let now = ClockSync.hostNow()
-                for tuple in tuples {
-                    self.rtts.append((now - Double(tuple.ptsNs) / 1e9) * 1000)
+            if !self.isInitiator {
+                // Reflecting stays on the delivery queue — PeerSession is
+                // internally lock-guarded, so calling sendDetections here
+                // (off main) is safe. Only the counter needs main.
+                session.sendDetections(tuples)
+                DispatchQueue.main.async { self.received += tuples.count }
+            } else {
+                let localRtts = tuples.map { (now - Double($0.ptsNs) / 1e9) * 1000 }
+                DispatchQueue.main.async {
+                    self.rtts.append(contentsOf: localRtts)
+                    self.received += tuples.count
                 }
             }
         }
@@ -103,6 +126,7 @@ final class PeerBenchModel: ObservableObject {
         guard let session else { return }
         session.tick(now: ClockSync.hostNow())
         phaseText = "\(session.phase)"
+        if case .confirming(let code) = session.phase { pairingCode = code } else { pairingCode = nil }
         if let estimate = session.clockSync.estimate {
             offsetText = String(format: "%.2f ms ± %.2f ms",
                                 estimate.offset * 1000, estimate.uncertainty * 1000)
@@ -116,10 +140,21 @@ final class PeerBenchModel: ObservableObject {
             // reflected-echo count) with empty rtts / zero sent, per the
             // task-11 reviewer fix.
             if isInitiator {
-                // 100 Hz synthetic tuples while the bench runs.
-                let tuple = DetectionTuple(seq: UInt32(sent), ptsNs: UInt64(ClockSync.hostNow() * 1e9),
-                                           x: 0, y: 0, conf: Float16(1), bboxH: Float16(1))
-                session.sendDetections([tuple]); sent += 1
+                // 3 datagrams x 2 tuples/datagram per 50 ms tick = 120 Hz
+                // tuple rate, 60 Hz datagram rate — mirrors RecordModel's
+                // production batching pattern (>= 2 tuples flushed per
+                // datagram, ~30 ms cadence) instead of 20 Hz singletons.
+                // `sent` counts tuples (not datagrams) so loss% math is
+                // unchanged.
+                for _ in 0..<3 {
+                    var batch: [DetectionTuple] = []
+                    for _ in 0..<2 {
+                        batch.append(DetectionTuple(seq: UInt32(sent), ptsNs: UInt64(ClockSync.hostNow() * 1e9),
+                                                     x: 0, y: 0, conf: Float16(1), bboxH: Float16(1)))
+                        sent += 1
+                    }
+                    session.sendDetections(batch)
+                }
                 let sorted = rtts.sorted()
                 if !sorted.isEmpty {
                     rttText = String(format: "%.0f / %.0f / %.0f ms",

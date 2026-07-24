@@ -39,6 +39,16 @@ final class BLETransport: NSObject, PeerTransport {
     private var localControl: CBMutableCharacteristic?
     private var localDatagram: CBMutableCharacteristic?
     private var subscribedCentral: CBCentral?
+    /// Peripheral role only: the central must subscribe to BOTH
+    /// characteristics before we fire `.connected` — PeerSession sends hello
+    /// via control-indicate the instant `.connected` fires, so signaling on
+    /// datagram-subscribe alone can race the central's control subscription
+    /// (still in flight) and silently drop the hello, wedging pairing.
+    private var controlSubscribed = false
+    private var datagramSubscribed = false
+    /// Guards `.connected` firing more than once (each subscribe event is
+    /// independent; only the one that completes the pair should signal).
+    private var didEmitConnected = false
     /// Control chunks that hit a queue-full (`updateValue` returned false)
     /// indicate; drained in order from `peripheralManagerIsReady`.
     private var pendingIndications: [Data] = []
@@ -140,6 +150,9 @@ final class BLETransport: NSObject, PeerTransport {
         localDatagram = nil
         reassembler = FrameReassembler()
         pendingIndications = []
+        controlSubscribed = false
+        datagramSubscribed = false
+        didEmitConnected = false
     }
 
     private func ingestControlChunk(_ chunk: Data) {
@@ -262,7 +275,16 @@ extension BLETransport: CBPeripheralManagerDelegate {
     func peripheralManager(_ manager: CBPeripheralManager, central: CBCentral,
                            didSubscribeTo characteristic: CBCharacteristic) {
         subscribedCentral = central
-        if characteristic.uuid == Self.datagramUUID { onStateChange?(.connected) }
+        if characteristic.uuid == Self.controlUUID { controlSubscribed = true }
+        else if characteristic.uuid == Self.datagramUUID { datagramSubscribed = true }
+        // Fire exactly once, and only once BOTH characteristics are
+        // subscribed — PeerSession sends hello via control-indicate right
+        // on `.connected`, and that hello is silently dropped if the
+        // central hasn't finished subscribing to control yet.
+        if controlSubscribed, datagramSubscribed, !didEmitConnected {
+            didEmitConnected = true
+            onStateChange?(.connected)
+        }
     }
 
     func peripheralManager(_ manager: CBPeripheralManager,
