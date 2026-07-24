@@ -26,7 +26,7 @@ final class SyntheticDetectorTests: XCTestCase {
 
     func testStaysInsideTheNormalizedFrame() {
         let d = SyntheticBallDetector()
-        for t in stride(from: 0.0, through: 6.0, by: 0.05) {
+        for t in stride(from: -6.0, through: 6.0, by: 0.05) {
             let r = d.detect(buffer(), timestamp: t)!.rect
             XCTAssertGreaterThanOrEqual(r.minX, 0); XCTAssertLessThanOrEqual(r.maxX, 1)
             XCTAssertGreaterThanOrEqual(r.minY, 0); XCTAssertLessThanOrEqual(r.maxY, 1)

@@ -16,7 +16,13 @@ final class SyntheticBallDetector: BallDetecting {
     }
 
     func detect(_ pixelBuffer: CVPixelBuffer, timestamp: TimeInterval) -> BallObservation? {
-        let phase = (timestamp.truncatingRemainder(dividingBy: period)) / period
+        // truncatingRemainder takes the sign of the dividend, so a negative
+        // timestamp yields a negative raw phase — fold it back into [0, 1)
+        // before use. Left un-normalized, `u` below would escape [0,1] for
+        // negative timestamps (replay/rewound playback is a real future
+        // caller of this detector, per the class doc comment).
+        let raw = (timestamp.truncatingRemainder(dividingBy: period)) / period
+        let phase = raw < 0 ? raw + 1 : raw
         let u = 0.1 + 0.8 * phase
         // Apex mid-flight; Vision's y grows upward, so the arc peaks high.
         let v = min(0.98, max(0.02, 0.2 + 4.0 * 0.6 * phase * (1.0 - phase)))
