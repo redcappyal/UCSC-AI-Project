@@ -102,3 +102,18 @@ def test_detect_impacts_one_view_when_occluded():
     front = [i for i in impacts if i.surface == "front_wall"]
     assert len(front) == 1
     assert front[0].confidence == "one_view"
+
+
+def test_build_track3d_accepts_explicit_timeline():
+    left, right = make_fin_pair()
+    states, _ = simulate_front_wall_shot()
+    samples_a = sample_camera(states, left, fps=60.0)
+    samples_b = sample_camera(states, right, fps=60.0, phase_s=0.007)
+    default_track = stereo_engine.build_track3d(left, samples_a, right, samples_b)
+    timeline = [p.t_s for p in default_track]
+    replayed = stereo_engine.build_track3d(left, samples_a, right, samples_b,
+                                           timeline_s=timeline)
+    assert len(replayed) == len(default_track)
+    for a, b in zip(replayed, default_track):
+        assert a.t_s == b.t_s
+        assert np.allclose(a.point_ft, b.point_ft, atol=0.0)

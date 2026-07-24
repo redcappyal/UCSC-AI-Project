@@ -192,13 +192,15 @@ def eval_pixel_track(samples, t_s, window=FIT_WINDOW_SAMPLES):
     return np.array([np.polyval(coeff_u, 0.0), np.polyval(coeff_v, 0.0)])
 
 
-def build_track3d(model_a, samples_a, model_b, samples_b, hz=120.0):
+def build_track3d(model_a, samples_a, model_b, samples_b, hz=120.0, timeline_s=None):
     if not samples_a or not samples_b:
         return []
-    t_lo = max(samples_a[0].t_s, samples_b[0].t_s)
-    t_hi = min(samples_a[-1].t_s, samples_b[-1].t_s)
+    if timeline_s is None:
+        t_lo = max(samples_a[0].t_s, samples_b[0].t_s)
+        t_hi = min(samples_a[-1].t_s, samples_b[-1].t_s)
+        timeline_s = np.arange(t_lo, t_hi, 1.0 / hz)
     track = []
-    for t_s in np.arange(t_lo, t_hi, 1.0 / hz):
+    for t_s in timeline_s:
         px_a = eval_pixel_track(samples_a, t_s)
         px_b = eval_pixel_track(samples_b, t_s)
         if px_a is None or px_b is None:

@@ -49,25 +49,68 @@ def main():
         call_cases.append({"surface": surface, "point_ft": [float(v) for v in point],
                            "call": call, "margin_ft": float(margin)})
 
-    states, _ = simulate_front_wall_shot()
+    def trajectory_case(name, samples_a, samples_b):
+        t_lo = max(samples_a[0].t_s, samples_b[0].t_s)
+        t_hi = min(samples_a[-1].t_s, samples_b[-1].t_s)
+        timeline = [float(t) for t in np.arange(t_lo, t_hi, 1.0 / 120.0)]
+        impacts = stereo_engine.detect_impacts(
+            left, samples_a, right, samples_b,
+            track=stereo_engine.build_track3d(left, samples_a, right, samples_b,
+                                              timeline_s=timeline))
+        return {
+            "name": name,
+            "samples_a": [{"t_s": s.t_s, "px": list(map(float, s.px))} for s in samples_a],
+            "samples_b": [{"t_s": s.t_s, "px": list(map(float, s.px))} for s in samples_b],
+            "timeline_s": timeline,
+            "impacts": [{"t_s": i.t_s, "surface": i.surface,
+                          "point_ft": [float(v) for v in i.point_ft], "call": i.call,
+                          "margin_ft": i.margin_ft, "confidence": i.confidence,
+                          "snap_disagreement_ft": i.snap_disagreement_ft}
+                         for i in impacts],
+        }
+
+    states, (t_true, _p) = simulate_front_wall_shot()
     samples_a = sample_camera(states, left, fps=60.0)
     samples_b = sample_camera(states, right, fps=60.0, phase_s=0.007)
-    impacts = stereo_engine.detect_impacts(left, samples_a, right, samples_b)
+    occluded_b = [s for s in samples_b if not (t_true - 0.3 <= s.t_s <= t_true + 0.1)]
+    gap_a = [s for s in samples_a if not (t_true - 0.3 <= s.t_s <= t_true - 0.005)]
+    gap_b = [s for s in samples_b if not (t_true - 0.3 <= s.t_s <= t_true - 0.005)]
+    trajectories = [
+        trajectory_case("clean", samples_a, samples_b),
+        trajectory_case("occluded_one_view", samples_a, occluded_b),
+        trajectory_case("no_call", gap_a, gap_b),
+    ]
+
+    lattice = [np.array([x, y, z]) for x in (5.25, 10.5, 15.75)
+               for y in (4.0, 12.0, 20.0, 28.0) for z in (1.0, 8.0)]
+    obs_a = [(p, np.asarray(left.project(p))) for p in lattice]
+    obs_b = [(p, np.asarray(right.project(p))) for p in lattice]
+    import dataclasses
+    bias = np.array([0.0, 0.0, 0.5])
+    biased_right = dataclasses.replace(
+        right, camera_center_ft=right.camera_center_ft + bias)
+
+    def _coerce_report(report):
+        return {k: (bool(v) if isinstance(v, (bool, np.bool_)) else float(v))
+                for k, v in report.items()}
+
+    pair_case = {
+        "obs_lattice": [{"court_ft": [float(v) for v in p],
+                          "px_a": [float(v) for v in pa], "px_b": [float(v) for v in pb]}
+                         for (p, pa), (_p2, pb) in zip(obs_a, obs_b)],
+        "good": _coerce_report(stereo_engine.pair_agreement(left, obs_a, right, obs_b)),
+        "biased": {"bias_ft": [0.0, 0.0, 0.5],
+                    **_coerce_report(stereo_engine.pair_agreement(left, obs_a, biased_right, obs_b))},
+    }
 
     goldens = {
-        "schema": "stereo-goldens-v1",
+        "schema": "stereo-goldens-v2",
         "cameras": {"left": left.to_dict(), "right": right.to_dict()},
         "triangulation_cases": triangulation_cases,
         "snap_cases": snap_cases,
         "call_cases": call_cases,
-        "trajectory": {
-            "samples_a": [{"t_s": s.t_s, "px": list(map(float, s.px))} for s in samples_a],
-            "samples_b": [{"t_s": s.t_s, "px": list(map(float, s.px))} for s in samples_b],
-            "impacts": [{"t_s": i.t_s, "surface": i.surface,
-                          "point_ft": [float(v) for v in i.point_ft], "call": i.call,
-                          "margin_ft": i.margin_ft, "confidence": i.confidence}
-                         for i in impacts],
-        },
+        "trajectories": trajectories,
+        "pair_agreement": pair_case,
     }
     payload = json.dumps(goldens, indent=2, sort_keys=True)
     (REPO / "tests" / "stereo_goldens.json").write_text(payload)
