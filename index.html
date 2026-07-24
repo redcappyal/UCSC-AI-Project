@@ -1343,7 +1343,7 @@ function setPhase(p){
   if(p === 'review'){ $('p-review').classList.remove('hidden'); buildReview(); }
   if(p === 'tap_wall'){ $('p-wall-corners').classList.remove('hidden'); buildWallCornerView(); scheduleCameraCheck(); }
   if(p === 'tap_floor'){ $('p-tap-floor').classList.remove('hidden'); buildFloorView(); }
-  if(p === 'clip'){ $('p-clip').classList.remove('hidden'); setupClipControls(); }
+  if(p === 'clip'){ $('p-clip').classList.remove('hidden'); $('runTrackBtn').disabled = false; setupClipControls(); }   // never leave Track ball stuck disabled from a prior/aborted run
   if(p === 'analyze'){ $('p-analyze').classList.remove('hidden'); startAnalyzePreview(); }
   else { stopAnalyzePreview(); }
   if(p === 'track'){ $('p-track').classList.remove('hidden'); buildTrackView(); }
