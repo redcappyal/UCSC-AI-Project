@@ -25,6 +25,10 @@ private struct FakeAPI: APIClientProtocol {
         cursor.index = min(cursor.index + 1, statuses.count - 1)
         return statuses[cursor.index]
     }
+
+    func fetchSolvedCameraModel(calibrationJSON: String) async throws -> String {
+        "{}"
+    }
 }
 
 @MainActor

@@ -15,6 +15,7 @@ GOLDENS = Path(__file__).resolve().parent / "stereo_goldens.json"
 
 def load():
     data = json.loads(GOLDENS.read_text())
+    assert data["schema"] == "stereo-goldens-v2"
     left = CameraModel.from_dict(data["cameras"]["left"])
     right = CameraModel.from_dict(data["cameras"]["right"])
     return data, left, right
@@ -46,12 +47,37 @@ def test_snap_and_call_goldens():
 
 def test_trajectory_impact_goldens():
     data, left, right = load()
-    samples_a = [TrackSample(t_s=s["t_s"], px=tuple(s["px"])) for s in data["trajectory"]["samples_a"]]
-    samples_b = [TrackSample(t_s=s["t_s"], px=tuple(s["px"])) for s in data["trajectory"]["samples_b"]]
-    impacts = stereo_engine.detect_impacts(left, samples_a, right, samples_b)
-    expected = data["trajectory"]["impacts"]
-    assert len(impacts) == len(expected)
-    for got, want in zip(impacts, expected):
-        assert got.surface == want["surface"] and got.call == want["call"]
-        assert abs(got.t_s - want["t_s"]) < 1e-9
-        assert np.allclose(got.point_ft, want["point_ft"], atol=1e-9)
+    for case in data["trajectories"]:
+        samples_a = [TrackSample(t_s=s["t_s"], px=tuple(s["px"])) for s in case["samples_a"]]
+        samples_b = [TrackSample(t_s=s["t_s"], px=tuple(s["px"])) for s in case["samples_b"]]
+        track = stereo_engine.build_track3d(left, samples_a, right, samples_b,
+                                             timeline_s=case["timeline_s"])
+        impacts = stereo_engine.detect_impacts(left, samples_a, right, samples_b, track=track)
+        expected = case["impacts"]
+        assert len(impacts) == len(expected), case["name"]
+        for got, want in zip(impacts, expected):
+            assert got.surface == want["surface"] and got.call == want["call"]
+            assert got.confidence == want["confidence"]
+            assert abs(got.t_s - want["t_s"]) < 1e-9
+            assert np.allclose(got.point_ft, want["point_ft"], atol=1e-9)
+
+
+def test_trajectory_cases_cover_confidence_tiers():
+    data, _, _ = load()
+    tiers = {i["confidence"] for c in data["trajectories"] for i in c["impacts"]}
+    assert {"high", "one_view", "no_call"} <= tiers
+
+
+def test_pair_agreement_goldens():
+    data, left, right = load()
+    case = data["pair_agreement"]
+    obs_a = [(np.array(e["court_ft"]), np.array(e["px_a"])) for e in case["obs_lattice"]]
+    obs_b = [(np.array(e["court_ft"]), np.array(e["px_b"])) for e in case["obs_lattice"]]
+    good = stereo_engine.pair_agreement(left, obs_a, right, obs_b)
+    assert good["ok_pair"] == case["good"]["ok_pair"]
+    assert abs(good["median_err_ft"] - case["good"]["median_err_ft"]) < 1e-9
+    import dataclasses
+    biased_model = dataclasses.replace(
+        right, camera_center_ft=right.camera_center_ft + np.array(case["biased"]["bias_ft"]))
+    biased = stereo_engine.pair_agreement(left, obs_a, biased_model, obs_b)
+    assert biased["ok_pair"] is False and biased["ok_pair"] == case["biased"]["ok_pair"]
