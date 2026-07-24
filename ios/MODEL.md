@@ -7,6 +7,31 @@
 
 Prints `best weights: .../best.pt`.
 
+Concretely, for the current Roboflow dataset on a CUDA box:
+
+    python train_yolo_ball.py --workspace reds-workspace-oc87h \
+        --project squashai --dataset-version 3 --device 0
+
+`--batch -1` (the default) auto-sizes to available VRAM; drop to `--batch 8`
+if it OOMs. Leave `--cache` off unless the box has ~30 GB of RAM to spare
+(see build_train_kwargs) — the v3 dataset is 11.5k images.
+
+**RTX 50-series (Blackwell) needs a CUDA 12.8+ PyTorch.** Those GPUs are
+compute capability sm_120, and the cu118/cu121/cu124 wheels ship no sm_120
+kernels — training dies with "no kernel image is available for execution on
+the device." Install before ultralytics:
+
+    pip install torch torchvision --index-url https://download.pytorch.org/whl/cu128
+
+Verify the GPU is actually being used before walking away:
+
+    python -c "import torch; print(torch.cuda.is_available(), torch.cuda.get_device_name(0))"
+
+Apple Silicon (`--device mps`) is not a viable training path for a dataset
+this size — measured: a local run had not finished epoch 1 after ~19 minutes.
+Train on CUDA, then bring `best.pt` back to the Mac for step 3 (Core ML
+export needs coremltools and is macOS-only).
+
 ## 2. Score before shipping (acceptance gate)
 
     python yolo_model_eval.py --weights best.pt --video <bayclub clip>.mp4 \
