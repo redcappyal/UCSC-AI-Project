@@ -25,7 +25,15 @@ from event_engine import detect_events_fused
 from classify_events import classify_events
 from detect_wall_hits import MAX_GAP_FRAMES, detect_hits_from_rows
 from inference_engine import get_tracking_model, infer_frame_predictions
-from judge_call import Point, judge_ball, judge_margin_px, load_calibration_lines, load_wall_corners
+from judge_call import (
+    Point,
+    judge_ball,
+    judge_margin_px,
+    judge_serve_ball,
+    load_calibration_lines,
+    load_service_line,
+    load_wall_corners,
+)
 from judge_call import wall_diagram_coordinates
 from tracking_common import (
     CONFIDENCE_THRESHOLD,
@@ -384,6 +392,15 @@ def is_front_wall_hit(hit):
     return event_type in (None, "wall", "unknown")
 
 
+def is_serve_hit(hit):
+    if hit.get("is_serve"):
+        return True
+    try:
+        return int(hit.get("rally_hit_sequence") or 0) == 1
+    except (TypeError, ValueError):
+        return False
+
+
 def env_float(name, default):
     raw_value = os.getenv(name)
     if raw_value is None:
@@ -482,7 +499,11 @@ def build_target_zone_summary(hits):
     target_hits = [
         hit
         for hit in hits
-        if is_front_wall_hit(hit) and hit.get("target_zone") is not None
+        if (
+            is_front_wall_hit(hit)
+            and not is_serve_hit(hit)
+            and hit.get("target_zone") is not None
+        )
     ]
     for hit in target_hits:
         zone = by_zone.get(int(hit["target_zone"]["zone"]))
@@ -586,10 +607,15 @@ def assign_front_wall_hit_players(hits):
             hit["server_player_number"] = rally_server
             hit["player_number"] = player_number
 
+        serve_hit = rally_hits[0]
         last_hit = rally_hits[-1]
         last_player = int(last_hit.get("player_number") or rally_server)
         last_call = last_hit.get("call")
-        if last_call == "OUT":
+        serve_call = serve_hit.get("call") if serve_hit.get("is_serve") else None
+        if serve_call == "OUT":
+            winner = other_player(rally_server)
+            winner_reason = "serve_out"
+        elif last_call == "OUT":
             winner = other_player(last_player)
             winner_reason = "last_front_wall_hit_out"
         elif last_call == "IN":
@@ -599,18 +625,27 @@ def assign_front_wall_hit_players(hits):
             winner = None
             winner_reason = "last_front_wall_hit_unjudged"
 
+        rally_start_time = float(rally_hits[0].get("timestamp_seconds", 0.0))
+        rally_end_time = float(rally_hits[-1].get("timestamp_seconds", 0.0))
         rally_summaries.append({
             "rally_number": rally_index,
             "start_frame": int(rally_hits[0].get("frame", 0) or 0),
             "end_frame": int(rally_hits[-1].get("frame", 0) or 0),
-            "start_time_seconds": float(rally_hits[0].get("timestamp_seconds", 0.0)),
-            "end_time_seconds": float(rally_hits[-1].get("timestamp_seconds", 0.0)),
+            "start_time_seconds": rally_start_time,
+            "end_time_seconds": rally_end_time,
+            "duration_seconds": round(max(0.0, rally_end_time - rally_start_time), 3),
             "front_wall_hit_count": len(rally_hits),
             "server_player_number": rally_server,
             "winner_player_number": winner,
             "winner_reason": winner_reason,
             "last_call": last_call,
             "last_player_number": last_player,
+            "serve_frame": (
+                int(serve_hit.get("frame", 0) or 0)
+                if serve_hit.get("is_serve")
+                else None
+            ),
+            "serve_call": serve_call,
         })
         if winner in (1, 2):
             server = winner
@@ -643,9 +678,11 @@ def build_player_target_zone_summaries(hits):
 
 def judge_hits(run_dir, results, detected, audio_available=None, camera=None, camera_info=None):
     top_line = bottom_line = None
+    service_line = None
     wall_corners = None
     pixels_per_foot = None
     floor_map = None
+    calibration = None
     calibration_path = Path(run_dir) / "calibration.json"
     if calibration_path.exists():
         try:
@@ -656,6 +693,10 @@ def judge_hits(run_dir, results, detected, audio_available=None, camera=None, ca
             pixels_per_foot = velocity_scale_from_tin_line(bottom_line)
         except (ValueError, json.JSONDecodeError):
             pass
+        try:
+            service_line = load_service_line(calibration)
+        except (ValueError, TypeError):
+            service_line = None
 
     hits = []
     for hit in detected:
@@ -793,6 +834,47 @@ def judge_hits(run_dir, results, detected, audio_available=None, camera=None, ca
         hits.append(entry)
 
     player_assignment = assign_front_wall_hit_players(hits)
+    if top_line is not None and service_line is not None:
+        for entry in hits:
+            if int(entry.get("rally_hit_sequence") or 0) != 1:
+                continue
+            point = None
+            if entry.get("impact"):
+                point = Point(float(entry["impact"]["x"]), float(entry["impact"]["y"]))
+            else:
+                display_row = results.get(int(entry.get("frame", -1)))
+                if display_row is not None:
+                    point = ball_point_from_row(display_row)
+            if point is None:
+                continue
+
+            entry["is_serve"] = True
+            entry["standard_call"] = entry.get("call")
+            try:
+                call, reason, _, service_y = judge_serve_ball(
+                    point, top_line, service_line, wall_corners
+                )
+                entry["call"] = call
+                entry["reason"] = reason
+                entry["margin_px"] = (
+                    judge_margin_px(point, top_line, service_line, wall_corners)
+                    if call in ("IN", "OUT")
+                    else None
+                )
+                entry["serve_call"] = call
+                entry["serve_reason"] = reason
+                entry["service_line_y"] = service_y
+            except ValueError as error:
+                entry["call"] = "UNKNOWN"
+                entry["reason"] = str(error)
+                entry["margin_px"] = None
+                entry["serve_call"] = "UNKNOWN"
+                entry["serve_reason"] = str(error)
+
+        # Serve OUT can change the rally winner and therefore the next rally's
+        # inferred server. Re-run the deterministic assignment after applying
+        # the first-contact serve rule.
+        player_assignment = assign_front_wall_hit_players(hits)
     payload = {
         "hits": hits,
         "target_zones": build_target_zone_summary(hits),

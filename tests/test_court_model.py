@@ -408,7 +408,7 @@ def test_judge_hits_maps_floor_bounces_to_court(tmp_path):
 
     payload = json.loads((tmp_path / "detected_hits.json").read_text())
     assert payload["floor_zones"]["total_floor_bounces"] == 1
-    assert payload["target_zones"]["total_wall_hits"] == 1
+    assert payload["target_zones"]["total_wall_hits"] == 0
 
 
 def test_judge_hits_v1_calibration_has_no_floor_fields(tmp_path):

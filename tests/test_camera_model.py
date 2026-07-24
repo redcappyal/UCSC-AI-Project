@@ -84,6 +84,26 @@ def test_camera_correspondences_extracts_floor_and_wall():
                        court_model.OUT_LINE_HEIGHT_FT]
 
 
+def test_camera_correspondences_include_service_line_when_calibrated():
+    camera = make_camera()
+    calibration = _synthetic_calibration(camera)
+    left = camera.project((0.0, 0.0, court_model.SERVICE_LINE_HEIGHT_FT))
+    right = camera.project((
+        court_model.COURT_WIDTH_FT, 0.0, court_model.SERVICE_LINE_HEIGHT_FT
+    ))
+    calibration["lines"].append({
+        "name": "service_line_top_edge",
+        "endpoints": [list(left), list(right)],
+    })
+
+    _, court_xyz, labels = court_model._camera_correspondences(calibration)
+
+    assert len(court_xyz) == 13
+    assert "line:service_line_top_edge_left" in labels
+    assert "line:service_line_top_edge_right" in labels
+    assert court_model.SERVICE_LINE_HEIGHT_FT == pytest.approx(5.8399, abs=1e-3)
+
+
 def test_init_camera_from_floor_recovers_pose():
     camera = make_camera(focal_px=1500.0, position=(10.5, 29.0, 7.0),
                          look_at=(10.5, 0.0, 4.0))

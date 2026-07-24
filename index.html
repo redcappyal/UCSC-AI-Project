@@ -30,7 +30,7 @@
     --bg:#f5f5f7; --surface:#e9e9ee; --line:#e0e0e5; --dim:#6e6e76; --text:#000;
     --accent-bg:#ffd60a; --accent-text:#000;
     --strip-bg:#e3e3e8; --tick:rgba(0,0,0,.14);
-    --out:#007da6; --tin:#557a00;
+    --out:#007da6; --service:#a84f00; --tin:#557a00;
   }
   /* Self-hosted (fonts/ + /fonts route) so the app works offline; falls back
      to the system stack until the woff2 loads. */
@@ -80,7 +80,7 @@
   ::view-transition-old(root), ::view-transition-new(root){animation:none; mix-blend-mode:normal}
   #instr{flex:0 0 auto; padding:2px 14px 10px; font-size:15px; color:var(--dim)}
   #instr.warn{color:var(--text); font-weight:700}
-  #instr b.out{color:var(--out)} #instr b.tin{color:var(--tin)}
+  #instr b.out{color:var(--out)} #instr b.service{color:var(--service)} #instr b.tin{color:var(--tin)}
 
   #stage{position:relative; flex:1 1 0; min-height:0; display:flex; align-items:center;
     justify-content:center; overflow:hidden; background:var(--strip-bg)}
@@ -430,6 +430,18 @@
   .coachMetric span{display:block; font-size:22px; font-weight:800; line-height:1.1; overflow-wrap:anywhere}
   .coachMetric small{display:block; color:var(--dim); font-size:12px; line-height:1.35; margin-top:7px}
   .coachIntro{padding:12px 14px 0; color:var(--dim); font-size:14px; line-height:1.45}
+  .coachOutcomeComparison{display:grid; grid-template-columns:repeat(2, minmax(0, 1fr)); gap:12px;
+    padding:14px; border-top:1px solid var(--line)}
+  .coachOutcomeSection{min-width:0; border:1px solid var(--line); border-radius:10px; overflow:hidden;
+    background:color-mix(in srgb, var(--surface) 92%, var(--bg))}
+  .coachOutcomeHead{display:flex; align-items:flex-start; justify-content:space-between; gap:12px;
+    padding:11px 12px; border-bottom:1px solid var(--line)}
+  .coachOutcomeHead strong{font-size:17px; line-height:1.25}
+  .coachOutcomeHead span{color:var(--dim); font-size:12px; line-height:1.35; text-align:right}
+  .coachOutcomeSection.winning .coachOutcomeHead{border-left:4px solid var(--in)}
+  .coachOutcomeSection.losing .coachOutcomeHead{border-left:4px solid var(--outcall)}
+  .coachOutcomeSection .coachMetrics{grid-template-columns:1fr; padding:10px}
+  .coachOutcomeEmpty{padding:14px 12px; color:var(--dim); font-size:13px; line-height:1.4}
   .coachFeedback{padding:12px 14px; border-top:1px solid var(--line); font-size:16px; line-height:1.45; white-space:pre-wrap}
 
   /* The verdict box always occupies the same space: empty (blank), event
@@ -437,6 +449,8 @@
      showing or clearing a verdict never shifts the layout around it. */
   .verdict{border-radius:14px; padding:10px 14px; text-align:center; font-size:13px; line-height:1.4;
     min-height:78px; display:flex; flex-direction:column; justify-content:center}
+  .verdictPlayer{display:block; margin-bottom:2px; font-size:13px; font-weight:800;
+    letter-spacing:.04em; text-transform:uppercase}
   .verdict strong{display:block; font-size:28px; letter-spacing:.04em}
   .verdict.in{background:var(--in); color:#03230c}
   .verdict.out{background:var(--outcall); color:#fff}
@@ -493,6 +507,7 @@
   @media (max-width: 560px){
     .targetCourt{width:calc(100% - 16px)}
     .coachMetrics{grid-template-columns:1fr}
+    .coachOutcomeComparison{grid-template-columns:1fr}
   }
 
   /* Reduced motion (DESIGN.md §10): opacity pulses and the indeterminate
@@ -640,7 +655,7 @@
     <button class="small hidden" id="applyProfileBtn" type="button"></button>
   </section>
 
-  <!-- PHASE: tap out / tap tin -->
+  <!-- PHASE: tap out / tap tin / tap service -->
   <section class="hidden" id="p-tap">
     <button class="primary proxied" id="confirmBtn" disabled>Looks right</button>
     <div class="row"><button class="small" id="clearTapsBtn" disabled>Clear selection</button></div>
@@ -976,6 +991,7 @@
       </div>
       <div class="coachIntro" id="coachIntroP1"></div>
       <div class="coachMetrics" id="coachMetricsP1"></div>
+      <div class="coachOutcomeComparison" id="coachOutcomesP1"></div>
       <div class="coachFeedback" id="coachFeedbackP1"></div>
     </div>
     <div class="row">
@@ -1016,6 +1032,7 @@
       </div>
       <div class="coachIntro" id="coachIntroP2"></div>
       <div class="coachMetrics" id="coachMetricsP2"></div>
+      <div class="coachOutcomeComparison" id="coachOutcomesP2"></div>
       <div class="coachFeedback" id="coachFeedbackP2"></div>
     </div>
   </section>
@@ -1174,11 +1191,14 @@ const CFG = {
   out: { key:'out', label:'OUT line', edge:'max', css:'var(--out)', hex:'#35e0ff',
          rgb:[53,224,255], edgeName:'out_line_lower_edge',
          edgeDesc:'lower edge of the out line (ball at or above this is OUT)' },
+  service: { key:'service', label:'SERVICE line', edge:'min', css:'var(--service)', hex:'#ff9f43',
+         rgb:[255,159,67], edgeName:'service_line_top_edge',
+         edgeDesc:'top edge of the service line (a serve at or below this is OUT)' },
   tin: { key:'tin', label:'TIN', edge:'min', css:'var(--tin)', hex:'#b4ff3a',
          rgb:[180,255,58], edgeName:'tin_top_edge',
          edgeDesc:'top edge of the tin (ball at or below this is DOWN)' },
 };
-const ORDER = ['out','tin'];
+const ORDER = ['out','service','tin'];
 const MIN_COLS = 40;          // minimum horizontal span (in columns) for a trustworthy fit
 const FILL_CAP_FRAC = 0.25;   // abort fill if it exceeds this fraction of the frame
 const DEFAULT_FILL_TOL = 35;
@@ -1192,12 +1212,13 @@ const S = {
   loadTimer:null,
   base:null,                  // ImageData of the locked frame
   work:null,                  // {key, seeds:[[x,y],...], mask, maskCanvas, fit, msg, msgKind}
-  lines:{out:null, tin:null}, // committed: {seeds, maskCanvas, fit}
+  lines:{out:null, tin:null, service:null}, // committed: {seeds, maskCanvas, fit}
   wall:null,                  // front-wall corner taps, clockwise from upper left
   floor:null,                 // floor-homography wizard state (see newFloorState)
   profile:null,               // {id, name, created_utc} when a saved profile is in play
   run:null,                   // backend tracking result
   coachReports:{},            // run_id -> coaching analytics/feedback response
+  coachLlmRequests:{},        // run_id -> in-flight LLM enhancement promise
   corrections:{},             // frame -> saved v2 correction entry for the run
   corrTarget:null,            // {frame, predicted, draft, pickingFrame} — the hit being corrected
   ballByFrame:null,           // Map(frame -> {x,y}) from ball_coordinates.csv (video px)
@@ -1228,10 +1249,11 @@ const S = {
 const STEP_META = {
   load:   {label:'Squash Line Calling', instr:''},
   record: {label:'Record', instr:'', action:{btn:'recBtn', label:'Record'}},
-  frame:  {label:'Pick frame', instr:'Drag the film strip under the playhead to a frame where both the out line and the tin are fully visible and unblocked.',
+  frame:  {label:'Pick frame', instr:'Drag the film strip under the playhead to a frame where the out line, service line, and tin are fully visible and unblocked.',
            action:{btn:'useFrame', label:'Use frame'}},
   tap_out:{label:'Out line', instr:'', action:{btn:'confirmBtn', label:'Looks right'}},
   tap_tin:{label:'Tin', instr:'', action:{btn:'confirmBtn', label:'Looks right'}},
+  tap_service:{label:'Service line', instr:'', action:{btn:'confirmBtn', label:'Looks right'}},
   review: {label:'Review', instr:'Check that each fitted edge hugs the real paint edge across the whole line.',
            action:{btn:'chooseClipBtn', label:'Use lines'}},
   tap_wall:{label:'Wall corners', instr:'', action:{btn:'wallDoneBtn', label:'Use corners'}},
@@ -1267,7 +1289,7 @@ const SECTION_ROOTS = ['load','matches','coach'];
    report pages replace it (Call -> Player 1 -> Player 2). Phases not in this
    list (load, record, label, target, hubs) get no number. */
 function stepSequence(){
-  const seq = ['frame','tap_out','tap_tin','review','tap_wall'];
+  const seq = ['frame','tap_out','tap_tin','tap_service','review','tap_wall'];
   if(COURT) seq.push('tap_floor');
   return [...seq, 'clip','track','player1_report','player2_report'];
 }
@@ -1316,7 +1338,7 @@ function setPhase(p){
   syncHeaderAction(STEP_META[p].action);
 
   $('instr').classList.remove('warn');
-  if(p === 'tap_out' || p === 'tap_tin'){
+  if(p === 'tap_out' || p === 'tap_tin' || p === 'tap_service'){
     const c = CFG[curKey()];
     $('instr').innerHTML = `Tap the red paint of the <b class="${c.key}">${c.label}</b>. If glare breaks the selection, tap the missed stretch to extend it. Pinch to zoom for a precise tap.`;
     $('instr').classList.remove('hidden');
@@ -1331,7 +1353,7 @@ function setPhase(p){
   if(p === 'load'){ $('p-load').classList.remove('hidden'); }
   if(p === 'record'){ $('p-record').classList.remove('hidden'); enterRecordPhase(); }
   if(p === 'frame'){ $('p-frame').classList.remove('hidden'); setupFrameTimeline(); updateProfileButton(); }
-  if(p === 'tap_out' || p === 'tap_tin'){
+  if(p === 'tap_out' || p === 'tap_tin' || p === 'tap_service'){
     $('p-tap').classList.remove('hidden');
     $('confirmBtn').disabled = !(S.work && S.work.fit);
     $('zoomCtrl').classList.remove('hidden');
@@ -1361,7 +1383,8 @@ function setPhase(p){
   $('navCoach').classList.toggle('active', p === 'coach');
   render();
 }
-const curKey = () => S.phase === 'tap_out' ? 'out' : 'tin';
+const curKey = () => S.phase === 'tap_out' ? 'out'
+  : S.phase === 'tap_tin' ? 'tin' : 'service';
 
 /* ---------- video loading & scrubbing ---------- */
 async function checkBackend(){
@@ -1386,7 +1409,7 @@ function loadVideoFile(f, recCal = null){
   S.videoName = f.name;
   S.pendingRecCal = recCal;   // set only when judging an in-app recording
   S.videoFps = null;
-  S.lines = {out:null, tin:null};  // line fits belong to the previous video's frame — clear so a fresh calibration starts blank
+  S.lines = {out:null, tin:null, service:null};  // line fits belong to the previous video's frame — clear so a fresh calibration starts blank
   S.wall = null;
   S.floor = null;             // floor landmarks belong to the previous video's frame
   S.profile = null;
@@ -1851,7 +1874,7 @@ async function exportRecording(id){
 }
 
 /* On-site calibration: freeze the live view into S.base and run the standard
-   wizard (tap lines → wall corners → floor map); its exits return here. */
+   wizard (tap out/tin/service lines → wall corners → floor map); its exits return here. */
 $('recCalibrateBtn').onclick = () => {
   if(!camVid.videoWidth || !camVid.videoHeight) return;
   S.W = camVid.videoWidth; S.H = camVid.videoHeight;
@@ -1860,7 +1883,7 @@ $('recCalibrateBtn').onclick = () => {
   S.base = ctx.getImageData(0, 0, S.W, S.H);
   S.videoName = 'live-camera';
   S.frameTime = 0;
-  S.work = null; S.lines = {out:null, tin:null}; S.wall = null; S.floor = null; S.profile = null;
+  S.work = null; S.lines = {out:null, tin:null, service:null}; S.wall = null; S.floor = null; S.profile = null;
   S.rec.calibrating = true;
   setPhase('tap_out');
 };
@@ -1890,8 +1913,10 @@ $('hdrBack').onclick = () => {
     else { setPhase('frame'); ctx.drawImage(vid, 0, 0, S.W, S.H); }
   } else if(S.phase === 'tap_tin'){
     S.work = null; S.lines.out = null; setPhase('tap_out');
-  } else if(S.phase === 'review'){
+  } else if(S.phase === 'tap_service'){
     S.work = null; S.lines.tin = null; setPhase('tap_tin');
+  } else if(S.phase === 'review'){
+    S.work = null; S.lines.service = null; setPhase('tap_service');
   } else if(S.phase === 'tap_wall'){
     setPhase('review');
   } else if(S.phase === 'tap_floor'){
@@ -1996,7 +2021,7 @@ const pointers = new Map();
 let pinch = null;
 
 canvas.addEventListener('pointerdown', e => {
-  if(S.phase !== 'tap_out' && S.phase !== 'tap_tin' && S.phase !== 'tap_wall' && S.phase !== 'tap_floor') return;
+  if(S.phase !== 'tap_out' && S.phase !== 'tap_tin' && S.phase !== 'tap_service' && S.phase !== 'tap_wall' && S.phase !== 'tap_floor') return;
   e.preventDefault();
   canvas.setPointerCapture(e.pointerId);
   pointers.set(e.pointerId, { x:e.clientX, y:e.clientY, startX:e.clientX, startY:e.clientY, moved:false, multi:false });
@@ -2047,7 +2072,7 @@ function endPointer(e){
   pointers.delete(e.pointerId);
   if(pointers.size < 2) pinch = null;
   if(!p) return;
-  const tapPhase = S.phase === 'tap_out' || S.phase === 'tap_tin' || S.phase === 'tap_wall' || S.phase === 'tap_floor';
+  const tapPhase = S.phase === 'tap_out' || S.phase === 'tap_tin' || S.phase === 'tap_service' || S.phase === 'tap_wall' || S.phase === 'tap_floor';
   if(tapPhase && !p.moved && !p.multi && pointers.size === 0){
     const r = canvas.getBoundingClientRect();
     const x = Math.min(S.W - 1, Math.max(0, Math.round((p.x - r.left) * S.W / r.width)));
@@ -2120,12 +2145,8 @@ $('confirmBtn').onclick = () => {
   if(!S.work || !S.work.fit) return;
   const k = S.work.key;
   S.lines[k] = { seeds:S.work.seeds, maskCanvas:S.work.maskCanvas, fit:S.work.fit };
-  if(k === 'tin'){
-    S.wall = null;
-    S.floor = null;
-  }
   S.work = null;
-  setPhase(k === 'out' ? 'tap_tin' : 'review');
+  setPhase(k === 'out' ? 'tap_tin' : k === 'tin' ? 'tap_service' : 'review');
 };
 
 /* ---------- flood fill (HSV similarity) ---------- */
@@ -2561,7 +2582,7 @@ function midY(fit){ return fit.m * (S.W / 2) + fit.b; }
 
 function buildReview(){
   const w = $('reviewWarn');
-  const out = S.lines.out.fit, tin = S.lines.tin.fit;
+  const out = S.lines.out.fit, service = S.lines.service.fit, tin = S.lines.tin.fit;
 
   // Both lines span the same 21 ft front wall, so their endpoints should
   // roughly agree in x. The tin is the more trustworthy of the two (its paint
@@ -2569,17 +2590,21 @@ function buildReview(){
   // disagrees badly — truncated by glare, or leaked — snap it to the tin's,
   // keeping the out line's own slope/intercept.
   const tinSpan = tin.xMax - tin.xMin;
-  let snapped = false;
+  const snapped = [];
   if(tinSpan > 0){
     const tolPx = tinSpan * 0.08;
-    if(Math.abs(out.xMin - tin.xMin) > tolPx){ out.xMin = tin.xMin; snapped = true; }
-    if(Math.abs(out.xMax - tin.xMax) > tolPx){ out.xMax = tin.xMax; snapped = true; }
-    if(snapped) out.snappedToTin = true;
+    for(const [name, fit] of [['Out', out], ['Service', service]]){
+      let changed = false;
+      if(Math.abs(fit.xMin - tin.xMin) > tolPx){ fit.xMin = tin.xMin; changed = true; }
+      if(Math.abs(fit.xMax - tin.xMax) > tolPx){ fit.xMax = tin.xMax; changed = true; }
+      if(changed){ fit.snappedToTin = true; snapped.push(name); }
+    }
   }
 
   const notes = [];
-  if(snapped) notes.push('Out-line span disagreed with the tin — endpoints snapped to the tin’s span (angle kept).');
-  if(midY(out) >= midY(tin)) notes.push('Warning: the out line was fitted below the tin — go Back and redo the taps.');
+  if(snapped.length) notes.push(`${snapped.join(' and ')} line span disagreed with the tin — endpoints snapped to the tin’s span (angle kept).`);
+  if(!(midY(out) < midY(service) && midY(service) < midY(tin)))
+    notes.push('Warning: the lines must run from out line to service line to tin, top to bottom — go Back and redo the taps.');
   w.textContent = notes.join(' ');
   w.className = 'status' + (notes.length ? ' warn' : '');
   render();
@@ -2611,7 +2636,7 @@ function buildJson(){
     frame_height: S.H,
     frame_time_s: +S.frameTime.toFixed(3),
     created_utc: new Date().toISOString(),
-    lines: [line('out'), line('tin')],
+    lines: ORDER.map(line),
     court_units: 'feet',
     court_convention: COURT ? COURT.convention
       : 'origin front-left floor corner viewed from back-wall camera; x right 0-21; y toward back wall 0-32',
@@ -3254,6 +3279,7 @@ function applyProfile(saved){
   const byName = {};
   for(const l of cal.lines || []) byName[l.name] = l;
   const out = byName[CFG.out.edgeName], tin = byName[CFG.tin.edgeName];
+  const service = byName[CFG.service.edgeName];
   if(!out || !tin){ showError('That saved profile is missing its line fits.'); return; }
 
   vid.pause();
@@ -3264,6 +3290,9 @@ function applyProfile(saved){
   S.profile = saved.profile;
   S.lines.out = { seeds: [], maskCanvas: null, fit: fitFromStoredLine(out) };
   S.lines.tin = { seeds: [], maskCanvas: null, fit: fitFromStoredLine(tin) };
+  S.lines.service = service
+    ? { seeds: [], maskCanvas: null, fit: fitFromStoredLine(service) }
+    : null;
   S.wall = wallFromCalibration(cal);
 
   S.floor = null;
@@ -3285,6 +3314,15 @@ function applyProfile(saved){
     if(!S.floor.H) S.floor = null;     // corrupt/partial profile: fall back to no floor map
   }
 
+  if(!service){
+    S.work = null;
+    setPhase('tap_service');
+    $('tapStatus').textContent =
+      'This saved profile predates serve calibration. Tap the service line once to upgrade it.';
+    $('tapStatus').className = 'status warn';
+    return;
+  }
+
   setPhase('review');                  // visual confirmation against the current frame
   const w = $('reviewWarn');
   const note = `Applied profile “${saved.profile.name}” — check the lines still hug the paint` +
@@ -3294,7 +3332,7 @@ function applyProfile(saved){
   w.className = 'status warn';
 }
 $('floorSaveProfileBtn').onclick = () => {
-  if(!S.floor || !S.floor.H || !S.lines.out || !S.lines.tin) return;
+  if(!S.floor || !S.floor.H || !S.lines.out || !S.lines.tin || !S.lines.service) return;
   const name = (window.prompt('Profile name (e.g. “Court 3 rear mount”)',
     S.profile ? S.profile.name : '') || '').trim();
   if(!name) return;
@@ -4563,15 +4601,52 @@ function summaryFromPlayerAnalytics(player){
   };
 }
 
+function targetSummaryFromMetricHits(hits, playerNumber=null){
+  if(!Array.isArray(hits)) return null;
+  const zones = Array.from({length:8}, (_, index) => ({
+    zone:index + 1,
+    count:0,
+    percentage:0,
+  }));
+  const included = hits.filter(hit => {
+    const eventType = hit.event_type;
+    const isFrontWall = eventType === undefined || eventType === null ||
+      eventType === 'wall' || eventType === 'unknown';
+    const isServe = Boolean(hit.is_serve) || Number(hit.rally_hit_sequence || 0) === 1;
+    const isPlayer = playerNumber === null ||
+      Number(hit.player_number) === Number(playerNumber);
+    return isFrontWall && !isServe && isPlayer && hit.target_zone;
+  });
+  for(const hit of included){
+    const zone = zones[Number(hit.target_zone.zone) - 1];
+    if(zone) zone.count += 1;
+  }
+  for(const zone of zones){
+    zone.percentage = included.length ? zone.count / included.length * 100 : 0;
+  }
+  return {
+    layout:'front_wall_8_target_no_serves',
+    total_wall_hits:included.length,
+    zones,
+    common_zones:[...zones]
+      .filter(zone => zone.count > 0)
+      .sort((left, right) => right.count - left.count || left.zone - right.zone)
+      .slice(0, 3),
+    missing_zones:zones.filter(zone => zone.count === 0),
+  };
+}
+
 function playerTargetSummary(playerNumber){
   const key = String(playerNumber);
-  const runSummary = S.run && S.run.target_zones_by_player && S.run.target_zones_by_player[key];
-  if(runSummary) return runSummary;
   const runId = S.run && S.run.run_id;
   const report = runId && S.coachReports[runId];
   const player = report && report.analytics && (report.analytics.players || [])
     .find(item => Number(item.player_number) === Number(playerNumber));
-  return summaryFromPlayerAnalytics(player);
+  const reportSummary = summaryFromPlayerAnalytics(player);
+  if(reportSummary) return reportSummary;
+  const hitSummary = targetSummaryFromMetricHits(S.run && S.run.hits, playerNumber);
+  if(hitSummary) return hitSummary;
+  return S.run && S.run.target_zones_by_player && S.run.target_zones_by_player[key];
 }
 
 function metricValue(value, suffix = ''){
@@ -4590,16 +4665,27 @@ function hidePlayerCoachPanels(){
     $(`coachSourceP${num}`).textContent = '';
     $(`coachIntroP${num}`).textContent = '';
     $(`coachMetricsP${num}`).innerHTML = '';
+    $(`coachOutcomesP${num}`).innerHTML = '';
     $(`coachFeedbackP${num}`).textContent = '';
   }
 }
 
 function coachingSourceText(data){
-  const source = data.feedback_source === 'llm' ? 'LLM feedback' : 'Local feedback';
+  const playerSource = data.player_feedback_source || data.feedback_source;
+  const source = playerSource === 'ollama'
+    ? 'Ollama feedback'
+    : playerSource === 'llm' ? 'OpenAI feedback' : 'Local feedback';
   const statusText = {
     missing_api_key: 'LLM not configured',
     request_failed: 'LLM unavailable',
+    ollama_unavailable: 'Ollama is not running',
+    ollama_model_missing: 'Ollama model is not installed',
+    ollama_request_failed: 'Ollama request failed',
     empty_response: 'LLM unavailable',
+    invalid_response: 'LLM response could not be read',
+    invalid_provider: 'Unknown LLM provider',
+    local_only: 'LLM disabled',
+    pending: 'LLM feedback loading',
   }[data.llm_status] || String(data.llm_status).replaceAll('_', ' ');
   return data.llm_status && data.llm_status !== 'ok'
     ? `${source} · ${statusText}`
@@ -4618,6 +4704,72 @@ function playerAssignmentText(playerNumber, assignment=null){
     : 'Player 2 uses the 2nd, 4th, 6th, and other even-numbered detected front-wall contacts.';
 }
 
+function renderOutcomeMetricSection(player, outcome){
+  const metrics = (player.rally_outcome_analytics || {})[outcome] || {};
+  const isWinning = outcome === 'winning';
+  const title = isWinning ? 'Winning' : 'Losing';
+  const rallyCount = Number(metrics.rally_count || 0);
+  const shotCount = Number(metrics.total_wall_hits || 0);
+  const rallyLabel = `${rallyCount} ${rallyCount === 1 ? 'rally' : 'rallies'}`;
+  const shotLabel = `${shotCount} ${shotCount === 1 ? 'shot' : 'shots'}`;
+  const context = `${isWinning ? 'won' : 'lost'} rallies`;
+  const header =
+    `<div class="coachOutcomeHead"><strong>${title}</strong>` +
+    `<span>${rallyLabel}<br>${shotLabel} analyzed</span></div>`;
+  if(!rallyCount){
+    return (
+      `<section class="coachOutcomeSection ${outcome}">${header}` +
+      `<div class="coachOutcomeEmpty">No decided ${context} are available for this comparison.</div></section>`
+    );
+  }
+  const cards = [
+    coachMetric(
+      'Average rally duration',
+      metricValue(metrics.average_rally_duration_seconds, ' s'),
+      `Average time from the first to final detected front-wall contact in ${context}.`
+    ),
+    coachMetric(
+      'Main targets',
+      formatZoneList(metrics.common_target_zones || [], 3),
+      `${player.label}'s most-used front-wall areas in ${context}.`
+    ),
+    coachMetric(
+      'Average shot height',
+      metricValue(metrics.average_wall_height_ft, ' ft'),
+      `Average front-wall contact height across ${player.label}'s shots in ${context}.`
+    ),
+    coachMetric(
+      'Average pace into front wall',
+      metricValue(metrics.average_incoming_speed_mph, ' mph'),
+      `Mean incoming pace across shots with a usable speed estimate in ${context}.`
+    ),
+    coachMetric(
+      'Average pace off front wall',
+      metricValue(metrics.average_exit_speed_mph, ' mph'),
+      `Mean rebound pace across shots with a usable speed estimate in ${context}.`
+    ),
+    coachMetric(
+      'Middle usage',
+      metricValue(metrics.center_target_rate, '%'),
+      `Share of ${player.label}'s analyzed shots that used middle targets in ${context}.`
+    ),
+    coachMetric(
+      'Wide usage',
+      metricValue(metrics.side_target_rate, '%'),
+      `Share of ${player.label}'s analyzed shots that used wide targets in ${context}.`
+    ),
+    coachMetric(
+      'Low attacking rate',
+      metricValue(metrics.low_target_rate, '%'),
+      `Share of ${player.label}'s analyzed shots that used low targets in ${context}.`
+    ),
+  ].join('');
+  return (
+    `<section class="coachOutcomeSection ${outcome}">${header}` +
+    `<div class="coachMetrics">${cards}</div></section>`
+  );
+}
+
 function renderPlayerCoachPanel(data, playerNumber, sourceText){
   const analytics = data.analytics || {};
   const player = (analytics.players || []).find(item => Number(item.player_number) === playerNumber) || {
@@ -4625,12 +4777,14 @@ function renderPlayerCoachPanel(data, playerNumber, sourceText){
     label: `Player ${playerNumber}`,
     total_wall_hits: 0,
     common_target_zones: [],
+    average_rally_duration_seconds: null,
     average_wall_height_ft: null,
     average_incoming_speed_mph: null,
     average_exit_speed_mph: null,
     center_target_rate: null,
     side_target_rate: null,
     low_target_rate: null,
+    rally_outcome_analytics: {},
   };
   $(`coachPanelP${playerNumber}`).classList.remove('hidden');
   $(`coachSourceP${playerNumber}`).textContent = sourceText;
@@ -4644,8 +4798,18 @@ function renderPlayerCoachPanel(data, playerNumber, sourceText){
     ),
     coachMetric(
       'Unforced errors',
+      metricValue(player.unforced_errors),
+      `Number of rally losses where ${player.label}'s final front-wall shot was OUT.`
+    ),
+    coachMetric(
+      'Unforced error rate',
       metricValue(player.unforced_error_percentage, '%'),
       `${player.label}'s unforced errors as a percentage of all rally losses: unforced errors ÷ (unforced + forced errors).`
+    ),
+    coachMetric(
+      'Average rally duration',
+      metricValue(player.average_rally_duration_seconds, ' s'),
+      `Average length of rallies ${player.label} won, from the first to final detected front-wall contact.`
     ),
     coachMetric(
       'Main targets',
@@ -4658,14 +4822,14 @@ function renderPlayerCoachPanel(data, playerNumber, sourceText){
       `Where ${player.label}'s shots usually struck the front wall, measured from the floor.`
     ),
     coachMetric(
-      'Pace before contact',
+      'Average pace into front wall',
       metricValue(player.average_incoming_speed_mph, ' mph'),
-      `Estimated speed as ${player.label}'s ball reached the front wall.`
+      `The mean speed across ${player.label}'s analyzed shots with a usable estimate as the ball approached the front wall.`
     ),
     coachMetric(
-      'Pace after contact',
+      'Average pace off front wall',
       metricValue(player.average_exit_speed_mph, ' mph'),
-      `Estimated speed as ${player.label}'s ball came off the front wall.`
+      `The mean speed across ${player.label}'s analyzed shots with a usable estimate immediately after the ball rebounded from the front wall.`
     ),
     coachMetric(
       'Middle usage',
@@ -4683,6 +4847,9 @@ function renderPlayerCoachPanel(data, playerNumber, sourceText){
       `How often ${player.label} hit lower front-wall targets.`
     ),
   ].join('');
+  $(`coachOutcomesP${playerNumber}`).innerHTML =
+    renderOutcomeMetricSection(player, 'winning') +
+    renderOutcomeMetricSection(player, 'losing');
   const feedback = data.player_feedback && data.player_feedback[String(playerNumber)];
   $(`coachFeedbackP${playerNumber}`).textContent =
     feedback || `${player.label}: no player-specific coaching feedback is available yet.`;
@@ -4706,11 +4873,22 @@ function setCoachLoading(playerNumber){
   $(`coachIntroP${playerNumber}`).textContent = `Building the Player ${playerNumber} report from detected front-wall contacts.`;
   $(`coachMetricsP${playerNumber}`).innerHTML = [
     coachMetric('Shots analyzed', '—', 'Reliable front-wall contacts included in the report.'),
-    coachMetric('Unforced errors', '—', 'Unforced errors as a percentage of all rally losses.'),
+    coachMetric('Unforced errors', '—', 'Number of rally losses ending with this player hitting OUT.'),
+    coachMetric('Unforced error rate', '—', 'Unforced errors as a percentage of all rally losses.'),
+    coachMetric('Average rally duration', '—', 'Average length of rallies won by this player.'),
     coachMetric('Main targets', '—', 'The wall areas you used most often.'),
     coachMetric('Typical shot height', '—', 'Where your shots usually struck the front wall.'),
-    coachMetric('Pace before contact', '—', 'Estimated speed as the ball reached the front wall.'),
+    coachMetric('Average pace into front wall', '—', 'Mean speed across analyzed shots with a usable estimate approaching the front wall.'),
   ].join('');
+  $(`coachOutcomesP${playerNumber}`).innerHTML =
+    renderOutcomeMetricSection({
+      label: `Player ${playerNumber}`,
+      rally_outcome_analytics: {},
+    }, 'winning') +
+    renderOutcomeMetricSection({
+      label: `Player ${playerNumber}`,
+      rally_outcome_analytics: {},
+    }, 'losing');
   $(`coachFeedbackP${playerNumber}`).textContent = 'Building player feedback from the target map...';
 }
 
@@ -4722,6 +4900,7 @@ async function loadCoachReport(playerNumber){
   }
   if(S.coachReports[runId]){
     renderCoachReport(S.coachReports[runId], playerNumber);
+    requestLlmCoachReport(runId);
     return;
   }
   setCoachLoading(playerNumber);
@@ -4731,14 +4910,51 @@ async function loadCoachReport(playerNumber){
     if(!response.ok || data.ok === false) throw new Error(data.error || 'Coaching report failed.');
     S.coachReports[runId] = data;
     renderCoachReport(data, playerNumber);
+    requestLlmCoachReport(runId);
   } catch(error){
     hidePlayerCoachPanels();
     $(`coachPanelP${playerNumber}`).classList.remove('hidden');
     $(`coachSourceP${playerNumber}`).textContent = 'Unavailable';
     $(`coachIntroP${playerNumber}`).textContent = playerAssignmentText(playerNumber);
     $(`coachMetricsP${playerNumber}`).innerHTML = '';
+    $(`coachOutcomesP${playerNumber}`).innerHTML = '';
     $(`coachFeedbackP${playerNumber}`).textContent = error.message || 'Coaching report failed.';
   }
+}
+
+function activeCoachPlayer(){
+  if(S.phase === 'player1_report') return 1;
+  if(S.phase === 'player2_report') return 2;
+  return null;
+}
+
+function requestLlmCoachReport(runId){
+  const localReport = S.coachReports[runId];
+  if(!localReport || localReport.llm_status !== 'pending' || S.coachLlmRequests[runId]) return;
+
+  const request = (async () => {
+    try{
+      const response = await fetch(
+        `/api/runs/${encodeURIComponent(runId)}/coach/llm`,
+        {method:'POST', cache:'no-store'}
+      );
+      const data = await response.json();
+      if(!response.ok || data.ok === false) throw new Error(data.error || 'LLM coaching failed.');
+      S.coachReports[runId] = data;
+    } catch(error){
+      S.coachReports[runId] = {
+        ...localReport,
+        llm_status:'request_failed',
+      };
+    } finally {
+      delete S.coachLlmRequests[runId];
+      const playerNumber = activeCoachPlayer();
+      if(playerNumber && S.run && S.run.run_id === runId){
+        renderCoachReport(S.coachReports[runId], playerNumber);
+      }
+    }
+  })();
+  S.coachLlmRequests[runId] = request;
 }
 
 function buildPlayerReportView(playerNumber){
@@ -4748,7 +4964,9 @@ function buildPlayerReportView(playerNumber){
 }
 
 function buildTargetView(){
-  const summary = S.debugTargetZones || (S.run && S.run.target_zones);
+  const summary = S.debugTargetZones ||
+    targetSummaryFromMetricHits(S.run && S.run.hits) ||
+    (S.run && S.run.target_zones);
   renderTargetZones(summary);
   const hasFloor = renderFloorMap();
   const total = summary ? summary.total_wall_hits : 0;
@@ -4841,6 +5059,9 @@ function rallyWinnerText(rally){
 
 function rallyWinnerDetail(rally){
   const winner = rallyWinnerText(rally);
+  const server = Number(rally.server_player_number);
+  if(rally.winner_reason === 'serve_out' && (server === 1 || server === 2))
+    return `${winner}; Player ${server}'s serve was OUT`;
   const lastPlayer = Number(rally.last_player_number);
   if(rally.last_call === 'OUT' && (lastPlayer === 1 || lastPlayer === 2))
     return `${winner}; Player ${lastPlayer}'s final front-wall hit was OUT`;
@@ -4994,10 +5215,10 @@ function makeHitBar(hit, leftPct, mini){
   bar.style.left = `${leftPct}%`;
   const label = nonWall
     ? EVENT_LABELS[type].toLowerCase()
-    : `${callWithMargin(hit.call, hit.margin_px)}${type === 'wall' ? ' · wall' : ''}`;
+    : `${hit.is_serve ? 'serve · ' : ''}${callWithMargin(hit.call, hit.margin_px)}${type === 'wall' ? ' · wall' : ''}`;
   const audioDb = hit.signals && hit.signals.audio_score;
   const audio = audioDb == null ? '' : ` (audio +${audioDb.toFixed(1)} dB)`;
-  bar.title = `Frame ${hit.frame} · ${label}${audio}`;
+  bar.title = `Frame ${hit.frame} · ${label} · ${playerAttributionText(hit)}${audio}`;
   bar.addEventListener('pointerdown', e => e.stopPropagation());
   bar.addEventListener('click', () => {
     transportStop();
@@ -5267,6 +5488,17 @@ function callWithMargin(call, marginPx){
 
 const EVENT_LABELS = { racket:'Racket hit', floor:'Floor bounce', side_wall:'Side wall' };
 
+function playerAttributionText(hit){
+  const player = Number(hit && hit.player_number);
+  return player === 1 || player === 2
+    ? `Hit by Player ${player}`
+    : 'Player attribution unavailable';
+}
+
+function playerAttributionMarkup(hit){
+  return `<span class="verdictPlayer">${playerAttributionText(hit)}</span>`;
+}
+
 function clearJudgeResult(){
   $('judgeResult').className = 'verdict blank';
   $('judgeResult').innerHTML = '<div>No line call yet</div>';
@@ -5278,6 +5510,7 @@ function renderEventCard(hit){
   saveRestoreStash(hit.frame);
   $('judgeResult').className = 'verdict neutral';
   $('judgeResult').innerHTML =
+    playerAttributionMarkup(hit) +
     `<strong>${EVENT_LABELS[hit.event_type] || hit.event_type}</strong>` +
     `<div>Frame ${hit.frame} · line calls apply to front-wall hits only</div>`;
   // Non-wall hits carry no judge context; seed the dot from the impact fit
@@ -5287,18 +5520,20 @@ function renderEventCard(hit){
                              margin_px:null, ball });
 }
 
-function renderJudgeResult(data){
-  const hit = hitAtFrame(data.frame);
+function renderJudgeResult(data, selectedHit=null){
+  const hit = selectedHit || hitAtFrame(data.frame);
   setCorrTarget(data.frame, {
     type: (hit && hit.event_type) || 'wall',
     call: data.call, source: data.source,
     margin_px: data.margin_px, ball: data.ball,
   });
   const callClass = data.call === 'IN' ? 'in' : data.call === 'OUT' ? 'out' : 'neutral';
+  const isServe = !!(data.is_serve || (hit && hit.is_serve));
   const sourceText = data.source === 'impact_estimate' ? 'estimated impact point' : 'detected ball center';
   $('judgeResult').className = `verdict ${callClass}`;
   $('judgeResult').innerHTML =
-    `<strong>${callWithMargin(data.call, data.margin_px)}</strong>` +
+    playerAttributionMarkup(hit) +
+    `<strong>${isServe ? 'SERVE ' : ''}${callWithMargin(data.call, data.margin_px)}</strong>` +
     `<div>Frame ${data.frame} · ${sourceText} (${data.ball.x.toFixed(1)}, ${data.ball.y.toFixed(1)}) · ` +
     `${data.reason}${data.outside_line_span ? ' · outside calibrated line span' : ''}</div>`;
 }
@@ -5322,11 +5557,18 @@ function scheduleAutoJudge(frame){
 
 async function judgeFrameRequest(frame, quiet=false){
   if(!S.run || Number.isNaN(frame)) return;
+  const selectedHit = hitAtFrame(frame);
   S.judgedFrame = frame;
   saveRestoreStash(frame);
   if(!quiet) setCallTab('review');    // the verdict lands in the Review pane
   $('judgeBtn').disabled = true;
   clearJudgeResult();
+  if(selectedHit){
+    $('judgeResult').className = 'verdict neutral';
+    $('judgeResult').innerHTML =
+      playerAttributionMarkup(selectedHit) +
+      `<strong>Judging…</strong><div>Frame ${frame}</div>`;
+  }
 
   try{
     const response = await fetch('/api/judge', {
@@ -5336,17 +5578,15 @@ async function judgeFrameRequest(frame, quiet=false){
     });
     const data = await response.json();
     if(!data.ok) throw new Error(data.error || 'Judgement failed.');
-    renderJudgeResult(data);
+    renderJudgeResult(data, selectedHit);
   } catch(error){
     // Auto-judged frames fail routinely (no detected ball mid-flight); report
     // that in the verdict box instead of raising the error banner every step.
-    if(quiet){
-      $('judgeResult').className = 'verdict neutral';
-      $('judgeResult').innerHTML =
-        `<strong>No call</strong><div>Frame ${frame} · ${error.message}</div>`;
-    } else {
-      showError(error.message);
-    }
+    $('judgeResult').className = 'verdict neutral';
+    $('judgeResult').innerHTML =
+      playerAttributionMarkup(selectedHit) +
+      `<strong>No call</strong><div>Frame ${frame} · ${error.message}</div>`;
+    if(!quiet) showError(error.message);
   } finally {
     $('judgeBtn').disabled = false;
   }

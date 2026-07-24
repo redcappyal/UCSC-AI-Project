@@ -515,10 +515,12 @@ def build_floor_zone_summary(hits, columns=FLOOR_ZONE_COLUMNS, rows=FLOOR_ZONE_R
 G_FT_PER_S2 = 32.174
 
 OUT_LINE_HEIGHT_FT = 15.0
+SERVICE_LINE_HEIGHT_FT = 1.78 * 3.280839895
 TIN_TOP_HEIGHT_FT = 19.0 / 12.0
 
 _WALL_LINE_HEIGHTS_FT = {
     "out_line_lower_edge": OUT_LINE_HEIGHT_FT,
+    "service_line_top_edge": SERVICE_LINE_HEIGHT_FT,
     "tin_top_edge": TIN_TOP_HEIGHT_FT,
 }
 

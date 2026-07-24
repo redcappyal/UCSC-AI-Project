@@ -5,7 +5,8 @@ every front-wall hit — plus a coaching report on where the ball actually went.
 
 A single-file mobile web app (`index.html`) over a Flask + OpenCV pipeline that detects
 the ball frame by frame, finds the moments it strikes a wall, and judges each front-wall
-impact against a hand-calibrated out line.
+impact against hand-calibrated out/tin lines. The first contact in each rally is also
+checked against a calibrated service line.
 
 ---
 
@@ -14,7 +15,7 @@ impact against a hand-calibrated out line.
 ```
 video ──► ball detection ──► bounce detection ──► classification ──► judging
           (per-frame          (velocity change,    (wall / side wall   (impact point vs
-           detection model)    two-stage fit,       / floor / racket)   calibrated out line)
+           detection model)    two-stage fit,       / floor / racket)   calibrated wall lines)
                                GB model, audio)
 ```
 
@@ -24,7 +25,7 @@ video ──► ball detection ──► bounce detection ──► classificati
 | Bounce detection | `detect_wall_hits.py`, `bounce_gb_model_detector.py`, `event_engine.py` | Finds impact frames from trajectory kinks. Swappable engines: `votes`, `gb_model`, `fusion`. |
 | Audio rescue | `audio_events.py` | Impact sounds recover bounces the trajectory missed. |
 | Classification | `classify_events.py` | Labels each hit wall / side wall / floor / racket. |
-| Judging | `judge_call.py`, `court_model.py` | Full-court floor homography + wall-line calibration → IN or OUT with a pixel margin. |
+| Judging | `judge_call.py`, `court_model.py` | Wall-line calibration → normal IN/OUT calls plus a service-line call for each rally’s first front-wall contact. |
 | Coaching | `app.py` | Target-zone analytics over the rally, optionally narrated by an LLM. |
 
 The UI is deliberately one file. `DESIGN.md` is the binding rulebook for anything visual —
@@ -54,7 +55,33 @@ Useful environment variables:
 | `ROBOFLOW_API_KEY` | — | Required for model inference. |
 | `ROBOFLOW_MODEL_ID` | `ai-squash-line-tracker/4` | Which detection model to load. |
 | `TRACKING_BACKEND` | `auto` | `torch` (GPU/MPS) or `onnx` (CPU). |
-| `OPENAI_API_KEY` | — | Optional. Enables LLM coaching text; falls back to a local template without it. |
+| `COACH_LLM_PROVIDER` | OpenAI when an API key is present; otherwise local templates | `ollama`, `openai`, or `local`. |
+| `OLLAMA_COACH_MODEL` | `qwen3:8b` | Local model used for structured coaching reports. |
+| `OLLAMA_BASE_URL` | `http://127.0.0.1:11434` | Ollama server used by the Flask app. |
+| `OPENAI_API_KEY` | — | Optional. Enables player-specific LLM feedback and drills; falls back to local coaching without it. |
+| `OPENAI_COACH_MODEL` | `gpt-5-mini` | Model used for structured coaching reports. |
+
+### Free local coaching with Ollama
+
+On an Apple Silicon Mac, install Ollama and download the default coaching model:
+
+```bash
+brew install ollama
+brew services start ollama
+ollama pull qwen3:8b
+```
+
+Then configure `.env`:
+
+```dotenv
+COACH_LLM_PROVIDER=ollama
+OLLAMA_COACH_MODEL=qwen3:8b
+OLLAMA_BASE_URL=http://127.0.0.1:11434
+```
+
+The coaching endpoint sends only the derived match analytics to the local Ollama
+server. If Ollama is stopped or the model is unavailable, the UI falls back to
+the built-in local coaching template and displays the reason.
 
 ---
 

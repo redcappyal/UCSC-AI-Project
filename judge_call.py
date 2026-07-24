@@ -152,6 +152,14 @@ def load_calibration_lines(calibration):
     return line_from_calibration(top), line_from_calibration(bottom)
 
 
+def load_service_line(calibration):
+    lines = {line.get("name"): line for line in calibration.get("lines", [])}
+    service = lines.get("service_line_top_edge")
+    if service is None:
+        raise ValueError("Calibration must include service_line_top_edge.")
+    return line_from_calibration(service)
+
+
 def load_wall_corners(calibration):
     wall = ((calibration or {}).get("planes") or {}).get("wall") or {}
     corners = wall.get("corners") or []
@@ -268,6 +276,18 @@ def judge_ball(ball, top_line, bottom_line, wall_corners=None):
         return "OUT", "below_or_on_bottom_line", top_y, bottom_y
 
     return "IN", "between_lines", top_y, bottom_y
+
+
+def judge_serve_ball(ball, out_line, service_line, wall_corners=None):
+    """Judge a serve: its first front-wall contact must be above the service line."""
+    call, reason, out_y, service_y = judge_ball(
+        ball, out_line, service_line, wall_corners
+    )
+    if reason == "below_or_on_bottom_line":
+        reason = "below_or_on_service_line"
+    elif reason == "between_lines":
+        reason = "between_out_and_service_lines"
+    return call, reason, out_y, service_y
 
 
 def judge_margin_px(ball, top_line, bottom_line, wall_corners=None):

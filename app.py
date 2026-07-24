@@ -1,5 +1,6 @@
 import hashlib
 import json
+import math
 import os
 import threading
 import time
@@ -17,8 +18,10 @@ from judge_call import (
     Point,
     judge_ball,
     judge_margin_px,
+    judge_serve_ball,
     load_ball_positions,
     load_calibration_lines,
+    load_service_line,
     load_wall_corners,
     wall_diagram_coordinates,
 )
@@ -40,8 +43,10 @@ if load_dotenv is not None:
 from job_runner import (
     RUNS_DIR,
     UPLOADS_DIR,
+    build_target_zone_summary,
     create_job,
     get_job,
+    is_serve_hit,
     start_tracking_job,
 )
 from inference_engine import DEFAULT_MODEL_ID, TRACKING_BACKEND
@@ -59,6 +64,8 @@ FRONT_WALL_OUT_HEIGHT_FT = 4.57 * 3.280839895
 FRONT_WALL_TIN_HEIGHT_FT = 0.48 * 3.280839895
 FRONT_WALL_SERVICE_HEIGHT_FT = 1.78 * 3.280839895
 OPENAI_RESPONSES_URL = "https://api.openai.com/v1/responses"
+DEFAULT_OLLAMA_URL = "http://127.0.0.1:11434"
+DEFAULT_OLLAMA_COACH_MODEL = "qwen3:8b"
 
 
 def model_provenance():
@@ -177,16 +184,18 @@ def get_run_hits(run_id, run_dir):
     return hits
 
 
-def find_hit_impact_near_frame(run_id, run_dir, frame):
+def find_run_hit_near_frame(run_id, run_dir, frame):
     best = None
     for hit in get_run_hits(run_id, run_dir):
-        impact = hit.get("impact")
-        if impact is None:
-            continue
         distance = abs(int(hit.get("frame", -10**9)) - frame)
         if distance <= JUDGE_HIT_FRAME_TOLERANCE and (best is None or distance < best[0]):
-            best = (distance, impact)
+            best = (distance, hit)
     return best[1] if best else None
+
+
+def find_hit_impact_near_frame(run_id, run_dir, frame):
+    hit = find_run_hit_near_frame(run_id, run_dir, frame)
+    return hit.get("impact") if hit else None
 
 
 def front_wall_hits_from_payload(payload):
@@ -196,6 +205,7 @@ def front_wall_hits_from_payload(payload):
         if hit.get("target_zone") is not None
         and hit.get("wall_diagram") is not None
         and hit.get("event_type") in (None, "wall", "unknown")
+        and not is_serve_hit(hit)
     ]
 
 
@@ -274,17 +284,45 @@ def coaching_analytics_for_hits(hits, target_summary):
     }
 
 
+def rally_duration_seconds(rally):
+    """Return a saved or inferred rally duration, ignoring invalid timestamps."""
+    saved_duration = rally.get("duration_seconds")
+    if saved_duration is not None:
+        try:
+            duration = float(saved_duration)
+        except (TypeError, ValueError):
+            duration = None
+        if duration is not None and math.isfinite(duration) and duration >= 0:
+            return duration
+
+    try:
+        start_time = float(rally.get("start_time_seconds"))
+        end_time = float(rally.get("end_time_seconds"))
+    except (TypeError, ValueError):
+        return None
+    duration = end_time - start_time
+    return duration if math.isfinite(duration) and duration >= 0 else None
+
+
 def player_error_metrics(rallies, player_number):
-    """Classify each lost rally from its final front-wall contact.
+    """Summarize a player's lost-rally errors and won-rally durations.
 
     An OUT shot by the loser is an unforced error. When the winner made the
-    final IN shot, the loser's failure to return it is a forced error.
+    final IN shot, the loser's failure to return it is a forced error. Rally
+    duration is averaged over rallies won by this player so each player's
+    value describes their own results.
     """
     unforced_errors = 0
     forced_errors = 0
+    won_rally_durations = []
     for rally in rallies or []:
         winner = int(rally.get("winner_player_number") or 0)
-        if winner not in (1, 2) or winner == player_number:
+        if winner not in (1, 2):
+            continue
+        if winner == player_number:
+            duration = rally_duration_seconds(rally)
+            if duration is not None:
+                won_rally_durations.append(duration)
             continue
 
         loser = 2 if winner == 1 else 1
@@ -299,6 +337,7 @@ def player_error_metrics(rallies, player_number):
         "unforced_errors": unforced_errors,
         "forced_errors": forced_errors,
         "total_errors": total_errors,
+        "average_rally_duration_seconds": rounded(average(won_rally_durations), 1),
         "unforced_error_percentage": (
             rounded(unforced_errors / total_errors * 100, 1)
             if total_errors
@@ -307,10 +346,87 @@ def player_error_metrics(rallies, player_number):
     }
 
 
+def rally_number_for_hit(hit, numbered_rallies):
+    """Match old hits without rally_number using saved rally bounds."""
+    try:
+        hit_rally_number = int(hit.get("rally_number"))
+    except (TypeError, ValueError):
+        hit_rally_number = None
+    if hit_rally_number is not None:
+        return hit_rally_number
+
+    for value_key, start_key, end_key in (
+        ("timestamp_seconds", "start_time_seconds", "end_time_seconds"),
+        ("frame", "start_frame", "end_frame"),
+    ):
+        try:
+            value = float(hit.get(value_key))
+        except (TypeError, ValueError):
+            continue
+        for rally_number, rally in numbered_rallies:
+            try:
+                start = float(rally.get(start_key))
+                end = float(rally.get(end_key))
+            except (TypeError, ValueError):
+                continue
+            if start <= value <= end:
+                return rally_number
+    return None
+
+
+def player_rally_outcome_analytics(front_wall_hits, rallies, player_number):
+    """Split one player's shot metrics across rallies they won and lost."""
+    numbered_rallies = []
+    for index, rally in enumerate(rallies or [], start=1):
+        try:
+            rally_number = int(rally.get("rally_number") or index)
+        except (TypeError, ValueError):
+            rally_number = index
+        numbered_rallies.append((rally_number, rally))
+
+    player_hits_by_rally = {}
+    for hit in front_wall_hits:
+        if int(hit.get("player_number") or 0) != player_number:
+            continue
+        rally_number = rally_number_for_hit(hit, numbered_rallies)
+        if rally_number is not None:
+            player_hits_by_rally.setdefault(rally_number, []).append(hit)
+
+    sections = {}
+    for outcome, is_win in (("winning", True), ("losing", False)):
+        section_rallies = []
+        section_rally_numbers = set()
+        for rally_number, rally in numbered_rallies:
+            winner = int(rally.get("winner_player_number") or 0)
+            if winner not in (1, 2):
+                continue
+            if (winner == player_number) == is_win:
+                section_rallies.append(rally)
+                section_rally_numbers.add(rally_number)
+
+        section_hits = [
+            hit
+            for rally_number in section_rally_numbers
+            for hit in player_hits_by_rally.get(rally_number, [])
+        ]
+        metrics = coaching_analytics_for_hits(
+            section_hits,
+            build_target_zone_summary(section_hits),
+        )
+        metrics.update({
+            "outcome": outcome,
+            "rally_count": len(section_rallies),
+            "average_rally_duration_seconds": rounded(
+                average(rally_duration_seconds(rally) for rally in section_rallies),
+                1,
+            ),
+        })
+        sections[outcome] = metrics
+    return sections
+
+
 def build_coaching_analytics(payload):
-    target_summary = payload.get("target_zones") or {}
     floor_summary = payload.get("floor_zones") or {}
-    player_target_summaries = payload.get("target_zones_by_player") or {}
     rallies = (
         payload.get("rallies")
         or (payload.get("player_assignment") or {}).get("rallies")
@@ -318,6 +434,7 @@ def build_coaching_analytics(payload):
     )
     front_wall_hits = front_wall_hits_from_payload(payload)
 
+    target_summary = build_target_zone_summary(front_wall_hits)
     aggregate = coaching_analytics_for_hits(front_wall_hits, target_summary)
     players = []
     for player_number in (1, 2):
@@ -326,11 +443,16 @@ def build_coaching_analytics(payload):
             for hit in front_wall_hits
             if int(hit.get("player_number") or 0) == player_number
         ]
-        player_summary = player_target_summaries.get(str(player_number)) or {}
+        player_summary = build_target_zone_summary(player_hits)
         player_analytics = coaching_analytics_for_hits(player_hits, player_summary)
         player_analytics["player_number"] = player_number
         player_analytics["label"] = f"Player {player_number}"
         player_analytics.update(player_error_metrics(rallies, player_number))
+        player_analytics["rally_outcome_analytics"] = player_rally_outcome_analytics(
+            front_wall_hits,
+            rallies,
+            player_number,
+        )
         players.append(player_analytics)
 
     aggregate.update({
@@ -438,12 +560,47 @@ def local_player_coaching_feedback(player_analytics):
         return f"{label}: no reliable front-wall contacts were detected for this player."
 
     notes = []
+    outcome_analytics = player_analytics.get("rally_outcome_analytics") or {}
+    winning = outcome_analytics.get("winning") or {}
+    losing = outcome_analytics.get("losing") or {}
+    if winning.get("total_wall_hits") and losing.get("total_wall_hits"):
+        winning_height = winning.get("average_wall_height_ft")
+        losing_height = losing.get("average_wall_height_ft")
+        if winning_height is not None and losing_height is not None:
+            notes.append(
+                f"{label}'s average shot height was {winning_height:.1f} ft in won rallies "
+                f"versus {losing_height:.1f} ft in lost rallies."
+            )
+
+        usage_differences = []
+        for metric, name in (
+            ("center_target_rate", "middle usage"),
+            ("side_target_rate", "wide usage"),
+            ("low_target_rate", "low attacking rate"),
+        ):
+            winning_rate = winning.get(metric)
+            losing_rate = losing.get(metric)
+            if winning_rate is not None and losing_rate is not None:
+                usage_differences.append((
+                    abs(winning_rate - losing_rate),
+                    name,
+                    winning_rate,
+                    losing_rate,
+                ))
+        if usage_differences:
+            _, name, winning_rate, losing_rate = max(usage_differences)
+            notes.append(
+                f"{label}'s {name} was {winning_rate:.0f}% in won rallies versus "
+                f"{losing_rate:.0f}% in lost rallies."
+            )
+
     common = player_analytics.get("common_target_zones") or []
     center_rate = player_analytics.get("center_target_rate")
     side_rate = player_analytics.get("side_target_rate")
     low_rate = player_analytics.get("low_target_rate")
     avg_height = player_analytics.get("average_wall_height_ft")
     avg_speed = player_analytics.get("average_incoming_speed_mph")
+    avg_rally_duration = player_analytics.get("average_rally_duration_seconds")
     missing = player_analytics.get("missing_target_zones") or []
 
     if common:
@@ -472,6 +629,10 @@ def local_player_coaching_feedback(player_analytics):
         notes.append(f"{label}'s typical front-wall contact height was {avg_height:.1f} ft.")
     if avg_speed is not None:
         notes.append(f"{label}'s average pace into the front wall was about {avg_speed:.1f} mph.")
+    if avg_rally_duration is not None:
+        notes.append(
+            f"Rallies won by {label} averaged {avg_rally_duration:.1f} seconds."
+        )
     if missing:
         shown = ", ".join(str(zone["zone"]) for zone in missing[:3])
         notes.append(f"{label} rarely used zones {shown}; those are useful practice targets.")
@@ -491,27 +652,162 @@ def extract_openai_text(data):
     return "\n".join(parts).strip()
 
 
-def llm_coaching_feedback(analytics):
+def openai_coach_response_format():
+    player_schema = {
+        "type": "object",
+        "properties": {
+            "observations": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "Two concise, evidence-based observations for this player.",
+            },
+            "drill_name": {"type": "string"},
+            "drill_instructions": {
+                "type": "string",
+                "description": "A specific drill setup with repetitions or duration.",
+            },
+            "drill_goal": {
+                "type": "string",
+                "description": "A measurable target for completing the drill successfully.",
+            },
+        },
+        "required": [
+            "observations",
+            "drill_name",
+            "drill_instructions",
+            "drill_goal",
+        ],
+        "additionalProperties": False,
+    }
+    return {
+        "type": "json_schema",
+        "name": "squash_coaching_report",
+        "strict": True,
+        "schema": {
+            "type": "object",
+            "properties": {
+                "summary": {
+                    "type": "string",
+                    "description": "A short overall summary comparing the two players.",
+                },
+                "players": {
+                    "type": "object",
+                    "properties": {
+                        "1": player_schema,
+                        "2": player_schema,
+                    },
+                    "required": ["1", "2"],
+                    "additionalProperties": False,
+                },
+            },
+            "required": ["summary", "players"],
+            "additionalProperties": False,
+        },
+    }
+
+
+def parse_llm_coaching_report(text):
+    if not text:
+        return None
+    try:
+        report = json.loads(text)
+    except (TypeError, json.JSONDecodeError):
+        return None
+    if not isinstance(report, dict) or not isinstance(report.get("summary"), str):
+        return None
+
+    players = report.get("players")
+    if not isinstance(players, dict):
+        return None
+    for player_number in ("1", "2"):
+        player = players.get(player_number)
+        if not isinstance(player, dict):
+            return None
+        observations = player.get("observations")
+        if (
+            not isinstance(observations, list)
+            or not observations
+            or any(not isinstance(item, str) or not item.strip() for item in observations)
+        ):
+            return None
+        for key in ("drill_name", "drill_instructions", "drill_goal"):
+            if not isinstance(player.get(key), str) or not player[key].strip():
+                return None
+    return report
+
+
+def format_llm_player_feedback(player_report):
+    observations = "\n".join(
+        f"• {observation.strip()}"
+        for observation in player_report.get("observations", [])
+        if observation.strip()
+    )
+    return (
+        f"Feedback\n{observations}\n\n"
+        f"Drill: {player_report['drill_name'].strip()}\n"
+        f"{player_report['drill_instructions'].strip()}\n"
+        f"Goal: {player_report['drill_goal'].strip()}"
+    )
+
+
+def coaching_messages(analytics):
+    return [
+        {
+            "role": "system",
+            "content": (
+                "You are a practical squash coach. Analyze only the supplied automated "
+                "match analytics and never invent shot types, technique, handedness, or "
+                "court movement that the data does not measure. Give each player two "
+                "concise observations, followed by one personalized drill with a clear "
+                "setup, repetitions or duration, and a measurable goal. Cite numeric "
+                "metrics when available. If a player's sample is small, say so plainly. "
+                "Compare winning-rally and losing-rally analytics when both samples exist, "
+                "and highlight useful differences without claiming they caused the result. "
+                "Use 'shots analyzed' instead of 'front-wall hits'. Wall height means "
+                "where the ball struck the front wall; pace is estimated ball speed "
+                "around front-wall contact."
+            ),
+        },
+        {
+            "role": "user",
+            "content": (
+                "Create the overall summary and separate Player 1 and Player 2 coaching "
+                "reports from these analytics:\n"
+                + json.dumps(analytics, indent=2)
+            ),
+        },
+    ]
+
+
+def configured_coach_provider():
+    configured = os.getenv("COACH_LLM_PROVIDER", "").strip().lower()
+    aliases = {
+        "ollama": "ollama",
+        "openai": "openai",
+        "local": "local",
+        "none": "local",
+        "off": "local",
+    }
+    if configured:
+        return aliases.get(configured, "invalid")
+    return "openai" if os.getenv("OPENAI_API_KEY", "").strip() else "local"
+
+
+def openai_coaching_feedback(analytics):
     api_key = os.getenv("OPENAI_API_KEY", "").strip()
     if not api_key:
         return None, "missing_api_key"
 
     model = os.getenv("OPENAI_COACH_MODEL", "gpt-5-mini")
-    prompt = (
-        "You are a squash coach speaking to a player. Give concise, practical feedback "
-        "from automated squash video analytics. Use plain player language: say "
-        "'shots analyzed' instead of 'front-wall hits', explain that wall height means "
-        "where the ball struck the front wall, and explain that pace means estimated "
-        "ball speed around front-wall contact. Mention limitations if sample size is small. "
-        "Return 3 short bullets and one practice focus.\n\n"
-        + json.dumps(analytics, indent=2)
-    )
     body = json.dumps(
         {
             "model": model,
-            "input": prompt,
-            "text": {"verbosity": "low"},
-            "max_output_tokens": 450,
+            "input": coaching_messages(analytics),
+            "text": {
+                "verbosity": "low",
+                "format": openai_coach_response_format(),
+            },
+            "max_output_tokens": 850,
         }
     ).encode("utf-8")
     request_obj = urllib.request.Request(
@@ -530,7 +826,64 @@ def llm_coaching_feedback(analytics):
         return None, "request_failed"
 
     text = extract_openai_text(data)
-    return (text or None), ("ok" if text else "empty_response")
+    if not text:
+        return None, "empty_response"
+    report = parse_llm_coaching_report(text)
+    return (report, "ok") if report else (None, "invalid_response")
+
+
+def ollama_coaching_feedback(analytics):
+    model = os.getenv("OLLAMA_COACH_MODEL", DEFAULT_OLLAMA_COACH_MODEL).strip()
+    base_url = os.getenv("OLLAMA_BASE_URL", DEFAULT_OLLAMA_URL).strip().rstrip("/")
+    try:
+        timeout = max(1.0, float(os.getenv("OLLAMA_COACH_TIMEOUT_SECONDS", "120")))
+    except ValueError:
+        timeout = 120.0
+
+    body = json.dumps(
+        {
+            "model": model,
+            "messages": coaching_messages(analytics),
+            "stream": False,
+            "think": False,
+            "format": openai_coach_response_format()["schema"],
+            "options": {
+                "temperature": 0.2,
+                "num_predict": 850,
+                "num_ctx": 8192,
+            },
+        }
+    ).encode("utf-8")
+    request_obj = urllib.request.Request(
+        f"{base_url}/api/chat",
+        data=body,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request_obj, timeout=timeout) as response:
+            data = json.loads(response.read().decode("utf-8"))
+    except urllib.error.HTTPError as error:
+        return None, "ollama_model_missing" if error.code == 404 else "ollama_request_failed"
+    except (urllib.error.URLError, TimeoutError, OSError, json.JSONDecodeError):
+        return None, "ollama_unavailable"
+
+    text = ((data.get("message") or {}).get("content") or "").strip()
+    if not text:
+        return None, "empty_response"
+    report = parse_llm_coaching_report(text)
+    return (report, "ok") if report else (None, "invalid_response")
+
+
+def llm_coaching_feedback(analytics):
+    provider = configured_coach_provider()
+    if provider == "ollama":
+        return ollama_coaching_feedback(analytics)
+    if provider == "openai":
+        return openai_coaching_feedback(analytics)
+    if provider == "local":
+        return None, "local_only"
+    return None, "invalid_provider"
 
 
 @app.get("/")
@@ -899,8 +1252,9 @@ def judge_frame():
         calibration = json.loads(calibration_path.read_text(encoding="utf-8"))
         top_line, bottom_line = load_calibration_lines(calibration)
         wall_corners = load_wall_corners(calibration)
+        selected_hit = find_run_hit_near_frame(run_id, run_dir, frame)
 
-        impact = find_hit_impact_near_frame(run_id, run_dir, frame)
+        impact = selected_hit.get("impact") if selected_hit else None
         if impact is not None:
             ball = Point(float(impact["x"]), float(impact["y"]))
             source = "impact_estimate"
@@ -911,11 +1265,24 @@ def judge_frame():
             source = "detected_center"
 
         call, reason, top_y, bottom_y = judge_ball(ball, top_line, bottom_line, wall_corners)
+        standard_call = call
         margin_px = (
             judge_margin_px(ball, top_line, bottom_line, wall_corners)
             if call in ("IN", "OUT")
             else None
         )
+        is_serve = bool(selected_hit and selected_hit.get("is_serve"))
+        service_y = None
+        if is_serve:
+            service_line = load_service_line(calibration)
+            call, reason, _, service_y = judge_serve_ball(
+                ball, top_line, service_line, wall_corners
+            )
+            margin_px = (
+                judge_margin_px(ball, top_line, service_line, wall_corners)
+                if call in ("IN", "OUT")
+                else None
+            )
         diagram = wall_diagram_coordinates(
             ball,
             top_line,
@@ -931,12 +1298,15 @@ def judge_frame():
             "ok": True,
             "frame": frame,
             "call": call,
+            "standard_call": standard_call,
+            "is_serve": is_serve,
             "reason": reason,
             "source": source,
             "margin_px": margin_px,
             "ball": {"x": ball.x, "y": ball.y},
             "top_y": top_y,
             "bottom_y": bottom_y,
+            "service_y": service_y,
             "wall_diagram": {
                 "x": diagram["x"],
                 "y": diagram["y"],
@@ -953,43 +1323,89 @@ def judge_frame():
     )
 
 
-@app.get("/api/runs/<run_id>/coach")
-def coach_run(run_id):
+def coaching_analytics_for_run(run_id):
     run_dir = RUNS_DIR / secure_filename(run_id)
     if not run_dir.is_dir():
-        return error_response("Run was not found.", status=404)
+        return None, error_response("Run was not found.", status=404)
 
     hits_path = run_dir / "detected_hits.json"
     if not hits_path.exists():
-        return error_response("Run analytics were not found.", status=404)
+        return None, error_response("Run analytics were not found.", status=404)
 
     try:
         payload = json.loads(hits_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
-        return error_response("Run analytics could not be read.", status=500)
+        return None, error_response("Run analytics could not be read.", status=500)
 
-    analytics = build_coaching_analytics(payload)
-    feedback, llm_status = llm_coaching_feedback(analytics)
-    source = "llm" if feedback else "local"
-    if not feedback:
+    return build_coaching_analytics(payload), None
+
+
+def coaching_response_payload(analytics, llm_provider, llm_report=None, llm_status="local_only"):
+    source = (
+        "ollama"
+        if llm_report and llm_provider == "ollama"
+        else "llm" if llm_report
+        else "local"
+    )
+    if llm_report:
+        feedback = llm_report["summary"]
+        player_feedback = {
+            player_number: format_llm_player_feedback(player_report)
+            for player_number, player_report in llm_report["players"].items()
+        }
+    else:
         feedback = local_coaching_feedback(analytics)
-    player_feedback = {
-        str(player.get("player_number")): local_player_coaching_feedback(player)
-        for player in analytics.get("players", [])
-        if player.get("player_number") is not None
+        player_feedback = {
+            str(player.get("player_number")): local_player_coaching_feedback(player)
+            for player in analytics.get("players", [])
+            if player.get("player_number") is not None
+        }
+
+    return {
+        "ok": True,
+        "analytics": analytics,
+        "feedback": feedback,
+        "feedback_source": source,
+        "player_feedback": player_feedback,
+        "player_feedback_source": source,
+        "llm_provider": llm_provider,
+        "llm_status": llm_status,
     }
 
-    return jsonify(
-        {
-            "ok": True,
-            "analytics": analytics,
-            "feedback": feedback,
-            "feedback_source": source,
-            "player_feedback": player_feedback,
-            "player_feedback_source": "local",
-            "llm_status": llm_status,
-        }
+
+@app.get("/api/runs/<run_id>/coach")
+def coach_run(run_id):
+    """Return deterministic analytics and local feedback without waiting."""
+    analytics, error = coaching_analytics_for_run(run_id)
+    if error is not None:
+        return error
+
+    llm_provider = configured_coach_provider()
+    llm_status = "pending" if llm_provider in ("openai", "ollama") else (
+        "local_only" if llm_provider == "local" else "invalid_provider"
     )
+    return jsonify(coaching_response_payload(
+        analytics,
+        llm_provider,
+        llm_status=llm_status,
+    ))
+
+
+@app.post("/api/runs/<run_id>/coach/llm")
+def coach_run_llm(run_id):
+    """Generate the slower LLM report after the local report is visible."""
+    analytics, error = coaching_analytics_for_run(run_id)
+    if error is not None:
+        return error
+
+    llm_provider = configured_coach_provider()
+    llm_report, llm_status = llm_coaching_feedback(analytics)
+    return jsonify(coaching_response_payload(
+        analytics,
+        llm_provider,
+        llm_report=llm_report,
+        llm_status=llm_status,
+    ))
 
 
 @app.get("/api/runs/<run_id>/<path:filename>")

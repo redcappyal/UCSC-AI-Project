@@ -119,10 +119,109 @@ def test_judge_hits_wall_events_judged_as_before(tmp_path):
     assert entry["target_zone"]["zone"] == 4
 
     payload = json.loads((tmp_path / "detected_hits.json").read_text())
-    assert payload["target_zones"]["total_wall_hits"] == 1
+    # This is the rally's first front-wall contact, so it remains judgeable
+    # but is excluded from coaching target metrics as a serve.
+    assert payload["target_zones"]["total_wall_hits"] == 0
     assert payload["target_zones"]["layout"] == "front_wall_8_target"
-    assert payload["target_zones"]["zones"][3]["count"] == 1
-    assert payload["target_zones"]["common_zones"][0]["zone"] == 4
+    assert payload["target_zones"]["zones"][3]["count"] == 0
+    assert payload["target_zones"]["common_zones"] == []
+
+
+def test_first_front_wall_hit_in_each_rally_uses_service_line(tmp_path, monkeypatch):
+    from job_runner import judge_hits
+
+    monkeypatch.setenv("PLAYER_ASSIGNMENT_RALLY_GAP_SECONDS", "5")
+    tmp_path.joinpath("calibration.json").write_text(json.dumps({
+        "lines": [
+            {"name": "out_line_lower_edge", "endpoints": [[0, 100], [1000, 100]]},
+            {"name": "service_line_top_edge", "endpoints": [[0, 400], [1000, 400]]},
+            {"name": "tin_top_edge", "endpoints": [[0, 700], [1000, 700]]},
+        ]
+    }))
+    results = {
+        10: {
+            "source_frame": 10, "timestamp_seconds": "1.0", "detected": "True",
+            "x_center": "500", "y_center": "250",
+        },
+        20: {
+            "source_frame": 20, "timestamp_seconds": "2.0", "detected": "True",
+            "x_center": "500", "y_center": "500",
+        },
+        100: {
+            "source_frame": 100, "timestamp_seconds": "10.0", "detected": "True",
+            "x_center": "500", "y_center": "500",
+        },
+    }
+    detected = [
+        {
+            "hit_frame": frame,
+            "timestamp_seconds": float(results[frame]["timestamp_seconds"]),
+            "event_type": "wall",
+        }
+        for frame in (10, 20, 100)
+    ]
+
+    judged = judge_hits(tmp_path, results, detected)
+
+    assert [hit["call"] for hit in judged] == ["IN", "IN", "OUT"]
+    assert [hit.get("is_serve", False) for hit in judged] == [True, False, True]
+    assert judged[0]["reason"] == "between_out_and_service_lines"
+    assert judged[1]["reason"] == "between_lines"
+    assert judged[2]["reason"] == "below_or_on_service_line"
+    assert judged[2]["standard_call"] == "IN"
+    assert judged[2]["margin_px"] == -100
+
+    payload = json.loads(tmp_path.joinpath("detected_hits.json").read_text())
+    rallies = payload["rallies"]
+    assert [rally["serve_call"] for rally in rallies] == ["IN", "OUT"]
+    assert [rally["winner_player_number"] for rally in rallies] == [2, 1]
+    assert rallies[1]["winner_reason"] == "serve_out"
+    assert judged[2]["player_number"] == 2
+    assert payload["target_zones"]["total_wall_hits"] == 1
+
+
+def test_judge_endpoint_preserves_serve_specific_call(tmp_path, monkeypatch):
+    import app as app_module
+    from job_runner import judge_hits
+
+    run_id = "serve-judge-test"
+    run_dir = tmp_path / run_id
+    run_dir.mkdir()
+    run_dir.joinpath("calibration.json").write_text(json.dumps({
+        "frame_width": 1000,
+        "lines": [
+            {"name": "out_line_lower_edge", "endpoints": [[0, 100], [1000, 100]]},
+            {"name": "service_line_top_edge", "endpoints": [[0, 400], [1000, 400]]},
+            {"name": "tin_top_edge", "endpoints": [[0, 700], [1000, 700]]},
+        ],
+    }))
+    results = {
+        10: {
+            "source_frame": 10, "timestamp_seconds": "1.0", "detected": "True",
+            "x_center": "500", "y_center": "500",
+        }
+    }
+    judge_hits(run_dir, results, [{
+        "hit_frame": 10, "timestamp_seconds": 1.0, "event_type": "wall",
+    }])
+    run_dir.joinpath("ball_coordinates.csv").write_text(
+        "source_frame,detected,x_center,y_center\n10,True,500,500\n"
+    )
+    monkeypatch.setattr(app_module, "RUNS_DIR", tmp_path)
+    app_module.BALL_POSITIONS_CACHE.pop(run_id, None)
+    app_module.RUN_HITS_CACHE.pop(run_id, None)
+
+    response = app_module.app.test_client().post(
+        "/api/judge", json={"run_id": run_id, "frame": 10}
+    )
+
+    assert response.status_code == 200
+    payload = response.get_json()
+    assert payload["is_serve"] is True
+    assert payload["standard_call"] == "IN"
+    assert payload["call"] == "OUT"
+    assert payload["reason"] == "below_or_on_service_line"
+    assert payload["service_y"] == 400
 
 
 def test_judge_hits_does_not_call_horizontal_sidewall_out(tmp_path):
@@ -190,6 +289,30 @@ def test_target_zone_layout_matches_front_wall_sketch():
     assert target_zone_for_diagram({"x": 0.92, "y": 0.95})["zone"] == 8
 
 
+def test_target_zone_summary_excludes_serves_from_metrics():
+    from job_runner import build_target_zone_summary
+
+    hits = [
+        {
+            "event_type": "wall",
+            "is_serve": True,
+            "rally_hit_sequence": 1,
+            "target_zone": {"zone": 4},
+        },
+        {
+            "event_type": "wall",
+            "rally_hit_sequence": 2,
+            "target_zone": {"zone": 5},
+        },
+    ]
+
+    summary = build_target_zone_summary(hits)
+
+    assert summary["total_wall_hits"] == 1
+    assert summary["zones"][3]["count"] == 0
+    assert summary["zones"][4]["count"] == 1
+
+
 def test_target_zones_are_split_by_players_within_one_rally(monkeypatch):
     from job_runner import assign_front_wall_hit_players, build_player_target_zone_summaries
 
@@ -209,8 +332,8 @@ def test_target_zones_are_split_by_players_within_one_rally(monkeypatch):
     assert assignment["rally_count"] == 1
     assert hits[0]["front_wall_sequence"] == 1
     assert hits[1]["front_wall_sequence"] == 2
-    assert summaries["1"]["total_wall_hits"] == 2
-    assert summaries["1"]["zones"][0]["count"] == 1
+    assert summaries["1"]["total_wall_hits"] == 1
+    assert summaries["1"]["zones"][0]["count"] == 0
     assert summaries["1"]["zones"][4]["count"] == 1
     assert summaries["2"]["total_wall_hits"] == 2
     assert summaries["2"]["zones"][1]["count"] == 1
@@ -234,6 +357,7 @@ def test_player_assignment_resets_each_rally_from_previous_winner(monkeypatch):
     assert assignment["rally_count"] == 3
     assert [rally["server_player_number"] for rally in assignment["rallies"]] == [1, 1, 2]
     assert [rally["winner_player_number"] for rally in assignment["rallies"]] == [1, 2, 2]
+    assert [rally["duration_seconds"] for rally in assignment["rallies"]] == [1.0, 1.0, 0.0]
     assert [hit["rally_number"] for hit in hits] == [1, 1, 2, 2, 3]
     assert [hit["player_number"] for hit in hits] == [1, 2, 1, 2, 2]
 
