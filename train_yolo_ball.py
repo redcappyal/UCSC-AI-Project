@@ -1,8 +1,15 @@
-"""CLI: download the Roboflow dataset and train YOLO11n for on-device Core ML.
+"""DEPRECATED: Ultralytics YOLO11n trainer. Do not ship anything it produces.
 
-The production cloud model stays RF-DETR; this trains the *phone* model on the
-same labels. Train anywhere with a GPU; export to Core ML on the Mac
-(ios/MODEL.md). ultralytics/roboflow import lazily so the test env stays light.
+Ultralytics is AGPL-3.0, which is incompatible with shipping CrossCourt on the
+App Store *and*, via section 13's network clause, with serving inference from
+the Flask pipeline — so keeping it server-side is not a workaround either. The
+supported path is YOLOX (Apache-2.0): see `yolox_ball_exp.py` and ios/MODEL.md.
+
+Kept for reference only, because the phone model's history runs through it.
+
+Originally: download the Roboflow dataset and train YOLO11n for on-device Core
+ML. The production cloud model stays RF-DETR; this trained the *phone* model on
+the same labels. ultralytics/roboflow import lazily so the test env stays light.
 """
 
 import argparse
