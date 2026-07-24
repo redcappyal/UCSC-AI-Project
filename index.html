@@ -678,7 +678,10 @@
       <div class="floorSide">
         <p id="floorPrompt"></p>
         <div class="row">
+          <button class="small" id="floorUndoLandmarkBtn" type="button" disabled>Undo landmark</button>
           <button class="small" id="floorSkipLandmarkBtn" type="button">Skip landmark</button>
+        </div>
+        <div class="row">
           <button class="small" id="floorClearBtn" type="button" disabled>Start over</button>
         </div>
       </div>
@@ -1226,7 +1229,7 @@ const S = {
 const STEP_META = {
   load:   {label:'Squash Line Calling', instr:''},
   record: {label:'Record', instr:'', action:{btn:'recBtn', label:'Record'}},
-  frame:  {label:'Pick frame', instr:'Drag the film strip under the playhead to a frame where the out line and the tin are fully visible and unblocked.',
+  frame:  {label:'Pick frame', instr:'Drag the film strip under the playhead to a frame where both the out line and the tin are fully visible and unblocked.',
            action:{btn:'useFrame', label:'Use frame'}},
   tap_out:{label:'Out line', instr:'', action:{btn:'confirmBtn', label:'Looks right'}},
   tap_tin:{label:'Tin', instr:'', action:{btn:'confirmBtn', label:'Looks right'}},
@@ -3018,12 +3021,16 @@ function updateFloorUI(){
   if(!COURT || !F){
     prompt.innerHTML = 'Court model unavailable — skip floor calibration.';
     $('floorDoneBtn').disabled = true;
+    $('floorUndoLandmarkBtn').disabled = true;
     $('floorSkipLandmarkBtn').disabled = true;
     $('floorClearBtn').disabled = true;
     $('floorSaveProfileBtn').disabled = true;
     buildFloorDiagram();
     return;
   }
+  // Undo targets the last landmark this wizard placed or skipped; the inherited
+  // front corners come from the wall step, so they're never undoable here.
+  const undoable = F.landmarks.some(l => !l.inherited && (l.refined_px || l.skipped));
   const placed = F.landmarks.filter(l => l.refined_px && !l.skipped).length;
   const active = F.activeIdx >= 0 ? F.landmarks[F.activeIdx] : null;
   if(active){
@@ -3033,6 +3040,7 @@ function updateFloorUI(){
   } else {
     prompt.innerHTML = 'All landmarks placed. Check the overlay hugs the painted lines; tap any marker to redo it. The two front corners come from the wall step — go Back to adjust them.';
   }
+  $('floorUndoLandmarkBtn').disabled = !undoable;
   $('floorSkipLandmarkBtn').disabled = !active;
   $('floorClearBtn').disabled = !F.landmarks.some(l => l.refined_px || l.skipped);
   $('floorDoneBtn').disabled = !F.H;
@@ -3082,6 +3090,22 @@ function buildFloorView(){
   updateFloorUI();
   scheduleCameraCheck();
 }
+$('floorUndoLandmarkBtn').onclick = () => {
+  const F = S.floor;
+  if(!F) return;
+  // Roll back the most recently placed-or-skipped landmark this wizard owns
+  // (inherited front corners belong to the wall step) and make it active again,
+  // so a mistake costs one re-tap instead of starting the whole floor over.
+  let idx = -1;
+  F.landmarks.forEach((l, i) => { if(!l.inherited && (l.refined_px || l.skipped)) idx = i; });
+  if(idx < 0) return;
+  const l = F.landmarks[idx];
+  l.refined_px = null; l.tap_px = null; l.method = null; l.skipped = false; l.residual_px = null;
+  F.activeIdx = nextIncompleteIdx();
+  refitFloor();
+  updateFloorUI();
+  render();
+};
 $('floorSkipLandmarkBtn').onclick = () => {
   const F = S.floor;
   if(!F || F.activeIdx < 0) return;
