@@ -1619,7 +1619,15 @@ async function enterRecordPhase(){
     return;
   }
   camStatusMsg('Starting camera…');
-  const video = {facingMode:{ideal:'environment'}, width:{ideal:1920}, height:{ideal:1080}, frameRate:{ideal:60}};
+  /* 4K to match native capture (ios/CAPTURE.md: 3840x2160, portrait
+     2160x3840). Calibration profiles are keyed on frame dimensions, so a
+     1080p stream here produces a profile that matchingProfile() will never
+     offer against app footage — it fails closed, but silently.
+     `ideal`, not `exact`: a device that cannot reach 4K still gets a working
+     camera for its own record-and-calibrate flow, which is self-consistent
+     at whatever resolution it lands on. The status line reports what the
+     browser actually granted, and warns when that will not match the app. */
+  const video = {facingMode:{ideal:'environment'}, width:{ideal:3840}, height:{ideal:2160}, frameRate:{ideal:60}};
   let stream = null;
   try{
     stream = await navigator.mediaDevices.getUserMedia({video, audio:true});
@@ -1647,7 +1655,12 @@ async function enterRecordPhase(){
     } else {
       S.rec.mime = pickRecMime();
       $('recBtn').disabled = false;
-      camStatusMsg(`Camera ready · ${w}×${h}${fps}${mic}`);
+      // Orientation-agnostic: portrait 2160x3840 and landscape 3840x2160
+      // are both 4K. Below that, a profile calibrated here cannot match app
+      // footage, so say so now rather than at the picker.
+      const is4k = Math.max(w, h) >= 3840 && Math.min(w, h) >= 2160;
+      const note = is4k ? '' : ' · below 4K, won’t match app recordings';
+      camStatusMsg(`Camera ready · ${w}×${h}${fps}${mic}${note}`, !is4k);
     }
     $('recCalibrateBtn').disabled = false;
   };
