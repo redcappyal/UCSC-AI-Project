@@ -26,6 +26,18 @@ The venv is `.venv`; everything runs through it. System `python3` has no flask o
 Editing a `*.py` that has a paired `tests/test_*.py` auto-runs that file (PostToolUse
 hook). Failures come back as a *blocked edit*, not a warning.
 
+On the Windows CUDA training box there is no `.venv` here; that environment lives at
+`C:\Users\alann\Code\ball-detector-train\.venv` (cv2 + torch, no pytest or flask), and
+the PostToolUse hook above is not configured there.
+
+**Never pass a possibly-non-ASCII path to `cv2.imread`/`cv2.imwrite`.** On Windows both
+reach the CRT's ANSI file API: reads return `None`, and writes return `True` while landing
+under a mojibake filename — that is how `ball-crops-2026-07-24` lost 961 of 2,936 train
+crops. Use `_imread_unicode`/`_imwrite_unicode` in `prepare_ball_dataset.py`. Crop
+filenames are ASCII by construction via `ascii_slug()`, with the readable clip name kept
+in the COCO per-image `clip` field. `cv2.VideoCapture`/`VideoWriter` are *not* affected —
+FFmpeg does its own UTF-8 conversion — so leave those call sites alone.
+
 ## Skills carry the workflow
 
 - `/verify` — launching, driving the browser, test videos, UI gotchas.
