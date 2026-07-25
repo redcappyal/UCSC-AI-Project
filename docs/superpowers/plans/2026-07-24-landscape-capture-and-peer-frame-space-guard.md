@@ -455,7 +455,23 @@ cd ios && xcodebuild test -scheme SquashLineCalling -destination 'platform=iOS S
 Expected: PASS, whole suite. `PeerBenchView.swift:92` still compiles unchanged — it takes
 the `.landscapeRight` default.
 
-- [ ] **Step 6: Correct PEER.md**
+- [ ] **Step 6: Make CaptureSettings' "not yet enforced" note true**
+
+Task 1 deliberately left `CaptureOrientation`'s doc comment saying the guard does not exist
+yet, because at that commit it did not. This task is what makes it exist, so the comment
+must be updated in the same commit — a branch where each commit is honest in isolation is
+the whole point. In `ios/Sources/Record/CaptureSettings.swift`, replace the "Not yet
+enforced" paragraph of the `CaptureOrientation` doc comment with:
+
+```swift
+    /// The mount travels explicitly in `Hello.captureOrientation`, and
+    /// `PeerSession` enforces the match at handshake (see its `.hello`
+    /// handler) by comparing the peer's hello against its own. Mixing mounts
+    /// is refused rather than absorbed, so the operator learns the mount is
+    /// wrong instead of the archive inheriting it.
+```
+
+- [ ] **Step 7: Correct PEER.md**
 
 In `ios/PEER.md`, replace the capture bullet and the whole `⚠️` bullet (lines ~56-70) with:
 
@@ -473,10 +489,10 @@ In `ios/PEER.md`, replace the capture bullet and the whole `⚠️` bullet (line
   `.landscapeRight` default.
 ```
 
-- [ ] **Step 7: Commit**
+- [ ] **Step 8: Commit**
 
 ```bash
-git add ios/Sources/Peer/ControlMessage.swift ios/Sources/Peer/PeerSession.swift ios/Tests/CaptureOrientationTests.swift ios/PEER.md && git commit -m "fix(peer): compare the peer's frame space against what this phone advertised"
+git add ios/Sources/Peer/ControlMessage.swift ios/Sources/Peer/PeerSession.swift ios/Sources/Record/CaptureSettings.swift ios/Tests/CaptureOrientationTests.swift ios/PEER.md && git commit -m "fix(peer): compare the peer's frame space against what this phone advertised"
 ```
 
 ---
@@ -863,7 +879,20 @@ Replace `startCamera()` (lines ~334-346):
     }
 ```
 
-- [ ] **Step 5: Run the full suite to verify it passes**
+- [ ] **Step 5: Make CameraController's "nothing assigns this yet" note true**
+
+Task 1 left `CameraController.orientation`'s doc comment saying nothing assigns it, because
+nothing did. This task is what assigns it, so the comment must be corrected in the same
+commit. In `ios/Sources/Record/CameraController.swift`, replace the second paragraph of the
+`orientation` property's doc comment with:
+
+```swift
+    /// `RecordModel.startCamera` resolves this from the device's interface
+    /// orientation and pins the supported-orientation mask there, so it
+    /// cannot change under a running session.
+```
+
+- [ ] **Step 6: Run the full suite to verify it passes**
 
 ```bash
 cd ios && xcodegen generate && xcodebuild test -scheme SquashLineCalling -destination 'platform=iOS Simulator,name=iPhone 15,OS=17.0.1'
@@ -871,10 +900,10 @@ cd ios && xcodegen generate && xcodebuild test -scheme SquashLineCalling -destin
 
 Expected: PASS, whole suite.
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 7: Commit**
 
 ```bash
-git add ios/Sources/Record/RecordModel.swift ios/Tests/LiveWiringTests.swift && git commit -m "fix(record): label detection tuples with the mount the session actually captured in"
+git add ios/Sources/Record/RecordModel.swift ios/Sources/Record/CameraController.swift ios/Tests/LiveWiringTests.swift && git commit -m "fix(record): label detection tuples with the mount the session actually captured in"
 ```
 
 ---
