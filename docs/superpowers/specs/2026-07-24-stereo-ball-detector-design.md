@@ -238,16 +238,62 @@ The full suite must still report **271 passed**, plus the new tests.
 
 | Risk | Mitigation |
 | --- | --- |
-| 66 tiles/frame is too slow on a CPU-only Flask box | Measure before optimising (Decision 6). `tile_overlap_px` and `max_batch_tiles` are manifest knobs, so a deployment can trade recall for speed explicitly rather than silently. The window strategy is a seam for §6's tracker-guided crop. |
+| 66 tiles/frame is too slow on a CPU-only Flask box | Measure before optimising (Decision 6). `tile_overlap_px` and `max_batch_tiles` are manifest knobs, so a deployment can trade recall for speed explicitly rather than silently. The window strategy is a seam for §6's tracker-guided crop. **Measured — see below.** |
 | Two detectors in one system become confusable | Manifest stamped into output; no silent fallback |
 | Tile seams cause missed or duplicated balls | Overlap > p90 ball width; cross-tile NMS; round-trip test |
 | Model is unevaluated and may be worse than RF-DETR | Confined to the stereo path, which is itself unevaluated. §3's gate is the follow-up, and this change is what makes it runnable |
 | Concurrent phase-5 session conflicts | Isolated worktree; `stereo_offline.py` untouched on their branch, so this should merge cleanly |
+
+### Measured: tile-sweep cost (Task 7)
+
+Benchmarked `ball_detector.detect_frame` end to end over one synthetic 4K frame
+(3840×2160 zeros, 66 tiles, batches of 32) against the real exported
+`crosscourt-ball-416-v1` checkpoint, warm-up iterations excluded:
+
+| Device | Hardware | Mean s/frame | Std dev | Iterations |
+| --- | --- | --- | --- | --- |
+| CPU | Intel Core i5-14400F, 10 torch threads | **2.02 s** | 0.011 s | 5 (2 warm-up) |
+| GPU | NVIDIA RTX 5060, CUDA 12.8 | **0.167 s** | 0.003 s | 10 (4 warm-up) |
+
+GPU is roughly 12× faster than CPU. Full methodology and raw output are in
+`.superpowers/sdd/task-7-report.md`.
+
+**CPU exceeds the ~2 s/frame threshold** (2.02 s measured, marginally over).
+A CPU-only Flask deployment should not ship the full 66-tile sweep as-is: it
+should either raise `tile_overlap_px`'s implied stride (fewer, larger-stride
+tiles, trading recall for speed via the existing manifest knob) or move to
+§6's tracker-guided single-crop before this path serves anything but offline
+batch processing. This is not implied — it is the explicit recommendation of
+this measurement.
+
+**GPU caveat discovered while measuring.** `export_ball_model.py` traces with
+a CPU example tensor (`torch.randn(1, 3, 416, 416)`, no `.cuda()`). YOLOX's
+`YOLOXHead.decode_outputs` builds its grid/stride tensors via
+`.type(xin[0].type())`; `torch.jit.trace` resolves that Python type string at
+trace time and bakes it into the graph as a literal `torch.device("cpu")` op.
+Consequence: the officially shipped `models/crosscourt-ball-416-v1/model.torchscript`
+is device-locked to CPU — moving the loaded module and input tensor to CUDA
+raises `RuntimeError: Expected all tensors to be on the same device, but found
+at least two devices, cuda:0 and cpu!` inside the traced decode step. The GPU
+number above was measured against a second trace of the identical checkpoint
+made with a CUDA example tensor, produced only for this benchmark (not
+committed, not the shipped artifact — `export_ball_model.py` is outside this
+task's file list). Shipping real GPU inference would need
+`export_ball_model.py` itself to trace on the target device, which is a
+follow-up, not this change.
 
 ## Follow-ups (not this change)
 
 1. **Give `yolo_model_eval.py` a YOLOX loader** and score both detectors on the
    same clip. This is `MODEL.md` §3's gate and the prerequisite for promoting
    YOLOX beyond the stereo path.
-2. Benchmark tile-sweep cost; decide whether the tracker-guided crop is needed.
+2. ~~Benchmark tile-sweep cost; decide whether the tracker-guided crop is
+   needed.~~ Done (Task 7) — see "Measured: tile-sweep cost" above. CPU is
+   marginally over budget at 2.02 s/frame; either raise the tile stride or
+   build the tracker-guided crop before a CPU-only deployment.
 3. Retrain with `max_epoch ≈ 120` — the run converged at 100 of 300.
+4. **Make `export_ball_model.py` trace on the target device** instead of
+   always tracing with a CPU example tensor. As written it bakes YOLOX's
+   `decode_outputs` grid/stride tensors to CPU regardless of where the module
+   is later loaded, so the shipped TorchScript artifact cannot run on GPU at
+   all — discovered while gathering Task 7's GPU benchmark (see above).
