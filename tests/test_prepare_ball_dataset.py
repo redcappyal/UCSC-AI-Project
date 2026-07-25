@@ -1,6 +1,7 @@
 """prepare_ball_dataset: geometry, splitting and crop planning (no cv2 needed)."""
 
 import random
+import re
 import sys
 from pathlib import Path
 
@@ -9,8 +10,10 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from prepare_ball_dataset import (
-    _clip_box, burst_count, clip_and_frame, clip_scale_factors, plan_crops,
-    polygon_aabb, polygon_points, split_by_clip, streak_metrics, thin_bursts,
+    _clip_box, _imread_unicode, _imwrite_unicode, ascii_slug, burst_count,
+    clip_and_frame, clip_scale_factors, crop_file_name, plan_crops,
+    polygon_aabb, polygon_points, render_split, slugified_clips,
+    split_by_clip, streak_metrics, thin_bursts,
 )
 
 
@@ -171,3 +174,154 @@ def test_plan_crops_is_deterministic_for_a_seed():
     first = plan_crops(record, rng=random.Random(7), **args)
     second = plan_crops(record, rng=random.Random(7), **args)
     assert [p["origin"] for p in first] == [p["origin"] for p in second]
+
+
+SAFE_NAME = re.compile(r"[A-Za-z0-9._-]+")
+
+
+def test_ascii_slug_leaves_a_clean_roboflow_name_alone():
+    # The 1,975 already-good crops must not be renamed by this change.
+    name = "Bay-Club-1_mov-0042_jpg.rf.abc123"
+    assert ascii_slug(name) == name
+
+
+def test_ascii_slug_digests_a_name_the_charset_filter_ignores_but_strip_shortens():
+    # "abc." and "abc" are the same file on Windows (trailing dots are
+    # silently discarded there), and ".hidden" is a hidden file on Unix, so
+    # strip() must still run on names the charset filter already accepts -
+    # and because that strip is lossy, the digest must stay too, or the
+    # stripped name would collide with the bare one below.
+    for stem, bare in [("abc.", "abc"), (".hidden", "hidden")]:
+        slug = ascii_slug(stem)
+        assert slug != stem
+        assert slug.startswith(f"{bare}-")
+        assert len(slug) == len(bare) + 1 + 8
+        assert slug != ascii_slug(bare)
+
+
+def test_ascii_slug_replaces_the_fullwidth_bar_and_marks_the_change():
+    # The production case: a YouTube title whose "|" was sanitised to U+FF5C.
+    assert (ascii_slug("Squash Rally ｜ Best_mov-9_jpg.rf.d")
+            == "Squash_Rally_Best_mov-9_jpg.rf.d-cc74d589")
+
+
+def test_ascii_slug_transliterates_accents_rather_than_dropping_letters():
+    # NFKD first: "café" is still recognisably café, not "caf".
+    assert ascii_slug("café").startswith("cafe-")
+
+
+def test_ascii_slug_falls_back_when_no_character_survives():
+    # A wholly non-Latin title must still produce a usable, unique filename.
+    slug = ascii_slug("スカッシュ")
+    assert slug.startswith("clip-")
+    assert len(slug) == len("clip-") + 8
+
+
+def test_ascii_slug_handles_the_cp437_mojibake_form():
+    # What the U+FF5C name became on disk after the bad unzip; recovering a
+    # half-corrupted dataset must not trip over it either.
+    assert SAFE_NAME.fullmatch(ascii_slug("clip∩╜£name_mov-1_jpg.rf.a"))
+
+
+def test_ascii_slug_keeps_colliding_names_distinct():
+    # Two different titles collapse onto one base; the digest is the only thing
+    # stopping their crops from overwriting each other.
+    bar, question = ascii_slug("Rally ｜ One"), ascii_slug("Rally ? One")
+    assert bar.startswith("Rally_One-") and question.startswith("Rally_One-")
+    assert bar != question
+
+
+def test_ascii_slug_output_is_always_filename_safe():
+    for name in ["Squash ｜ Rally", 'a/b\\c:d*e?f"g<h>i|j', "  ", "..",
+                 "スカッシュ", "Bay-Club-1_mov-0042_jpg.rf.abc123"]:
+        assert SAFE_NAME.fullmatch(ascii_slug(name)), name
+
+
+def test_ascii_slug_is_deterministic():
+    # Regenerating the dataset must not reshuffle filenames.
+    assert ascii_slug("Squash ｜ Rally") == ascii_slug("Squash ｜ Rally")
+
+
+def test_crop_file_name_indexes_crops_within_a_slugged_stem():
+    assert (crop_file_name("Bay-Club-1_mov-0042_jpg.rf.abc", 3)
+            == "Bay-Club-1_mov-0042_jpg.rf.abc_c3.jpg")
+
+
+def test_crop_file_name_is_safe_even_when_the_stem_is_not():
+    name = crop_file_name("Rally ｜ One_jpg.rf.d", 0)
+    assert name == f"{ascii_slug('Rally ｜ One_jpg.rf.d')}_c0.jpg"
+    assert SAFE_NAME.fullmatch(name)
+
+
+def test_slugified_clips_lists_only_the_offenders():
+    # The manifest entry exists so a digest suffix in a filename explains itself
+    # without opening the COCO json.
+    records = [frame(clip="Bay-Club-1"), frame(clip="Rally ｜ One"),
+               frame(clip="Bay-Club-1")]
+    assert slugified_clips(records) == ["Rally ｜ One"]
+
+
+def test_slugified_clips_tracks_stem_divergence_not_clip_divergence():
+    # A prior implementation slugged r["clip"] directly, but crop filenames
+    # are slugged from r["path"].stem. "abc." looks unsafe as a bare clip
+    # name (a trailing dot is stripped), but once it is embedded in
+    # "abc._mov-0000_jpg" the stem is already in canonical form and its crops
+    # carry no digest at all - the old implementation listed it anyway.
+    records = [frame(clip="abc.", number=0)]
+    assert slugified_clips(records) == []
+
+
+def test_unicode_path_survives_a_write_read_round_trip(tmp_path):
+    # cv2.imwrite returns True while writing a mojibake filename on Windows, so
+    # the COCO json ends up naming files that are not there. This is the guard.
+    cv2 = pytest.importorskip("cv2")
+    np = pytest.importorskip("numpy")
+
+    target = tmp_path / "Rally ｜ One_c0.jpg"
+    _imwrite_unicode(target, np.full((16, 16, 3), 128, dtype=np.uint8),
+                     [int(cv2.IMWRITE_JPEG_QUALITY), 95])
+
+    # The mojibake sibling is what this assertion is really looking for.
+    assert [p.name for p in tmp_path.iterdir()] == [target.name]
+    assert _imread_unicode(target).shape == (16, 16, 3)
+
+
+def test_imread_unicode_returns_none_for_a_missing_file(tmp_path):
+    pytest.importorskip("cv2")
+    # render_split skips frames it cannot read; that contract has to survive.
+    assert _imread_unicode(tmp_path / "absent.jpg") is None
+
+
+def test_render_split_raises_on_a_filename_collision_across_source_dirs(tmp_path):
+    # crop_file_name keys off path.stem, dropping the parent directory. Two
+    # source records with the same file name in different export split dirs
+    # (as Roboflow can emit) therefore plan to the same crop filename; the
+    # second write would silently clobber the first's pixels while the COCO
+    # json still ends up with two distinct `images` entries.
+    cv2 = pytest.importorskip("cv2")
+    np = pytest.importorskip("numpy")
+
+    stem = "Bay-Club-1_mov-0001_jpg"
+    train_dir, valid_dir = tmp_path / "train", tmp_path / "valid"
+    train_dir.mkdir()
+    valid_dir.mkdir()
+    path_a, path_b = train_dir / f"{stem}.jpg", valid_dir / f"{stem}.jpg"
+    image = np.full((32, 32, 3), 128, dtype=np.uint8)
+    for path in (path_a, path_b):
+        _imwrite_unicode(path, image, [int(cv2.IMWRITE_JPEG_QUALITY), 95])
+
+    def record(path):
+        return {"path": path, "clip": "Bay-Club-1", "frame": 1,
+                "width": 32, "height": 32,
+                "balls": [{"bbox": [8, 8, 4, 4], "streak": None}]}
+
+    record_a, record_b = record(path_a), record(path_b)
+    args = dict(crop=16, scale=1.0, positives=1, negatives=0,
+                jitter=0.0, min_visible=0.6)
+    plans_by_record = {
+        path_a: plan_crops(record_a, rng=random.Random(0), **args),
+        path_b: plan_crops(record_b, rng=random.Random(0), **args),
+    }
+
+    with pytest.raises(SystemExit):
+        render_split([record_a, record_b], plans_by_record, tmp_path, "train", 16, 95)

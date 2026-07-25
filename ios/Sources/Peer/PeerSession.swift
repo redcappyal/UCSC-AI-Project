@@ -243,6 +243,17 @@ final class PeerSession: ObservableObject {
                 transport.stop()
                 return
             }
+            // Detection tuples are expressed in the advertised frame size.
+            // Two phones in different orientations (one portrait, one
+            // landscape-mounted) advertise transposed dimensions — nothing
+            // downstream would error, it would just triangulate transposed
+            // coordinates into confident, wrong line calls. Refuse instead.
+            guard theirs.frameW == CaptureSettings.frameWidth,
+                  theirs.frameH == CaptureSettings.frameHeight else {
+                setPhase(.failed("peer camera orientation doesn't match this phone — mount or hold both phones the same way (portrait or landscape) and reconnect"))
+                transport.stop()
+                return
+            }
             _peerHello = theirs
             _role = isInitiator ? .primary : .secondary
             if isInitiator { sendControl(.role(.secondary)) }

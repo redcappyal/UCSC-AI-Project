@@ -399,7 +399,11 @@ def test_update_job_persists_atomically(tmp_path):
             job_runner.JOBS.pop(run_id, None)
 
 
-def test_upload_dedup_and_track_validation():
+def test_upload_dedup_and_track_validation(runs_dir):
+    # runs_dir is here for its redirect, not its value: it moves BY_HASH_DIR
+    # off the real upload store, which is what makes "exactly one file matches
+    # this hash" a fact about these two uploads rather than about whatever
+    # earlier runs left behind.
     import app as app_module
 
     client = app_module.app.test_client()
@@ -428,53 +432,99 @@ def test_upload_dedup_and_track_validation():
 
     assert ids[0] == ids[1]
     matches = list(app_module.BY_HASH_DIR.glob(f"{ids[0]}.*"))
-    try:
-        assert len(matches) == 1
-        assert app_module.video_path_for_id(ids[0]) == matches[0]
-    finally:
-        for match in matches:
-            match.unlink()
+    assert len(matches) == 1
+    assert app_module.video_path_for_id(ids[0]) == matches[0]
 
     assert client.get("/api/track/status/does-not-exist").status_code == 404
 
 
-def test_ground_truth_save_and_fetch_roundtrip():
+def test_track_rejection_leaves_no_run_directory(tmp_path, monkeypatch):
+    """A refused /api/track must not create the run it refused to start.
+
+    The run directory used to be made before the video was looked up, so every
+    rejection left an empty run behind: they accumulate in the runs list, and
+    the test suite grew one per invocation.
+    """
+    import app as app_module
+
+    monkeypatch.setattr(app_module, "RUNS_DIR", tmp_path)
+    client = app_module.app.test_client()
+
+    response = client.post("/api/track", data={
+        "video_id": "deadbeef", "calibration_json": "{}",
+        "start_time": "0", "end_time": "5",
+    })
+    assert response.status_code == 404
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_track_rejects_a_clip_past_the_end_without_making_a_run(tmp_path, monkeypatch):
+    """Same guarantee for the checks that only run once the video is readable.
+
+    `video_info` and the clip-window comparison sit after the video is
+    resolved, so they are early returns the 404 case above never reaches.
+    """
+    import app as app_module
+    import cv2
+    import numpy as np
+
+    video_path = tmp_path / "tiny.mp4"
+    # mp4v, not avc1: Linux opencv-python-headless ships no H.264 encoder,
+    # and a failed VideoWriter drops no file rather than raising.
+    writer = cv2.VideoWriter(str(video_path), cv2.VideoWriter_fourcc(*"mp4v"), 30.0, (64, 48))
+    for _ in range(12):
+        writer.write(np.zeros((48, 64, 3), dtype=np.uint8))
+    writer.release()
+    assert video_path.exists(), "VideoWriter produced no file (codec unavailable?)"
+
+    runs_dir = tmp_path / "runs"
+    runs_dir.mkdir()
+    monkeypatch.setattr(app_module, "RUNS_DIR", runs_dir)
+    # Resolving the id here keeps the upload branch (and the real UPLOADS_DIR)
+    # out of a test about run-directory creation.
+    monkeypatch.setattr(app_module, "video_path_for_id", lambda _id: video_path)
+    client = app_module.app.test_client()
+
+    # 0.4s of video; a window starting at 100s lands past the last frame.
+    response = client.post("/api/track", data={
+        "video_id": "whatever", "calibration_json": "{}",
+        "start_time": "100", "end_time": "101",
+    })
+    assert response.status_code == 400
+    assert list(runs_dir.iterdir()) == []
+
+
+def test_ground_truth_save_and_fetch_roundtrip(runs_dir):
     import app as app_module
 
     client = app_module.app.test_client()
     run_id = "gt-route-test"
-    run_dir = app_module.RUNS_DIR / run_id
-    run_dir.mkdir(parents=True, exist_ok=True)
-    try:
-        response = client.post(f"/api/runs/{run_id}/ground_truth", json={
-            "events": [
-                {"frame": 60, "type": "wall"},
-                {"frame": 20, "type": "racket"},
-            ],
-        })
-        assert response.status_code == 200
-        assert response.get_json()["count"] == 2
+    (runs_dir / run_id).mkdir(parents=True, exist_ok=True)
 
-        fetched = client.get(f"/api/runs/{run_id}/ground_truth.json").get_json()
-        assert fetched["tolerance_frames"] == 1
-        # Events come back sorted by frame regardless of submitted order.
-        assert [e["frame"] for e in fetched["events"]] == [20, 60]
+    response = client.post(f"/api/runs/{run_id}/ground_truth", json={
+        "events": [
+            {"frame": 60, "type": "wall"},
+            {"frame": 20, "type": "racket"},
+        ],
+    })
+    assert response.status_code == 200
+    assert response.get_json()["count"] == 2
 
-        response = client.post(f"/api/runs/{run_id}/ground_truth", json={
-            "events": [{"frame": 5, "type": "volley_boast"}],
-        })
-        assert response.status_code == 400
+    fetched = client.get(f"/api/runs/{run_id}/ground_truth.json").get_json()
+    assert fetched["tolerance_frames"] == 1
+    # Events come back sorted by frame regardless of submitted order.
+    assert [e["frame"] for e in fetched["events"]] == [20, 60]
 
-        response = client.post("/api/runs/no-such-run/ground_truth", json={"events": []})
-        assert response.status_code == 404
-    finally:
-        import shutil
-        shutil.rmtree(run_dir, ignore_errors=True)
+    response = client.post(f"/api/runs/{run_id}/ground_truth", json={
+        "events": [{"frame": 5, "type": "volley_boast"}],
+    })
+    assert response.status_code == 400
+
+    response = client.post("/api/runs/no-such-run/ground_truth", json={"events": []})
+    assert response.status_code == 404
 
 
-def test_label_run_creation_from_uploaded_video(tmp_path):
-    import shutil
-
+def test_label_run_creation_from_uploaded_video(tmp_path, runs_dir):
     import app as app_module
     import cv2
     import numpy as np
@@ -501,25 +551,18 @@ def test_label_run_creation_from_uploaded_video(tmp_path):
             content_type="multipart/form-data",
         ).get_json()["video_id"]
 
-    run_dir = None
-    try:
-        data = client.post("/api/label_runs", json={"video_id": video_id}).get_json()
-        assert data["run_id"] == f"label-{video_id[:12]}"
-        assert data["label_only"] is True
-        assert data["start_frame"] == 0 and data["end_frame"] == 11
-        assert abs(data["fps"] - 30.0) < 0.1
+    data = client.post("/api/label_runs", json={"video_id": video_id}).get_json()
+    assert data["run_id"] == f"label-{video_id[:12]}"
+    assert data["label_only"] is True
+    assert data["start_frame"] == 0 and data["end_frame"] == 11
+    assert abs(data["fps"] - 30.0) < 0.1
 
-        run_dir = app_module.RUNS_DIR / data["run_id"]
-        meta = json.loads((run_dir / "label_run.json").read_text())
-        assert meta["video_path"].endswith(f"{video_id}.mp4")
+    run_dir = runs_dir / data["run_id"]
+    meta = json.loads((run_dir / "label_run.json").read_text())
+    assert meta["video_path"].endswith(f"{video_id}.mp4")
 
-        # ground truth saves into the label-only run like any other run
-        response = client.post(f"/api/runs/{data['run_id']}/ground_truth", json={
-            "events": [{"frame": 6, "type": "wall"}],
-        })
-        assert response.status_code == 200
-    finally:
-        if run_dir is not None:
-            shutil.rmtree(run_dir, ignore_errors=True)
-        for stray in app_module.BY_HASH_DIR.glob(f"{video_id}.*"):
-            stray.unlink()
+    # ground truth saves into the label-only run like any other run
+    response = client.post(f"/api/runs/{data['run_id']}/ground_truth", json={
+        "events": [{"frame": 6, "type": "wall"}],
+    })
+    assert response.status_code == 200

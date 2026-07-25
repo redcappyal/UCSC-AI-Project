@@ -30,11 +30,13 @@ Usage: python prepare_ball_dataset.py --source "~/Desktop/Annotated Data/SquashA
 """
 
 import argparse
+import hashlib
 import json
 import math
 import random
 import re
 import statistics
+import unicodedata
 from collections import defaultdict
 from pathlib import Path
 
@@ -52,6 +54,11 @@ MIN_SOURCE_WIDTH = 960
 # this to reach the target is too far out of domain to rescale into it.
 SCALE_LIMITS = (0.5, 4.0)
 
+# Anything outside this set breaks a crop filename somewhere in the chain: cv2
+# on Windows, or a zip round-trip that loses the UTF-8 flag. See
+# docs/superpowers/specs/2026-07-24-ascii-crop-filenames-design.md.
+UNSAFE_CHARS = re.compile(r"[^A-Za-z0-9._-]+")
+
 
 def clip_and_frame(file_name):
     """('BayClub', 42) for a Roboflow frame name; (stem, None) if unparseable."""
@@ -59,6 +66,61 @@ def clip_and_frame(file_name):
     if not match:
         return Path(file_name).stem.split(".rf.")[0], None
     return match.group("clip"), int(match.group("frame"))
+
+
+def ascii_slug(stem):
+    """ASCII, filesystem-safe form of a source frame stem.
+
+    One source clip is a YouTube title carrying U+FF5C (｜, a sanitised "|"), and
+    a filename built from it is unusable on Windows twice over: cv2.imread
+    returns None for it, and cv2.imwrite reports success while writing a
+    mojibake name. Emitting ASCII is what makes the crop names portable.
+
+    NFKD runs first so accents transliterate (é -> e) instead of vanishing, but
+    it also turns U+FF5C into a literal "|" — valid ASCII, invalid in a Windows
+    filename — so the charset filter runs after it, never instead of it.
+
+    The transform is lossy, so a name that changed carries an 8-hex digest of
+    the original: two clips that collapse onto one base stay distinct, and the
+    suffix is stable per source name. Only a name already in canonical form —
+    safe charset *and* no leading or trailing "._-" — is returned untouched;
+    a name that the charset filter leaves alone but the strip still shortens
+    earns the digest too, because stripping is itself lossy: Win32 silently
+    discards trailing dots, so "abc." and "abc" are the same file on Windows,
+    and a leading dot hides a file on Unix. Collapsing either onto the bare
+    form unchanged would let two source frames silently overwrite each
+    other's crops, so the digest stays with every lossy transform, not just
+    the charset one.
+
+    A residual risk survives this: a stem already shaped like a slug's output
+    (e.g. "Rally_One-4075aa34") is returned untouched, and a genuinely
+    different stem can slug to that same string (e.g. "Rally ｜ One") —
+    probability ~2⁻³² given the 8-hex digest. render_split's duplicate-
+    filename guard is what makes that acceptable: the collision surfaces as
+    a SystemExit naming both source paths, never a silent overwrite.
+    """
+    folded = unicodedata.normalize("NFKD", stem).encode("ascii", "ignore").decode("ascii")
+    slug = UNSAFE_CHARS.sub("_", folded).strip("._-") or "clip"
+    if slug == stem:
+        return slug
+    return f"{slug}-{hashlib.sha1(stem.encode('utf-8')).hexdigest()[:8]}"
+
+
+def crop_file_name(source_stem, index):
+    """Filename for the `index`-th crop cut from a source frame."""
+    return f"{ascii_slug(source_stem)}_c{index}.jpg"
+
+
+def slugified_clips(records):
+    """Clips whose crops carry a digest suffix in their filename.
+
+    Crop filenames are slugged from `record["path"].stem`, not from `clip`
+    itself, so this checks the stem for divergence and reports the clip it
+    belongs to. Reported in the manifest so the digest suffix on those crops
+    is self-explaining; the readable name itself stays in each image's `clip`.
+    """
+    return sorted({r["clip"] for r in records
+                   if ascii_slug(r["path"].stem) != r["path"].stem})
 
 
 def polygon_points(segmentation):
@@ -288,18 +350,69 @@ def plan_crops(record, crop, scale, rng, positives, negatives, jitter, min_visib
     return plans
 
 
+def _imread_unicode(path):
+    """cv2.imread that survives a non-ASCII path on Windows.
+
+    cv2 gets the UTF-8 bytes of a Python str and hands them to the CRT's
+    non-Unicode file API, so on a cp1252 box every non-ASCII path misses and
+    imread returns None with the file sitting right there. Reading the bytes in
+    Python and decoding them in memory sidesteps the path entirely. Returns None
+    for a missing or unreadable file, as imread did.
+    """
+    import cv2
+    import numpy as np
+
+    try:
+        data = np.fromfile(str(path), dtype=np.uint8)
+    except OSError:
+        return None
+    if data.size == 0:
+        return None
+    return cv2.imdecode(data, cv2.IMREAD_COLOR)
+
+
+def _imwrite_unicode(path, image, params=None):
+    """cv2.imwrite that survives a non-ASCII path on Windows.
+
+    The read-side failure is loud; this one is not. cv2.imwrite returns True and
+    writes a real file whose name is the UTF-8 bytes reinterpreted as cp1252, so
+    the COCO json ends up pointing at files that do not exist — how the
+    2026-07-24 dataset lost 961 of its 2,936 train crops. This function raises
+    rather than returning a status, so — unlike cv2.imwrite — there is no path
+    through it that reports success without the file landing on disk. In
+    practice cv2.imencode raises cv2.error on a missing or unknown extension
+    rather than returning ok=False; the `if not ok` check below is a defensive
+    backstop, not the mechanism this guarantee actually rests on.
+    """
+    import cv2
+
+    ok, buffer = cv2.imencode(Path(path).suffix, image, params or [])
+    if not ok:
+        raise OSError(f"cv2 could not encode {path}")
+    buffer.tofile(str(path))
+
+
 def render_split(records, plans_by_record, out_dir, split, crop, quality):
-    """Write crop JPEGs and the split's COCO json. Returns the manifest slice."""
+    """Write crop JPEGs and the split's COCO json. Returns the manifest slice.
+
+    `crop_file_name` keys off `record["path"].stem`, dropping the parent
+    directory, so two source records with the same file name in different
+    export split dirs would otherwise plan to the same crop filename and the
+    second write would silently overwrite the first's pixels while the COCO
+    json still carried two distinct `images` entries. `emitted` below turns
+    that into a loud failure instead.
+    """
     import cv2                            # lazy: geometry is testable without it
 
     images_dir = out_dir / split
     images_dir.mkdir(parents=True, exist_ok=True)
     images, annotations = [], []
+    emitted = {}                           # crop filename -> source path
     for record in records:
         plans = plans_by_record.get(record["path"])
         if not plans:
             continue
-        frame = cv2.imread(str(record["path"]))
+        frame = _imread_unicode(record["path"])
         if frame is None:
             continue
         scale = plans[0]["scale"]
@@ -311,9 +424,15 @@ def render_split(records, plans_by_record, out_dir, split, crop, quality):
             tile = frame[oy:oy + crop, ox:ox + crop]
             if tile.shape[0] != crop or tile.shape[1] != crop:
                 continue
-            name = f"{record['path'].stem}_c{index}.jpg"
-            cv2.imwrite(str(images_dir / name), tile,
-                        [int(cv2.IMWRITE_JPEG_QUALITY), quality])
+            name = crop_file_name(record["path"].stem, index)
+            other = emitted.get(name)
+            if other is not None and other != record["path"]:
+                raise SystemExit(
+                    f"crop filename collision in split {split!r}: {name!r} "
+                    f"would be written for both {other} and {record['path']}")
+            emitted[name] = record["path"]
+            _imwrite_unicode(images_dir / name, tile,
+                             [int(cv2.IMWRITE_JPEG_QUALITY), quality])
             image_id = len(images) + 1
             images.append({"id": image_id, "file_name": name,
                            "width": crop, "height": crop,
@@ -400,6 +519,9 @@ def build(source, out, crop, positives, negatives, jitter, min_visible,
                    "min_frame_gap": min_frame_gap,
                    "target_ball_px": target_ball_px},
         "clip_scale_factors": {k: round(v, 3) for k, v in sorted(scales.items())},
+        # The readable name lives in each image's `clip`; this flags the clips
+        # whose crops therefore carry a digest suffix.
+        "slugified_clips": slugified_clips(kept),
         "source_frames_seen": total_frames,
         "source_frames_kept": len(kept),
         "dropped_low_resolution": dict(sorted(dropped_low_res.items())),

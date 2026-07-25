@@ -2,7 +2,6 @@
 
 import json
 import os
-import shutil
 import sys
 import time
 from pathlib import Path
@@ -11,6 +10,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 
 def make_run_with_calibration(app_module, run_id, calibration, age_seconds):
+    """A run carrying a calibration of a given age.
+
+    Reads RUNS_DIR off the module at call time, so it follows the `runs_dir`
+    fixture's redirect. test_stereo_endpoints.py imports this too.
+    """
     run_dir = app_module.RUNS_DIR / run_id
     run_dir.mkdir(parents=True, exist_ok=True)
     path = run_dir / "calibration.json"
@@ -20,42 +24,33 @@ def make_run_with_calibration(app_module, run_id, calibration, age_seconds):
     return run_dir
 
 
-def test_latest_calibration_returns_newest_run():
+def test_latest_calibration_returns_newest_run(runs_dir):
     import app as app_module
 
     client = app_module.app.test_client()
-    older = make_run_with_calibration(
+    make_run_with_calibration(
         app_module, "cal-latest-older", {"lines": [{"name": "out"}]}, age_seconds=120)
-    newer = make_run_with_calibration(
+    make_run_with_calibration(
         app_module, "cal-latest-newer", {"lines": [{"name": "tin"}]}, age_seconds=5)
-    try:
-        response = client.get("/api/calibration/latest")
-        assert response.status_code == 200
-        body = response.get_json()
-        assert body["ok"] is True
-        assert body["run_id"] == "cal-latest-newer"
-        assert body["calibration"] == {"lines": [{"name": "tin"}]}
-        assert body["saved_at"].endswith("Z")
-    finally:
-        shutil.rmtree(older, ignore_errors=True)
-        shutil.rmtree(newer, ignore_errors=True)
+
+    response = client.get("/api/calibration/latest")
+    assert response.status_code == 200
+    body = response.get_json()
+    assert body["ok"] is True
+    assert body["run_id"] == "cal-latest-newer"
+    assert body["calibration"] == {"lines": [{"name": "tin"}]}
+    assert body["saved_at"].endswith("Z")
 
 
-def test_latest_calibration_404_when_none_exist():
+def test_latest_calibration_404_when_none_exist(runs_dir):
     import app as app_module
 
     client = app_module.app.test_client()
-    # Only guaranteed-empty when no other test left runs behind; use a marker
-    # dir without calibration.json to prove non-calibrated runs are skipped.
-    marker = app_module.RUNS_DIR / "cal-latest-empty-run"
-    marker.mkdir(parents=True, exist_ok=True)
-    had_calibrations = any(app_module.RUNS_DIR.glob("*/calibration.json"))
-    try:
-        response = client.get("/api/calibration/latest")
-        if had_calibrations:
-            assert response.status_code == 200  # other fixtures present; endpoint still works
-        else:
-            assert response.status_code == 404
-            assert response.get_json()["ok"] is False
-    finally:
-        shutil.rmtree(marker, ignore_errors=True)
+    # A run without a calibration.json must not count — the directory is there,
+    # the calibration is not. Isolation is what lets this assert the 404
+    # outright rather than tolerating whatever another test left behind.
+    (runs_dir / "cal-latest-empty-run").mkdir(parents=True, exist_ok=True)
+
+    response = client.get("/api/calibration/latest")
+    assert response.status_code == 404
+    assert response.get_json()["ok"] is False

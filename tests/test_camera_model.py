@@ -1,3 +1,5 @@
+import dataclasses
+
 import numpy as np
 import pytest
 
@@ -50,28 +52,39 @@ def test_projection_matrix_agrees_with_project():
     assert (u, v) == pytest.approx(camera.project(point[:3]))
 
 
-def _synthetic_calibration(camera, frame_size=(1920, 1080)):
-    """Project the real landmark/line geometry through a known camera."""
+def _synthetic_calibration(camera, frame_size=(1920, 1080), distortion=None):
+    """Project the real landmark/line geometry through a known camera.
+
+    `camera.project` returns undistorted pixels, so when `distortion` is
+    given the taps are pushed back through `distort_point` -- a wizard taps
+    raw, lens-bent pixels, and solve_camera_model undistorts them again.
+    """
+    def tap(court_xyz):
+        return court_model.distort_point(camera.project(court_xyz), distortion)
+
     landmarks = []
     for mark in court_model.FLOOR_LANDMARKS:
         if mark["optional"]:
             continue
         x_ft, y_ft = mark["court_ft"]
-        u, v = camera.project((x_ft, y_ft, 0.0))
+        u, v = tap((x_ft, y_ft, 0.0))
         landmarks.append({"id": mark["id"], "court_ft": [x_ft, y_ft],
                           "refined_px": [u, v]})
     lines = []
     for name, height in (("out_line_lower_edge", court_model.OUT_LINE_HEIGHT_FT),
                          ("tin_top_edge", court_model.TIN_TOP_HEIGHT_FT)):
-        left = camera.project((0.0, 0.0, height))
-        right = camera.project((court_model.COURT_WIDTH_FT, 0.0, height))
+        left = tap((0.0, 0.0, height))
+        right = tap((court_model.COURT_WIDTH_FT, 0.0, height))
         lines.append({"name": name, "endpoints": [list(left), list(right)]})
-    return {
+    calibration = {
         "schema": "squash-calibration-v2",
         "frame_width": frame_size[0], "frame_height": frame_size[1],
         "lines": lines,
         "planes": {"floor": {"landmarks": landmarks}},
     }
+    if distortion is not None:
+        calibration["distortion"] = distortion
+    return calibration
 
 
 def test_camera_correspondences_extracts_floor_and_wall():
@@ -322,3 +335,155 @@ def test_camera_check_endpoint():
         response = client.post("/api/camera-check", json=payload)
         assert response.status_code == 200
         assert response.get_json()["status"] in ("no_frame_size", "invalid_json")
+
+
+# --- frame space: which pixels was this model solved in? -------------------
+#
+# A solved model that does not record its own pixel space is a silent
+# failure waiting to happen: a calibration solved on a 1080x1920 clip used
+# verbatim against 4K detections puts every ray off by 2x with nothing
+# raised. These tests pin the record and the only safe way to re-express it.
+
+PORTRAIT_1080 = (1080, 1920)
+PORTRAIT_4K = (2160, 3840)
+
+# A real lens: k1 negative (barrel), norm_px in the source pixel space.
+LENS = {"model": "division_k1", "k1": -0.08,
+        "center_px": [548.0, 952.0], "norm_px": 1100.0}
+
+
+def _portrait_camera(**kwargs):
+    return make_camera(focal_px=900.0, center=(540.0, 960.0),
+                       position=(10.5, 30.5, 7.0), look_at=(10.5, 0.0, 4.5),
+                       frame_size=PORTRAIT_1080, **kwargs)
+
+
+def test_camera_model_dict_carries_frame_size():
+    camera = _portrait_camera()
+    payload = camera.to_dict()
+    assert payload["frame_width"] == 1080.0
+    assert payload["frame_height"] == 1920.0
+    restored = CameraModel.from_dict(payload)
+    assert (restored.frame_width, restored.frame_height) == (1080.0, 1920.0)
+
+
+def test_camera_model_from_dict_tolerates_missing_frame_size():
+    # A model stored before frame size was recorded. Unknown must stay
+    # unknown -- guessing a default is exactly the silent failure.
+    payload = _portrait_camera().to_dict()
+    payload.pop("frame_width", None)
+    payload.pop("frame_height", None)
+    restored = CameraModel.from_dict(payload)
+    assert restored.frame_width is None
+    assert restored.frame_height is None
+
+
+def test_solve_camera_model_records_frame_size():
+    camera = _portrait_camera()
+    solved, info = court_model.solve_camera_model(
+        _synthetic_calibration(camera, frame_size=PORTRAIT_1080))
+    assert info["status"] == "ok"
+    assert solved.frame_width == 1080.0
+    assert solved.frame_height == 1920.0
+
+
+def test_scale_camera_model_scales_only_pixel_quantities():
+    camera = make_camera(focal_px=900.0, center=(540.0, 960.0),
+                         frame_size=PORTRAIT_1080)
+    camera = dataclasses.replace(camera, distortion=dict(LENS), fit_rms_px=1.25)
+    scaled = court_model.scale_camera_model(camera, *PORTRAIT_4K)
+
+    assert scaled.focal_px == pytest.approx(1800.0)
+    assert scaled.center_px == pytest.approx((1080.0, 1920.0))
+    assert scaled.fit_rms_px == pytest.approx(2.5)
+    assert scaled.distortion["center_px"] == pytest.approx([1096.0, 1904.0])
+    assert scaled.distortion["norm_px"] == pytest.approx(2200.0)
+    assert (scaled.frame_width, scaled.frame_height) == (2160.0, 3840.0)
+
+    # World-space and dimensionless quantities must NOT move.
+    assert np.array_equal(scaled.rotation, camera.rotation)
+    assert np.array_equal(scaled.camera_center_ft, camera.camera_center_ft)
+    assert scaled.distortion["k1"] == camera.distortion["k1"]
+    assert scaled.point_count == camera.point_count
+    # Pure function: the source model is untouched.
+    assert camera.focal_px == 900.0
+    assert camera.distortion["norm_px"] == 1100.0
+
+
+def test_scale_camera_model_defaults_absent_norm_px_before_scaling():
+    # court_model._distortion_params treats a missing/zero norm_px as 1000.0.
+    # Scaling has to materialize that effective value, or r^2 changes and
+    # the undistort silently stops matching.
+    lens = {"model": "division_k1", "k1": -0.05, "center_px": [540.0, 960.0]}
+    camera = dataclasses.replace(
+        make_camera(frame_size=PORTRAIT_1080), distortion=lens)
+    scaled = court_model.scale_camera_model(camera, *PORTRAIT_4K)
+    assert scaled.distortion["norm_px"] == pytest.approx(2000.0)
+
+
+def _ray_probe_pixels(width, height):
+    """Center, axis points and all four corners -- off-axis is where a
+    wrong principal point or distortion scale shows up first."""
+    return [(width / 2.0, height / 2.0), (width / 2.0, 12.0), (17.0, height / 2.0),
+            (0.0, 0.0), (width - 1.0, 0.0), (0.0, height - 1.0),
+            (width - 1.0, height - 1.0), (231.0, 1487.0), (908.0, 344.0)]
+
+
+@pytest.mark.parametrize("lens", [None, LENS])
+def test_scale_camera_model_preserves_rays(lens):
+    """The acceptance property: scaling the model and scaling the pixel are
+    the same operation. Ray through p in the source space == ray through
+    2p in the doubled space -- same origin, same direction."""
+    camera = _portrait_camera()
+    if lens is not None:
+        camera = dataclasses.replace(camera, distortion=dict(lens))
+    scaled = court_model.scale_camera_model(camera, *PORTRAIT_4K)
+    factor = PORTRAIT_4K[0] / PORTRAIT_1080[0]
+
+    worst = 0.0
+    for pixel in _ray_probe_pixels(*PORTRAIT_1080):
+        origin, direction = camera.ray(
+            court_model.undistort_point(pixel, camera.distortion))
+        big = (pixel[0] * factor, pixel[1] * factor)
+        origin_scaled, direction_scaled = scaled.ray(
+            court_model.undistort_point(big, scaled.distortion))
+        assert np.array_equal(origin_scaled, origin)
+        worst = max(worst, float(np.max(np.abs(direction_scaled - direction))))
+    assert worst < 1e-9
+
+
+def test_scale_camera_model_requires_a_known_frame_size():
+    camera = dataclasses.replace(
+        make_camera(), frame_width=None, frame_height=None)
+    with pytest.raises(ValueError, match="frame size"):
+        court_model.scale_camera_model(camera, *PORTRAIT_4K)
+
+
+def test_scale_camera_model_rejects_aspect_change():
+    # 1080x1920 -> 2160x2880 is a different crop, not a resolution change:
+    # no single factor can express it, so guessing would corrupt geometry.
+    camera = _portrait_camera()
+    with pytest.raises(ValueError, match="aspect"):
+        court_model.scale_camera_model(camera, 2160, 2880)
+
+
+def test_scale_camera_model_rejects_nonpositive_target():
+    camera = _portrait_camera()
+    with pytest.raises(ValueError):
+        court_model.scale_camera_model(camera, 0, 0)
+
+
+def test_camera_model_endpoint_reports_frame_size():
+    import app as app_module
+
+    client = app_module.app.test_client()
+    camera = _portrait_camera()
+    body = client.post("/api/camera-model", json={
+        "calibration": _synthetic_calibration(camera, frame_size=PORTRAIT_1080),
+    }).get_json()
+    assert body["ok"] is True and body["status"] == "ok"
+    # Both on the response (clients reason about it without decoding the
+    # model) and inside the model itself (it travels peer-to-peer).
+    assert (body["frame_width"], body["frame_height"]) == (1080.0, 1920.0)
+    assert body["camera_model"]["frame_width"] == 1080.0
+    assert body["camera_model"]["frame_height"] == 1920.0

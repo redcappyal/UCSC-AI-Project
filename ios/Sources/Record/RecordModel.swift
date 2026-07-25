@@ -23,7 +23,23 @@ final class RecordModel: ObservableObject {
 
     var detectorMissing: Bool { !tracker.isEnabled }
 
+    enum DetectorKind: Equatable { case none, synthetic, model }
+
+    /// `detectorMissing` only knows nil-vs-non-nil, so it cannot tell a real
+    /// model from the DEBUG stand-in. The UI must never imply a real detection
+    /// when the source is synthetic.
+    @Published private(set) var detectorKind: DetectorKind
+
     init(detector: BallDetecting? = CoreMLBallDetector()) {
+        if detector == nil {
+            detectorKind = .none
+        } else {
+            #if DEBUG
+            detectorKind = detector is SyntheticBallDetector ? .synthetic : .model
+            #else
+            detectorKind = .model
+            #endif
+        }
         tracker = BallTracker(detector: detector)
         tracker.subscribe { [weak self] observation in
             guard let self else { return }
@@ -51,6 +67,9 @@ final class RecordModel: ObservableObject {
     let remoteDetections = RemoteDetectionStore()
     private var peer: PeerSession?
     private var peerPumpTimer: Timer?
+    /// The DEBUG stereo demo has no peer, so it cannot share `peerPumpTimer`.
+    /// Declared unconditionally so `deinit` doesn't have to fork on `#if`.
+    private var demoPumpTimer: Timer?
     private var peerSubscribed = false
     private var nextDetectionSeq: UInt32 = 0
     private var pendingTuples: [DetectionTuple] = []
@@ -70,6 +89,34 @@ final class RecordModel: ObservableObject {
     /// which role it's running as.
     @Published var stereoEvents: [String] = []
     private static let stereoEventsCap = 20
+
+    // MARK: live call rendering (Phase 4)
+
+    /// What `p-live` should be showing, or nil for "nothing called yet".
+    ///
+    /// Set from the engine's `onEvent` after a main hop. Deliberately never
+    /// derived from `stereoEvents`: that list is relayed JSON, and re-parsing
+    /// it would be a second place for the `no_call` gate to be forgotten.
+    @Published private(set) var livePresentation: CallPresentation?
+
+    /// The §8.17 wash, which is *transient* where `livePresentation` is
+    /// persistent. Separate state on purpose: binding the full-stage flash to
+    /// the banner's value leaves an 82%-opacity verdict wash covering the
+    /// camera feed from the first call onward, and §16 gates the mini-court on
+    /// "once the flash clears".
+    @Published private(set) var flashPresentation: CallPresentation?
+    private var flashClearWork: DispatchWorkItem?
+    /// §10 budgets the whole flash at ≤ 500 ms, and `CallFlashView` spends
+    /// 150 ms of that easing in — so the hold is the remainder, not 500 ms.
+    static let flashHoldS = 0.35
+
+    private func showFlash(_ presentation: CallPresentation) {
+        flashPresentation = presentation
+        flashClearWork?.cancel()
+        let work = DispatchWorkItem { [weak self] in self?.flashPresentation = nil }
+        flashClearWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.flashHoldS, execute: work)
+    }
 
     /// Wire a paired session. Safe to call again with a new session; the
     /// tracker subscription is registered once. Subscriber runs on the main
@@ -130,7 +177,17 @@ final class RecordModel: ObservableObject {
             errorText = "stereo: malformed local camera model"
             return
         }
-        localModel = model
+        // A solved model is only meaningful in the pixel space it was solved
+        // in. Everything downstream (detections, StereoEngine) works in
+        // CaptureSettings' space, so re-express it here or refuse: a model
+        // of unknown or differently-cropped origin cannot be scaled, and a
+        // wrong-but-silent line call is worse than no call.
+        do {
+            localModel = try model.adoptedForCapture()
+        } catch {
+            errorText = "stereo: local camera model — \(error.localizedDescription)"
+            return
+        }
         // onCalibration fires on the transport delivery context, not main
         // (like onRemoteDetections) — hop before touching any RecordModel
         // state (self.peer, self.localModel, self.stereoEngine), all of
@@ -142,7 +199,18 @@ final class RecordModel: ObservableObject {
                       let localModel = self.localModel,
                       let remoteData = payloadJSON.data(using: .utf8),
                       let remoteModel = try? CameraModel.fromJSON(remoteData) else { return }
-                let engine = StereoEngine(localModel: localModel, remoteModel: remoteModel,
+                // Same adoption as the local model above — the peer sends
+                // whatever space its own calibration was solved in. Refusing
+                // to go live is the correct outcome when it can't be scaled.
+                let adoptedRemote: CameraModel
+                do {
+                    adoptedRemote = try remoteModel.adoptedForCapture()
+                } catch {
+                    self.errorText =
+                        "stereo: remote camera model — \(error.localizedDescription)"
+                    return
+                }
+                let engine = StereoEngine(localModel: localModel, remoteModel: adoptedRemote,
                                           remoteToLocal: { [weak peer] in peer?.clockSync.remoteToLocal($0) })
                 engine.onEvent = { [weak self, weak peer] event in
                     guard case .impact(let impact) = event else { return }
@@ -164,7 +232,15 @@ final class RecordModel: ObservableObject {
                     // convention as PeerSession's other send* methods), but
                     // the @Published append still needs the main hop.
                     peer?.sendEvent(rallyID: rallyID, json: json)
-                    DispatchQueue.main.async { self?.appendStereoEvent(json) }
+                    // Built here, off-main: the mapping is pure, and doing it
+                    // from the impact struct rather than from `json` keeps the
+                    // no_call gate in exactly one place.
+                    let presentation = CallPresentation.from(impact)
+                    DispatchQueue.main.async {
+                        self?.appendStereoEvent(json)
+                        self?.livePresentation = presentation
+                        self?.showFlash(presentation)
+                    }
                 }
                 self.stereoEngine = engine
             }
@@ -177,6 +253,69 @@ final class RecordModel: ObservableObject {
         }
     }
 
+    #if DEBUG
+    /// Drive the whole live path on one device, with no peer and no ball model.
+    ///
+    /// Builds a `StereoEngine` directly from two solved camera models — the
+    /// same shape `StereoEngineTests` uses, deliberately *not* a spoofed
+    /// `PeerSession` handshake — and feeds it a court-feet trajectory
+    /// projected through both models, so the two eyes see a physically
+    /// consistent ball. Both eyes matter: `StereoEngine.process` bails unless
+    /// local *and* remote samples overlap, so a local-only synthetic detector
+    /// would emit nothing, forever.
+    ///
+    /// The models are used unadopted, in their own solve pixel space. Calling
+    /// `adoptedForCapture()` here would throw: the capture space is a
+    /// different aspect ratio, and `CameraModel.scaled` refuses that rather
+    /// than distorting the geometry.
+    func startStereoDemo(localModelJSON: String, remoteModelJSON: String) {
+        // The demo's models are the goldens in their own unadopted 1920×1080
+        // space. Installing its engine over a paired session's would keep
+        // attachPeer's pump and onRemoteDetections feeding 4K capture-space
+        // detections through the wrong geometry — silently wrong calls, which
+        // is the one failure mode this whole layer exists to avoid.
+        guard peer == nil else {
+            errorText = "Stereo demo: not available while paired."
+            return
+        }
+        guard let localData = localModelJSON.data(using: .utf8),
+              let remoteData = remoteModelJSON.data(using: .utf8),
+              let local = try? CameraModel.fromJSON(localData),
+              let remote = try? CameraModel.fromJSON(remoteData) else {
+            errorText = "Stereo demo: could not parse the camera models."
+            return
+        }
+
+        // Same clock for both eyes — there is no peer to sync against.
+        let engine = StereoEngine(localModel: local, remoteModel: remote,
+                                  remoteToLocal: { $0 })
+        engine.onEvent = { [weak self] event in
+            guard case .impact(let impact) = event else { return }
+            let presentation = CallPresentation.from(impact)
+            DispatchQueue.main.async {
+                self?.livePresentation = presentation
+                self?.showFlash(presentation)
+            }
+        }
+
+        let tracks = StereoDemo.pixelTracks(local: local, remote: remote)
+        for sample in tracks.local { engine.addLocalPixel(sample.px, tS: sample.tS) }
+        engine.addRemote(StereoDemo.remoteTuples(tracks.remote))
+
+        stereoEngine = engine
+        livePresentation = nil
+        flashClearWork?.cancel()
+        flashPresentation = nil
+
+        // `attachPeer` owns the shared pump, but the demo has no peer, so it
+        // needs its own. Invalidate first so repeated taps don't stack timers.
+        demoPumpTimer?.invalidate()
+        demoPumpTimer = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { [weak engine] _ in
+            engine?.processIfDue(now: ClockSync.hostNow())
+        }
+    }
+    #endif
+
     /// Newest-first insert with the 20-entry cap. Main-thread only; callers
     /// hop before calling.
     private func appendStereoEvent(_ json: String) {
@@ -188,6 +327,8 @@ final class RecordModel: ObservableObject {
 
     deinit {
         peerPumpTimer?.invalidate()
+        demoPumpTimer?.invalidate()
+        flashClearWork?.cancel()
     }
 
     func startCamera() async {

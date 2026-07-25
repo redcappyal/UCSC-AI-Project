@@ -3,6 +3,11 @@ import simd
 
 /// Division-model lens distortion — the JS<->Python<->Swift contract
 /// (mirrors court_model.undistort_point).
+///
+/// Invariant: `normPx` is always > 0. Python resolves court_model's
+/// `or 1000.0` fallback lazily, at each use; Swift resolves it once, in
+/// `CameraModel.fromJSON`, so every later consumer (`undistort`, `scaled`)
+/// can use the stored value directly and still agree with Python.
 struct Distortion {
     let k1: Double
     let centerPx: SIMD2<Double>
@@ -18,6 +23,25 @@ struct CameraModel {
     let rotation: simd_double3x3        // world -> camera
     let cameraCenterFt: SIMD3<Double>
     let distortion: Distortion?
+    /// The pixel space every px-valued field above is expressed in — the
+    /// resolution the model was SOLVED at, not the one it is being used at.
+    /// nil for a model stored before court_model recorded it; unknown must
+    /// stay unknown, because assuming a default is exactly the silent
+    /// failure this field exists to prevent (see `scaled(toWidth:height:)`).
+    let frameWidth: Double?
+    let frameHeight: Double?
+
+    init(focalPx: Double, centerPx: SIMD2<Double>, rotation: simd_double3x3,
+         cameraCenterFt: SIMD3<Double>, distortion: Distortion?,
+         frameWidth: Double? = nil, frameHeight: Double? = nil) {
+        self.focalPx = focalPx
+        self.centerPx = centerPx
+        self.rotation = rotation
+        self.cameraCenterFt = cameraCenterFt
+        self.distortion = distortion
+        self.frameWidth = frameWidth
+        self.frameHeight = frameHeight
+    }
 
     enum DecodeError: Error { case malformed(String) }
 
@@ -49,7 +73,10 @@ struct CameraModel {
         ])
         return CameraModel(focalPx: focal, centerPx: SIMD2(center[0], center[1]),
                            rotation: rotation, cameraCenterFt: SIMD3(cc[0], cc[1], cc[2]),
-                           distortion: distortion)
+                           distortion: distortion,
+                           // Absent on older stored models — left nil, never guessed.
+                           frameWidth: obj["frame_width"] as? Double,
+                           frameHeight: obj["frame_height"] as? Double)
     }
 
     func undistort(_ px: SIMD2<Double>) -> SIMD2<Double> {
@@ -74,5 +101,85 @@ struct CameraModel {
                               1.0)
         let worldDir = simd_normalize(rotation.transpose * cameraDir)
         return (cameraCenterFt, worldDir)
+    }
+}
+
+// MARK: - pixel space
+
+extension CameraModel {
+    /// Aspect ratios equal to within this are the same framing at a
+    /// different resolution. Mirrors court_model.CAMERA_ASPECT_TOLERANCE.
+    static let aspectTolerance = 1e-3
+
+    enum ScaleError: Error, Equatable, LocalizedError {
+        case unknownFrameSize
+        case nonPositiveTarget
+        case aspectMismatch(from: SIMD2<Double>, to: SIMD2<Double>)
+
+        var errorDescription: String? {
+            switch self {
+            case .unknownFrameSize:
+                return "Camera model has no frame size: the pixel space it "
+                     + "was solved in is unknown, so it cannot be scaled."
+            case .nonPositiveTarget:
+                return "Target frame size must be positive."
+            case .aspectMismatch(let from, let to):
+                return "Camera model aspect \(from.x / from.y) "
+                     + "(\(from.x)x\(from.y)) does not match target aspect "
+                     + "\(to.x / to.y) (\(to.x)x\(to.y)): different crop or "
+                     + "FOV, not a resolution change."
+            }
+        }
+    }
+
+    /// Re-express a solved model in a different pixel space.
+    ///
+    /// Mirrors court_model.scale_camera_model exactly — same guards, same
+    /// arithmetic, pinned by the `scaled_model` golden case.
+    ///
+    /// Pure resolution change only. Throws if the model has no frame size
+    /// (unknown source space) or if the aspect ratio differs by more than
+    /// 1e-3 — a different aspect means a different crop/FOV, which no scale
+    /// factor can fix, so guessing would silently corrupt the geometry.
+    ///
+    /// Everything measured in pixels scales by s = toWidth / frameWidth:
+    /// focal, principal point, and the distortion's own center and
+    /// normalizer. Everything else is deliberately left alone — `rotation`
+    /// and `cameraCenterFt` are world-space, and `k1` stays dimensionless
+    /// precisely because r² = |p−c|²/norm² is invariant once `normPx`
+    /// scales with the rest. (Python also scales `fit_rms_px`, a pixel
+    /// residual; Swift's model does not carry it.)
+    func scaled(toWidth: Double, height toHeight: Double) throws -> CameraModel {
+        guard let frameWidth, let frameHeight else { throw ScaleError.unknownFrameSize }
+        guard toWidth > 0, toHeight > 0 else { throw ScaleError.nonPositiveTarget }
+        guard abs(toWidth / toHeight - frameWidth / frameHeight) <= Self.aspectTolerance else {
+            throw ScaleError.aspectMismatch(from: SIMD2(frameWidth, frameHeight),
+                                            to: SIMD2(toWidth, toHeight))
+        }
+        let scale = toWidth / frameWidth
+        // fromJSON already resolved court_model's `or 1000.0` fallback for a
+        // missing normPx, so scaling the stored value is the same
+        // materialization Python does inside scale_camera_model.
+        let lens = distortion.map {
+            Distortion(k1: $0.k1, centerPx: $0.centerPx * scale, normPx: $0.normPx * scale)
+        }
+        return CameraModel(focalPx: focalPx * scale, centerPx: centerPx * scale,
+                           rotation: rotation, cameraCenterFt: cameraCenterFt,
+                           distortion: lens,
+                           frameWidth: toWidth, frameHeight: toHeight)
+    }
+
+    /// Re-express a solved model in the live capture pixel space.
+    ///
+    /// Every consumer on the live path — overlay mapping, peer detection
+    /// tuples, StereoEngine — works in CaptureSettings.frameWidth ×
+    /// frameHeight, but a calibration may have been solved on a clip of any
+    /// resolution. Adopting a model without this step is the silent failure:
+    /// a 1080×1920 solve against 4K detections is wrong by 2× and raises
+    /// nothing. Throws rather than guessing when the source space is unknown
+    /// or the aspect differs.
+    func adoptedForCapture() throws -> CameraModel {
+        try scaled(toWidth: Double(CaptureSettings.frameWidth),
+                   height: Double(CaptureSettings.frameHeight))
     }
 }

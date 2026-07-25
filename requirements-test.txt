@@ -2,7 +2,7 @@
 #
 # The full requirements.txt pulls `inference` (and with it torch), which is
 # gigabytes and minutes of CI time. inference_engine.py imports that stack
-# lazily, so the whole test suite runs without it — verified, 117 passing.
+# lazily, so the whole test suite runs without it — verified, 348 passing.
 # Keep this list minimal; if a test starts needing the real model runtime,
 # that test belongs behind a marker, not in the default CI job.
 flask

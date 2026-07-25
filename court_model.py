@@ -532,6 +532,13 @@ class CameraModel:
     Operates in undistorted pixel space: `project` returns undistorted
     pixels and `ray` expects them; callers undistort observations with
     `undistort_point(p, self.distortion)` first.
+
+    `frame_width`/`frame_height` name the pixel space every px-valued field
+    here is expressed in. Without them a consumer cannot tell whether
+    `focal_px` is in 1080-wide or 2160-wide pixels, and feeding 4K
+    detections to a 1080p model bends every ray by 2x while raising
+    nothing. None means "unknown" (a model stored before this was
+    recorded) -- never assume a default; see `scale_camera_model`.
     """
 
     focal_px: float
@@ -541,6 +548,8 @@ class CameraModel:
     distortion: dict | None
     fit_rms_px: float | None
     point_count: int
+    frame_width: float | None = None
+    frame_height: float | None = None
 
     def project(self, court_xyz):
         camera_point = self.rotation @ (
@@ -590,10 +599,19 @@ class CameraModel:
             "distortion": self.distortion,
             "fit_rms_px": self.fit_rms_px,
             "point_count": self.point_count,
+            "frame_width": self.frame_width,
+            "frame_height": self.frame_height,
         }
 
     @classmethod
     def from_dict(cls, data):
+        def optional_size(key):
+            # Absent on models stored before frame size was recorded.
+            # Unknown stays unknown -- a guessed default is the silent
+            # failure this field exists to prevent.
+            value = data.get(key)
+            return None if value is None else float(value)
+
         return cls(
             focal_px=float(data["focal_px"]),
             center_px=(float(data["center_px"][0]), float(data["center_px"][1])),
@@ -602,6 +620,8 @@ class CameraModel:
             distortion=data.get("distortion"),
             fit_rms_px=data.get("fit_rms_px"),
             point_count=int(data.get("point_count") or 0),
+            frame_width=optional_size("frame_width"),
+            frame_height=optional_size("frame_height"),
         )
 
 
@@ -1021,5 +1041,69 @@ def solve_camera_model(calibration):
         focal_px=float(focal), center_px=center_px, rotation=rotation,
         camera_center_ft=np.asarray(center, dtype=float),
         distortion=distortion, fit_rms_px=rms, point_count=len(court_xyz),
+        frame_width=frame_width, frame_height=frame_height,
     )
     return camera, info
+
+
+# Aspect ratios equal to within this are the same framing at a different
+# resolution. Anything further apart is a different crop or FOV.
+CAMERA_ASPECT_TOLERANCE = 1e-3
+
+
+def scale_camera_model(model, to_width, to_height):
+    """Re-express a solved model in a different pixel space.
+
+    Pure resolution change only. Returns a new CameraModel.
+
+    Raises ValueError if the model has no frame size (unknown source
+    space) or if the aspect ratio differs by more than 1e-3 -- a
+    different aspect means a different crop/FOV, which no scale factor
+    can fix, so guessing would silently corrupt the geometry.
+
+    Everything measured in pixels scales by s = to_width / frame_width:
+    focal, principal point, the fit residual, and the distortion's own
+    center and normalizer. Everything else is deliberately left alone --
+    `rotation` and `camera_center_ft` are world-space, and `k1` stays
+    dimensionless precisely because r^2 = |p-c|^2 / norm^2 is invariant
+    once `norm_px` scales with the rest.
+    """
+    if model.frame_width is None or model.frame_height is None:
+        raise ValueError(
+            "Camera model has no frame size: the pixel space it was solved "
+            "in is unknown, so it cannot be scaled.")
+    to_width, to_height = float(to_width), float(to_height)
+    if to_width <= 0 or to_height <= 0:
+        raise ValueError("Target frame size must be positive.")
+    source_aspect = model.frame_width / model.frame_height
+    if abs(to_width / to_height - source_aspect) > CAMERA_ASPECT_TOLERANCE:
+        raise ValueError(
+            f"Camera model aspect {source_aspect:.6f} "
+            f"({model.frame_width:g}x{model.frame_height:g}) does not match "
+            f"target aspect {to_width / to_height:.6f} "
+            f"({to_width:g}x{to_height:g}): different crop or FOV, not a "
+            "resolution change.")
+
+    scale = to_width / model.frame_width
+    distortion = model.distortion
+    if distortion is not None:
+        # _distortion_params resolves the effective values -- notably its
+        # `or 1000.0` fallback for a missing norm_px, which has to be
+        # materialized here or r^2 changes under the scale. It also raises
+        # on an unsupported model rather than letting it through unscaled.
+        _k1, dcx, dcy, norm = _distortion_params(distortion)
+        distortion = dict(distortion)
+        distortion["center_px"] = [dcx * scale, dcy * scale]
+        distortion["norm_px"] = norm * scale
+
+    return CameraModel(
+        focal_px=model.focal_px * scale,
+        center_px=(model.center_px[0] * scale, model.center_px[1] * scale),
+        rotation=model.rotation,
+        camera_center_ft=model.camera_center_ft,
+        distortion=distortion,
+        fit_rms_px=None if model.fit_rms_px is None else model.fit_rms_px * scale,
+        point_count=model.point_count,
+        frame_width=to_width,
+        frame_height=to_height,
+    )
