@@ -137,3 +137,82 @@ def describe(model_dir=None):
         "source_checkpoint": manifest.source_checkpoint,
         "trained_commit": manifest.trained_commit,
     }
+
+
+class TorchScriptRunner:
+    """Runs the traced ball model over a batch of tile crops.
+
+    Traced with decode_in_inference=True, so the graph emits decoded
+    [batch, n_anchors, 5 + n_classes] and this class only thresholds by
+    objectness and reshapes. The Core ML artifact (ios/MODEL.md §4) is traced
+    the other way -- raw head outputs, decode in Swift for ANE residency --
+    which is what manifest["decode"] distinguishes.
+    """
+
+    def __init__(self, module, manifest, torch_module):
+        self._module = module
+        self._torch = torch_module
+        self.manifest = manifest
+
+    def run_batch(self, crops):
+        import numpy as np
+
+        torch = self._torch
+        # HWC uint8 BGR -> NCHW float32. YOLOX trains on raw 0-255 BGR as
+        # cv2 delivers it (ValTransform applies no mean/std and no channel
+        # swap), so pass the channels through unchanged and do not rescale.
+        stacked = np.stack(crops).astype("float32")
+        tensor = torch.from_numpy(stacked).permute(0, 3, 1, 2).contiguous()
+
+        with torch.no_grad():
+            raw = self._module(tensor)
+        if isinstance(raw, (list, tuple)):
+            raw = raw[0]
+        output = raw.detach().cpu().numpy()
+
+        # Vectorised threshold before touching Python. A 416 crop yields ~3549
+        # anchors; at 66 tiles that is ~234k rows per frame, and a per-row
+        # Python loop over all of them would dominate the runtime.
+        results = []
+        for row in output:
+            objectness = row[:, 4]
+            class_scores = row[:, 5:]
+            if class_scores.shape[1]:
+                class_index = class_scores.argmax(axis=1)
+                score = objectness * class_scores[
+                    np.arange(class_scores.shape[0]), class_index]
+            else:
+                class_index = np.zeros(row.shape[0], dtype=int)
+                score = objectness
+            keep = np.nonzero(score >= self.manifest.conf_threshold)[0]
+            results.append([
+                (float(row[i, 0]), float(row[i, 1]),
+                 float(row[i, 2]), float(row[i, 3]),
+                 float(score[i]), int(class_index[i]))
+                for i in keep
+            ])
+        return results
+
+
+def load_detector(model_dir=None):
+    """Load the traced model. Raises loudly; never falls back to another detector."""
+    model_dir = Path(model_dir) if model_dir is not None else model_dir_from_env()
+    cached = _DETECTOR_CACHE.get(model_dir)
+    if cached is not None:
+        return cached
+
+    manifest = load_manifest(model_dir)
+
+    try:
+        import torch
+    except ImportError as exc:
+        raise ImportError(
+            "The stereo ball detector needs torch. The default test env is "
+            "deliberately torch-free; install the full requirements.txt."
+        ) from exc
+
+    module = torch.jit.load(str(manifest.artifact_path), map_location="cpu")
+    module.eval()
+    runner = TorchScriptRunner(module, manifest, torch)
+    _DETECTOR_CACHE[model_dir] = runner
+    return runner

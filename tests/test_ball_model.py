@@ -118,3 +118,31 @@ def test_model_manifest_artifact_path(tmp_path):
     manifest = ball_model.load_manifest(model_dir)
     assert manifest.artifact_path == model_dir / "model.torchscript"
     assert manifest.artifact_path.is_file()
+
+
+def test_load_detector_missing_model_raises_and_does_not_fall_back(tmp_path):
+    # Silent fallback to RF-DETR would make the stereo/single-camera detector
+    # split invisible; the spec requires this to be loud.
+    with pytest.raises(FileNotFoundError, match="export_ball_model.py"):
+        ball_model.load_detector(tmp_path / "nope")
+
+
+def test_ball_model_imports_without_torch():
+    import sys
+    # The default CI job has no torch installed; importing ball_model must not
+    # need it. If torch is absent this is trivially true, so assert the module
+    # did not pull it in either way.
+    before = "torch" in sys.modules
+    import importlib
+    importlib.reload(ball_model)
+    assert ("torch" in sys.modules) == before
+
+
+@pytest.mark.requires_model
+def test_torchscript_runner_returns_boxes_for_real_model():
+    runner = ball_model.load_detector()
+    import numpy as np
+    crops = [np.zeros((416, 416, 3), dtype=np.uint8)]
+    result = runner.run_batch(crops)
+    assert len(result) == 1
+    assert isinstance(result[0], list)
