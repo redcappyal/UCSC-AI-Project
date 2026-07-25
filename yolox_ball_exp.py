@@ -46,7 +46,13 @@ class Exp(MyExp):
         self.train_ann = "instances_train.json"
         self.val_ann = "instances_val.json"
         self.test_ann = "instances_test.json"
-        self.name = "train"                   # image folder, not COCO's train2017/
+        # Image folders are train/, val/, test/ — not COCO's train2017/val2017/.
+        # Read by the get_dataset/get_eval_dataset overrides below. A bare
+        # `self.name` here would be dead config: nothing in YOLOX's Exp ever
+        # reads it, so it silently would not redirect either loader.
+        self.train_name = "train"
+        self.val_name = "val"
+        self.test_name = "test"
 
         # Crops are already cut at 416 px at native source resolution, so the
         # network input matches and nothing is resampled a second time.
@@ -102,3 +108,81 @@ class Exp(MyExp):
 
         self.print_interval = 50
         self.exp_name = "crosscourt-ball-416"
+
+    # --- dataset wiring --------------------------------------------------
+    # Both overrides exist for one reason: stock YOLOX hardcodes the COCO 2017
+    # folder layout. Exp.get_dataset() passes no `name` at all, so COCODataset
+    # falls back to its own "train2017" default, and Exp.get_eval_dataset()
+    # hardcodes "val2017"/"test2017". Neither consults an exp attribute, so the
+    # train/, val/, test/ folders this dataset ships are reachable only by
+    # overriding. Annotation paths need no help — COCODataset already resolves
+    # them as {data_dir}/annotations/{json_file}, matching the layout as built.
+
+    def get_dataset(self, cache: bool = False, cache_type: str = "ram"):
+        from yolox.data import COCODataset, TrainTransform
+
+        return COCODataset(
+            data_dir=self.data_dir,
+            json_file=self.train_ann,
+            name=self.train_name,
+            img_size=self.input_size,
+            preproc=TrainTransform(
+                max_labels=50,
+                flip_prob=self.flip_prob,
+                hsv_prob=self.hsv_prob,
+            ),
+            cache=cache,
+            cache_type=cache_type,
+        )
+
+    def get_eval_dataset(self, **kwargs):
+        from yolox.data import COCODataset, ValTransform
+
+        testdev = kwargs.get("testdev", False)
+        legacy = kwargs.get("legacy", False)
+
+        return COCODataset(
+            data_dir=self.data_dir,
+            json_file=self.test_ann if testdev else self.val_ann,
+            name=self.test_name if testdev else self.val_name,
+            img_size=self.test_size,
+            preproc=ValTransform(legacy=legacy),
+        )
+
+    def get_model(self):
+        # Overridden only to thread `depthwise` through. Stock Exp.get_model()
+        # builds YOLOPAFPN/YOLOXHead without it, so self.depthwise would be dead
+        # config — it agrees with their default today, but a future edit setting
+        # it True would silently not apply. Otherwise identical to the base.
+        import torch.nn as nn
+
+        from yolox.models import YOLOX, YOLOPAFPN, YOLOXHead
+
+        def init_yolo(M):
+            for m in M.modules():
+                if isinstance(m, nn.BatchNorm2d):
+                    m.eps = 1e-3
+                    m.momentum = 0.03
+
+        if getattr(self, "model", None) is None:
+            in_channels = [256, 512, 1024]
+            backbone = YOLOPAFPN(
+                self.depth,
+                self.width,
+                in_channels=in_channels,
+                act=self.act,
+                depthwise=self.depthwise,
+            )
+            head = YOLOXHead(
+                self.num_classes,
+                self.width,
+                in_channels=in_channels,
+                act=self.act,
+                depthwise=self.depthwise,
+            )
+            self.model = YOLOX(backbone, head)
+
+        self.model.apply(init_yolo)
+        self.model.head.initialize_biases(1e-2)
+        self.model.train()
+        return self.model
