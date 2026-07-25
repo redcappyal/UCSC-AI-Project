@@ -20,10 +20,11 @@ enum OrientationLock {
         }
     }
 
-    /// Narrowed to the single mount capture resolved at configure time, so the
-    /// device cannot flip to the other landscape mid-session and leave the
-    /// orientation advertised in `Hello` describing a mount that is no longer
-    /// real.
+    /// Not yet called by production code — capture wiring is a later task.
+    /// Narrows to the single mount capture resolves at configure time, so
+    /// that the device will not be able to flip to the other landscape
+    /// mid-session and leave the orientation advertised in `Hello`
+    /// describing a mount that is no longer real.
     static func pinnedMask(for orientation: CaptureSettings.CaptureOrientation) -> UIInterfaceOrientationMask {
         switch orientation {
         case .landscapeRight: return .landscapeRight
@@ -31,9 +32,10 @@ enum OrientationLock {
         }
     }
 
+    /// Not yet called by production code — capture wiring is a later task.
     /// The mount an interface orientation implies, or nil when the interface
-    /// is portrait — portrait is not a capture mode, so callers fall back to a
-    /// default rather than inventing a mount.
+    /// is portrait — portrait is not a capture mode, so a future caller would
+    /// need to fall back to a default rather than inventing a mount.
     static func captureOrientation(for interface: UIInterfaceOrientation) -> CaptureSettings.CaptureOrientation? {
         switch interface {
         case .landscapeRight: return .landscapeRight
@@ -46,15 +48,27 @@ enum OrientationLock {
 /// Holds the mask the app delegate serves. UIKit asks the delegate on every
 /// rotation decision, so mutating this and then telling UIKit to re-ask is
 /// what actually moves the device.
+@MainActor
 final class OrientationPolicy {
     static let shared = OrientationPolicy()
-    private(set) var mask: UIInterfaceOrientationMask = .all
+    /// Seeded to the launch tab's mask (`RootTabView`'s initial `@State`
+    /// is `.play`): UIKit asks the delegate for the launch orientation at
+    /// scene connection, before any SwiftUI `onAppear` can run, so a
+    /// default of `.all` would bring the app up portrait.
+    private(set) var mask: UIInterfaceOrientationMask = OrientationLock.mask(for: .play)
 
     func apply(_ newMask: UIInterfaceOrientationMask) {
         mask = newMask
-        guard let scene = UIApplication.shared.connectedScenes
-            .compactMap({ $0 as? UIWindowScene })
-            .first(where: { $0.activationState == .foregroundActive }) else { return }
+        // Prefer the foreground-active scene, but a transient system
+        // interruption (an alert, Control Center) can leave every scene
+        // `.foregroundInactive` for a moment. Returning early there would
+        // update `mask` without ever telling UIKit to re-ask, and UIKit does
+        // not poll — it would stay on the stale orientation until something
+        // else (a rotation, a tab switch) happened to trigger another query.
+        // Falling back to any scene with a key window still reaches UIKit.
+        let scenes = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
+        guard let scene = scenes.first(where: { $0.activationState == .foregroundActive })
+            ?? scenes.first(where: { $0.keyWindow != nil }) else { return }
         scene.keyWindow?.rootViewController?.setNeedsUpdateOfSupportedInterfaceOrientations()
         scene.requestGeometryUpdate(.iOS(interfaceOrientations: newMask))
     }

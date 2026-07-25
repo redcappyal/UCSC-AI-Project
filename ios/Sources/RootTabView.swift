@@ -61,8 +61,7 @@ struct RootTabView: View {
         }
         .tint(Theme.accentBg)
         .background(Theme.bg)
-        .onAppear { OrientationPolicy.shared.apply(OrientationLock.mask(for: tab)) }
-        .onChange(of: tab) { _, newTab in
+        .onChange(of: tab, initial: true) { _, newTab in
             OrientationPolicy.shared.apply(OrientationLock.mask(for: newTab))
         }
     }

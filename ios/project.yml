@@ -38,10 +38,10 @@ targets:
         NSBluetoothAlwaysUsageDescription: Pairs with the second court camera to sync line calls.
         NSLocalNetworkUsageDescription: Finds and pairs with the second court camera on this court.
         NSBonjourServices: [_crosscourt._tcp]
-        # Superset of every orientation any tab allows; OrientationLock does
-        # the per-tab narrowing at runtime. Portrait stays because the Matches
-        # and Coach webviews are portrait mobile UI — a runtime mask can only
-        # restrict what this list already permits, never extend it.
+        # Superset of every orientation the app can present. OrientationLock
+        # narrows per tab at runtime and the web tabs pass `.all`; UIKit
+        # intersects it with this list, so upside-down is excluded here
+        # rather than in code.
         UISupportedInterfaceOrientations:
           [UIInterfaceOrientationPortrait, UIInterfaceOrientationLandscapeLeft,
            UIInterfaceOrientationLandscapeRight]

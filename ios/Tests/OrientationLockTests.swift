@@ -27,6 +27,11 @@ final class OrientationLockTests: XCTestCase {
         for orientation in CaptureSettings.CaptureOrientation.allCases {
             XCTAssertTrue(OrientationLock.mask(for: .play)
                 .contains(OrientationLock.pinnedMask(for: orientation)), "\(orientation)")
+            // `.landscape.contains([])` is true, so the subset check alone
+            // would pass vacuously for an arm that returned an empty mask —
+            // e.g. a future CaptureOrientation case nobody wired up. Close
+            // that hole explicitly.
+            XCTAssertFalse(OrientationLock.pinnedMask(for: orientation).isEmpty, "\(orientation)")
         }
     }
 
@@ -40,5 +45,33 @@ final class OrientationLockTests: XCTestCase {
         XCTAssertNil(OrientationLock.captureOrientation(for: .portrait))
         XCTAssertNil(OrientationLock.captureOrientation(for: .portraitUpsideDown))
         XCTAssertNil(OrientationLock.captureOrientation(for: .unknown))
+    }
+
+    /// The delegate forwards `OrientationPolicy.shared.mask` rather than
+    /// tracking its own state. `.portrait` is deliberately not a mask any tab
+    /// or default produces (Play is `.landscape`, the web tabs and the launch
+    /// seed are `.all`/`.landscape`), so this can't pass vacuously off a
+    /// value the mask already happened to hold.
+    func testDelegateServesThePolicysMask() {
+        let previous = OrientationPolicy.shared.mask
+        defer { OrientationPolicy.shared.apply(previous) }
+        OrientationPolicy.shared.apply(.portrait)
+        XCTAssertEqual(
+            AppDelegate().application(UIApplication.shared, supportedInterfaceOrientationsFor: nil),
+            .portrait)
+    }
+
+    /// `apply` assigns `mask` before it ever looks at `UIApplication.shared`'s
+    /// scenes, so the delegate answers correctly on the very next query even
+    /// when this test host has no `.foregroundActive` `UIWindowScene` to hand
+    /// the geometry-update call to — which is the launch-time case FIX 1
+    /// exists for. `.portraitUpsideDown` is likewise a mask nothing else in
+    /// the app ever applies, so a no-op `apply` would leave `mask` at
+    /// whatever it was and this would fail rather than pass by coincidence.
+    func testApplyUpdatesTheMaskRegardlessOfSceneState() {
+        let previous = OrientationPolicy.shared.mask
+        defer { OrientationPolicy.shared.apply(previous) }
+        OrientationPolicy.shared.apply(.portraitUpsideDown)
+        XCTAssertEqual(OrientationPolicy.shared.mask, .portraitUpsideDown)
     }
 }
