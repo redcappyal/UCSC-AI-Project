@@ -26,7 +26,27 @@ final class LiveSessionModel: ObservableObject {
 
     /// No default: two phones both defaulting to primary would both open a
     /// CBCentralManager and hang with nothing honest to show for it.
-    @Published var role: PeerRole? { didSet { republish() } }
+    ///
+    /// DESIGN.md scopes the role segment to the idle state only: once
+    /// `beginPairing()` has built a session, `PeerSession.isInitiator` is
+    /// already fixed from whatever `role` was at that moment, so a later
+    /// change here would let this published value disagree with the
+    /// session's actual wiring. Revert instead of accepting it — settable
+    /// freely before a session exists, a no-op after.
+    @Published var role: PeerRole? {
+        didSet {
+            guard session == nil else {
+                if !isRevertingRole && role != oldValue {
+                    isRevertingRole = true
+                    role = oldValue
+                    isRevertingRole = false
+                }
+                return
+            }
+            republish()
+        }
+    }
+    private var isRevertingRole = false
 
     #if DEBUG
     @Published var transportName = "ble"
@@ -38,6 +58,7 @@ final class LiveSessionModel: ObservableObject {
     private var session: PeerSession?
     private var localModelJSON: String?
     private var pumpTimer: Timer?
+    private var isPreparing = false
 
     init(api: APIClientProtocol = APIClient(),
          makeTransport: @escaping (String) -> PeerTransport = LiveSessionModel.defaultTransport) {
@@ -45,7 +66,12 @@ final class LiveSessionModel: ObservableObject {
         self.makeTransport = makeTransport
     }
 
-    static func defaultTransport(_ name: String) -> PeerTransport {
+    /// `nonisolated`: this is the default value for a non-isolated
+    /// `(String) -> PeerTransport` parameter. Left `@MainActor`-isolated (the
+    /// class default), converting it to that non-isolated function type loses
+    /// the actor annotation — diagnosed as a warning in Swift 5.9 language
+    /// mode, and free to silence since the body touches no instance state.
+    nonisolated static func defaultTransport(_ name: String) -> PeerTransport {
         name == "wifi-p2p" ? WiFiP2PTransport() : BLETransport()
     }
 
@@ -68,8 +94,17 @@ final class LiveSessionModel: ObservableObject {
     /// adoption here rather than inside `attachStereo` is the point: an
     /// unusable calibration must fail before two people walk to opposite
     /// corners of the court.
+    ///
+    /// A view can plausibly call this from both `.task` and `.onAppear`. The
+    /// in-flight guard makes the second concurrent call a no-op instead of
+    /// running two overlapping fetches — without it, a late completion of
+    /// the first could reset an already-`.failed` result from the second
+    /// back to `.loading`.
     func prepare() async {
         guard calibration != .ready else { return }
+        guard !isPreparing else { return }
+        isPreparing = true
+        defer { isPreparing = false }
         calibration = .loading
         republish()
         do {
@@ -80,18 +115,13 @@ final class LiveSessionModel: ObservableObject {
             localModelJSON = json
             calibration = .ready
         } catch {
-            calibration = .failed(Self.describe(error))
+            // §16 shows a failure reason verbatim, so prefer the server's own
+            // words. `APIError.errorDescription` already returns
+            // `message ?? "Server error (code)."` for `.http` — the same rule
+            // this used to duplicate — so `localizedDescription` is enough.
+            calibration = .failed(error.localizedDescription)
         }
         republish()
-    }
-
-    /// §16 shows a failure reason verbatim, so prefer the server's own words.
-    static func describe(_ error: Error) -> String {
-        if let apiError = error as? APIError,
-           case .http(_, let message) = apiError, let message {
-            return message
-        }
-        return error.localizedDescription
     }
 
     // MARK: - The one primary (§7)
@@ -136,6 +166,10 @@ final class LiveSessionModel: ObservableObject {
         session = nil
         engineReady = false
         pairing = PairingModel(session: nil)
+        // Tear down the camera side too: without this, RecordModel's own
+        // 20 Hz pump keeps ticking a session nobody owns anymore, and a
+        // stale call can keep showing for a rally that was just cancelled.
+        record?.detachPeer()
         republish()
     }
 
@@ -199,7 +233,14 @@ final class LiveSessionModel: ObservableObject {
         guard session != nil else { return true }
         switch pairing.step {
         case .searching, .syncing, .live, .degraded: return false
-        case .idle, .failed:                         return pairing.canPair
+        case .idle:                                  return pairing.canPair
+        // `.failed` differs from `.idle` on purpose: `pairing.canPair` answers
+        // "can THIS spent session pair again", which is always false once a
+        // session has failed (`PeerSession` never resets). But PAIR here
+        // means "build a fresh session", and `beginPairing()` is the owner
+        // that constructs one — DESIGN.md §16's `Failed → PAIR (retry)` needs
+        // this to read `true`, not the spent session's own answer.
+        case .failed:                                return true
         case .confirm:                               return pairing.canConfirm
         // Only the primary can honestly know a rally is callable, and only
         // once its engine exists.

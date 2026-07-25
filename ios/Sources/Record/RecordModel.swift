@@ -268,6 +268,41 @@ final class RecordModel: ObservableObject {
         }
     }
 
+    /// Undoes `attachPeer`/`attachStereo` when a session ends. Without this,
+    /// `peerPumpTimer` keeps calling `peer?.tick()` and
+    /// `stereoEngine?.processIfDue()` forever against a session nobody owns
+    /// anymore, and a stale `livePresentation`/`flashPresentation` can keep
+    /// showing a verdict for a rally the user just cancelled.
+    ///
+    /// Does NOT clear `onStereoReady`: `bind(record:)` installs that once and
+    /// the binding outlives any one session.
+    ///
+    /// `tracker.subscribe`'s closure (registered once in `attachPeer`, guarded
+    /// by `peerSubscribed` so it is never registered twice) cannot be
+    /// unsubscribed — `BallTracker` has no such API. That's fine: its body
+    /// opens with `guard let self, let peer = self.peer else { return }`, so
+    /// once `peer` is nil below it is a no-op on every subsequent detection.
+    /// Confirmed by reading that closure, not assumed.
+    func detachPeer() {
+        peerPumpTimer?.invalidate()
+        peerPumpTimer = nil
+        peer = nil
+        stereoEngine = nil
+        localModel = nil
+
+        livePresentation = nil
+        liveTrack = []
+        liveImpact = nil
+        flashClearWork?.cancel()
+        flashClearWork = nil
+        flashPresentation = nil
+        stereoEvents = []
+
+        nextDetectionSeq = 0
+        pendingTuples.removeAll()
+        lastFlushAt = 0
+    }
+
     #if DEBUG
     /// Drive the whole live path on one device, with no peer and no ball model.
     ///
