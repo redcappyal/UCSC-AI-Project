@@ -83,6 +83,9 @@ final class RecordModel: ObservableObject {
 
     private var localModel: CameraModel?
     private var stereoEngine: StereoEngine?
+    /// Fired once the primary's StereoEngine is built from both camera models.
+    /// Until then the primary cannot make a call, and START RALLY must say so.
+    var onStereoReady: (() -> Void)?
     /// Newest-first, capped at 20. Populated on the primary as its engine
     /// emits impacts, and mirrored on the secondary from relayed .event
     /// messages — same list either way, so the UI doesn't need to know
@@ -254,6 +257,7 @@ final class RecordModel: ObservableObject {
                     }
                 }
                 self.stereoEngine = engine
+                self.onStereoReady?()
             }
         }
         // Secondary-side mirror: relayed events land here (never fires on
