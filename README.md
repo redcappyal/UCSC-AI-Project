@@ -92,7 +92,7 @@ the built-in local coaching template and displays the reason.
 .venv/bin/python -m pytest tests/ -q
 ```
 
-346 tests, about a minute. They run without the model runtime — `requirements-test.txt` is
+348 tests, about a minute. They run without the model runtime — `requirements-test.txt` is
 the light dependency set CI installs, and it deliberately excludes `inference`/torch.
 
 ---

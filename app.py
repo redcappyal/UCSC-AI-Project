@@ -1198,7 +1198,6 @@ def track_clip():
 
     run_id = str(int(time.time() * 1000))
     run_dir = RUNS_DIR / run_id
-    run_dir.mkdir(parents=True, exist_ok=True)
 
     if video_id:
         video_path = video_path_for_id(video_id)
@@ -1225,6 +1224,10 @@ def track_clip():
     if calibration_warning:
         app.logger.warning("run %s: %s", run_id, calibration_warning)
 
+    # Created only now, with every rejection path behind us. Made any earlier it
+    # outlives the error that refused it — the 404 above returns without
+    # cleaning up — and those empty runs then accumulate in the runs list.
+    run_dir.mkdir(parents=True, exist_ok=True)
     calibration_path = run_dir / "calibration.json"
     calibration_path.write_text(json.dumps(calibration, indent=2), encoding="utf-8")
 

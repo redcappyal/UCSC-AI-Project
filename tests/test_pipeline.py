@@ -438,6 +438,62 @@ def test_upload_dedup_and_track_validation():
     assert client.get("/api/track/status/does-not-exist").status_code == 404
 
 
+def test_track_rejection_leaves_no_run_directory(tmp_path, monkeypatch):
+    """A refused /api/track must not create the run it refused to start.
+
+    The run directory used to be made before the video was looked up, so every
+    rejection left an empty run behind: they accumulate in the runs list, and
+    the test suite grew one per invocation.
+    """
+    import app as app_module
+
+    monkeypatch.setattr(app_module, "RUNS_DIR", tmp_path)
+    client = app_module.app.test_client()
+
+    response = client.post("/api/track", data={
+        "video_id": "deadbeef", "calibration_json": "{}",
+        "start_time": "0", "end_time": "5",
+    })
+    assert response.status_code == 404
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_track_rejects_a_clip_past_the_end_without_making_a_run(tmp_path, monkeypatch):
+    """Same guarantee for the checks that only run once the video is readable.
+
+    `video_info` and the clip-window comparison sit after the video is
+    resolved, so they are early returns the 404 case above never reaches.
+    """
+    import app as app_module
+    import cv2
+    import numpy as np
+
+    video_path = tmp_path / "tiny.mp4"
+    # mp4v, not avc1: Linux opencv-python-headless ships no H.264 encoder,
+    # and a failed VideoWriter drops no file rather than raising.
+    writer = cv2.VideoWriter(str(video_path), cv2.VideoWriter_fourcc(*"mp4v"), 30.0, (64, 48))
+    for _ in range(12):
+        writer.write(np.zeros((48, 64, 3), dtype=np.uint8))
+    writer.release()
+    assert video_path.exists(), "VideoWriter produced no file (codec unavailable?)"
+
+    runs_dir = tmp_path / "runs"
+    runs_dir.mkdir()
+    monkeypatch.setattr(app_module, "RUNS_DIR", runs_dir)
+    # Resolving the id here keeps the upload branch (and the real UPLOADS_DIR)
+    # out of a test about run-directory creation.
+    monkeypatch.setattr(app_module, "video_path_for_id", lambda _id: video_path)
+    client = app_module.app.test_client()
+
+    # 0.4s of video; a window starting at 100s lands past the last frame.
+    response = client.post("/api/track", data={
+        "video_id": "whatever", "calibration_json": "{}",
+        "start_time": "100", "end_time": "101",
+    })
+    assert response.status_code == 400
+    assert list(runs_dir.iterdir()) == []
+
+
 def test_ground_truth_save_and_fetch_roundtrip():
     import app as app_module
 
