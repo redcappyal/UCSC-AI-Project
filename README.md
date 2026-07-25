@@ -27,6 +27,7 @@ video ──► ball detection ──► bounce detection ──► classificati
 | Classification | `classify_events.py` | Labels each hit wall / side wall / floor / racket. |
 | Judging | `judge_call.py`, `court_model.py` | Wall-line calibration → normal IN/OUT calls plus a service-line call for each rally’s first front-wall contact. |
 | Coaching | `app.py` | Target-zone analytics over the rally, optionally narrated by an LLM. |
+| Stereo fusion | `stereo_engine.py`, `stereo_sync.py`, `job_runner.py` | Optional. Two phones recording one rally fuse into a court-frame 3D track and 3D line calls. See [docs/stereo-fusion.md](docs/stereo-fusion.md) — the fused path is built and tested, but **unevaluated** against the monocular baseline. |
 
 The UI is deliberately one file. `DESIGN.md` is the binding rulebook for anything visual —
 read it before touching HTML/CSS/JS, and update it in the same change if you must deviate.
@@ -91,8 +92,8 @@ the built-in local coaching template and displays the reason.
 .venv/bin/python -m pytest tests/ -q
 ```
 
-287 tests, ~8 seconds. They run without the model runtime — `requirements-test.txt` is the
-light dependency set CI installs, and it deliberately excludes `inference`/torch.
+346 tests, about a minute. They run without the model runtime — `requirements-test.txt` is
+the light dependency set CI installs, and it deliberately excludes `inference`/torch.
 
 ---
 

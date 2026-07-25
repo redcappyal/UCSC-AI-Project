@@ -18,6 +18,11 @@ final class CameraController: NSObject {
     }
 
     let session = AVCaptureSession()
+    /// Handheld vs. mounted capture — set before `configure()` runs, since it
+    /// drives both the video connection's rotation and the asset writer's
+    /// dimensions below. Defaults to `.portrait` (today's handheld behaviour,
+    /// unchanged).
+    var orientation: CaptureSettings.CaptureOrientation = .portrait
     /// Every video frame, on the output queue. RecordView wires this to
     /// BallTracker.process.
     var onVideoSample: ((CVPixelBuffer, TimeInterval) -> Void)?
@@ -100,9 +105,11 @@ final class CameraController: NSObject {
         }
 
         if let connection = videoOutput.connection(with: .video) {
-            // Portrait upright to match the locked UI orientation.
-            if connection.isVideoRotationAngleSupported(90) {
-                connection.videoRotationAngle = 90
+            // Portrait upright to match the locked UI orientation, or 0 for a
+            // landscape mount, whose sensor readout is already upright.
+            let angle = CaptureSettings.rotationAngle(for: orientation)
+            if connection.isVideoRotationAngleSupported(angle) {
+                connection.videoRotationAngle = angle
             }
             // Stabilisation OFF, and this one is not negotiable: OIS and EIS
             // both warp the frame per-frame, which would silently invalidate
@@ -213,10 +220,13 @@ final class CameraController: NSObject {
             .appendingPathComponent("rally-\(Int(Date().timeIntervalSince1970)).mp4")
         let writer = try AVAssetWriter(outputURL: url, fileType: .mp4)
 
+        // Same orientation the video connection was rotated for above: 4K
+        // rotated upright in portrait, or the sensor's native 4K landscape.
+        let frameSize = CaptureSettings.frameSize(for: orientation)
         let video = AVAssetWriterInput(mediaType: .video, outputSettings: [
             AVVideoCodecKey: CaptureSettings.videoCodec,
-            AVVideoWidthKey: CaptureSettings.frameWidth,    // portrait: rotated 4K
-            AVVideoHeightKey: CaptureSettings.frameHeight,
+            AVVideoWidthKey: frameSize.width,
+            AVVideoHeightKey: frameSize.height,
             AVVideoCompressionPropertiesKey: [
                 AVVideoAverageBitRateKey: CaptureSettings.videoBitRate,
                 // Rate control guesses badly at 4K without being told the

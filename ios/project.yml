@@ -38,9 +38,13 @@ targets:
         NSBluetoothAlwaysUsageDescription: Pairs with the second court camera to sync line calls.
         NSLocalNetworkUsageDescription: Finds and pairs with the second court camera on this court.
         NSBonjourServices: [_crosscourt._tcp]
-        UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait]
-        # ASC 90474: exempts the portrait-only bundle from the iPad
-        # multitasking all-orientations requirement.
+        # Portrait for handheld recording; landscape-right for a back-wall
+        # mount (Phase 4 mounted sessions) — the sensor's native readout is
+        # already upright there, see CaptureSettings.CaptureOrientation.
+        UISupportedInterfaceOrientations:
+          [UIInterfaceOrientationPortrait, UIInterfaceOrientationLandscapeRight]
+        # ASC 90474: exempts the (still not-all-orientations) bundle from the
+        # iPad multitasking all-orientations requirement.
         UIRequiresFullScreen: true
         ITSAppUsesNonExemptEncryption: false
         # Allows the plain-HTTP serverBase override against a LAN Flask

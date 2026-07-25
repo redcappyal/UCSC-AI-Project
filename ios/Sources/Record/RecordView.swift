@@ -9,7 +9,22 @@ struct RecordView: View {
             CameraPreviewView(session: model.camera.session).ignoresSafeArea()
             OverlayView(trail: model.trail).ignoresSafeArea()
 
+            // §8.17: the flash is a stage overlay, never in the layout flow,
+            // so a call appearing or clearing shifts nothing below it.
+            CallFlashView(presentation: model.flashPresentation)
+                .allowsHitTesting(false)
+                .ignoresSafeArea()
+
             VStack {
+                if model.detectorKind == RecordModel.DetectorKind.synthetic {
+                    // A fixture must never be mistaken for a real detection.
+                    Text("Synthetic detector — not a real ball")
+                        .font(.footnote.weight(.semibold))
+                        .foregroundStyle(Theme.dim)
+                        .padding(.horizontal, 12).padding(.vertical, 6)
+                        .background(Theme.surface, in: Capsule())
+                        .padding(.top, 8)
+                }
                 if model.detectorMissing {
                     Text("Ball model missing — overlay disabled")
                         .font(.footnote.weight(.semibold))
@@ -35,9 +50,34 @@ struct RecordView: View {
                         .padding(.top, 8)
                 }
                 Spacer()
+                // §8.18: persistent, beneath the stage, height always
+                // reserved — it renders its blank state before any call.
+                CallBannerView(presentation: model.livePresentation)
+                    .padding(.horizontal, 14)
+                    .padding(.bottom, 8)
                 recordControls
             }
         }
+        #if DEBUG
+        // The plan put this beside RootTabView's peer-bench button, but the
+        // demo needs `model`, which lives here — RootTabView has no handle on
+        // RecordView's @StateObject. Same stage, same chip styling, offset so
+        // it clears the bench button above it.
+        .overlay(alignment: .topTrailing) {
+            Button {
+                model.startStereoDemo(localModelJSON: StereoDemo.localModelJSON,
+                                      remoteModelJSON: StereoDemo.remoteModelJSON)
+            } label: {
+                Image(systemName: "cube.transparent")
+                    .foregroundStyle(Theme.dim)
+                    .padding(10)
+                    .background(Theme.surface, in: Circle())
+            }
+            .accessibilityLabel("Run stereo demo")
+            .padding(.top, 60)
+            .padding(.trailing, 8)
+        }
+        #endif
         .task { await model.startCamera() }
         .sheet(item: $model.finishedClip) { clip in
             ResultsView(clip: clip)

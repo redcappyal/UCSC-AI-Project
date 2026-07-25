@@ -55,5 +55,58 @@ Do not add it before approval — Automatic signing fails for everyone.
 
 ## Known limits (by design, Plan A)
 - Peer link does not survive backgrounding; keep both apps foregrounded.
-- Portrait 1080×1920 capture (landscape lands with spec Phase 4).
+- Capture is 4K60: portrait 2160×3840 handheld, landscape 3840×2160 for a
+  mounted session (`CaptureSettings.CaptureOrientation`). **Both phones must
+  run the same orientation** — mixed orientations give transposed pixel
+  spaces that triangulate to plausible-looking nonsense.
+- ⚠️ **The frame-space guard does not currently catch that.** `PeerSession`
+  compares `theirs.frameW/frameH` against the *static* portrait constants
+  `CaptureSettings.frameWidth/frameHeight`, and builds its own hello from the
+  same statics — so the advertised value does not depend on the session's
+  orientation and the comparison can never fail on an orientation mismatch.
+  `RecordModel.peerFrameW/peerFrameH` are hardcoded to the same statics, so
+  detection tuples are labelled portrait even in a landscape session. Until
+  both read `CaptureSettings.frameSize(for:)`, treat "both phones in the same
+  orientation" as an operator responsibility, not something the app enforces.
 - Detections flow one way (secondary → primary); events flow back in Phase 3.
+
+## Live path (spec Phase 4)
+
+`p-pair` (`PairingView` + `PairingModel`) maps `PeerSession.Phase` onto the
+DESIGN.md §16 state table; `p-live` is the record stage plus the §8.17 call
+flash and the §8.18 call banner. Recording never depends on the link: a
+dropped link shows "Link lost — still recording" and keeps writing locally.
+
+### Bring-up without hardware
+
+There is a DEBUG stereo demo — the cube button on the record stage, under the
+peer-bench button. It builds a `StereoEngine` from the validated golden camera
+pair and drives it with a court-feet trajectory projected through both models,
+so the full engine → `CallPresentation` → flash/banner path runs on one device
+with no peer and no ball model. It should resolve to `IN · high confidence`.
+
+That demo exercises everything except the radio and the camera. What it cannot
+tell you is whether the link, the clock sync, or a real detector work.
+
+### Two-phone bring-up (needs the hardware)
+
+1. Same build on both phones, both mounted in the **same** orientation.
+2. A 4K calibration per phone, or an older one the adoption path can scale —
+   note that adoption refuses an aspect-ratio change rather than distorting
+   the model, so a portrait profile will not load for a landscape session.
+3. Pair: both phones to `p-pair`, PAIR on both, compare the 4-digit code,
+   CONFIRM on both. "Codes don't match" ends the session — use it, that is the
+   stranger's-phone case.
+4. Wait for `Paired · sync ±x ms`. If x does not settle under 5 ms the session
+   will not leave syncing; that is the gate doing its job, not a hang.
+5. START RALLY.
+
+### Still needs hardware before any of this means anything
+
+- A real `BallDetector.mlpackage` in `ios/Model/` — the directory ships empty.
+- The Phase 1 transport selection bench (the table above is still blank) and
+  the thermal go/no-go at 4K60.
+- The Phase 2 ≤ 2 ms sync assertion against a clap anchor.
+- Rolling-shutter correction is **not implemented**: `DetectionTuple.y` carries
+  the row for it, but nothing applies `t_effective = PTS + (row/H)·readout`.
+  Until it is, the sync budget is optimistic for fast cross-frame motion.
