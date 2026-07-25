@@ -35,4 +35,32 @@ final class CaptureOrientationTests: XCTestCase {
         XCTAssertTrue(why.lowercased().contains("orientation")
                       || why.lowercased().contains("frame"), "unhelpful reason: \(why)")
     }
+
+    func testMismatchedOrientationsFailTheHandshake() {
+        let pair = LoopbackTransport.pair()
+        let portrait = PeerSession(transport: pair.0, isInitiator: true,
+                                   orientation: .portrait, now: { 0 })
+        let landscape = PeerSession(transport: pair.1, isInitiator: false,
+                                    orientation: .landscapeRight, now: { 0 })
+        landscape.start(); portrait.start()
+
+        // Transposed pixel spaces triangulate to confident, wrong line calls.
+        // Refusing is the only safe outcome.
+        guard case .failed(let reason) = portrait.phase else {
+            return XCTFail("expected the guard to refuse, got \(portrait.phase)")
+        }
+        XCTAssertTrue(reason.contains("orientation"))
+    }
+
+    func testMatchedOrientationsHandshakeNormally() {
+        let pair = LoopbackTransport.pair()
+        let a = PeerSession(transport: pair.0, isInitiator: true,
+                            orientation: .landscapeRight, now: { 0 })
+        let b = PeerSession(transport: pair.1, isInitiator: false,
+                            orientation: .landscapeRight, now: { 0 })
+        b.start(); a.start()
+        guard case .confirming = a.phase else {
+            return XCTFail("expected .confirming, got \(a.phase)")
+        }
+    }
 }

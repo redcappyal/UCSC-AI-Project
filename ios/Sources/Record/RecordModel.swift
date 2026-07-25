@@ -74,10 +74,10 @@ final class RecordModel: ObservableObject {
     private var nextDetectionSeq: UInt32 = 0
     private var pendingTuples: [DetectionTuple] = []
     private var lastFlushAt: TimeInterval = 0
-    // Must match the Hello this device advertises (PeerSession) — the peer
-    // reads detections in these pixel units, so a mismatch skews stereo.
-    private let peerFrameW = CaptureSettings.frameWidth
-    private let peerFrameH = CaptureSettings.frameHeight
+    // Must match the Hello this device advertises (PeerSession), which is
+    // built from the session's own orientation — a mismatch skews stereo.
+    private var peerFrameW: Int { CaptureSettings.frameSize(for: camera.orientation).width }
+    private var peerFrameH: Int { CaptureSettings.frameSize(for: camera.orientation).height }
 
     // MARK: stereo (Phase 3, Plan B2)
 

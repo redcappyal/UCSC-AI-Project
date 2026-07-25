@@ -39,6 +39,7 @@ final class PeerSession: ObservableObject {
 
     private let transport: PeerTransport
     private let isInitiator: Bool
+    private let orientation: CaptureSettings.CaptureOrientation
     private let now: () -> TimeInterval
     private let heartbeatTimeout: TimeInterval
 
@@ -98,18 +99,21 @@ final class PeerSession: ObservableObject {
     static let readyUncertainty = 0.005    // 5 ms gate to leave syncing
 
     init(transport: PeerTransport, isInitiator: Bool,
+         orientation: CaptureSettings.CaptureOrientation = .portrait,
          now: @escaping () -> TimeInterval = ClockSync.hostNow,
          heartbeatTimeout: TimeInterval = 3.0) {
         self.transport = transport
         self.isInitiator = isInitiator
+        self.orientation = orientation
         self.now = now
         self.heartbeatTimeout = heartbeatTimeout
+        let frame = CaptureSettings.frameSize(for: orientation)
         self.myHello = Hello(protoVersion: peerProtoVersion,
                              appVersion: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "dev",
                              deviceModel: ProcessInfo.processInfo.hostName,
                              nonce: UInt32.random(in: .min ... .max),
-                             frameW: CaptureSettings.frameWidth,
-                             frameH: CaptureSettings.frameHeight)
+                             frameW: frame.width,
+                             frameH: frame.height)
         transport.onControl = { [weak self] in self?.handleControl($0) }
         transport.onDatagram = { [weak self] in self?.handleDatagram($0) }
         transport.onStateChange = { [weak self] in self?.handleTransportState($0) }
@@ -267,8 +271,8 @@ final class PeerSession: ObservableObject {
             // landscape-mounted) advertise transposed dimensions — nothing
             // downstream would error, it would just triangulate transposed
             // coordinates into confident, wrong line calls. Refuse instead.
-            guard theirs.frameW == CaptureSettings.frameWidth,
-                  theirs.frameH == CaptureSettings.frameHeight else {
+            let mine = CaptureSettings.frameSize(for: orientation)
+            guard theirs.frameW == mine.width, theirs.frameH == mine.height else {
                 setPhase(.failed("peer camera orientation doesn't match this phone — mount or hold both phones the same way (portrait or landscape) and reconnect"))
                 transport.stop()
                 return
