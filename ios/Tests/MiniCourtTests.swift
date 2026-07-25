@@ -6,6 +6,15 @@ import simd
 final class MiniCourtTests: XCTestCase {
     private let eps = 1e-9
 
+    /// `CGPoint` stores `CGFloat`, and `XCTAssertEqual(_:_:accuracy:)` is
+    /// generic over a single `FloatingPoint` — mixing `CGFloat` and `Double`
+    /// in one call does not compile. Everything goes through here.
+    private func assertClose(_ got: CGFloat, _ want: Double,
+                             _ message: String = "",
+                             file: StaticString = #filePath, line: UInt = #line) {
+        XCTAssertEqual(Double(got), want, accuracy: eps, message, file: file, line: line)
+    }
+
     // MARK: - Plan view (from above)
 
     /// Court feet: x = width 0…21 left to right, y = depth 0 **at the front
@@ -20,8 +29,8 @@ final class MiniCourtTests: XCTestCase {
         ]
         for (point, expected) in corners {
             let got = CourtProjection.planView(point)
-            XCTAssertEqual(got.x, expected.x, accuracy: eps, "x for \(point)")
-            XCTAssertEqual(got.y, expected.y, accuracy: eps, "y for \(point)")
+            assertClose(got.x, Double(expected.x), "x for \(point)")
+            assertClose(got.y, Double(expected.y), "y for \(point)")
         }
     }
 
@@ -35,25 +44,24 @@ final class MiniCourtTests: XCTestCase {
 
     func testSideElevationPutsTheFloorOnTheBottomEdge() {
         // Screen space: y grows downward, so the floor is y = 1.
-        XCTAssertEqual(CourtProjection.sideElevation(SIMD3(10, 16, 0)).y,
-                       1.0, accuracy: eps)
+        assertClose(CourtProjection.sideElevation(SIMD3(10, 16, 0)).y, 1.0)
     }
 
     func testSideElevationPutsTheOutLineOnTheTopEdge() {
-        XCTAssertEqual(
+        assertClose(
             CourtProjection.sideElevation(SIMD3(10, 16, StereoMath.outLineHeightFt)).y,
-            0.0, accuracy: eps)
+            0.0)
     }
 
     func testSideElevationPlacesTheTinJustAboveTheFloor() {
         let tin = CourtProjection.sideElevation(SIMD3(10, 0, StereoMath.tinTopHeightFt)).y
-        XCTAssertEqual(tin, 1.0 - (19.0 / 12.0) / StereoMath.outLineHeightFt, accuracy: eps)
+        assertClose(tin, 1.0 - (19.0 / 12.0) / StereoMath.outLineHeightFt)
         XCTAssertGreaterThan(tin, 0.85)   // sanity: the tin is low on the wall
     }
 
     func testSideElevationRunsFrontWallToBack() {
-        XCTAssertEqual(CourtProjection.sideElevation(SIMD3(10, 0, 0)).x, 0.0, accuracy: eps)
-        XCTAssertEqual(CourtProjection.sideElevation(SIMD3(10, 32, 0)).x, 1.0, accuracy: eps)
+        assertClose(CourtProjection.sideElevation(SIMD3(10, 0, 0)).x, 0.0)
+        assertClose(CourtProjection.sideElevation(SIMD3(10, 32, 0)).x, 1.0)
     }
 
     // MARK: - Clamping
@@ -64,10 +72,10 @@ final class MiniCourtTests: XCTestCase {
     func testUnresolvedGoldenPointClampsRatherThanEscaping() {
         let rogue = SIMD3(13.63, -1.67, 5.07)
         let plan = CourtProjection.planView(rogue)
-        XCTAssertEqual(plan.y, 0.0, accuracy: eps)
+        assertClose(plan.y, 0.0)
         XCTAssertTrue((0...1).contains(plan.x))
         let side = CourtProjection.sideElevation(rogue)
-        XCTAssertEqual(side.x, 0.0, accuracy: eps)
+        assertClose(side.x, 0.0)
         XCTAssertTrue((0...1).contains(side.y))
     }
 

@@ -11,7 +11,7 @@ struct RecordView: View {
 
             // §8.17: the flash is a stage overlay, never in the layout flow,
             // so a call appearing or clearing shifts nothing below it.
-            CallFlashView(presentation: model.livePresentation)
+            CallFlashView(presentation: model.flashPresentation)
                 .allowsHitTesting(false)
                 .ignoresSafeArea()
 

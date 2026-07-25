@@ -130,7 +130,8 @@ struct PairingView: View {
         switch model.step {
         // Searching has no peer yet to act on; syncing needs no user action.
         case .searching, .syncing, .live: return false
-        case .idle, .failed:              return true
+        // A spent session cannot be restarted, so PAIR would be a dead tap.
+        case .idle, .failed:              return model.canPair
         case .confirm:                    return model.canConfirm
         case .ready:                      return true
         // Degraded leaves recording untouched, so the primary is unaffected.

@@ -26,6 +26,22 @@ final class PairingModel: ObservableObject {
     /// hands off to `p-live`.
     var canGoLive: Bool { if case .ready = step { return true }; return false }
 
+    /// `PeerSession` is single-use: `start()` only moves `.idle → .searching`,
+    /// and the production transports latch themselves torn-down. Once a
+    /// session is spent, PAIR has nothing left to do — and §7's one primary
+    /// must never advertise a tap that cannot fire. Reviving the screen needs
+    /// a fresh session via `onSessionEnded`.
+    ///
+    /// Note this cannot be decided from `step` alone: `map` folds `.ended`
+    /// into `.idle`, so the view cannot tell a spent session from a fresh one.
+    var canPair: Bool {
+        guard let session else { return false }
+        switch session.phase {
+        case .ended, .failed: return false
+        default: return true
+        }
+    }
+
     private let session: PeerSession?
 
     init(session: PeerSession?) {

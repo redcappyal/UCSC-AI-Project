@@ -99,6 +99,25 @@ final class RecordModel: ObservableObject {
     /// it would be a second place for the `no_call` gate to be forgotten.
     @Published private(set) var livePresentation: CallPresentation?
 
+    /// The §8.17 wash, which is *transient* where `livePresentation` is
+    /// persistent. Separate state on purpose: binding the full-stage flash to
+    /// the banner's value leaves an 82%-opacity verdict wash covering the
+    /// camera feed from the first call onward, and §16 gates the mini-court on
+    /// "once the flash clears".
+    @Published private(set) var flashPresentation: CallPresentation?
+    private var flashClearWork: DispatchWorkItem?
+    /// §10 budgets the whole flash at ≤ 500 ms, and `CallFlashView` spends
+    /// 150 ms of that easing in — so the hold is the remainder, not 500 ms.
+    static let flashHoldS = 0.35
+
+    private func showFlash(_ presentation: CallPresentation) {
+        flashPresentation = presentation
+        flashClearWork?.cancel()
+        let work = DispatchWorkItem { [weak self] in self?.flashPresentation = nil }
+        flashClearWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.flashHoldS, execute: work)
+    }
+
     /// Wire a paired session. Safe to call again with a new session; the
     /// tracker subscription is registered once. Subscriber runs on the main
     /// queue (BallTracker's fan-out queue). The timer pump keeps
@@ -220,6 +239,7 @@ final class RecordModel: ObservableObject {
                     DispatchQueue.main.async {
                         self?.appendStereoEvent(json)
                         self?.livePresentation = presentation
+                        self?.showFlash(presentation)
                     }
                 }
                 self.stereoEngine = engine
@@ -249,6 +269,15 @@ final class RecordModel: ObservableObject {
     /// different aspect ratio, and `CameraModel.scaled` refuses that rather
     /// than distorting the geometry.
     func startStereoDemo(localModelJSON: String, remoteModelJSON: String) {
+        // The demo's models are the goldens in their own unadopted 1920×1080
+        // space. Installing its engine over a paired session's would keep
+        // attachPeer's pump and onRemoteDetections feeding 4K capture-space
+        // detections through the wrong geometry — silently wrong calls, which
+        // is the one failure mode this whole layer exists to avoid.
+        guard peer == nil else {
+            errorText = "Stereo demo: not available while paired."
+            return
+        }
         guard let localData = localModelJSON.data(using: .utf8),
               let remoteData = remoteModelJSON.data(using: .utf8),
               let local = try? CameraModel.fromJSON(localData),
@@ -263,7 +292,10 @@ final class RecordModel: ObservableObject {
         engine.onEvent = { [weak self] event in
             guard case .impact(let impact) = event else { return }
             let presentation = CallPresentation.from(impact)
-            DispatchQueue.main.async { self?.livePresentation = presentation }
+            DispatchQueue.main.async {
+                self?.livePresentation = presentation
+                self?.showFlash(presentation)
+            }
         }
 
         let tracks = StereoDemo.pixelTracks(local: local, remote: remote)
@@ -272,6 +304,8 @@ final class RecordModel: ObservableObject {
 
         stereoEngine = engine
         livePresentation = nil
+        flashClearWork?.cancel()
+        flashPresentation = nil
 
         // `attachPeer` owns the shared pump, but the demo has no peer, so it
         // needs its own. Invalidate first so repeated taps don't stack timers.
@@ -294,6 +328,7 @@ final class RecordModel: ObservableObject {
     deinit {
         peerPumpTimer?.invalidate()
         demoPumpTimer?.invalidate()
+        flashClearWork?.cancel()
     }
 
     func startCamera() async {

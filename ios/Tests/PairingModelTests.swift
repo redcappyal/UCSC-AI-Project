@@ -47,6 +47,11 @@ final class PairingModelTests: XCTestCase {
     func testConfirmStepCarriesTheSameFourDigitCodeOnBothSides() {
         let rig = makeRig()
         rig.secondary.start(); rig.primary.start()
+        // Loopback delivers inline, so the handshake finishes *inside*
+        // `primary.start()` — which resyncs only the primary's model. The
+        // secondary's session is already `.confirming`; its model has not been
+        // told. Pump it once (a no-op for `tick` in `.confirming`) to catch up.
+        rig.secondary.pump(now: 0)
 
         guard case .confirm(let codeA) = rig.primary.step,
               case .confirm(let codeB) = rig.secondary.step else {
@@ -153,6 +158,21 @@ final class PairingModelTests: XCTestCase {
         // §16: ending returns p-pair to its idle state, not all the way to Play.
         XCTAssertEqual(rig.primary.step, .idle)
         XCTAssertEqual(rig.primary.statusLine, "Not paired")
+        // ...but the session is spent, so PAIR must not offer a tap that
+        // cannot fire. `step` alone cannot tell this — `map` folds `.ended`
+        // into `.idle` — which is exactly why `canPair` reads the session.
+        XCTAssertFalse(rig.primary.canPair)
+    }
+
+    func testAFreshSessionOffersPairAndASpentOneDoesNot() {
+        let rig = makeRig()
+        XCTAssertTrue(rig.primary.canPair)
+        XCTAssertFalse(PairingModel(session: nil).canPair)
+
+        rig.secondary.start(); rig.primary.start()
+        XCTAssertTrue(rig.primary.canPair)
+        rig.primary.end()
+        XCTAssertFalse(rig.primary.canPair)
     }
 
     // MARK: - The pure mapping

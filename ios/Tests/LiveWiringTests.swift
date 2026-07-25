@@ -56,8 +56,10 @@ final class LiveWiringTests: XCTestCase {
         let local = try CameraModel.fromJSON(Data(StereoDemo.localModelJSON.utf8))
         let remote = try CameraModel.fromJSON(Data(StereoDemo.remoteModelJSON.utf8))
         let tracks = StereoDemo.pixelTracks(local: local, remote: remote)
-        let separations = zip(tracks.local, tracks.remote).map {
-            simd_length($0.px - $1.px)
+        // zip yields one tuple per element, so this takes a single parameter —
+        // `$0.px - $1.px` would not compile.
+        let separations = zip(tracks.local, tracks.remote).map { pair in
+            simd_length(pair.0.px - pair.1.px)
         }
         XCTAssertGreaterThan(separations.max() ?? 0, 10.0,
                              "3 ft of baseline should move the ball well over 10 px")
@@ -92,6 +94,24 @@ final class LiveWiringTests: XCTestCase {
         XCTAssertEqual(presentation.detail, "high confidence")
         XCTAssertTrue(presentation.isVerdict)
         XCTAssertEqual(presentation.color, Theme.inCall)
+    }
+
+    /// §10 caps the wash at ≤ 500 ms and §16 gates the mini-court on "once the
+    /// flash clears". Binding the flash to the persistent banner value leaves
+    /// a verdict wash over the camera feed forever, so the two must be
+    /// separate state with only the flash auto-clearing.
+    func testFlashClearsButTheBannerPersists() {
+        let model = RecordModel(detector: nil)
+        model.startStereoDemo(localModelJSON: StereoDemo.localModelJSON,
+                              remoteModelJSON: StereoDemo.remoteModelJSON)
+
+        spinMainUntil(timeout: 3.0) { model.flashPresentation != nil }
+        XCTAssertNotNil(model.flashPresentation, "the wash never appeared")
+
+        spinMainUntil(timeout: 2.0) { model.flashPresentation == nil }
+        XCTAssertNil(model.flashPresentation, "the wash never cleared")
+        XCTAssertNotNil(model.livePresentation,
+                        "the banner must survive the flash clearing")
     }
 
     func testStereoDemoSurvivesBeingStartedTwice() {

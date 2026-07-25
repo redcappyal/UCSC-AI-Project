@@ -94,7 +94,9 @@ struct CallFlashView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .allowsHitTesting(false)          // display-only, like the analyzing scrim
-        .animation(reduceMotion ? nil : .easeOut(duration: 0.25), value: presentation)
+        // §10 budgets the whole flash at ≤ 500 ms; the hold
+        // (RecordModel.flashHoldS) takes the rest, so keep the ease short.
+        .animation(reduceMotion ? nil : .easeOut(duration: 0.15), value: presentation)
     }
 }
 
