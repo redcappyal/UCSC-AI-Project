@@ -19,16 +19,14 @@ final class LiveWiringTests: XCTestCase {
     /// same (3840, 2160) — `CaptureSettings.frameSize(for:)` ignores its
     /// argument by design — so the frame-size assertions compare equal
     /// constants today. What keeps them from being vacuous by construction is
-    /// that `session` is built from the loop's `orientation`, not from
-    /// `model.captureOrientation`: the two sides trace back to independently
-    /// obtained values rather than one value fed into the same pure function
-    /// twice (which could never disagree no matter what `frameSize(for:)`
-    /// did, now or later). That independence is what lets them become
-    /// genuinely load-bearing the moment a mount with different dimensions
-    /// exists — an asymmetry in `frameSize(for:)`, or a break in how
-    /// `captureOrientation` reaches `detectionFrameSize`, would show up as a
-    /// mismatch here instead of being masked by both sides reading the same
-    /// subject.
+    /// that `model` and `session` derive the same arranged orientation (the
+    /// loop's `orientation`) through independent paths, rather than one side
+    /// reading the other's output: the model's path runs through its own
+    /// `init` and `detectionFrameSize`; the session's runs through its own
+    /// `init` and `advertisedHello`. Once `frameSize(for:)` distinguishes the
+    /// mounts, a break in how `captureOrientation` reaches
+    /// `detectionFrameSize` shows up as a mismatch here instead of being
+    /// masked by both sides reading the same subject twice.
     ///
     /// The mount assertion is the one that bites today: it fails if `init`
     /// ignores the parameter, which is the wiring this task adds.

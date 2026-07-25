@@ -65,33 +65,47 @@ final class OrientationPolicy {
     /// portrait.
     private(set) var mask: UIInterfaceOrientationMask = OrientationLock.mask(for: .launch)
     /// The mount `RecordModel.startCamera` pinned for the running capture
-    /// session, or nil when no session has pinned one (or the pin was
-    /// released). `applyForTab` consults this so a tab round trip back to
-    /// Play re-asserts the pin instead of the Play tab's wider resting
-    /// `.landscape` mask — nothing stops the capture session on tab exit, so
-    /// without this the device could flip mid-session the moment the
-    /// operator glances at another tab and back.
+    /// session, or nil before any session has pinned one — nothing in
+    /// production ever clears it back to nil, since there is no
+    /// capture-session teardown yet (see `releaseCapturePin`). `applyForTab`
+    /// consults this so a tab round trip back to Play re-asserts the pin
+    /// instead of the Play tab's wider resting `.landscape` mask — nothing
+    /// stops the capture session on tab exit, so without this the device
+    /// could flip mid-session the moment the operator glances at another tab
+    /// and back.
     private(set) var capturePin: UIInterfaceOrientationMask?
 
     /// Two-tier scene lookup: prefer the foreground-active scene, but a
     /// transient system interruption (an alert, Control Center) can leave
     /// every scene `.foregroundInactive` for a moment, and returning nothing
     /// there would leave a caller with no scene to act on until something
-    /// else happened to trigger another query. Falling back to any scene
-    /// with a key window still reaches one. Both predicates require a key
-    /// window so a caller can act on the result unconditionally — a
-    /// `.foregroundActive` scene with a nil `keyWindow` would otherwise need
-    /// its own further guard.
+    /// else happened to trigger another query. Falling back to any
+    /// qualifying scene still reaches one.
     ///
     /// Shared by `apply` (which re-asks UIKit for a rotation) and
     /// `RecordModel.startCamera` (which reads the scene's
     /// `interfaceOrientation` to resolve the mount) so the two can never pick
-    /// different scenes and disagree about which one is "the" active scene.
-    @MainActor
-    static func activeWindowScene() -> UIWindowScene? {
+    /// different scenes and disagree about which one is "the" active scene —
+    /// one lookup, one `requiresKeyWindow` knob, rather than two call sites
+    /// that could quietly diverge.
+    ///
+    /// The two callers need different guarantees from it, which is what the
+    /// parameter is for. `apply` dereferences `scene.keyWindow` directly, so
+    /// it needs `requiresKeyWindow: true` (the default) — a caller can then
+    /// act on the result unconditionally instead of adding its own further
+    /// guard. `startCamera` only reads `scene.interfaceOrientation` to
+    /// resolve the capture mount, and that property is readable on a
+    /// foreground-active scene with no key window yet; requiring one there
+    /// would needlessly fall through to the `.landscapeRight` literal
+    /// fallback for a scene that could otherwise have resolved the real
+    /// mount, so it passes `requiresKeyWindow: false`.
+    static func activeWindowScene(requiresKeyWindow: Bool = true) -> UIWindowScene? {
         let scenes = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
-        return scenes.first(where: { $0.activationState == .foregroundActive && $0.keyWindow != nil })
-            ?? scenes.first(where: { $0.keyWindow != nil })
+        func qualifies(_ scene: UIWindowScene) -> Bool {
+            !requiresKeyWindow || scene.keyWindow != nil
+        }
+        return scenes.first(where: { $0.activationState == .foregroundActive && qualifies($0) })
+            ?? scenes.first(where: qualifies)
     }
 
     /// Sets `mask` and tells UIKit to re-ask the delegate for it, which is
@@ -114,9 +128,11 @@ final class OrientationPolicy {
         apply(pinnedMask)
     }
 
-    /// Called when the capture session ends. Without this, `applyForTab`
-    /// would keep re-asserting a pin from a session that is no longer
-    /// running.
+    /// No production caller yet — there is no `stopCamera` or other teardown
+    /// in `RecordModel` that stops a running capture session, so a pin set at
+    /// configure time is meant to outlive every tab change for the app's
+    /// lifetime. This exists for the teardown hook `RecordModel` does not yet
+    /// have, and is exercised directly by `OrientationLockTests`.
     func releaseCapturePin() {
         capturePin = nil
     }
