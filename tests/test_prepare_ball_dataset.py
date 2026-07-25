@@ -11,8 +11,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from prepare_ball_dataset import (
     _clip_box, ascii_slug, burst_count, clip_and_frame, clip_scale_factors,
-    plan_crops, polygon_aabb, polygon_points, split_by_clip, streak_metrics,
-    thin_bursts,
+    crop_file_name, plan_crops, polygon_aabb, polygon_points, slugified_clips,
+    split_by_clip, streak_metrics, thin_bursts,
 )
 
 
@@ -239,3 +239,22 @@ def test_ascii_slug_output_is_always_filename_safe():
 def test_ascii_slug_is_deterministic():
     # Regenerating the dataset must not reshuffle filenames.
     assert ascii_slug("Squash ｜ Rally") == ascii_slug("Squash ｜ Rally")
+
+
+def test_crop_file_name_indexes_crops_within_a_slugged_stem():
+    assert (crop_file_name("Bay-Club-1_mov-0042_jpg.rf.abc", 3)
+            == "Bay-Club-1_mov-0042_jpg.rf.abc_c3.jpg")
+
+
+def test_crop_file_name_is_safe_even_when_the_stem_is_not():
+    name = crop_file_name("Rally ｜ One_jpg.rf.d", 0)
+    assert name == f"{ascii_slug('Rally ｜ One_jpg.rf.d')}_c0.jpg"
+    assert SAFE_NAME.fullmatch(name)
+
+
+def test_slugified_clips_lists_only_the_offenders():
+    # The manifest entry exists so a digest suffix in a filename explains itself
+    # without opening the COCO json.
+    records = [frame(clip="Bay-Club-1"), frame(clip="Rally ｜ One"),
+               frame(clip="Bay-Club-1")]
+    assert slugified_clips(records) == ["Rally ｜ One"]

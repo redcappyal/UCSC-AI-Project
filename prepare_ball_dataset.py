@@ -99,6 +99,20 @@ def ascii_slug(stem):
     return f"{slug}-{hashlib.sha1(stem.encode('utf-8')).hexdigest()[:8]}"
 
 
+def crop_file_name(source_stem, index):
+    """Filename for the `index`-th crop cut from a source frame."""
+    return f"{ascii_slug(source_stem)}_c{index}.jpg"
+
+
+def slugified_clips(records):
+    """Clip names that could not be used verbatim in a filename.
+
+    Reported in the manifest so the digest suffix on those crops is
+    self-explaining; the readable name itself stays in each image's `clip`.
+    """
+    return sorted({r["clip"] for r in records if ascii_slug(r["clip"]) != r["clip"]})
+
+
 def polygon_points(segmentation):
     """COCO segmentation -> [(x, y), ...]. Roboflow emits one flat ring."""
     if not segmentation:
@@ -349,7 +363,7 @@ def render_split(records, plans_by_record, out_dir, split, crop, quality):
             tile = frame[oy:oy + crop, ox:ox + crop]
             if tile.shape[0] != crop or tile.shape[1] != crop:
                 continue
-            name = f"{record['path'].stem}_c{index}.jpg"
+            name = crop_file_name(record["path"].stem, index)
             cv2.imwrite(str(images_dir / name), tile,
                         [int(cv2.IMWRITE_JPEG_QUALITY), quality])
             image_id = len(images) + 1
@@ -438,6 +452,9 @@ def build(source, out, crop, positives, negatives, jitter, min_visible,
                    "min_frame_gap": min_frame_gap,
                    "target_ball_px": target_ball_px},
         "clip_scale_factors": {k: round(v, 3) for k, v in sorted(scales.items())},
+        # The readable name lives in each image's `clip`; this flags the clips
+        # whose crops therefore carry a digest suffix.
+        "slugified_clips": slugified_clips(kept),
         "source_frames_seen": total_frames,
         "source_frames_kept": len(kept),
         "dropped_low_resolution": dict(sorted(dropped_low_res.items())),
