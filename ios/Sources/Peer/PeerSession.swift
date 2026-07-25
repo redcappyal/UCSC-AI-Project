@@ -19,9 +19,12 @@ final class PeerSession: ObservableObject {
     var role: PeerRole? { stateLock.lock(); defer { stateLock.unlock() }; return _role }
     let clockSync = ClockSync()
     var peerHello: Hello? { stateLock.lock(); defer { stateLock.unlock() }; return _peerHello }
-    /// What this device advertises. Exposed so callers can assert their
-    /// detection frame space matches the space the peer will read it in —
-    /// the two disagreeing is precisely the bug this file used to have.
+    /// What this device advertises. Exposed for `LiveWiringTests`, which
+    /// asserts a session's detection frame space matches the space it
+    /// advertises here — the two disagreeing is precisely the bug this file
+    /// used to have. Also here for the pairing wiring that doesn't exist yet:
+    /// `RecordModel.attachPeer` does not read this today, since nothing
+    /// constructs its `PeerSession` with the session's real mount.
     var advertisedHello: Hello { stateLock.lock(); defer { stateLock.unlock() }; return myHello }
     var onRemoteDetections: (([DetectionTuple]) -> Void)?
     /// Fired on the transport delivery context (like onRemoteDetections) when

@@ -139,9 +139,13 @@ final class OrientationPolicy {
 
     /// Called by `RootTabView` on every tab change. For `.play`, prefers a
     /// live `capturePin` over the tab's resting mask, so the pin a running
-    /// capture session set survives a round trip through another tab —
-    /// nothing else re-asserts it, since leaving Play does not stop the
-    /// camera session. `OrientationLock.mask(for:)` itself stays pure and
+    /// capture session set survives a round trip through another tab. This is
+    /// still worth keeping even though `RecordView`'s `.task` (and so
+    /// `startCamera`/`pinForCapture`) does re-fire on return to Play — it is
+    /// cancelled when Play disappears and restarts when it reappears: the
+    /// pin here makes the mask correct immediately, on the tab-change
+    /// callback, rather than waiting on the async re-run of `startCamera` to
+    /// get there. `OrientationLock.mask(for:)` itself stays pure and
     /// capture-agnostic; this is the capture-aware layer on top of it.
     func applyForTab(_ tab: RootTab) {
         switch tab {

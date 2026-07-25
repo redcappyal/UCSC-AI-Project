@@ -64,10 +64,10 @@ Do not add it before approval — Automatic signing fails for everyone.
   deliberately stays at 1 so those peers reach this specific, actionable error instead of
   a generic version mismatch.
 - The capture side is not wired to any of this yet: every `PeerSession` the app builds takes
-  the `.landscapeRight` default, so `CameraController.orientation` (itself hardcoded to
-  `.landscapeRight` — resolving it from the device's real interface orientation is still to
-  come) never reaches the wire. Until a future task constructs `PeerSession` with the
-  session's actual resolved mount, a genuinely mixed pair still pairs.
+  the `.landscapeRight` default, so `CameraController.orientation` (`RecordModel.startCamera`
+  resolves the mount from the interface orientation and pins it there, but `PeerSession` is
+  still never constructed with it) never reaches the wire. Until a future task constructs
+  `PeerSession` with the session's actual resolved mount, a genuinely mixed pair still pairs.
 - Detections flow one way (secondary → primary); events flow back in Phase 3.
 
 ## Live path (spec Phase 4)

@@ -158,9 +158,22 @@ final class CaptureOrientationTests: XCTestCase {
     /// through JSON. Renaming a case (e.g. `landscapeRight` →
     /// `landscapeStandard`) type-checks as a pure refactor but silently
     /// changes the encoded bytes, breaking any cross-version pair where one
-    /// side has renamed and the other hasn't. Pin every case's raw value —
-    /// pinning only one leaves the other exactly as breakable as no pin at
-    /// all.
+    /// side has renamed and the other hasn't.
+    ///
+    /// Two different things are pinned here, by two different assertions, and
+    /// it matters which does which. The literal assertions below compare each
+    /// case's `.rawValue` against a hardcoded string that is never derived
+    /// from the enum — that is what actually pins the case *names*: rename
+    /// `landscapeRight` to anything and one side of the comparison changes
+    /// while the other doesn't, so it fails. The loop's
+    /// `json.contains(orientation.rawValue)` cannot do that: `orientation`
+    /// comes from `allCases`, so a rename moves the case, its `rawValue`, and
+    /// the JSON it encodes to together, and the assertion passes regardless
+    /// of what the case is called. What the loop's assertion genuinely
+    /// verifies, for every case, is that the wire value takes the rawValue
+    /// string form at all — i.e. that `Codable` is encoding through the
+    /// raw-value path rather than, say, an integer or a nested container —
+    /// not that any particular name survives.
     ///
     /// Also pins the JSON *key*, `"captureOrientation"` itself, not just its
     /// value: a `CodingKeys` rename would break cross-version pairing just
@@ -173,6 +186,13 @@ final class CaptureOrientationTests: XCTestCase {
     /// key is PRESENT for a real, non-nil mount proves it is the actual key
     /// on the wire, so the other test's absence check means something.
     func testCaptureOrientationWireValuesAndKeyArePinned() {
+        // Case-name pins: the reference is a string literal that does not
+        // come from `CaptureOrientation` at all, so a rename of either case
+        // fails here with the stale name still visible on one side of the
+        // diff. This is the assertion the loop below cannot be.
+        XCTAssertEqual(CaptureSettings.CaptureOrientation.landscapeRight.rawValue, "landscapeRight")
+        XCTAssertEqual(CaptureSettings.CaptureOrientation.landscapeLeft.rawValue, "landscapeLeft")
+
         for orientation in CaptureSettings.CaptureOrientation.allCases {
             let hello = Hello(protoVersion: peerProtoVersion, appVersion: "dev", deviceModel: "x",
                               nonce: 1, frameW: CaptureSettings.frameWidth,
@@ -183,9 +203,9 @@ final class CaptureOrientationTests: XCTestCase {
                          "a non-nil mount must put the key on the wire, anchoring " +
                          "testHelloWithoutOrientationKeyStillDecodes's absence check")
             XCTAssertTrue(json.contains(orientation.rawValue),
-                         "the raw wire value for \(orientation) must stay " +
-                         "\"\(orientation.rawValue)\" — renaming the case silently " +
-                         "changes the bytes and breaks cross-version pairing")
+                         "the wire value for \(orientation) must be encoded as its " +
+                         "rawValue string, not an integer or a nested container — " +
+                         "case-name stability is pinned above, against literals, not here")
         }
     }
 }

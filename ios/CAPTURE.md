@@ -111,12 +111,18 @@ Run these on a Mac, in order, before trusting any of it:
    this as an error and the fix — removing the property's declaration default —
    was applied unverified), and `OrientationLockTests`/`LiveWiringTests`
    touching the `@MainActor` `OrientationPolicy` from XCTest.
-2. **Play tab locks to landscape.** Rotate the simulator through all four
-   orientations on Play: it must never show portrait. Landscape-left and
-   landscape-right are both allowed *before* the camera configures.
-3. **The pin holds.** Once the exposure note appears, the other landscape must
-   be refused. Then switch to Matches and back to Play — the pin must survive
-   the round trip, which is what `OrientationPolicy.capturePin` exists for.
+2. **Play tab locks to landscape, pinned at launch.** The pin lands within
+   milliseconds of app launch, not once the camera configures: `RecordView`'s
+   `.task { await model.startCamera() }` fires the instant Play (the launch
+   tab) first appears, and `RecordModel.startCamera` calls `pinForCapture`
+   *before* `camera.configure()` runs — long before the exposure note. There
+   is no window where both landscapes are selectable. Launch the simulator
+   held landscape-left: Play must lock to landscape-left immediately, and
+   rotating to landscape-right or portrait must be refused from the first
+   frame. Relaunch held landscape-right and confirm the opposite pin.
+3. **The pin holds across a tab round trip.** Whichever landscape got pinned
+   at launch, switch to Matches and back to Play — the pin must survive the
+   round trip, which is what `OrientationPolicy.capturePin` exists for.
 4. **The web tabs still rotate.** Matches and Coach must reach portrait, or the
    `UISupportedInterfaceOrientations` superset is wrong.
 5. **180° normalization — needs a physical iPhone, no simulator camera.**
@@ -125,7 +131,7 @@ Run these on a Mac, in order, before trusting any of it:
    is inverted; swap the cases and update `CaptureOrientationTests`, which
    asserts the mapping and must change with it.
 
-Two known limits, both deliberate and neither fixed by this branch:
+Three known limits, all deliberate and none fixed by this branch:
 
 - **The peer mount guard is correct but unreachable.** `PeerSession` refuses a
   mismatched pair, but nothing in the app constructs a `PeerSession` carrying a
@@ -135,6 +141,13 @@ Two known limits, both deliberate and neither fixed by this branch:
 - **Portrait-solved calibrations no longer load.** `CameraModel.scaled` refuses
   the aspect change rather than distorting geometry, so any calibration solved
   from portrait footage must be re-solved from landscape footage.
+- **Mount choice is effectively one-shot per app launch.** Nothing releases the
+  pin: `releaseCapturePin()` has no production caller, because `RecordModel`
+  holds its capture session for the app's entire lifetime — there is no
+  `stopCamera` or other teardown to call it from. An operator who launches the
+  app holding the phone one way and then mounts it the other way gets a pinned
+  wrong mount and a 180°-inverted recording, with no recovery short of
+  relaunching the app.
 
 When these are run, replace this section with what actually passed, the device
 model, and the date. A partially-run checklist recorded as complete is the

@@ -47,8 +47,8 @@ final class OrientationLockTests: XCTestCase {
     }
 
     func testPortraitInterfaceHasNoMount() {
-        // Portrait is not a capture mode; a future caller would need to fall
-        // back rather than guess.
+        // Portrait is not a capture mode; `RecordModel.startCamera` is the
+        // caller that falls back to a default rather than guessing a mount.
         XCTAssertNil(OrientationLock.captureOrientation(for: .portrait))
         XCTAssertNil(OrientationLock.captureOrientation(for: .portraitUpsideDown))
         XCTAssertNil(OrientationLock.captureOrientation(for: .unknown))
