@@ -20,7 +20,7 @@ The venv is `.venv`; everything runs through it. System `python3` has no flask o
 
 ```bash
 .venv/bin/python app.py                  # http://127.0.0.1:5188
-.venv/bin/python -m pytest tests/ -q     # 287 tests, ~8s
+.venv/bin/python -m pytest tests/ -q     # 346 tests, ~8s
 ```
 
 Editing a `*.py` that has a paired `tests/test_*.py` auto-runs that file (PostToolUse
