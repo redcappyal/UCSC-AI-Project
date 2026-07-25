@@ -210,6 +210,17 @@ def test_main_cli_smoke(tmp_path, monkeypatch):
     # free of cv2/inference dependencies.
     monkeypatch.setattr(stereo_offline, "_video_fps", lambda video_path: 60.0)
     monkeypatch.setattr(stereo_offline, "_iter_frames", lambda video_path: iter([]))
+    # Ambient STEREO_DETECTOR must not change this test's outcome -- the
+    # module docstring advertises STEREO_DETECTOR=rfdetr as a valid override,
+    # and a developer with it exported would otherwise see this fail.
+    monkeypatch.delenv("STEREO_DETECTOR", raising=False)
+    # Point at a directory guaranteed not to exist, rather than relying on no
+    # model being present at ball_model.DEFAULT_MODEL_DIR: a later task
+    # exports a real model to exactly that path, and once it does,
+    # describe() would start returning a dict instead of None, silently
+    # breaking this assertion on any machine where the export ran (while
+    # staying green elsewhere, since models/ is gitignored).
+    monkeypatch.setenv("BALL_MODEL_DIR", str(tmp_path / "no-model"))
 
     argv = [
         "stereo_offline.py",
@@ -222,6 +233,173 @@ def test_main_cli_smoke(tmp_path, monkeypatch):
     stereo_offline.main()
 
     result = json.loads(out_path.read_text(encoding="utf-8"))
-    assert set(result.keys()) == {"impacts", "pair_agreement", "sample_counts"}
+    assert set(result.keys()) == {
+        "impacts", "pair_agreement", "sample_counts", "detector"}
     assert result["sample_counts"] == {"a": 0, "b": 0}
     assert result["impacts"] == []
+    # No model is present at BALL_MODEL_DIR; describe() is best-effort and
+    # reports that absence rather than raising.
+    assert result["detector"] == {"backend": "yolox", "model": None}
+
+
+# --- detector provenance ----------------------------------------------------
+
+
+def test_fuse_clips_reports_injected_detector(monkeypatch):
+    # Injected infer means no model is loaded; provenance must say so rather
+    # than reading a manifest that is not there. This is what keeps the
+    # existing synthetic tests working with no model on disk.
+    cam_a, cam_b = make_fin_pair()
+    calibration_a = _synthetic_calibration(cam_a)
+    calibration_b = _synthetic_calibration(cam_b)
+    monkeypatch.setattr(stereo_offline, "_video_fps", lambda video_path: 60.0)
+    monkeypatch.setattr(stereo_offline, "_iter_frames",
+                        lambda video_path: iter(_fake_frames(5)))
+
+    result = stereo_offline.fuse_clips(
+        "a.mp4", calibration_a, "b.mp4", calibration_b,
+        infer_a=lambda frame: [], infer_b=lambda frame: [])
+
+    assert result["detector"] == {"backend": "injected"}
+
+
+def test_fuse_clips_reports_rfdetr_detector(monkeypatch):
+    monkeypatch.setenv("STEREO_DETECTOR", "rfdetr")
+    cam_a, cam_b = make_fin_pair()
+    calibration_a = _synthetic_calibration(cam_a)
+    calibration_b = _synthetic_calibration(cam_b)
+    monkeypatch.setattr(stereo_offline, "_video_fps", lambda video_path: 60.0)
+    # Zero decoded frames: never builds `infer`, so this stays free of the
+    # heavy rfdetr/torch import while still exercising the provenance stamp.
+    monkeypatch.setattr(stereo_offline, "_iter_frames", lambda video_path: iter([]))
+
+    result = stereo_offline.fuse_clips(
+        "a.mp4", calibration_a, "b.mp4", calibration_b)
+
+    assert result["detector"] == {"backend": "rfdetr"}
+
+
+def test_selected_detector_rejects_unknown_value(monkeypatch):
+    monkeypatch.setenv("STEREO_DETECTOR", "rfdtr")  # typo of "rfdetr"
+    with pytest.raises(ValueError, match="STEREO_DETECTOR"):
+        stereo_offline.selected_detector()
+
+
+def test_fuse_clips_rejects_unknown_detector_on_zero_frame_path(monkeypatch):
+    """Regression for the bug finding 2 fixed: fuse_clips used to re-derive
+    the backend with its own unconditional `if backend == "rfdetr": ... else
+    yolox`, so an unknown STEREO_DETECTOR value was only caught when
+    _build_infer ran. On a clip that decodes zero frames, _build_infer is
+    never reached (it is constructed lazily inside the frame loop), so the
+    run used to succeed and silently stamp "yolox" despite no detector ever
+    running. Validation now lives in selected_detector(), so every caller
+    -- including this zero-frame path -- raises."""
+    monkeypatch.setenv("STEREO_DETECTOR", "rfdtr")
+    cam_a, cam_b = make_fin_pair()
+    calibration_a = _synthetic_calibration(cam_a)
+    calibration_b = _synthetic_calibration(cam_b)
+    monkeypatch.setattr(stereo_offline, "_video_fps", lambda video_path: 60.0)
+    monkeypatch.setattr(stereo_offline, "_iter_frames", lambda video_path: iter([]))
+
+    with pytest.raises(ValueError, match="STEREO_DETECTOR"):
+        stereo_offline.fuse_clips("a.mp4", calibration_a, "b.mp4", calibration_b)
+
+
+def test_build_infer_defaults_to_yolox_for_stereo(monkeypatch):
+    # Ambient STEREO_DETECTOR must not change this test's outcome -- the
+    # module docstring advertises STEREO_DETECTOR=rfdetr as a valid override,
+    # and a developer with it exported would otherwise see this test wander
+    # into the real inference_engine import.
+    monkeypatch.delenv("STEREO_DETECTOR", raising=False)
+    calls = {}
+
+    class _Manifest:
+        conf_threshold = 0.1  # below the 0.4 confidence used below
+
+    _manifest = _Manifest()
+
+    class _Runner:
+        manifest = _manifest
+
+    runner_instance = _Runner()
+
+    monkeypatch.setattr(stereo_offline, "_load_ball_detector",
+                        lambda: runner_instance)
+    monkeypatch.setattr(
+        stereo_offline, "_detect_frame",
+        lambda runner, frame, manifest: calls.setdefault(
+            "args", (runner, frame, manifest)) or [])
+
+    infer = stereo_offline._build_infer(None, 0.4)
+    infer("FRAME")
+
+    # Proves the runner _load_ball_detector() returned is the same object
+    # handed to detect_frame, not just any object with a `.manifest`.
+    assert calls["args"][0] is runner_instance
+    assert calls["args"][1] == "FRAME"
+    assert calls["args"][2] is _manifest
+
+
+def test_build_infer_honours_rfdetr_override(monkeypatch):
+    monkeypatch.setenv("STEREO_DETECTOR", "rfdetr")
+    seen = {}
+
+    def _fake_import():
+        def _get_model():
+            return "RFDETR_MODEL"
+
+        def _infer(model, frame, confidence):
+            seen["model"] = model
+            return []
+
+        return _get_model, _infer
+
+    monkeypatch.setattr(stereo_offline, "_import_rfdetr", _fake_import)
+    infer = stereo_offline._build_infer(None, 0.4)
+    infer("FRAME")
+
+    assert seen["model"] == "RFDETR_MODEL"
+
+
+def test_build_infer_rejects_model_without_manifest(monkeypatch):
+    """The RF-DETR-object-under-yolox-default case: passing a `model` with no
+    `.manifest` attribute while STEREO_DETECTOR selects yolox (the default)
+    must raise TypeError up front, not wander into an opaque AttributeError
+    mid-frame. A defensive monkeypatch on _load_ball_detector proves the
+    guard fires before ever reaching that seam -- if the guard regressed,
+    this would blow up on the loader instead of failing the assertion below,
+    which would still fail the test either way, but this pins down why."""
+    monkeypatch.delenv("STEREO_DETECTOR", raising=False)
+
+    def _unexpected_load():
+        raise AssertionError(
+            "guard should have raised before loading a detector")
+
+    monkeypatch.setattr(stereo_offline, "_load_ball_detector", _unexpected_load)
+
+    with pytest.raises(TypeError, match="manifest"):
+        stereo_offline._build_infer(object(), 0.4)
+
+
+def test_build_infer_rejects_unreachable_confidence(monkeypatch):
+    """If the manifest's conf_threshold sits above the caller's requested
+    confidence, the caller's threshold would be silently unreachable dead
+    code -- the detector already drops everything below its own
+    conf_threshold before selection ever sees it. A defensive monkeypatch on
+    _detect_frame proves the guard fires before any inference runs."""
+    monkeypatch.delenv("STEREO_DETECTOR", raising=False)
+
+    class _Manifest:
+        conf_threshold = 0.9  # above the 0.4 confidence used below
+
+    class _Runner:
+        manifest = _Manifest()
+
+    def _unexpected_detect(runner, frame, manifest):
+        raise AssertionError(
+            "guard should have raised before running inference")
+
+    monkeypatch.setattr(stereo_offline, "_detect_frame", _unexpected_detect)
+
+    with pytest.raises(ValueError, match="conf_threshold"):
+        stereo_offline._build_infer(_Runner(), 0.4)

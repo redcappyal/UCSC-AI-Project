@@ -1,12 +1,14 @@
 """Offline two-clip stereo fusion adapter.
 
-Runs the production RF-DETR ball detector (via inference_engine) over two
-calibrated, clock-offset squash clips and produces 3D impact calls through
-stereo_engine. Heavy deps (cv2 video I/O, the `inference` package, and
-tracking_common -- which imports cv2 unconditionally at its own top) import
-lazily inside functions -- mirroring inference_engine.py / train_yolo_ball.py's
-convention -- so importing this module, or exercising its test injection
-seams, never touches them.
+Runs a ball detector -- by default the locally trained YOLOX detector
+(ball_model + ball_detector); set STEREO_DETECTOR=rfdetr to use the hosted
+RF-DETR the single-camera pipeline still runs on (via inference_engine) --
+over two calibrated, clock-offset squash clips and produces 3D impact calls
+through stereo_engine. Heavy deps (cv2 video I/O, the `inference` package,
+torch, and tracking_common -- which imports cv2 unconditionally at its own
+top) import lazily inside functions -- mirroring inference_engine.py /
+train_yolo_ball.py's convention -- so importing this module, or exercising
+its test injection seams, never touches them.
 """
 
 import argparse
@@ -54,19 +56,93 @@ def _iter_frames(video_path):
         cap.release()
 
 
-def _build_infer(model, confidence):
-    """Build the real detector's per-frame callable: get_tracking_model()
-    (when `model` is None) + inference_engine.infer_frame_predictions.
-    Imported lazily so this is only ever touched when a clip actually has a
-    frame to run inference on -- a clip with zero decoded frames (as in the
-    CLI smoke test) never loads the model."""
-    from inference_engine import get_tracking_model, infer_frame_predictions
+STEREO_DETECTOR_DEFAULT = "yolox"
 
-    if model is None:
-        model = get_tracking_model()
+
+def _import_rfdetr():
+    """Seam for tests; keeps the heavy import lazy."""
+    from inference_engine import get_tracking_model, infer_frame_predictions
+    return get_tracking_model, infer_frame_predictions
+
+
+def _load_ball_detector():
+    """Seam for tests; keeps torch out of import time."""
+    import ball_model
+    return ball_model.load_detector()
+
+
+def _detect_frame(runner, frame, manifest):
+    """Seam for tests."""
+    import ball_detector
+    return ball_detector.detect_frame(runner, frame, manifest)
+
+
+def selected_detector():
+    """Read + validate STEREO_DETECTOR. The single source of truth for the
+    backend name: every caller (_build_infer and fuse_clips' provenance
+    stamp) goes through this, so an unknown value raises everywhere instead
+    of being silently reported as "yolox" on paths that never reach
+    _build_infer (e.g. a clip that decodes zero frames)."""
+    import os
+    backend = os.environ.get("STEREO_DETECTOR", STEREO_DETECTOR_DEFAULT).strip().lower()
+    if backend not in ("yolox", "rfdetr"):
+        raise ValueError(
+            f"Unknown STEREO_DETECTOR {backend!r}; expected 'yolox' or 'rfdetr'")
+    return backend
+
+
+def _build_infer(model, confidence):
+    """Build the stereo path's per-frame callable.
+
+    Defaults to the locally trained YOLOX detector (STEREO_DETECTOR=yolox);
+    STEREO_DETECTOR=rfdetr restores the hosted RF-DETR the single-camera
+    pipeline still uses. Imported lazily so a clip with zero decoded frames
+    never loads a model -- the CLI smoke test depends on that.
+
+    Never falls back between detectors: a missing model raises, because a
+    silent swap would make the stereo/single-camera split invisible.
+    """
+    backend = selected_detector()
+
+    if backend == "rfdetr":
+        get_tracking_model, infer_frame_predictions = _import_rfdetr()
+        if model is None:
+            model = get_tracking_model()
+
+        def _infer(frame):
+            return infer_frame_predictions(model, frame, confidence)
+
+        return _infer
+
+    # backend == "yolox" here: selected_detector() already validated the
+    # value, so this is the only other possibility.
+    if model is not None and not hasattr(model, "manifest"):
+        raise TypeError(
+            f"_build_infer got a `model` with no `.manifest` attribute while "
+            f"STEREO_DETECTOR={backend!r} selects the local YOLOX detector. "
+            f"`model` means a ball_model runner (from ball_model.load_detector()) "
+            f"here; it only means an RF-DETR tracking-model object when "
+            f"STEREO_DETECTOR=rfdetr. Pass model=None to load the default YOLOX "
+            f"runner, or set STEREO_DETECTOR=rfdetr if you meant to pass an "
+            f"RF-DETR model.")
+
+    runner = model if model is not None else _load_ball_detector()
+
+    # `confidence` is intentionally unused below: the manifest's
+    # conf_threshold is the detector's own floor, baked in at export time,
+    # and owns filtering for the yolox branch. We only check that it does
+    # not silently swallow the caller's requested threshold (see the guard
+    # below).
+    if runner.manifest.conf_threshold > confidence:
+        raise ValueError(
+            f"manifest conf_threshold ({runner.manifest.conf_threshold!r}) is "
+            f"above the requested confidence ({confidence!r}); the detector "
+            f"already drops everything below its own conf_threshold before "
+            f"this call ever sees it, so the requested confidence would be "
+            f"silently unreachable.")
 
     def _infer(frame):
-        return infer_frame_predictions(model, frame, confidence)
+        return _detect_frame(runner, frame, runner.manifest)
 
     return _infer
 
@@ -84,10 +160,18 @@ def detections_to_track_samples(video_path, model=None, *, confidence=0.4,
     callable(frame_bgr) -> list of prediction dicts in
     inference_engine.infer_frame_predictions' normalized shape
     ({"x","y","width","height","confidence","class"}); default None means
-    build it from the real model (get_tracking_model() when model is None)
-    + infer_frame_predictions, built lazily on first frame so a clip that
-    decodes zero frames never touches the heavy inference stack. Selects
-    the ball prediction per frame via tracking_common's
+    build it via _build_infer(model, confidence), lazily on first frame so a
+    clip that decodes zero frames never touches the heavy inference stack.
+    _build_infer's backend is selected_detector() (STEREO_DETECTOR, default
+    "yolox"): by default it loads ball_model.load_detector() (when `model`
+    is None) and calls ball_detector.detect_frame, in which case `model`,
+    when given, must be a ball_model runner (something with a `.manifest`
+    attribute). STEREO_DETECTOR=rfdetr instead calls get_tracking_model()
+    (when `model` is None) + inference_engine.infer_frame_predictions, in
+    which case `model` means an RF-DETR tracking-model object. Passing a
+    `model` of the wrong shape for the selected backend raises TypeError
+    rather than failing later, mid-frame, with an opaque AttributeError.
+    Selects the ball prediction per frame via tracking_common's
     select_ball_prediction; frames with no accepted ball produce no
     sample. px = (x, y) center in RAW pixels.
     """
@@ -148,7 +232,8 @@ def fuse_clips(video_a, calibration_a, video_b, calibration_b, *,
     {"impacts": [{"t_s","surface","point_ft","call","margin_ft",
                    "confidence","snap_disagreement_ft"}],
      "pair_agreement": {...},
-     "sample_counts": {"a": n, "b": m}}
+     "sample_counts": {"a": n, "b": m},
+     "detector": {"backend": ..., "model": {...}}}
     """
     model_a, info_a = court_model.solve_camera_model(calibration_a)
     if model_a is None:
@@ -175,10 +260,21 @@ def fuse_clips(video_a, calibration_a, video_b, calibration_b, *,
     obs_b = list(zip(court_xyz_b, image_px_b))
     agreement = stereo_engine.pair_agreement(model_a, obs_a, model_b, obs_b)
 
+    if infer_a is not None and infer_b is not None:
+        detector_info = {"backend": "injected"}
+    else:
+        backend = selected_detector()
+        if backend == "rfdetr":
+            detector_info = {"backend": "rfdetr"}
+        else:
+            import ball_model
+            detector_info = {"backend": "yolox", "model": ball_model.describe()}
+
     return {
         "impacts": [_impact_to_dict(impact) for impact in impacts],
         "pair_agreement": agreement,
         "sample_counts": {"a": len(samples_a), "b": len(samples_b)},
+        "detector": detector_info,
     }
 
 
