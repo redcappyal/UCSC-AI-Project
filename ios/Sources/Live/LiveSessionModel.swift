@@ -60,6 +60,12 @@ final class LiveSessionModel: ObservableObject {
     /// Only shown while the link is degraded: without it a dropped link
     /// leaves the secondary recording 4K60 with no way to end the rally.
     @Published private(set) var showsLocalStop = false
+    /// §16's `p-live` STOP — the whole rule for who gets one, published flat
+    /// (same reason as `primaryTitle`/`primaryEnabled`) so `LiveStageView`
+    /// has no state logic of its own: the primary can always end a rally it
+    /// started; the secondary only gains a local STOP once `showsLocalStop`
+    /// already says the link is degraded. See `updateShowsStop()`.
+    @Published private(set) var showsStop = false
     @Published private(set) var sessionID: String?
 
     private var peerVideoID: String?
@@ -470,6 +476,18 @@ final class LiveSessionModel: ObservableObject {
         showsLocalStop = degraded && rally == .recording
     }
 
+    /// §16's `p-live` STOP rule, kept alongside `updateShowsLocalStop` (its
+    /// only two call sites are the same two as that method's) rather than
+    /// folded into it: this one also depends on `role`, and keeping the two
+    /// separate keeps each one's doc honest about what it actually derives.
+    /// A view reading `rally`/`role`/`showsLocalStop` directly and combining
+    /// them itself would duplicate this exact rule outside the model — the
+    /// same reason `computedPrimaryEnabled` etc. live here instead of in
+    /// `PairingView`.
+    private func updateShowsStop() {
+        showsStop = rally == .recording && (role == .primary || showsLocalStop)
+    }
+
     #if DEBUG
     /// Test seam for the degraded-link path, which needs no radio to
     /// assert. `#if DEBUG`-gated so production code can never call a
@@ -483,6 +501,7 @@ final class LiveSessionModel: ObservableObject {
     /// otherwise derive on its own.
     func handleDegraded(_ degraded: Bool) {
         updateShowsLocalStop(degraded: degraded)
+        updateShowsStop()
     }
     #endif
 
@@ -508,6 +527,7 @@ final class LiveSessionModel: ObservableObject {
             session?.sendSessionManifest(sessionID: minted, videoID: "")
         }
         updateShowsLocalStop(degraded: isPairingDegraded)
+        updateShowsStop()
     }
 
     /// The production input to `updateShowsLocalStop` — derived from the

@@ -12,6 +12,12 @@ import SwiftUI
 struct PlayRootView: View {
     @StateObject private var record = RecordModel()
     @StateObject private var live = LiveSessionModel()
+    /// Flips when `PairingView` reports `model.rally == .recording` (its
+    /// `onGoLive`), pushing `LiveStageView` on top of `p-pair` in this same
+    /// `NavigationStack`. Lives here, not in `PairingView`, because a
+    /// `@State` bound to a `.navigationDestination` has to be owned by
+    /// something that outlives any one push.
+    @State private var showLive = false
     @State private var showServerSettings = false
     #if DEBUG
     @State private var showPeerBench = false
@@ -37,8 +43,23 @@ struct PlayRootView: View {
                                  systemImage: "video", accent: true)
                     }
 
+                    // §16: `p-pair` → `p-live` is an automatic advance on
+                    // `rally` becoming `.recording`, for either role (see
+                    // `PairingView.onGoLive`'s doc comment) — never a second
+                    // tap target here. The destination is declared on
+                    // `PairingView` itself, not up here on the hero card:
+                    // `showLive` flips from *inside* the pushed `PairingView`
+                    // (its own `.onChange(of: model.rally)`), while it is the
+                    // active top of this `NavigationStack`, so the further
+                    // push has to be able to fire from exactly that pushed
+                    // view — declaring it any higher would tie a push that
+                    // originates deep in the stack to a modifier sitting
+                    // outside it for no benefit.
                     NavigationLink {
-                        PairingView(model: live)
+                        PairingView(model: live) { showLive = true }
+                            .navigationDestination(isPresented: $showLive) {
+                                LiveStageView(record: record, live: live)
+                            }
                     } label: {
                         heroCard("Live match", "Record and call in real time",
                                  systemImage: "dot.radiowaves.left.and.right", accent: false)

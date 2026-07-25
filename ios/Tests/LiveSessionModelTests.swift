@@ -339,6 +339,46 @@ final class LiveSessionModelTests: XCTestCase {
         rig.secondary.handleDegraded(false)
         XCTAssertFalse(rig.secondary.showsLocalStop)
     }
+
+    // MARK: - Task 10: `showsStop`, the `p-live` dead-end fix
+
+    /// Before Task 10, a started rally had no way to end at all — this is
+    /// the fix: the primary must be able to stop a rally it started
+    /// regardless of link health, not only while degraded like the
+    /// secondary's safety valve above.
+    func testPrimaryAlwaysShowsStopWhileRecordingRegardlessOfLinkHealth() async {
+        let rig = await makePairedRig()
+        XCTAssertFalse(rig.primary.showsStop, "setup: no rally yet")
+
+        rig.primary.startRally()
+        await settleCrossModelDelivery(until: { rig.primary.rally == .recording })
+        XCTAssertTrue(rig.primary.showsStop,
+                      "the primary must always be able to end a rally it started")
+
+        rig.primary.handleDegraded(true)
+        XCTAssertTrue(rig.primary.showsStop, "degrading the link must not take the primary's STOP away")
+        rig.primary.handleDegraded(false)
+        XCTAssertTrue(rig.primary.showsStop)
+    }
+
+    /// The mirror of `testSecondaryGainsALocalStopOnlyWhileDegraded`, through
+    /// the `showsStop` property `LiveStageView` actually reads: normally the
+    /// secondary has no STOP of its own (it relies on the primary's
+    /// `.record("stop", ...)` message), and only gains one once the link is
+    /// degraded.
+    func testSecondaryShowsStopOnlyWhileDegraded() async {
+        let rig = await makePairedRig()
+        rig.primary.startRally()
+        await settleCrossModelDelivery(until: { rig.secondary.rally == .recording })
+        XCTAssertFalse(rig.secondary.showsStop,
+                       "normally only the primary's STOP message ends the secondary's recording")
+
+        rig.secondary.handleDegraded(true)
+        XCTAssertTrue(rig.secondary.showsStop,
+                      "a dropped link must not leave the secondary recording with no exit")
+        rig.secondary.handleDegraded(false)
+        XCTAssertFalse(rig.secondary.showsStop)
+    }
     #endif
 
     func testRolesMapToTheServersCameraRoles() async {
