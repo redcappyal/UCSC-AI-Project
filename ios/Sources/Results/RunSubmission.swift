@@ -28,7 +28,9 @@ final class RunSubmission: ObservableObject {
         return nil
     }
 
-    func submit(videoURL: URL, duration: Double) async {
+    func submit(videoURL: URL, duration: Double,
+                sessionID: String? = nil, cameraRole: String? = nil,
+                peerVideoID: String? = nil, syncManifestJSON: String? = nil) async {
         do {
             phase = .fetchingCalibration
             let calibration = try await api.latestCalibration()
@@ -43,7 +45,9 @@ final class RunSubmission: ObservableObject {
             var job = try await api.startTrack(
                 videoID: upload.videoID,
                 calibrationJSON: calibration.calibrationJSON,
-                duration: clipDuration)
+                duration: clipDuration,
+                sessionID: sessionID, cameraRole: cameraRole,
+                peerVideoID: peerVideoID, syncManifestJSON: syncManifestJSON)
 
             while job.status == "queued" || job.status == "running" {
                 phase = .tracking(progress: job.progress ?? 0,
