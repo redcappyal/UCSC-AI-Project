@@ -22,9 +22,9 @@ final class CameraController: NSObject {
     /// since it drives both the video connection's rotation and the asset
     /// writer's dimensions below.
     ///
-    /// Nothing assigns this yet, so every session currently captures
-    /// `.landscapeRight`. Resolving it from the device's interface
-    /// orientation is still to come.
+    /// `RecordModel.startCamera` resolves this from the device's interface
+    /// orientation and pins the supported-orientation mask there, so it
+    /// cannot change under a running session.
     var orientation: CaptureSettings.CaptureOrientation = .landscapeRight
     /// Every video frame, on the output queue. RecordView wires this to
     /// BallTracker.process.

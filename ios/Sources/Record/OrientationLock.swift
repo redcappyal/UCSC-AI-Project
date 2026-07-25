@@ -28,7 +28,7 @@ enum OrientationLock {
         }
     }
 
-    /// Not yet called by production code — capture wiring is a later task.
+    /// Called by `RecordModel.startCamera` once the mount is resolved.
     /// Narrows to the single mount capture resolves at configure time, so
     /// that the device will not be able to flip to the other landscape
     /// mid-session and leave the orientation advertised in `Hello`
@@ -40,10 +40,10 @@ enum OrientationLock {
         }
     }
 
-    /// Not yet called by production code — capture wiring is a later task.
-    /// The mount an interface orientation implies, or nil when the interface
-    /// is portrait — portrait is not a capture mode, so a future caller would
-    /// need to fall back to a default rather than inventing a mount.
+    /// Called by `RecordModel.startCamera` once the interface orientation is
+    /// known. The mount an interface orientation implies, or nil when the
+    /// interface is portrait — portrait is not a capture mode, so the caller
+    /// falls back to a default rather than inventing a mount.
     static func captureOrientation(for interface: UIInterfaceOrientation) -> CaptureSettings.CaptureOrientation? {
         switch interface {
         case .landscapeRight: return .landscapeRight

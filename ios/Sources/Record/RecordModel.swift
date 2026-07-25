@@ -1,4 +1,5 @@
 import Foundation
+import UIKit
 
 struct FinishedClip: Identifiable {
     let id = UUID()
@@ -30,7 +31,12 @@ final class RecordModel: ObservableObject {
     /// when the source is synthetic.
     @Published private(set) var detectorKind: DetectorKind
 
-    init(detector: BallDetecting? = CoreMLBallDetector()) {
+    init(detector: BallDetecting? = CoreMLBallDetector(),
+         captureOrientation: CaptureSettings.CaptureOrientation = .landscapeRight) {
+        // Production overwrites this in `startCamera` once the interface
+        // orientation is known; the parameter exists so tests can pick a mount
+        // without a live window scene.
+        self.captureOrientation = captureOrientation
         if detector == nil {
             detectorKind = .none
         } else {
@@ -74,10 +80,19 @@ final class RecordModel: ObservableObject {
     private var nextDetectionSeq: UInt32 = 0
     private var pendingTuples: [DetectionTuple] = []
     private var lastFlushAt: TimeInterval = 0
-    // Must match the Hello this device advertises (PeerSession) — the peer
-    // reads detections in these pixel units, so a mismatch skews stereo.
-    private let peerFrameW = CaptureSettings.frameWidth
-    private let peerFrameH = CaptureSettings.frameHeight
+    /// The mount this session capture-locked to, resolved when the camera
+    /// configures and pinned there (see `startCamera`). Everything that labels
+    /// a pixel space reads this.
+    @Published private(set) var captureOrientation: CaptureSettings.CaptureOrientation = .landscapeRight
+
+    /// The pixel space local detections are expressed in — the same space the
+    /// peer is told to read them in via `Hello`. Derived from the resolved
+    /// mount rather than from a constant, which is exactly what went wrong
+    /// before: hardcoded portrait constants labelled every tuple in a session
+    /// that was capturing landscape.
+    var detectionFrameSize: (width: Int, height: Int) {
+        CaptureSettings.frameSize(for: captureOrientation)
+    }
 
     // MARK: stereo (Phase 3, Plan B2)
 
@@ -151,7 +166,8 @@ final class RecordModel: ObservableObject {
             if peer.role == .secondary {
                 let tuple = DetectionMapper.tuple(seq: self.nextDetectionSeq,
                                                   observation: observation,
-                                                  frameW: self.peerFrameW, frameH: self.peerFrameH)
+                                                  frameW: self.detectionFrameSize.width,
+                                                  frameH: self.detectionFrameSize.height)
                 self.nextDetectionSeq += 1
                 self.pendingTuples.append(tuple)
                 let now = observation.timestamp
@@ -161,7 +177,9 @@ final class RecordModel: ObservableObject {
                     self.lastFlushAt = now
                 }
             } else if peer.role == .primary, let engine = self.stereoEngine {
-                engine.addLocalObservation(observation, frameW: self.peerFrameW, frameH: self.peerFrameH)
+                engine.addLocalObservation(observation,
+                                           frameW: self.detectionFrameSize.width,
+                                           frameH: self.detectionFrameSize.height)
             }
         }
     }
@@ -335,6 +353,20 @@ final class RecordModel: ObservableObject {
 
     func startCamera() async {
         do {
+            // Resolve the mount from the interface orientation, which the Play
+            // tab has already constrained to landscape, then pin the mask
+            // there. Pinning is what keeps the orientation advertised in Hello
+            // true for the session's whole life: without it a mid-session flip
+            // to the other landscape would leave the peer holding a mount
+            // description that is no longer real.
+            let interface = UIApplication.shared.connectedScenes
+                .compactMap { $0 as? UIWindowScene }
+                .first { $0.activationState == .foregroundActive }?
+                .interfaceOrientation ?? .landscapeRight
+            captureOrientation = OrientationLock.captureOrientation(for: interface) ?? .landscapeRight
+            camera.orientation = captureOrientation
+            OrientationPolicy.shared.apply(OrientationLock.pinnedMask(for: captureOrientation))
+
             try await camera.configure()
             camera.start()
             // Meter the court once from the mounted position, then freeze
