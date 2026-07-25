@@ -202,7 +202,24 @@ final class LiveSessionModelTests: XCTestCase {
     /// `reconcileRallyAfterStartAttempt()` directly — the exact
     /// reconciliation `startRally()` schedules for itself once its own
     /// toggle completes — rather than the real throw.
-    func testAStartThatFailsToActuallyRecordDoesNotLeaveRallyBelievingItIsRecording() {
+    ///
+    /// Teardown (added in review): `model.startRally()`'s own chained toggle
+    /// is real — there is no seam to stub `RecordModel.toggleRecording()`
+    /// itself — so once this test's synchronous assertions above finish,
+    /// that already-scheduled `Task` is still pending. Its guard
+    /// (`record.isRecording == false`, which the manual overwrite above
+    /// still satisfies at the point that `Task` actually runs) passes, so it
+    /// goes on to call the real `record.toggleRecording()` — which, per
+    /// `CameraController.startRecording()`, really does open an
+    /// `AVAssetWriter`, with nothing left to ever stop it once `record`
+    /// deallocates at the end of this method. Rather than depend on the
+    /// weak `self`/`record` captures inside `toggleRecordingChained`/
+    /// `reconcileRallyAfterStartAttempt` happening to resolve to nil before
+    /// that `Task` runs — plausible, but nothing in this file pins down
+    /// that ordering as guaranteed — `async` here buys an explicit place to
+    /// wait for the pending `Task` to actually finish, then explicitly stop
+    /// whatever it started before `record` goes out of scope.
+    func testAStartThatFailsToActuallyRecordDoesNotLeaveRallyBelievingItIsRecording() async {
         let (model, _) = makeModel()
         let record = RecordModel(detector: nil)
         model.bind(record: record)
@@ -211,9 +228,9 @@ final class LiveSessionModelTests: XCTestCase {
         XCTAssertEqual(model.rally, .recording, "setup: startRally() optimistically goes .recording")
 
         // The real toggle this startRally() call scheduled hasn't run yet —
-        // it's chained behind a suspension point this synchronous test never
-        // reaches — so overwriting this state first is race-free, not a
-        // guess about scheduling order.
+        // it's chained behind a suspension point this synchronous section
+        // never reaches — so overwriting this state first is race-free, not
+        // a guess about scheduling order.
         record.isRecording = false
         record.errorText = "camera would not start"
         model.reconcileRallyAfterStartAttempt()
@@ -227,33 +244,84 @@ final class LiveSessionModelTests: XCTestCase {
         // `stopRally()` is a no-op.
         model.stopRally()
         XCTAssertEqual(model.rally, .failed("camera would not start"))
+
+        // Teardown: let startRally()'s own pending chained toggle actually
+        // run — its guard still matches the `isRecording = false` forced
+        // above, so it calls the real `toggleRecording()`, which succeeds
+        // (starting a real `AVAssetWriter` needs no running capture
+        // session — the same reason this whole test can't make a *real*
+        // start fail deterministically) and sets `isRecording = true`. Then
+        // explicitly stop it, exactly as a real session would eventually
+        // do, so no writer is left dangling once `record` deallocates.
+        await settleCrossModelDelivery(until: { record.isRecording })
+        if record.isRecording {
+            await record.toggleRecording()
+        }
+        XCTAssertFalse(record.isRecording, "teardown: no AVAssetWriter should be left running past this test")
     }
 
     /// The guard this test targets is `startRally()`'s own `guard rally !=
-    /// .recording else { return }`. Deleting it and asserting only the
-    /// SECONDARY's `rally` (as this test used to) can't catch that: a
-    /// second call would re-toggle the PRIMARY's own camera and re-send
-    /// "start", and the secondary's own separate guard in
-    /// `handleRemoteRecord` (`if rally != .recording { startLocalRecording()
-    /// }`) ignores a repeated "start" regardless of whether the primary's
-    /// guard exists — so the secondary's state can't distinguish a working
-    /// guard from a deleted one. Assert the PRIMARY's own side instead:
-    /// its `rally` is unchanged, and — critically — its `RecordModel
-    /// .isRecording` is still true, i.e. the second call did not silently
-    /// stop the camera it was already recording on.
+    /// .recording else { return }`. Two things (both found in review) make a
+    /// weaker version of this test vacuous:
+    ///
+    /// 1. There is no suspension point between the second `startRally()`
+    ///    call and an assertion right after it, and this test class is
+    ///    `@MainActor`, so the unstructured toggle `Task` `startRally()`
+    ///    kicks off structurally cannot have run yet by the time such an
+    ///    assertion executes — an `isRecording`-based assertion taken
+    ///    immediately is incapable of having changed either way.
+    /// 2. Even after settling for that `Task`, deleting the guard leaves
+    ///    every *state* assertion passing anyway: the second call's own
+    ///    toggle would be skipped by `toggleRecordingChained
+    ///    (ifRecordingIs:)`'s own "camera already agrees with what I intend"
+    ///    check (from the first fix pass), `rally` would just be
+    ///    re-assigned the value it already had, and the reconcile that
+    ///    follows would no-op. The *only* observable difference a deleted
+    ///    guard produces is an extra `goLive()` / `sendRecord(action:
+    ///    "start", ...)` frame put on the wire — so that is what this test
+    ///    counts, by wrapping the primary's own outgoing transport half
+    ///    (`rig.pair.0`).
+    ///
+    /// Verified (by reading, not compiling) that this counter would
+    /// genuinely increment if the guard were removed:
+    /// `LoopbackTransport.sendControl` calls `controlDeliveryHook` (when
+    /// set) synchronously and, whether hooked or not, `deliver` synchronously
+    /// afterward — both inline in the caller's own call stack. `startRally()`
+    /// calls `session?.sendRecord(action: "start", ...)` synchronously in its
+    /// own body, and `sendRecord`'s only gate (`internalPhase == .live ||
+    /// .ready`) is already satisfied by the first call's `goLive()`. So a
+    /// second, guard-free `startRally()` call would synchronously push a
+    /// second "start" frame through this exact hook before returning — no
+    /// settling needed for the count itself, only (below) for the
+    /// state-based assertions that DO depend on the cross-model `Task` hop.
     func testASecondStartWhileRecordingIsIgnored() async {
         let rig = await makePairedRig()
+
+        var startFramesDelivered = 0
+        rig.pair.0.controlDeliveryHook = { frame, deliver in
+            if let message = ControlMessage.decode(frame), case .record("start", _) = message {
+                startFramesDelivered += 1
+            }
+            deliver(frame)
+        }
+
         rig.primary.startRally()
+        XCTAssertEqual(startFramesDelivered, 1, "setup: the first startRally() must reach the secondary")
         await settleCrossModelDelivery(until: { rig.secondary.rally == .recording })
         // Let the primary's own first-start toggle actually finish (not
         // just the secondary's delivery of it) before firing the second
         // call, so `isRecording` reflects a completed start rather than an
         // in-flight one.
         await settleCrossModelDelivery(until: { rig.primaryRecord.isRecording })
+
         rig.primary.startRally()
+        rig.pair.0.controlDeliveryHook = nil
+
         XCTAssertEqual(rig.primary.rally, .recording)
         XCTAssertTrue(rig.primaryRecord.isRecording,
                       "a second startRally() must not silently stop the camera it's already recording on")
+        XCTAssertEqual(startFramesDelivered, 1,
+                      "a second startRally() while already recording must not put a second \"start\" frame on the wire")
     }
 
     #if DEBUG
@@ -329,8 +397,14 @@ final class LiveSessionModelTests: XCTestCase {
     /// `testPairIsReenabledAfterAPairingFailure` above already does — lets
     /// the real timer do all of the ticking, in one consistent time domain,
     /// exactly as production does.
+    /// `pair` (the raw `LoopbackTransport` half-pair) comes along too, past
+    /// the point where this method's own use of `controlDeliveryHook` has
+    /// been cleared (`nil`ed out below once the buffered hellos are
+    /// released) — so a caller can install its own hook afterward, e.g. to
+    /// count wire frames, without stepping on setup's.
     private func makePairedRig() async -> (primary: LiveSessionModel, secondary: LiveSessionModel,
-                                            primaryRecord: RecordModel, secondaryRecord: RecordModel) {
+                                            primaryRecord: RecordModel, secondaryRecord: RecordModel,
+                                            pair: (LoopbackTransport, LoopbackTransport)) {
         let pair = LoopbackTransport.pair()
 
         // beginPairing() constructs the PeerSession and calls its start()
@@ -410,6 +484,6 @@ final class LiveSessionModelTests: XCTestCase {
                 """)
         }
 
-        return (primary, secondary, primaryRecord, secondaryRecord)
+        return (primary, secondary, primaryRecord, secondaryRecord, pair)
     }
 }

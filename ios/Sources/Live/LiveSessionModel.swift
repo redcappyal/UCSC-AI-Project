@@ -66,8 +66,11 @@ final class LiveSessionModel: ObservableObject {
     private var submission = RunSubmission()
     /// Chains `RecordModel.toggleRecording()` calls so a fire-and-forget
     /// start and an awaited stop can never land out of the order they were
-    /// issued in. See `toggleRecordingChained(ifRecordingIs:)`.
-    private var recordingTransition: Task<Void, Never>?
+    /// issued in, and reports whether its own call to `toggleRecording()`
+    /// actually ran. See `toggleRecordingChained(ifRecordingIs:)` —
+    /// `endSession()` reads that to know whether it produced a clip worth
+    /// discarding.
+    private var recordingTransition: Task<Bool, Never>?
 
     /// The server's paired-run role. Fixed by the pairing role: initiator = a.
     var cameraRole: String? { role.map { $0 == .primary ? "a" : "b" } }
@@ -200,23 +203,43 @@ final class LiveSessionModel: ObservableObject {
     }
 
     func endSession() {
-        // A running recording must never be abandoned: left alone, the
-        // camera keeps rolling with no path back to it once `session`/
-        // `pairing` are torn down below, and the *next* rally start would
-        // toggle the abandoned recording *off* and publish its clip into
-        // the shared `finishedClip` — the exact inversion this fix exists
-        // to prevent. Chained (not a bare toggle) so it can't race an
-        // in-flight start/stop, and gated on `isRecording` for the same
-        // reason `finishRecordingAndSubmit()` is: toggling when the camera
-        // isn't actually recording would START it, not stop it.
-        if record?.isRecording == true {
-            let toggle = toggleRecordingChained(ifRecordingIs: true)
-            // Captures `record` itself (not `self`/`self.record`) so the
-            // clip this stop produces is discarded even if this
-            // `LiveSessionModel` — or its binding to this `RecordModel` — is
-            // gone by the time the toggle finishes.
-            Task { [record] in
-                await toggle.value
+        // A running recording — or one that is about to start via a
+        // chained toggle still queued behind an earlier one — must never
+        // be abandoned: left alone, the camera keeps rolling (or starts
+        // rolling) with no path back to it once `session`/`pairing` are
+        // torn down below, and the *next* rally start would toggle the
+        // abandoned recording *off* and publish its clip into the shared
+        // `finishedClip` — the exact inversion this fix exists to prevent.
+        //
+        // Unconditional — deliberately NOT gated on a preceding
+        // `record?.isRecording == true` (an earlier version's mistake):
+        // that read is taken *now*, at call time, but what must be
+        // cancelled is a *chained* toggle that can still run *later*.
+        // Failing sequence that gate missed: startRally() enqueues a start
+        // toggle and returns (fire-and-forget) → endSession() runs while
+        // the camera hasn't actually started yet, so an `isRecording`-gated
+        // `if` here reads false, skips scheduling a stop, and lets teardown
+        // proceed → the queued start toggle then executes after teardown,
+        // into a session nobody owns anymore. `toggleRecordingChained
+        // (ifRecordingIs:)` re-reads `record.isRecording` itself, at the
+        // moment it actually runs (after awaiting whatever was already
+        // chained ahead of it) — so calling it unconditionally here is a
+        // correctly-timed no-op when nothing ends up recording, and a
+        // correctly-timed stop otherwise.
+        let toggle = toggleRecordingChained(ifRecordingIs: true)
+        // Captures `record` itself (not `self`/`self.record`) so the clip
+        // this stop produces is discarded even if this `LiveSessionModel`
+        // — or its binding to this `RecordModel` — is gone by the time the
+        // toggle finishes. Clears `finishedClip` only when the toggle
+        // actually fired (per its own reported return value): `finishedClip`
+        // is shared with the plain single-camera flow (see
+        // `finishRecordingAndSubmit()`'s own comment on the same field), so
+        // when this call was skipped — nothing here was ever recording —
+        // any clip already sitting in `finishedClip` belongs to that other
+        // flow and must not be nilled out from under it.
+        Task { [record] in
+            let toggled = await toggle.value
+            if toggled {
                 // Ending a session is a cancellation, not a completed
                 // rally: never submit this clip. Clearing it also keeps it
                 // from leaking into a later single-camera visit to this
@@ -327,13 +350,20 @@ final class LiveSessionModel: ObservableObject {
     /// the guard fails, the call is skipped rather than forced;
     /// `reconcileRallyAfterStartAttempt()` is what turns a skipped or
     /// failed start into a visible `.failed` rally instead of a silent one.
-    @discardableResult
-    private func toggleRecordingChained(ifRecordingIs expected: Bool) -> Task<Void, Never> {
+    ///
+    /// Returns whether this call's own `toggleRecording()` actually ran —
+    /// `false` when the guard above skipped it. No longer
+    /// `@discardableResult`: every call site now reads or awaits this to
+    /// decide something (`endSession()` needs it to know whether it
+    /// produced a clip worth discarding; the others await it purely for
+    /// sequencing, which reading the property still allows).
+    private func toggleRecordingChained(ifRecordingIs expected: Bool) -> Task<Bool, Never> {
         let previous = recordingTransition
         let next = Task { [weak self] in
             await previous?.value
-            guard let self, let record = self.record, record.isRecording == expected else { return }
+            guard let self, let record = self.record, record.isRecording == expected else { return false }
             await record.toggleRecording()
+            return true
         }
         recordingTransition = next
         return next
@@ -362,6 +392,21 @@ final class LiveSessionModel: ObservableObject {
     func reconcileRallyAfterStartAttempt() {
         guard rally == .recording else { return }
         guard record?.isRecording != true else { return }
+        // The peer may already be acting as though the rally is live —
+        // startRally() sends "start" before this phone's own camera is
+        // confirmed, and handleRemoteRecord's "start" case (reached only on
+        // the far side of that same send) starts the peer's own local
+        // recording independently, before either phone knows whether this
+        // one's camera actually started. If it didn't, the rally cannot
+        // proceed, and the peer must be told to retract *before* this phone
+        // marks itself `.failed` below: once `.failed`, `stopRally()`'s own
+        // `guard rally == .recording` blocks this phone from ever sending
+        // "stop" again, so this is the last chance to do it. The send has
+        // to live here rather than in `stopRally()` because `stopRally()`
+        // is never reached on this path — `rally` never actually made it to
+        // a stoppable state, only the optimistic assumption (set at the top
+        // of `startRally()`/`startLocalRecording()`) that it had.
+        session?.sendRecord(action: "stop", ptsNs: UInt64(ClockSync.hostNow() * 1_000_000_000))
         rally = .failed(record?.errorText ?? "Recording did not start.")
         republish()
     }
