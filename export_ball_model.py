@@ -60,6 +60,15 @@ def main():
     # needs the opposite -- raw outputs, decode in Swift for ANE residency.
     model.head.decode_in_inference = True
 
+    # Verify square input: the tiled-sweep detector requires it
+    if exp.test_size[0] != exp.test_size[1]:
+        raise ValueError(
+            f"exp.test_size must be square for tiled-sweep detection, "
+            f"got ({exp.test_size[0]}, {exp.test_size[1]}). "
+            f"The detector cuts square tiles and feeds them to the network, "
+            f"so non-square inputs cannot be handled."
+        )
+
     size = exp.test_size[0]
     example = torch.randn(1, 3, size, size)
     traced = torch.jit.trace(model, example)
