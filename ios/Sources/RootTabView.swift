@@ -14,7 +14,7 @@ struct RootTabView: View {
     // Bound selection rather than per-tab onAppear/onDisappear: SwiftUI does
     // not guarantee their ordering across a tab switch, and the mask must be
     // a function of which tab is showing, not of which callback ran last.
-    @State private var tab: RootTab = .play
+    @State private var tab: RootTab = .launch
 
     var body: some View {
         TabView(selection: $tab) {

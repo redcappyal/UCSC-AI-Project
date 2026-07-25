@@ -3,6 +3,12 @@ import XCTest
 import UIKit
 @testable import SquashLineCalling
 
+// OrientationPolicy is @MainActor-isolated; XCTestCase is not, so its test
+// methods are nonisolated by default. Two tests below reference
+// OrientationPolicy.shared and AppDelegate().application(...) directly —
+// isolating the whole case keeps those references on the actor they
+// require. Inert for the other, pure-value-type tests.
+@MainActor
 final class OrientationLockTests: XCTestCase {
     func testPlayTabIsLandscapeOnly() {
         // The preview is live while the operator aims the phone in its mount,
@@ -41,7 +47,8 @@ final class OrientationLockTests: XCTestCase {
     }
 
     func testPortraitInterfaceHasNoMount() {
-        // Portrait is not a capture mode; callers fall back rather than guess.
+        // Portrait is not a capture mode; a future caller would need to fall
+        // back rather than guess.
         XCTAssertNil(OrientationLock.captureOrientation(for: .portrait))
         XCTAssertNil(OrientationLock.captureOrientation(for: .portraitUpsideDown))
         XCTAssertNil(OrientationLock.captureOrientation(for: .unknown))
@@ -62,12 +69,12 @@ final class OrientationLockTests: XCTestCase {
     }
 
     /// `apply` assigns `mask` before it ever looks at `UIApplication.shared`'s
-    /// scenes, so the delegate answers correctly on the very next query even
-    /// when this test host has no `.foregroundActive` `UIWindowScene` to hand
-    /// the geometry-update call to — which is the launch-time case FIX 1
-    /// exists for. `.portraitUpsideDown` is likewise a mask nothing else in
-    /// the app ever applies, so a no-op `apply` would leave `mask` at
-    /// whatever it was and this would fail rather than pass by coincidence.
+    /// scenes, so the delegate answers correctly on the very next query
+    /// regardless of whether a foreground-active scene exists — which is the
+    /// launch-time case FIX 1 exists for. `.portraitUpsideDown` is likewise a
+    /// mask nothing else in the app ever applies, so a no-op `apply` would
+    /// leave `mask` at whatever it was and this would fail rather than pass
+    /// by coincidence.
     func testApplyUpdatesTheMaskRegardlessOfSceneState() {
         let previous = OrientationPolicy.shared.mask
         defer { OrientationPolicy.shared.apply(previous) }

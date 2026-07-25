@@ -2,7 +2,15 @@
 import UIKit
 
 /// Which tab is showing, and therefore which orientations the app permits.
-enum RootTab: Hashable, CaseIterable { case play, matches, coach }
+enum RootTab: Hashable, CaseIterable {
+    case play, matches, coach
+
+    /// The tab the app opens into. `RootTabView`'s initial `@State` and
+    /// `OrientationPolicy`'s seeded mask both read this one literal, so the
+    /// two can never drift apart — a hand-copied literal in each place is
+    /// what let the launch-orientation bug happen the first time.
+    static let launch: RootTab = .play
+}
 
 /// The app's supported-orientation policy as pure functions.
 ///
@@ -51,11 +59,11 @@ enum OrientationLock {
 @MainActor
 final class OrientationPolicy {
     static let shared = OrientationPolicy()
-    /// Seeded to the launch tab's mask (`RootTabView`'s initial `@State`
-    /// is `.play`): UIKit asks the delegate for the launch orientation at
-    /// scene connection, before any SwiftUI `onAppear` can run, so a
-    /// default of `.all` would bring the app up portrait.
-    private(set) var mask: UIInterfaceOrientationMask = OrientationLock.mask(for: .play)
+    /// Seeded to `RootTab.launch`'s mask: UIKit asks the delegate for the
+    /// launch orientation at scene connection, before any SwiftUI
+    /// `onAppear` can run, so a default of `.all` would bring the app up
+    /// portrait.
+    private(set) var mask: UIInterfaceOrientationMask = OrientationLock.mask(for: .launch)
 
     func apply(_ newMask: UIInterfaceOrientationMask) {
         mask = newMask
@@ -66,8 +74,12 @@ final class OrientationPolicy {
         // not poll — it would stay on the stale orientation until something
         // else (a rotation, a tab switch) happened to trigger another query.
         // Falling back to any scene with a key window still reaches UIKit.
+        // Both predicates require a key window so the call below is never
+        // partial: a `.foregroundActive` scene with a nil `keyWindow` would
+        // otherwise optional-chain away `setNeedsUpdateOfSupportedInterfaceOrientations()`
+        // and leave only `requestGeometryUpdate` running.
         let scenes = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
-        guard let scene = scenes.first(where: { $0.activationState == .foregroundActive })
+        guard let scene = scenes.first(where: { $0.activationState == .foregroundActive && $0.keyWindow != nil })
             ?? scenes.first(where: { $0.keyWindow != nil }) else { return }
         scene.keyWindow?.rootViewController?.setNeedsUpdateOfSupportedInterfaceOrientations()
         scene.requestGeometryUpdate(.iOS(interfaceOrientations: newMask))

@@ -41,7 +41,9 @@ targets:
         # Superset of every orientation the app can present. OrientationLock
         # narrows per tab at runtime and the web tabs pass `.all`; UIKit
         # intersects it with this list, so upside-down is excluded here
-        # rather than in code.
+        # rather than in code. Portrait stays because the Matches and Coach
+        # webviews are portrait mobile UI — removing it here would break
+        # those tabs no matter what OrientationLock does at runtime.
         UISupportedInterfaceOrientations:
           [UIInterfaceOrientationPortrait, UIInterfaceOrientationLandscapeLeft,
            UIInterfaceOrientationLandscapeRight]
