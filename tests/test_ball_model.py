@@ -80,3 +80,41 @@ def test_describe_summarises_for_provenance_stamping(tmp_path):
     assert summary["conf_threshold"] == 0.25
     assert summary["input_size"] == [416, 416]
     assert summary["source_checkpoint"] == "best_ckpt.pth (epoch 100)"
+
+
+def test_describe_returns_none_on_scalar_input_size(tmp_path):
+    """describe() must be best-effort: scalar input_size (TypeError) must return None."""
+    model_dir = _write_model(tmp_path, input_size=416)
+    assert ball_model.describe(model_dir) is None
+
+
+def test_load_manifest_raises_on_scalar_input_size(tmp_path):
+    """load_manifest() must raise loudly on malformed manifest (TypeError from scalar input_size)."""
+    model_dir = _write_model(tmp_path, input_size=416)
+    with pytest.raises(TypeError):
+        ball_model.load_manifest(model_dir)
+
+
+def test_describe_returns_none_on_top_level_json_list(tmp_path):
+    """describe() must be best-effort: top-level JSON list (AttributeError) must return None."""
+    artifact = tmp_path / "model.torchscript"
+    artifact.write_bytes(b"not-a-real-torchscript")
+    (tmp_path / "manifest.json").write_text(json.dumps([]), encoding="utf-8")
+    assert ball_model.describe(tmp_path) is None
+
+
+def test_load_manifest_raises_on_top_level_json_list(tmp_path):
+    """load_manifest() must raise loudly on top-level JSON list (AttributeError from .get() on list)."""
+    artifact = tmp_path / "model.torchscript"
+    artifact.write_bytes(b"not-a-real-torchscript")
+    (tmp_path / "manifest.json").write_text(json.dumps([]), encoding="utf-8")
+    with pytest.raises(AttributeError):
+        ball_model.load_manifest(tmp_path)
+
+
+def test_model_manifest_artifact_path(tmp_path):
+    """ModelManifest.artifact_path must resolve to model.torchscript inside model_dir."""
+    model_dir = _write_model(tmp_path)
+    manifest = ball_model.load_manifest(model_dir)
+    assert manifest.artifact_path == model_dir / "model.torchscript"
+    assert manifest.artifact_path.is_file()

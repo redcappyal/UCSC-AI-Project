@@ -125,7 +125,7 @@ def describe(model_dir=None):
     """
     try:
         manifest = load_manifest(model_dir)
-    except (FileNotFoundError, ValueError, KeyError):
+    except Exception:
         return None
     return {
         "name": manifest.name,
