@@ -20,8 +20,11 @@ final class CameraController: NSObject {
     let session = AVCaptureSession()
     /// Which way the phone sits in its mount — set before `configure()` runs,
     /// since it drives both the video connection's rotation and the asset
-    /// writer's dimensions below. `RecordModel.startCamera` resolves it from
-    /// the interface orientation and pins it there.
+    /// writer's dimensions below.
+    ///
+    /// Nothing assigns this yet, so every session currently captures
+    /// `.landscapeRight`. Resolving it from the device's interface
+    /// orientation is still to come.
     var orientation: CaptureSettings.CaptureOrientation = .landscapeRight
     /// Every video frame, on the output queue. RecordView wires this to
     /// BallTracker.process.
@@ -105,8 +108,9 @@ final class CameraController: NSObject {
         }
 
         if let connection = videoOutput.connection(with: .video) {
-            // Portrait upright to match the locked UI orientation, or 0 for a
-            // landscape mount, whose sensor readout is already upright.
+            // 0 for landscape-right (the sensor's native readout) or 180 for
+            // landscape-left (that readout upside down) — see
+            // CaptureSettings.rotationAngle(for:).
             let angle = CaptureSettings.rotationAngle(for: orientation)
             if connection.isVideoRotationAngleSupported(angle) {
                 connection.videoRotationAngle = angle
@@ -220,8 +224,9 @@ final class CameraController: NSObject {
             .appendingPathComponent("rally-\(Int(Date().timeIntervalSince1970)).mp4")
         let writer = try AVAssetWriter(outputURL: url, fileType: .mp4)
 
-        // Same orientation the video connection was rotated for above: 4K
-        // rotated upright in portrait, or the sensor's native 4K landscape.
+        // Same geometry for both mounts (CaptureSettings.frameSize(for:)):
+        // rotationAngle(for:) above already normalizes the frame upright
+        // either way, so the writer always sees 4K landscape.
         let frameSize = CaptureSettings.frameSize(for: orientation)
         let video = AVAssetWriterInput(mediaType: .video, outputSettings: [
             AVVideoCodecKey: CaptureSettings.videoCodec,
