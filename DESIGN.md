@@ -741,19 +741,34 @@ source tag reports it.
 
 ### 8.22 Two-way segment (`.corrSeg`)
 
-Two equal-width options in one capsule; exactly one selected. Used by the call
-page's Bounce / Not-bounce toggle (§16, `p-track`) and `p-pair`'s role picker
-(§16, `p-pair`).
+Two independent pill buttons, not one shared capsule; exactly one selected.
+Used by the call page's Bounce / Not-bounce toggle (§16, `p-track`) and
+`p-pair`'s role picker (§16, `p-pair`).
 
-- Capsule (`border-radius:999px`), `--surface` fill, 1 px `--line` border.
-- Each half ≥ 44 px tall and ≥ 44 px wide (§0.6); labels uppercase with
-  `letter-spacing:.05em` (§0.7).
-- The selected half takes `--accent-bg` with `--accent-text`; the unselected
-  half stays `--dim` on `--surface`. Never green/red — selection is not a
-  verdict (§0.3).
-- Both halves are always present and always the same size, so selection never
-  reflows anything (§0.9).
+- Two equal-width pills (`border-radius:999px`, the standard button radius),
+  6 px gap between them. No outer container — no shared fill, border, or
+  radius wrapping the pair.
+- Unselected: 1 px `--line` border, transparent background, inherited
+  `--text` label color, weight 600.
+- Selected: `--accent-bg` fill with `--accent-text`, border-color
+  transparent, weight 700. Never green/red — selection is not a verdict
+  (§0.3).
+- Labels uppercase with `letter-spacing:.05em` (§0.7).
+- Both halves are always present and always the same size, so selection
+  never reflows anything (§0.9).
 - No third state. A segment that needs one is a different component.
+
+**§0.6 debt (web).** The shipping control is `min-height:38px` — below the
+44 px binding minimum. This is a pre-existing violation, not a sanctioned
+exception: it ships below the line today and is owed a fix, tracked the same
+as any other §0.6 gap would be. Do not read the 38 px figure as permission;
+new web work reusing `.corrSeg` inherits the debt until it's fixed, not a
+license to repeat it.
+
+**Native (`p-pair`'s iOS role segment).** Built to the same grammar above —
+two equal-width pills, one selected, no third state — but at the full 44 px
+minimum, so it meets §0.6 outright. New native work is not inheriting the
+web control's shortfall.
 
 ---
 
@@ -946,9 +961,9 @@ on `p-pair`'s idle state and backing out to Play still leaves "Record a clip" un
 | Searching | "Looking for the other phone…" | PAIR (disabled) | no peer yet to report real progress on |
 | Confirming | "Codes match?" + `.pair-code` (§8.20) | CONFIRM | operator compares the 4-digit code on both phones; a secondary text action "Codes don't match" (§7 — not a second primary) ends the session and returns to Searching — the wrong-phone / stranger's-phone case |
 | Syncing | "Syncing clocks…" | CONFIRM (disabled) | clock-sync pass; no user action needed |
-| Ready | "Paired · sync ±1.4 ms" (tabular, §0.8) | START RALLY | tapping hands off to `p-live` |
+| Ready (primary) | "Paired · sync ±1.4 ms" (tabular, §0.8) | START RALLY | the calling phone's StereoEngine already exists; tapping hands off to `p-live` |
 | Ready, awaiting peer calibration (primary) | "Paired · waiting for the other phone's calibration" | START RALLY (disabled) | the StereoEngine does not exist until the secondary's calibration arrives; starting would record a rally nothing can call |
-| Ready (secondary) | "Paired · the other phone starts the rally" | — | the engine lives on the primary, so only the primary can honestly know a rally is callable |
+| Ready (secondary) | "Paired · the other phone starts the rally" | — (no primary action) | the engine lives on the primary, so only the primary can honestly know a rally is callable |
 | Degraded | "Link lost — still recording" | — (unaffected) | never a silent downgrade; recording continues |
 | Failed | the session's failure reason, verbatim | PAIR (retry) | e.g. the capture-orientation frame-size guard |
 
