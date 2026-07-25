@@ -50,13 +50,16 @@ enum CaptureSettings {
     ///
     /// The two phones in a paired session MUST agree. Both cases yield the
     /// same `frameSize(for:)`, so dimensions alone cannot tell them apart —
-    /// which is why the mount has to travel explicitly on the wire.
+    /// which is why the mount travels explicitly in `Hello.captureOrientation`.
+    /// `PeerSession` compares it against its own hello at handshake and
+    /// refuses a mismatched pair rather than absorbing it, so the operator
+    /// learns the mount is wrong instead of the archive inheriting it.
     ///
-    /// The mount travels explicitly in `Hello.captureOrientation`, and
-    /// `PeerSession` enforces the match at handshake (see its `.hello`
-    /// handler) by comparing the peer's hello against its own. Mixing mounts
-    /// is refused rather than absorbed, so the operator learns the mount is
-    /// wrong instead of the archive inheriting it.
+    /// The capture side is not wired to it yet: every `PeerSession` built
+    /// today takes the `.landscapeRight` default, so `CameraController`'s
+    /// real mount never reaches the wire. Until a paired session is
+    /// constructed with the resolved mount, a genuinely mixed pair still
+    /// pairs — `ios/PEER.md` tracks this.
     enum CaptureOrientation: String, Codable, Equatable, CaseIterable {
         case landscapeRight, landscapeLeft
     }

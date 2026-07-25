@@ -62,6 +62,20 @@ final class CaptureOrientationTests: XCTestCase {
         XCTAssertTrue(why.lowercased().contains("orientation"), "unhelpful reason: \(why)")
         // Both sides must refuse: each runs its own guard against the other's
         // hello, and a one-sided refusal would leave the peer waiting.
+        //
+        // Incidental dependency: secondary only gets a chance to see
+        // primary's hello (and thus reach .failed itself) because
+        // primary.start() still calls transport.startInitiator() — and
+        // handleTransportState still sends .hello on .connected — even
+        // though primary's own phase is already .failed from the first,
+        // synchronously-delivered exchange. Neither call is phase-guarded
+        // today; that's production-equivalent (a failed session has nothing
+        // left to protect), but it means this assertion also implicitly
+        // relies on it. A future `guard internalPhase == .searching` before
+        // sending .hello in handleTransportState would silently stop
+        // secondary from ever receiving primary's hello, and this
+        // assertion would then fail for a reason unrelated to whether the
+        // orientation guard itself is correct.
         guard case .failed = secondary.phase else {
             return XCTFail("expected failed on the secondary, got \(secondary.phase)")
         }
@@ -123,5 +137,36 @@ final class CaptureOrientationTests: XCTestCase {
             return XCTFail("a legacy hello must decode, not drop")
         }
         XCTAssertNil(decoded.captureOrientation)
+    }
+
+    /// Not a version-bump tripwire in the ordinary sense: both sessions in
+    /// every other test here build their hello from the same
+    /// `peerProtoVersion` constant, so a bump to 2 would leave them matching
+    /// each other and every other test would keep passing. What a bump
+    /// actually breaks is invisible to this suite — a real peer still on
+    /// version 1 would fail the protoVersion check in `handleControl`
+    /// *before* the orientation guard ever runs, so it would be reported as
+    /// a version mismatch instead of the specific, actionable orientation
+    /// error. Pinned directly since nothing else here can catch that.
+    func testProtoVersionStaysPinnedSoLegacyPeersReachTheOrientationGuard() {
+        XCTAssertEqual(peerProtoVersion, 1,
+                       "bumping this makes the orientation guard unreachable for legacy peers: the version check runs first")
+    }
+
+    /// `CaptureOrientation`'s raw values are wire format, not an internal
+    /// implementation detail — pairing across app versions round-trips them
+    /// through JSON. Renaming a case (e.g. `landscapeRight` →
+    /// `landscapeStandard`) type-checks as a pure refactor but silently
+    /// changes the encoded bytes, breaking any cross-version pair where one
+    /// side has renamed and the other hasn't. Pin the literal string.
+    func testCaptureOrientationWireValueIsPinned() {
+        let hello = Hello(protoVersion: peerProtoVersion, appVersion: "dev", deviceModel: "x",
+                          nonce: 1, frameW: CaptureSettings.frameWidth,
+                          frameH: CaptureSettings.frameHeight,
+                          captureOrientation: .landscapeRight)
+        let data = try! ControlMessage.encode(.hello(hello))
+        XCTAssertTrue(String(decoding: data, as: UTF8.self).contains("landscapeRight"),
+                     "the raw wire value must stay \"landscapeRight\" — renaming the case " +
+                     "silently changes the bytes and breaks cross-version pairing")
     }
 }

@@ -262,8 +262,9 @@ final class PeerSession: ObservableObject {
             // their hello from those same constants, so it could never fail.
             //
             // Orientation is compared explicitly because both mounts share
-            // one frame size; a nil orientation is a peer predating the field
-            // (portrait capture), which is a genuine mismatch.
+            // one frame size; a nil orientation is a peer predating the
+            // field — it advertises no mount at all, which cannot equal
+            // ours, a genuine mismatch.
             guard theirs.frameW == myHello.frameW,
                   theirs.frameH == myHello.frameH,
                   theirs.captureOrientation == myHello.captureOrientation else {

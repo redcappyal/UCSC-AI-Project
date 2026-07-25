@@ -18,9 +18,10 @@ struct Hello: Codable, Equatable {
     /// from a build predating it THROW in JSONDecoder; ControlMessage.decode
     /// returns nil and handleControl guards that away with no branch, so the
     /// frame is dropped silently and pairing hangs in .searching with no
-    /// diagnostic. Optional decodes cleanly and nil reads as "legacy peer,
-    /// portrait capture" — a mismatch against any landscape session, refused
-    /// with a message that tells the operator what to do.
+    /// diagnostic. Optional decodes cleanly: a peer predating this field
+    /// advertises no mount at all, which cannot equal any real orientation
+    /// and is refused as a mismatch — not read as any particular capture
+    /// mode.
     var captureOrientation: CaptureSettings.CaptureOrientation? = nil
 }
 

@@ -59,13 +59,15 @@ Do not add it before approval — Automatic signing fails for everyone.
   normalizes landscape-left upright with 180. **Both phones must run the same mount** —
   `PeerSession` enforces it at handshake by comparing the peer's advertised frame size
   AND `captureOrientation` against its own `myHello`, and refuses the pair otherwise.
-  A peer on a build predating the `captureOrientation` field advertises none; that reads
-  as legacy portrait capture and is refused with the same message. `peerProtoVersion`
+  A peer on a build predating the `captureOrientation` field advertises none, which cannot
+  match either mount and is refused with the same message. `peerProtoVersion`
   deliberately stays at 1 so those peers reach this specific, actionable error instead of
   a generic version mismatch.
-- When the production pairing path is wired, `PeerSession` must be constructed with the
-  session's resolved `captureOrientation` (`RecordModel.captureOrientation`), not the
-  `.landscapeRight` default.
+- The capture side is not wired to any of this yet: every `PeerSession` built today takes
+  the `.landscapeRight` default, so `CameraController.orientation` (itself hardcoded to
+  `.landscapeRight` — resolving it from the device's real interface orientation is still to
+  come) never reaches the wire. Until a future task constructs `PeerSession` with the
+  session's actual resolved mount, a genuinely mixed pair still pairs.
 - Detections flow one way (secondary → primary); events flow back in Phase 3.
 
 ## Live path (spec Phase 4)
