@@ -56,9 +56,28 @@ final class CameraController: NSObject {
         }
     }
 
+    /// Repeatable: every call leaves the session configured from scratch.
+    ///
+    /// That matters because most of this method's throws happen *after* the
+    /// session has already been mutated — `applyCaptureFormat` throws with the
+    /// camera input added, the video-output guard throws with the same, and
+    /// `lockForCourt()` throws with the session fully configured and running.
+    /// `RecordModel.startCamera()` clears its own `cameraStarted` flag on any
+    /// of those so the user can retry, and the model now outlives the view, so
+    /// popping and re-pushing the record stage re-runs its `.task` and really
+    /// does retry. Without the teardown below, that retry hits
+    /// `session.canAddInput(...) == false` and throws `configurationFailed`
+    /// forever — the camera would be bricked for the rest of the launch.
+    ///
+    /// Tearing down first rather than tracking "already configured": a
+    /// half-configured session is the case that actually needs handling, and
+    /// that state has to be *undone*, not skipped. One rule, no second flag to
+    /// keep in step with `RecordModel.cameraStarted`.
     private func configureSession() throws {
         session.beginConfiguration()
         defer { session.commitConfiguration() }
+        for input in session.inputs { session.removeInput(input) }
+        for output in session.outputs { session.removeOutput(output) }
         // .inputPriority hands format choice to us: any real preset would
         // stomp the activeFormat set below.
         session.sessionPreset = .inputPriority

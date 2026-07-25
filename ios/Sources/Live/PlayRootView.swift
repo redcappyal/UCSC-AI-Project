@@ -17,46 +17,15 @@ struct PlayRootView: View {
     @State private var showPeerBench = false
     #endif
 
-    // MARK: - Shared-`RecordModel` hazard (see task-9 report)
-    //
-    // `RecordView`'s record button calls `RecordModel.toggleRecording()`
-    // directly. `LiveSessionModel` never does — every call it makes is
-    // routed through `toggleRecordingChained(ifRecordingIs:)`, which
-    // re-reads `record.isRecording` at execution time so a queued toggle can
-    // never invert. That chain protects call *ordering* within the live
-    // layer; it has no way to know about a toggle that happened outside it
-    // entirely. Sharing one `RecordModel` between both stages means a plain
-    // recording started from `RecordView` is invisible to the live layer's
-    // guards (and vice versa): `startRally()`'s `ifRecordingIs: false` guard
-    // would see an already-true `isRecording` it did not cause, skip its own
-    // toggle, and `reconcileRallyAfterStartAttempt()` would read that
-    // pre-existing `true` as "the start succeeded" — after which
-    // `stopRally()` would stop and submit that stray clip as the rally
-    // footage. The mirror case is just as real: stopping a live rally's
-    // recording via `RecordView`'s raw button would hand that footage to the
-    // plain judge flow (`ResultsView`, via the shared `finishedClip`)
-    // instead of the paired-upload path, while `LiveSessionModel` is left
-    // believing a recording it no longer owns is still running.
-    //
-    // Fixed here, not in either model: block the navigation link into
-    // whichever stage did not cause the state currently in flight. Neither
-    // check strands the user — each can still return to the stage that
-    // *does* own the in-flight recording to resolve it (stop it from
-    // `RecordView`, or drive the rally to completion from the live side).
-
-    /// True only when a recording is running that the live layer did not
-    /// start — `live.rally == .recording` is what the live layer's own chain
-    /// caused, so excluding it here is what keeps this from also blocking a
-    /// return to Live while its *own* rally is in progress.
-    private var liveBlockedByPlainRecording: Bool {
-        record.isRecording && live.rally != .recording
-    }
-
-    /// A live rally in flight uses `RecordModel` too; entering the record
-    /// stage while one is recording would expose it to the raw button above.
-    private var recordBlockedByLiveRally: Bool {
-        live.rally == .recording
-    }
+    // Both hero cards are plainly navigable. The shared-`RecordModel` hazard
+    // is handled where the camera actually lives — `RecordModel`'s one
+    // serialized, owner-tagged `setRecording(_:owner:)` funnel — not by
+    // gating navigation from here. Gating entry was the wrong boundary three
+    // ways: `.disabled` cannot reach a stage already pushed (a remote
+    // "record" starts a rally on the secondary phone with no tap on it at
+    // all), reading `live.rally` to decide whether plain recording is
+    // reachable is the coupling DESIGN.md §16 forbids, and the gate opened
+    // before the camera stopped.
 
     var body: some View {
         NavigationStack {
@@ -67,8 +36,6 @@ struct PlayRootView: View {
                         heroCard("Record a clip", "Film a rally with this phone's camera",
                                  systemImage: "video", accent: true)
                     }
-                    .disabled(recordBlockedByLiveRally)
-                    .opacity(recordBlockedByLiveRally ? 0.4 : 1)
 
                     NavigationLink {
                         PairingView(model: live)
@@ -76,8 +43,6 @@ struct PlayRootView: View {
                         heroCard("Live match", "Record and call in real time",
                                  systemImage: "dot.radiowaves.left.and.right", accent: false)
                     }
-                    .disabled(liveBlockedByPlainRecording)
-                    .opacity(liveBlockedByPlainRecording ? 0.4 : 1)
                     Spacer()
                 }
                 .padding(.horizontal, 14)
@@ -97,6 +62,8 @@ struct PlayRootView: View {
                         Image(systemName: "antenna.radiowaves.left.and.right")
                             .foregroundStyle(Theme.dim)
                     }
+                    // §15: icon-only buttons carry a label, same as the gear.
+                    .accessibilityLabel("Peer link bench")
                 }
                 #endif
             }
@@ -108,25 +75,36 @@ struct PlayRootView: View {
         #endif
     }
 
+    /// §8.15: radius 8 (§4.4's card token — 14 is reserved for the verdict
+    /// box), full width, `min-height:72`, padding 14, row gap 12, 28 px line
+    /// icon. Accent = `--accent-bg` fill with *all* ink `--accent-text`;
+    /// surface = `--surface` fill, `1px --line` border, `--text` title,
+    /// `--dim` icon and description.
     private func heroCard(_ title: String, _ subtitle: String,
                           systemImage: String, accent: Bool) -> some View {
         HStack(spacing: 12) {
             Image(systemName: systemImage)
-                .foregroundStyle(accent ? Theme.accentText : Theme.text)
+                .font(.system(size: 28))
+                .foregroundStyle(accent ? Theme.accentText : Theme.dim)
             VStack(alignment: .leading, spacing: 2) {
                 Text(title).font(.system(.headline).weight(.bold))
                     .foregroundStyle(accent ? Theme.accentText : Theme.text)
                 Text(subtitle).font(.footnote)
-                    .foregroundStyle(accent ? Theme.accentText.opacity(0.7) : Theme.dim)
+                    // No `opacity(0.7)` on the accent card: §8.15 says all of
+                    // its ink is `--accent-text`, and an alpha step is not a
+                    // token.
+                    .foregroundStyle(accent ? Theme.accentText : Theme.dim)
             }
             Spacer(minLength: 0)
         }
         .padding(14)
         .frame(minHeight: 72)
-        // §4.4 radius scale: 8px is the card token (14px is reserved for the
-        // verdict box) — the one deliberate deviation from the brief's draft
-        // snippet, corrected to match DESIGN.md rather than drift from it.
         .background(accent ? Theme.accentBg : Theme.surface,
                     in: RoundedRectangle(cornerRadius: 8))
+        .overlay {
+            if !accent {
+                RoundedRectangle(cornerRadius: 8).stroke(Theme.line, lineWidth: 1)
+            }
+        }
     }
 }

@@ -6,6 +6,18 @@ struct FinishedClip: Identifiable {
     let duration: Double
 }
 
+/// Which consumer asked for a recording — the record stage's own button, or
+/// the live layer's rally lifecycle.
+///
+/// One `RecordModel` (one camera) is shared by both, so "who started this
+/// recording" is not derivable from anything else: `LiveSessionModel.rally`
+/// is that layer's *belief*, which is exactly what must never be trusted here
+/// (DESIGN.md §16 — pairing adds capability, never gates it). The owner is
+/// recorded where the camera actually lives, for the duration of the
+/// recording, and it decides two things: who is allowed to stop it, and which
+/// consumer its clip is surfaced to.
+enum RecordingOwner: Equatable { case single, live }
+
 @MainActor
 final class RecordModel: ObservableObject {
     let camera = CameraController()
@@ -17,7 +29,46 @@ final class RecordModel: ObservableObject {
     @Published var errorText: String?
     /// Resolved capture exposure, shown once the court lock lands.
     @Published var exposureNote: String?
-    @Published var finishedClip: FinishedClip?   // non-nil presents ResultsView
+
+    /// Who started the recording currently running, or nil when the camera is
+    /// not recording. Written only by `applyRecording(_:owner:)`.
+    @Published private(set) var recordingOwner: RecordingOwner?
+
+    /// The clip the last completed recording produced, and who it belongs to.
+    ///
+    /// Deliberately not readable as one shared field any more: both consumers
+    /// used to read the same `finishedClip`, so a live-owned rally could open
+    /// `ResultsView` in the plain judge flow, and a plain recording could be
+    /// submitted as paired rally footage. Each consumer now reads its own
+    /// owner-filtered view of it (`singleCameraClip` / `liveClip`) and cannot
+    /// see — or clear — the other's.
+    @Published private(set) var finishedClip: FinishedClip?
+    @Published private(set) var finishedClipOwner: RecordingOwner?
+
+    /// The record stage's clip: non-nil presents `ResultsView`. Settable so
+    /// `RecordView`'s `.sheet(item:)` can bind to it; writing anything but
+    /// `nil`, or clearing a clip this consumer does not own, is refused.
+    var singleCameraClip: FinishedClip? {
+        get { clip(for: .single) }
+        set { setClip(newValue, for: .single) }
+    }
+
+    /// The live layer's clip, read by `LiveSessionModel` when a rally's stop
+    /// lands. Same rules as `singleCameraClip`, mirrored.
+    var liveClip: FinishedClip? {
+        get { clip(for: .live) }
+        set { setClip(newValue, for: .live) }
+    }
+
+    private func clip(for owner: RecordingOwner) -> FinishedClip? {
+        finishedClipOwner == owner ? finishedClip : nil
+    }
+
+    private func setClip(_ newValue: FinishedClip?, for owner: RecordingOwner) {
+        guard newValue == nil, finishedClipOwner == owner else { return }
+        finishedClip = nil
+        finishedClipOwner = nil
+    }
 
     private static let trailLength = 15
 
@@ -385,16 +436,21 @@ final class RecordModel: ObservableObject {
         flashClearWork?.cancel()
     }
 
-    /// Both the record stage and the live stage call this from their own
-    /// `.task`, now that `PlayRootView` shares one `RecordModel` between
-    /// them — idempotent so the second caller doesn't re-configure (and
-    /// re-flash) an already-running camera.
+    /// Guards `startCamera()`. `RecordView` is the only caller today (it calls
+    /// it from its own `.task`, which re-runs every time the stage is pushed);
+    /// the live stage will call it from its own `.task` when `p-live` lands in
+    /// Task 10. Idempotent either way, so a second caller doesn't re-configure
+    /// — and re-flash — an already-running camera.
     private var cameraStarted = false
 
     func startCamera() async {
         guard !cameraStarted else { return }
         cameraStarted = true
         do {
+            // `CameraController.configure()` is repeatable: it tears its own
+            // inputs/outputs down before re-adding them, so re-entering here
+            // after a mid-configuration failure below really does retry
+            // rather than throwing `configurationFailed` forever.
             try await camera.configure()
             camera.start()
             // Meter the court once from the mounted position, then freeze
@@ -408,32 +464,117 @@ final class RecordModel: ObservableObject {
         }
     }
 
-    func toggleRecording() async {
-        if isRecording {
-            do {
-                let url = try await camera.stopRecording()
-                let duration = recordingStartedAt.map {
-                    Date().timeIntervalSince($0)
-                } ?? 0
-                isRecording = false
-                recordingStartedAt = nil
-                finishedClip = FinishedClip(url: url, duration: duration)
-            } catch {
-                isRecording = false
-                recordingStartedAt = nil
-                errorText = error.localizedDescription
-            }
-        } else {
+    // MARK: - The one recording funnel
+
+    /// Serializes every start/stop against the camera, in the order they were
+    /// issued. Held here — not in any consumer — because the camera is here.
+    private var recordingTransition: Task<Bool, Never>?
+
+    /// Whether a recording is running that `owner` started.
+    ///
+    /// On the model, not in a `View`'s private computed properties, so the
+    /// invariant is assertable without standing up a view — the same reason
+    /// `LiveSessionModel` publishes §16's table as flat state.
+    func isRecordingOwned(by owner: RecordingOwner) -> Bool {
+        isRecording && recordingOwner == owner
+    }
+
+    /// The whole rule, written once: `owner` may start only when nothing is
+    /// recording, and may stop only a recording it started itself.
+    ///
+    /// `applyRecording` enforces exactly this predicate, and `RecordView` asks
+    /// exactly this predicate before offering its button — so what the screen
+    /// offers and what the model will do cannot drift apart.
+    ///
+    /// Evaluate it at the moment the transition would run, never in advance:
+    /// a queued transition ahead of this one can change the answer.
+    func canSetRecording(_ shouldRecord: Bool, owner: RecordingOwner) -> Bool {
+        shouldRecord ? !isRecording : isRecordingOwned(by: owner)
+    }
+
+    /// The single funnel. Chains onto any in-flight transition, re-reads the
+    /// camera's real state at execution time, performs the start or stop only
+    /// if that is actually the needed transition, and returns whether it acted.
+    ///
+    /// Absolute (`shouldRecord`), never a toggle: a toggle issued against a
+    /// camera state that already contradicts the intent flips it the wrong
+    /// way, which is how a stop could once turn into a start.
+    @discardableResult
+    func setRecording(_ shouldRecord: Bool, owner: RecordingOwner) async -> Bool {
+        await enqueueSetRecording(shouldRecord, owner: owner).value
+    }
+
+    /// `setRecording`'s synchronous face, for callers that must fire and
+    /// forget but still need the order fixed at *issue* time — `startRally()`
+    /// kicks a start off without awaiting it, and a stop issued right behind
+    /// it must land behind it. Wrapping `setRecording` in an unstructured
+    /// `Task` at the call site would not do: the enqueue would then happen
+    /// whenever that task got scheduled, so two calls could reach the chain in
+    /// the opposite order from the one they were made in.
+    func enqueueSetRecording(_ shouldRecord: Bool, owner: RecordingOwner) -> Task<Bool, Never> {
+        let previous = recordingTransition
+        let next = Task { [weak self] in
+            await previous?.value
+            guard let self else { return false }
+            return await self.applyRecording(shouldRecord, owner: owner)
+        }
+        recordingTransition = next
+        return next
+    }
+
+    /// Runs only from the chain above, so `isRecording`/`recordingOwner` read
+    /// here are the camera's state *after* everything issued earlier landed.
+    private func applyRecording(_ shouldRecord: Bool, owner: RecordingOwner) async -> Bool {
+        guard canSetRecording(shouldRecord, owner: owner) else { return false }
+        if shouldRecord {
             do {
                 try camera.startRecording()
                 isRecording = true
+                recordingOwner = owner
                 recordingStartedAt = Date()
                 errorText = nil
+                return true
             } catch {
+                // Nothing started, so nothing is owned. The caller learns this
+                // from the `false`; the live layer turns it into a visible
+                // `.failed` rally via `reconcileRallyAfterStartAttempt()`.
                 errorText = error.localizedDescription
+                return false
             }
         }
+        do {
+            let url = try await camera.stopRecording()
+            let duration = recordingStartedAt.map { Date().timeIntervalSince($0) } ?? 0
+            isRecording = false
+            recordingOwner = nil
+            recordingStartedAt = nil
+            finishedClip = FinishedClip(url: url, duration: duration)
+            finishedClipOwner = owner
+            return true
+        } catch {
+            // The recording is over either way (`stopRecording()` clears the
+            // writer before it can throw), so this counts as having acted —
+            // there is just no clip to hand anyone.
+            isRecording = false
+            recordingOwner = nil
+            recordingStartedAt = nil
+            errorText = error.localizedDescription
+            return true
+        }
     }
+
+    #if DEBUG
+    /// Test seam for clip routing. A test host has no capture session, so no
+    /// frame ever reaches the writer and a real stop always ends in
+    /// `CameraError.recordingEmpty` — the success branch of
+    /// `applyRecording`'s stop, the one that publishes a clip, is unreachable
+    /// outside a device. This publishes exactly what that branch would, so the
+    /// owner-routing rule itself can still be asserted.
+    func publishFinishedClipForTesting(_ clip: FinishedClip, owner: RecordingOwner) {
+        finishedClip = clip
+        finishedClipOwner = owner
+    }
+    #endif
 }
 
 final class RemoteDetectionStore {

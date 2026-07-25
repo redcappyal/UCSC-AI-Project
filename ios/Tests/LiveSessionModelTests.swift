@@ -190,30 +190,29 @@ final class LiveSessionModelTests: XCTestCase {
         XCTAssertEqual(rig.secondary.rally, .recording)
     }
 
-    /// `RecordModel.toggleRecording()`'s start branch can throw and leave
-    /// `isRecording == false` with the reason swallowed into `errorText` —
-    /// before this fix, nothing read that back, so `startRally()` proceeded
-    /// straight into `rally == .recording` regardless. Reproducing the real
-    /// throw needs no seam: `CameraController` is a concrete, non-injectable
-    /// type, and `startRecording()`'s `AVAssetWriter` setup doesn't depend
-    /// on a running capture session, so it doesn't reliably fail in a test
-    /// host. So this simulates the state `toggleRecording()`'s catch branch
-    /// leaves behind (`isRecording = false`, `errorText` set) and drives
+    /// `RecordModel`'s start branch can throw and leave `isRecording == false`
+    /// with the reason swallowed into `errorText` — before this fix, nothing
+    /// read that back, so `startRally()` proceeded straight into
+    /// `rally == .recording` regardless. Reproducing the real throw needs no
+    /// seam: `CameraController` is a concrete, non-injectable type, and
+    /// `startRecording()`'s `AVAssetWriter` setup doesn't depend on a running
+    /// capture session, so it doesn't reliably fail in a test host. So this
+    /// simulates the state that catch branch leaves behind
+    /// (`isRecording = false`, `errorText` set) and drives
     /// `reconcileRallyAfterStartAttempt()` directly — the exact
     /// reconciliation `startRally()` schedules for itself once its own
-    /// toggle completes — rather than the real throw.
+    /// transition completes — rather than the real throw.
     ///
-    /// Teardown (added in review): `model.startRally()`'s own chained toggle
-    /// is real — there is no seam to stub `RecordModel.toggleRecording()`
-    /// itself — so once this test's synchronous assertions above finish,
-    /// that already-scheduled `Task` is still pending. Its guard
-    /// (`record.isRecording == false`, which the manual overwrite above
-    /// still satisfies at the point that `Task` actually runs) passes, so it
-    /// goes on to call the real `record.toggleRecording()` — which, per
-    /// `CameraController.startRecording()`, really does open an
+    /// Teardown (added in review): `model.startRally()`'s own chained
+    /// transition is real — there is no seam to stub the camera itself — so
+    /// once this test's synchronous assertions above finish, that
+    /// already-scheduled `Task` is still pending. Its guard
+    /// (`canSetRecording(true, owner: .live)`, which the manual
+    /// `isRecording = false` overwrite above still satisfies at the point
+    /// that `Task` actually runs) passes, so it goes on to really open an
     /// `AVAssetWriter`, with nothing left to ever stop it once `record`
     /// deallocates at the end of this method. Rather than depend on the
-    /// weak `self`/`record` captures inside `toggleRecordingChained`/
+    /// weak `self`/`record` captures inside the funnel /
     /// `reconcileRallyAfterStartAttempt` happening to resolve to nil before
     /// that `Task` runs — plausible, but nothing in this file pins down
     /// that ordering as guaranteed — `async` here buys an explicit place to
@@ -227,10 +226,10 @@ final class LiveSessionModelTests: XCTestCase {
         model.startRally()
         XCTAssertEqual(model.rally, .recording, "setup: startRally() optimistically goes .recording")
 
-        // The real toggle this startRally() call scheduled hasn't run yet —
-        // it's chained behind a suspension point this synchronous section
-        // never reaches — so overwriting this state first is race-free, not
-        // a guess about scheduling order.
+        // The real transition this startRally() call scheduled hasn't run
+        // yet — it's chained behind a suspension point this synchronous
+        // section never reaches — so overwriting this state first is
+        // race-free, not a guess about scheduling order.
         record.isRecording = false
         record.errorText = "camera would not start"
         model.reconcileRallyAfterStartAttempt()
@@ -238,24 +237,25 @@ final class LiveSessionModelTests: XCTestCase {
         XCTAssertEqual(model.rally, .failed("camera would not start"))
         // Before this fix, `rally` would still read `.recording` here, and
         // `stopRally()`'s own guard (`rally == .recording`) would then let a
-        // "stop" through to a toggle that — with `isRecording` false — would
-        // START the camera instead of stopping it, with no remaining exit.
-        // Confirm that door is shut: `rally` no longer says `.recording`, so
-        // `stopRally()` is a no-op.
+        // "stop" through against a camera that never started — back when the
+        // call was a raw toggle, that STARTED it instead, with no remaining
+        // exit. Confirm that door is shut: `rally` no longer says
+        // `.recording`, so `stopRally()` is a no-op.
         model.stopRally()
         XCTAssertEqual(model.rally, .failed("camera would not start"))
 
-        // Teardown: let startRally()'s own pending chained toggle actually
-        // run — its guard still matches the `isRecording = false` forced
-        // above, so it calls the real `toggleRecording()`, which succeeds
-        // (starting a real `AVAssetWriter` needs no running capture
-        // session — the same reason this whole test can't make a *real*
-        // start fail deterministically) and sets `isRecording = true`. Then
-        // explicitly stop it, exactly as a real session would eventually
-        // do, so no writer is left dangling once `record` deallocates.
+        // Teardown: let startRally()'s own pending chained transition
+        // actually run — its guard still matches the `isRecording = false`
+        // forced above, so it really starts the camera (an `AVAssetWriter`
+        // needs no running capture session — the same reason this whole test
+        // can't make a *real* start fail deterministically) and sets
+        // `isRecording = true` with `.live` as the owner. Then explicitly
+        // stop it as that same owner, exactly as a real session would
+        // eventually do, so no writer is left dangling once `record`
+        // deallocates.
         await settleCrossModelDelivery(until: { record.isRecording })
         if record.isRecording {
-            await record.toggleRecording()
+            await record.setRecording(false, owner: .live)
         }
         XCTAssertFalse(record.isRecording, "teardown: no AVAssetWriter should be left running past this test")
     }
@@ -266,17 +266,17 @@ final class LiveSessionModelTests: XCTestCase {
     ///
     /// 1. There is no suspension point between the second `startRally()`
     ///    call and an assertion right after it, and this test class is
-    ///    `@MainActor`, so the unstructured toggle `Task` `startRally()`
+    ///    `@MainActor`, so the unstructured `Task` `startRally()`
     ///    kicks off structurally cannot have run yet by the time such an
     ///    assertion executes — an `isRecording`-based assertion taken
     ///    immediately is incapable of having changed either way.
     /// 2. Even after settling for that `Task`, deleting the guard leaves
     ///    every *state* assertion passing anyway: the second call's own
-    ///    toggle would be skipped by `toggleRecordingChained
-    ///    (ifRecordingIs:)`'s own "camera already agrees with what I intend"
-    ///    check (from the first fix pass), `rally` would just be
-    ///    re-assigned the value it already had, and the reconcile that
-    ///    follows would no-op. The *only* observable difference a deleted
+    ///    transition would be skipped by `RecordModel.canSetRecording
+    ///    (_:owner:)`'s "camera already agrees with what I intend" check,
+    ///    `rally` would just be re-assigned the value it already had, and
+    ///    the reconcile that follows would no-op. The *only* observable
+    ///    difference a deleted
     ///    guard produces is an extra `goLive()` / `sendRecord(action:
     ///    "start", ...)` frame put on the wire — so that is what this test
     ///    counts, by wrapping the primary's own outgoing transport half
@@ -308,7 +308,7 @@ final class LiveSessionModelTests: XCTestCase {
         rig.primary.startRally()
         XCTAssertEqual(startFramesDelivered, 1, "setup: the first startRally() must reach the secondary")
         await settleCrossModelDelivery(until: { rig.secondary.rally == .recording })
-        // Let the primary's own first-start toggle actually finish (not
+        // Let the primary's own first-start transition actually finish (not
         // just the secondary's delivery of it) before firing the second
         // call, so `isRecording` reflects a completed start rather than an
         // in-flight one.
