@@ -131,6 +131,13 @@ iOS app in Safari (add-to-home-screen capable).
 - Z-index ladder: stage overlays `5–6` · error banner `30` · nav pill `40`. New modal
   surfaces (if ever needed) start at `50`. Do not exceed without updating this table.
 
+**Native shell (iOS).** The native client substitutes `NavigationStack` and the
+system back button for the header chevron and the proxied primary (§3.4), which
+are web-shell mechanisms. The phase inventory and the §16 blueprints are shared;
+only the chrome that moves between phases differs per client. The native Play
+root shows two hero cards, not three — "Judge a clip" is a web file input with no
+native equivalent, so "Record a clip" takes the accent slot there.
+
 ### 3.3 Phases, not pages
 
 Each screen is a `<section id="p-…">` inside `<main>`, toggled with `.hidden`. The current
@@ -732,6 +739,22 @@ The local template renders immediately; the LLM narration is fetched afterwards 
 height on arrival (§18). If the LLM is unreachable the local text simply stays and the
 source tag reports it.
 
+### 8.22 Two-way segment (`.corrSeg`)
+
+Two equal-width options in one capsule; exactly one selected. Used by the call
+page's Bounce / Not-bounce toggle (§16, `p-track`) and `p-pair`'s role picker
+(§16, `p-pair`).
+
+- Capsule (`border-radius:999px`), `--surface` fill, 1 px `--line` border.
+- Each half ≥ 44 px tall and ≥ 44 px wide (§0.6); labels uppercase with
+  `letter-spacing:.05em` (§0.7).
+- The selected half takes `--accent-bg` with `--accent-text`; the unselected
+  half stays `--dim` on `--surface`. Never green/red — selection is not a
+  verdict (§0.3).
+- Both halves are always present and always the same size, so selection never
+  reflows anything (§0.9).
+- No third state. A segment that needs one is a different component.
+
 ---
 
 ## 9. Iconography
@@ -870,8 +893,8 @@ Each phase: header shows step label + proxied primary; `#instr` gives the one-li
 | `p-player1-report` / `p-player2-report` | Per-player coaching report — the last two steps of the judge flow | Player N front-wall map (§8.10 court chart + `.targetMeta`; serves excluded) · Player N report panel (§8.21) · P1 only: a `.row` "Player 2 report" secondary | — (back chevron only) |
 | `p-matches` | Matches section root (placeholder) | placeholder hero · Planned card (§8.14) | — (no chevron; section root) |
 | `p-coach` | Coach section root (hub) | three feature cards (§8.13) — no hero, no copy | — (no chevron; section root) |
-| `p-pair` | Pair with a second phone for a live two-camera session | link-status row (§8.19) · pair-code (§8.20) once codes are exchanged, with its "Codes don't match" secondary text action · DEBUG transport picker (BLE / Wi-Fi) | "PAIR" → "CONFIRM" → "START RALLY" |
-| `p-live` | Live two-camera rally: verdict flash, honest-state banner, post-rally replay | stage = live camera preview (shared with `p-record`) · link-status row (persistent — a lost link stays visible mid-rally) · call-flash (§8.17) + call-banner (§8.18) overlaying the stage · post-rally mini-court replay (§8.10), visible once a call lands | "START RALLY" |
+| `p-pair` | Pair with a second phone for a live two-camera session | link-status row (§8.19) · pair-code (§8.20) once codes are exchanged, with its "Codes don't match" secondary text action · DEBUG transport picker (BLE / Wi-Fi) · role segment (§8.22), idle state only | "PAIR" → "CONFIRM" → "START RALLY" |
+| `p-live` | Live two-camera rally: verdict flash, honest-state banner, post-rally replay | stage = live camera preview (shared with `p-record`) · link-status row (persistent — a lost link stays visible mid-rally) · call-flash (§8.17) + call-banner (§8.18) overlaying the stage · post-rally mini-court replay (§8.10), visible once a call lands · mini-court replay is primary-only in v1 (the secondary receives relayed event JSON, which carries no 3D track) · while the link is degraded the secondary shows its own STOP, so a dropped link cannot leave it recording indefinitely | "START RALLY" |
 | `p-stats` | Placeholder: stats + trends | placeholder hero · Planned card (§8.14) | — (back chevron only) |
 | `p-shot-bot` | Placeholder: shot selection | placeholder hero · Planned card (§8.14) | — (back chevron only) |
 | `p-sharing` | Placeholder: your coach (coaching platform) | placeholder hero · Planned card (§8.14) | — (back chevron only) |
@@ -918,11 +941,14 @@ on `p-pair`'s idle state and backing out to Play still leaves "Record a clip" un
 
 | State | `.link-status` text | Primary | Notes |
 |---|---|---|---|
-| Idle / no peer | "Not paired" | PAIR | identical to today's single-camera app |
+| No role chosen | "Pick this phone's job to start." | PAIR (disabled) | §7: the primary never advertises a tap that cannot fire. There is no default role — two phones both defaulting to primary would both open a central and hang with nothing honest to say |
+| Idle / no peer | "Not paired" | PAIR | identical to today's single-camera app — entering `p-pair` fetches this phone's solved camera model; while that is in flight the row reads "Checking this phone's court calibration…" and PAIR is disabled |
 | Searching | "Looking for the other phone…" | PAIR (disabled) | no peer yet to report real progress on |
 | Confirming | "Codes match?" + `.pair-code` (§8.20) | CONFIRM | operator compares the 4-digit code on both phones; a secondary text action "Codes don't match" (§7 — not a second primary) ends the session and returns to Searching — the wrong-phone / stranger's-phone case |
 | Syncing | "Syncing clocks…" | CONFIRM (disabled) | clock-sync pass; no user action needed |
 | Ready | "Paired · sync ±1.4 ms" (tabular, §0.8) | START RALLY | tapping hands off to `p-live` |
+| Ready, awaiting peer calibration (primary) | "Paired · waiting for the other phone's calibration" | START RALLY (disabled) | the StereoEngine does not exist until the secondary's calibration arrives; starting would record a rally nothing can call |
+| Ready (secondary) | "Paired · the other phone starts the rally" | — | the engine lives on the primary, so only the primary can honestly know a rally is callable |
 | Degraded | "Link lost — still recording" | — (unaffected) | never a silent downgrade; recording continues |
 | Failed | the session's failure reason, verbatim | PAIR (retry) | e.g. the capture-orientation frame-size guard |
 
