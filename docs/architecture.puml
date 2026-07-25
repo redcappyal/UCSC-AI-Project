@@ -1,0 +1,768 @@
+' ===========================================================================
+'  Squash Line Calling — architecture diagrams
+'
+'  Seven diagrams in one file. Each @startuml block renders to its own image
+'  (<name>.png). See docs/ARCHITECTURE.md for how to view them and for the
+'  reading order.
+'
+'  Convention: these diagrams name FILES and FUNCTIONS, never line numbers.
+'  Line numbers rot within days; this file is meant to outlive the branch.
+' ===========================================================================
+
+
+' ===========================================================================
+'  1 of 7 — SYSTEM CONTEXT
+'  Start here. Two client surfaces, one Flask backend, no database.
+' ===========================================================================
+@startuml system_context
+title Squash Line Calling — system context\n<size:11>//Two client surfaces, one backend, no database//</size>
+
+skinparam componentStyle rectangle
+skinparam shadowing false
+skinparam roundCorner 8
+skinparam defaultTextAlignment center
+skinparam ArrowFontSize 11
+
+actor "Player\n<size:10>phone on a court mount</size>" as player
+
+package "Client surfaces" {
+
+  component "**Mobile browser**\nindex.html\n<size:10>ONE file: HTML + CSS + JS.\nNo build step, no framework,\nno bundler, no npm.</size>" as web
+
+  package "Native iOS app — ios/" {
+    component "**Play tab** (native SwiftUI)\nRecordView / RecordModel\n<size:10>4K60 capture + live on-device calls</size>" as iosNative
+    component "**Matches + Coach tabs**\nWebScreen (WKWebView)\n<size:10>loads the SAME index.html\nwith #shell=1</size>" as iosWeb
+  }
+}
+
+package "Server — one Flask process" {
+  component "**app.py**\nFlask, ~20 routes\n<size:10>dev :5188 · prod Caddy + systemd</size>" as flask
+  component "**job_runner.py**\ndaemon thread, Semaphore(1)\n<size:10>one tracking job at a time</size>" as jobs
+}
+
+database "**ui_runs/**  <size:10>(gitignored)</size>\n<size:10>ui_runs/{run_id}/\n  job.json          — authoritative run record\n  calibration.json  — the tapped geometry\n  ball_coordinates.csv\n  detected_hits.json\n  corrections.json / ground_truth.json\nui_runs/uploads/by-hash/{sha256}.mp4</size>" as store
+
+cloud "**Roboflow**\n<size:10>RF-DETR ball detector,\ndownloaded once to .roboflow-cache/</size>" as roboflow
+cloud "**OpenAI** <size:10>(optional)</size>\n<size:10>narrates the coaching report;\nfalls back to a local template</size>" as openai
+
+note as designspec #FFFDF0
+  <b>DESIGN.md</b>  «spec»
+  Binding rulebook for anything visual.
+  Tokens, component library, per-screen
+  blueprints, a hard "never do" list.
+  ios/Sources/Theme.swift mirrors the
+  same tokens — one spec, two surfaces.
+end note
+
+player --> web : records / uploads a clip
+player --> iosNative : records on court
+
+web --> flask : HTTPS · same origin\nGET / and ~19 /api/* routes
+iosWeb --> flask : loads index.html
+iosNative --> flask : POST /api/upload, /api/track\n<size:10>(APIClient.swift)</size>
+
+note right of iosNative #FFFDF0
+  <b>The live call loop never touches the server.</b>
+  Two phones running this same app pair over
+  BLE / Wi-Fi P2P, share a timebase via ClockSync,
+  and call the ball on device during the rally —
+  RecordModel, StereoEngine and PairingModel hold
+  zero references to APIClient.
+
+  The server is still involved <i>around</i> the rally:
+  APIClient calls api/calibration/latest,
+  <b>api/camera-model</b> (the camera pose solve is
+  server-side even for the native app), api/upload,
+  api/track and api/track/status. See diagram 6.
+end note
+
+flask --> jobs : start_tracking_job()\nspawns a daemon thread
+flask --> store : reads/writes run artifacts
+jobs --> store : writes job.json every ~0.5 s
+jobs --> roboflow : model download (first run only)
+flask --> openai : coaching narration
+
+designspec .. web
+designspec .. iosNative
+
+note bottom of store
+  <b>There is no database.</b> A run is fully described by
+  its directory. Two in-memory dicts (JOBS, plus mtime-keyed
+  caches in app.py) are pure accelerators — if the process
+  dies, job.json is still the truth.
+end note
+
+@enduml
+
+
+' ===========================================================================
+'  2 of 7 — PYTHON MODULE LAYERS
+'  The repo is 35 flat modules at the root. This is the layering the
+'  file tree does not show you.
+' ===========================================================================
+@startuml python_modules
+title Python module layers\n<size:11>//35 flat modules at the repo root — this is the layering the file tree hides//</size>
+
+skinparam componentStyle rectangle
+skinparam shadowing false
+skinparam roundCorner 8
+skinparam ArrowFontSize 11
+
+package "1 · Web layer" #EEF4FF {
+  component "**app.py**\n<size:10>routes, upload, run dirs,\ncoaching analytics, corrections</size>" as app
+}
+
+package "2 · Job layer" #EEF9F0 {
+  component "**job_runner.py**\n<size:10>run_tracking_job() · judge_hits()\nJOBS dict + job.json · thread + semaphore\nrally / player assignment</size>" as runner
+}
+
+package "3 · Perception layer" #FFF6EC {
+  component "**inference_engine.py**\n<size:10>RF-DETR load + per-frame infer.\nThe ONLY place the model is configured.</size>" as infer
+  component "**tracking_common.py**\n<size:10>CSV schema, ball-class filter,\nmotion-consistent ball selection</size>" as common
+  component "**audio_events.py**\n<size:10>impact sounds → candidate windows</size>" as audio
+
+  package "Bounce engines — pick ONE per run" #FFFFFF {
+    component "**bounce_gb_model_detector.py**\n<size:10>engine = “gb_model”  ← DEFAULT</size>" as gb
+    component "**detect_wall_hits.py**\n<size:10>engine = “votes”</size>" as votes
+    component "**event_engine.py**\n<size:10>engine = “fusion”\naudio × derivative × arcs\n+ squash sequence grammar</size>" as fusion
+  }
+
+  component "**ballistic.py**\n<size:10>gravity-constrained 3D arcs\n(fusion_3d only)</size>" as ballistic
+  component "**classify_events.py**\n<size:10>wall / racket / unknown</size>" as classify
+}
+
+package "4 · Geometry layer" #F6EEFF {
+  component "**judge_call.py**\n<size:10>Point · Line · WallCorners\njudge_ball() → IN / OUT</size>" as judge
+  component "**court_model.py**\n<size:10>court in feet, floor homography,\nfull camera solve (CameraModel)</size>" as court
+  component "**stereo_engine.py**\n<size:10>two-camera triangulation</size>" as stereo
+}
+
+package "Assets" #F4F4F4 {
+  artifact "bounce_gb_model.pkl\n<size:10>committed, 257 KB</size>" as pkl
+  artifact "RF-DETR weights\n<size:10>.roboflow-cache/</size>" as weights
+}
+
+package "Offline tooling — the data flywheel" #F4F4F4 {
+  component "label_hits.py\n<size:10>frame-by-frame labeler</size>" as labeler
+  component "build_eval_set.py" as buildeval
+  artifact "**eval_set/cases.jsonl**\n<size:10>committed corpus</size>" as evalset
+  component "eval_line_calls.py" as evalrun
+  component "train_bounce_classifier.py" as trainer
+  component ".github/workflows/tests.yml\n<size:10>pytest + eval gate</size>" as ci
+}
+
+app --> runner
+runner --> infer
+runner --> common
+runner --> audio
+infer ..> common
+runner --> gb
+runner --> votes
+runner --> fusion
+fusion --> ballistic
+gb --> classify
+votes --> classify
+runner --> judge
+runner --> court
+app --> stereo
+ballistic --> court
+judge <.. court : shares the tapped\ncorner geometry
+
+infer <-- weights
+gb <-- pkl
+
+labeler --> evalset
+app --> evalset : in-app corrections\n(ui_runs/ → build_eval_set)
+buildeval --> evalset
+evalset --> evalrun
+evalrun --> ci
+trainer --> pkl
+
+gb -[#CC5500,bold]-> trainer : **runtime import**\nbuild_features_for_frame()
+
+note as n1 #FFFDF0
+  <b>Two edges that surprise everyone:</b>
+
+  1. The three bounce engines are <b>interchangeable</b>.
+     POST /api/track picks one per run via the
+     "event_engine" field. Default is "gb_model".
+     The "fusion" engine emits its own event_type,
+     so it <b>skips</b> classify_events entirely.
+
+  2. bounce_gb_model_detector imports
+     train_bounce_classifier <b>at request time</b> — a
+     training module sits on the serving path. Do not
+     "clean up" that import.
+end note
+n1 .. gb
+
+note as n2 #FFFDF0
+  <b>The flywheel is a first-class subsystem.</b>
+  Two label streams (offline labeler + in-app
+  corrections) distill into one committed corpus,
+  which CI replays on every push.
+
+  Read README.md "Where the system actually stands"
+  before trusting any accuracy number.
+end note
+n2 .. evalset
+
+@enduml
+
+
+' ===========================================================================
+'  3 of 7 — THE TRACKING PIPELINE
+'  Everything inside run_tracking_job(). This is the heart of the app.
+' ===========================================================================
+@startuml tracking_pipeline
+title The tracking pipeline — job_runner.run_tracking_job()\n<size:11>//The heart of the app. Runs on one daemon thread, one job at a time.//</size>
+
+skinparam shadowing false
+skinparam ArrowFontSize 11
+
+start
+
+:acquire TRACKING_JOB_SEMAPHORE(1);
+note right
+  Global: <b>one tracking job at a time</b>.
+  A second submit blocks here until the
+  first finishes. Not a queue — a lock.
+end note
+
+partition "stage = **coarse**" {
+  :get_tracking_model()
+  <size:10>cached singleton — the first call downloads
+  RF-DETR and may take a minute</size>;
+
+  :**Coarse pass** — whole clip at frame_stride
+  <size:10>track_segments() at COARSE_INFERENCE_WIDTH=640
+  when stride > 1 — good enough to LOCATE hits</size>;
+  note right
+    Two threads inside every pass:
+    a decode producer feeding a
+    Queue(maxsize=8), and an inference
+    consumer. Strided-out frames use
+    cap.grab() to skip BGR decode.
+  end note
+
+  :write ball_coordinates.csv;
+
+  :**Audio analysis**
+  <size:10>fusion → extract_repeating_audio_windows()
+  else → extract_audio_candidates()</size>;
+
+  :**Find hit candidates** — detect_hits_from_rows()
+  <size:10>only to decide WHERE to look closely</size>;
+}
+
+if (frame_stride > 1 and candidates found?) then (yes)
+  partition "stage = **refine**" {
+    :**Refine pass** — stride 1 around each candidate
+    <size:10>±max(12, 4×stride) frames, merged with audio
+    windows ±4, re-tracked at the full inference_width</size>;
+    :rewrite ball_coordinates.csv;
+  }
+else (no — already dense)
+endif
+
+if (audio windows with ZERO nearby detections?) then (yes)
+  :**Audio rescue** — re-track just those windows
+  at width max(inference_width, 1600)
+  <size:10>an event with no ball position cannot be judged</size>;
+else (no)
+endif
+
+partition "stage = **judging**" {
+  :**Detect bounces** with the selected engine
+  <size:10>gb_model (default) | votes | fusion</size>;
+  if (engine == fusion?) then (yes)
+    :engine already emitted event_type;
+  else (no)
+    :**classify_events()** → wall / racket / unknown;
+  endif
+
+  :**judge_hits()**;
+  note right
+    Per event:
+    • not a front-wall hit → call = None,
+      reason = "classified_as_{type}"
+      (<b>verdicts are front-wall-only</b>)
+    • judged point = fitted impact if present,
+      else the detected box centre
+    • judge_ball() vs the two tapped lines →
+      IN / OUT + a signed pixel margin
+  end note
+
+  :**Analytics** — target zones, rallies,
+  player assignment, floor zones;
+}
+
+:status = **complete**, stage = complete;
+stop
+
+legend right
+  <b>Two levels of error handling, on purpose:</b>
+
+  <b>Inner</b> — a failure in detect/classify/judge is caught,
+  stored as job["hits_error"], and the run still completes.
+  A judging bug must not throw away a finished tracking pass.
+
+  <b>Outer</b> — anything else → status="failed" + error text.
+
+  <b>Crash recovery</b> — get_job() reads job.json when the run
+  is not in memory. A job still marked queued/running on disk
+  but absent from JOBS provably died with the process, so it
+  is rewritten as failed rather than polled forever.
+endlegend
+
+@enduml
+
+
+' ===========================================================================
+'  4 of 7 — JUDGE A CLIP (the request flow)
+'  The path a newcomer hits first.
+' ===========================================================================
+@startuml judge_a_clip
+title Judge a clip — the request flow\n<size:11>//Upload → track → poll → judge → correct//</size>
+
+skinparam shadowing false
+skinparam ParticipantPadding 12
+skinparam ArrowFontSize 11
+autonumber "<b>[0]"
+
+actor Player
+participant "index.html\n<size:10>browser</size>" as UI
+participant "app.py\n<size:10>Flask</size>" as API
+participant "job thread\n<size:10>job_runner</size>" as JOB
+database "ui_runs/\n<size:10>{run_id}/</size>" as FS
+
+== Calibration (all client-side) ==
+Player -> UI : tap the OUT line, the TIN,\nthe 4 wall corners, floor landmarks
+activate UI
+UI -> UI : HSV flood fill → RANSAC line fit\n→ DLT homography\n<size:10>plain JS. No ML in the browser.</size>
+UI -> API : POST /api/camera-check\n<size:10>debounced 400 ms after each tap</size>
+API --> UI : solve health: ok / warn / fail
+deactivate UI
+
+== Submit ==
+Player -> UI : tap **Track ball**
+UI -> API : POST /api/upload  <size:10>(multipart, XHR for progress)</size>
+activate API
+API -> FS : stream to disk in 1 MB chunks,\nhashing SHA-256 as it goes
+API --> UI : {video_id, fps, frame_count}
+note right of API
+  Content-addressed:
+  uploads/by-hash/{sha256}.mp4
+  Re-uploading the same clip is free.
+end note
+deactivate API
+
+UI -> API : POST /api/track\n<size:10>video_id, calibration_json, start/end,\nframe_stride, inference_width, event_engine</size>
+activate API
+API -> FS : mkdir {run_id}/ + write calibration.json
+API -> JOB : start_tracking_job()\n<size:10>threading.Thread(daemon=True)</size>
+API --> UI : {run_id, status:"queued"}
+deactivate API
+UI -> UI : setPhase('analyze')
+
+== Poll (no websockets, no SSE) ==
+activate JOB
+loop every 500 ms until complete or failed
+  UI -> API : GET /api/track/status/{run_id}
+  API --> UI : {status, stage, processed_frames,\ntotal_frames, progress, message}
+  UI -> UI : update the progress bar and seek the\npreview video to the frame being worked on
+end
+JOB -> FS : job.json rewritten every ~0.5 s\n<size:10>tmp file + os.replace = atomic</size>
+JOB -> FS : ball_coordinates.csv, detected_hits.json
+deactivate JOB
+
+UI -> UI : setPhase('track')  — the Call page
+
+== Review and correct ==
+UI -> API : GET ball_coordinates.csv + corrections
+UI -> API : POST /api/judge  {run_id, frame}\n<size:10>on demand, or 300 ms after a scrub settles</size>
+API --> UI : {call: "IN"|"OUT", reason, margin_px, ...}
+Player -> UI : disagree → drag the ball dot,\nfix the hit type or the frame
+UI -> API : POST /api/runs/{run_id}/corrections
+API -> FS : corrections.json  <size:10>(schema corrections-v2)</size>
+note over FS, API
+  These corrections are not just a UI nicety —
+  build_eval_set.py distills them into the
+  committed eval corpus. Correcting a call is
+  how the project gets better.
+end note
+
+@enduml
+
+
+' ===========================================================================
+'  5 of 7 — WEB UI PHASES
+'  index.html has no router. setPhase() is the whole navigation model.
+' ===========================================================================
+@startuml web_ui_phases
+title index.html — the phase state machine\n<size:11>//No router, no framework. setPhase(p) hides all 20 sections and un-hides one.//</size>
+
+skinparam shadowing false
+skinparam state {
+  BackgroundColor #FFFFFF
+  BorderColor #666666
+}
+skinparam ArrowFontSize 11
+
+[*] --> load : boot\n<size:10>setPhase('load')</size>
+
+state "**load**  <size:10>#p-load</size>" as load #EEF4FF
+state "**record**  <size:10>#p-record</size>" as record
+state "**label**  <size:10>#p-label</size>\n<size:10>dev bounce labeler</size>" as label
+
+state "Calibration + judge flow\n<size:10>the numbered steps: “4/11 · Review”</size>" as flow {
+  state "**frame**\n<size:10>pick a clean frame</size>" as frame
+  state "**tap_out**\n<size:10>tap the OUT line</size>" as tapout
+  state "**tap_tin**\n<size:10>tap the TIN</size>" as taptin
+  state "**review**\n<size:10>approve both fits</size>" as review
+  state "**tap_wall**\n<size:10>4 front-wall corners</size>" as tapwall
+  state "**tap_floor**\n<size:10>floor homography</size>" as tapfloor
+  state "**clip**\n<size:10>trim + engine options</size>" as clip
+  state "**analyze**\n<size:10>progress + live preview</size>" as analyze
+  state "**track**\n<size:10>the Call page</size>" as track
+  state "**target**" as target
+  state "**player1_report**" as p1
+  state "**player2_report**" as p2
+
+  frame --> tapout : Use frame
+  tapout --> taptin : Looks right
+  taptin --> review : Looks right
+  review --> tapwall : Use lines
+  tapwall --> tapfloor : Use corners\n<size:10>[COURT loaded]</size>
+  tapwall --> clip : <size:10>[no court model]</size>
+  tapfloor --> clip : Use floor map
+  clip --> analyze : **Track ball**
+  analyze --> track : job complete
+  analyze --> clip : job failed
+  track --> target
+  target --> p1
+  p1 --> p2
+}
+
+load --> frame : pick a file\n<size:10>#fileIn</size>
+load --> record : Record a clip
+load --> label : <size:10>[dev: label mode on]</size>
+record --> frame : judge a recording
+record --> tapout : **Calibrate here**\n<size:10>freezes the camera frame,\nreturns to record when done</size>
+
+state "Section roots\n<size:10>nav pill visible, no back chevron</size>" as roots #F4F4F4 {
+  state "**matches**" as matches
+  state "**coach**" as coach
+}
+load --> matches
+load --> coach
+
+state "Roadmap placeholders\n<size:10>“Coming soon” — no implementation</size>" as roadmap #F4F4F4 {
+  state "**live**" as live
+  state "**stats**" as stats
+  state "**shot_bot**" as shotbot
+  state "**sharing**" as sharing
+}
+coach --> roadmap : feature cards\n<size:10>button[data-phase]</size>
+load --> live
+
+[*] --> track : **restore on boot**\n<size:10>tryRestoreSession() reads the\nslc-restore localStorage stash and\njumps straight to a finished run</size>
+
+note as nphase #FFFDF0
+  <b>Three things the phase key does not tell you:</b>
+
+  • <b>tap_out and tap_tin share one section</b>, #p-tap.
+    curKey() decides which line you are tapping.
+  • <b>tap_wall → #p-wall-corners</b>, not #p-tap-wall.
+  • Back is <b>not</b> the reverse of these arrows — it is an
+    explicit if/else chain in $('hdrBack').onclick.
+
+  <b>live is a placeholder here.</b> The real live experience is
+  native — see diagram 6. DESIGN.md §16 documents p-pair and
+  p-live blueprints that exist in ios/, not in index.html.
+end note
+
+@enduml
+
+
+' ===========================================================================
+'  6 of 7 — THE iOS LIVE PATH
+'  On-device inference, two paired phones, calls during the rally.
+' ===========================================================================
+@startuml ios_live_path
+title The live path — native iOS (ios/Sources/)\n<size:11>//On-device inference across two paired phones. Calls during the rally, not after.//</size>
+
+skinparam componentStyle rectangle
+skinparam shadowing false
+skinparam roundCorner 8
+skinparam ArrowFontSize 11
+
+package "Phone A — primary" {
+  package "Capture — Record/" {
+    component "CameraController\n<size:10>4K60, exposure/WB/focus\nlocked once via lockForCourt()</size>" as cam
+    component "**RecordModel**\n<size:10>the live orchestrator</size>" as model
+  }
+
+  package "Detection — Tracking/" {
+    component "CoreMLBallDetector\n<size:10>Vision + Core ML on the ANE\n(computeUnits = .all)</size>" as detector
+    component "BallTracker\n+ RingBuffer" as tracker
+    component "SyntheticBallDetector\n<size:10>DEBUG — drives the whole path\nwith no model file</size>" as synth
+  }
+
+  package "Geometry — Stereo/" {
+    component "**StereoEngine**\n<size:10>triangulate → snap to plane\n→ impact → call</size>" as engine
+    component "CameraModel\nStereoMath / StereoTrack" as stereomath
+  }
+
+  package "Live UI — Live/" {
+    component "**CallFlashView**\n<size:10>full-stage verdict wash,\n150 ms in + 350 ms hold</size>" as flash
+    component "**CallBannerView**\n<size:10>persistent honest state,\nreserved height = no layout shift</size>" as banner
+    component "CallPresentation\n<size:10>gates on CONFIDENCE before call:\nno_call → “NO CALL · obstructed”</size>" as presentation
+    component "MiniCourtView\n<size:10>post-rally replay</size>" as minicourt <<not yet wired>>
+    component "PairingModel + PairingView\n<size:10>idle→searching→confirm→syncing→ready</size>" as pairing <<not yet wired>>
+    component "CallAnnouncer\n<size:10>AVSpeechSynthesizer,\nisEnabled = false by default</size>" as announcer <<not yet wired>>
+  }
+}
+
+package "Phone B — secondary" {
+  component "same app,\nstreams detections only" as phoneB
+}
+
+package "Peer link — Peer/" {
+  component "PeerSession\n<size:10>BLETransport / WiFiP2PTransport /\nLoopbackTransport</size>" as peer
+  component "**ClockSync**\n<size:10>NTP-style min-RTT + clap anchor.\nBudget: ≤ 2 ms.</size>" as clock
+}
+
+package "Server-dependent, outside the live loop — API/" {
+  component "APIClient\n<size:10>api/calibration/latest\n**api/camera-model**  ← the camera pose\nsolve is server-side even here\napi/upload · api/track · api/track/status</size>" as apiclient
+  component "WebScreen (WKWebView)\n<size:10>Matches + Coach tabs load\nindex.html with #shell=1</size>" as webscreen
+}
+
+cam --> model : sample buffers
+model --> detector : dedicated queue +\nDispatchSemaphore
+note right of model
+  Inference runs on its own queue behind a
+  semaphore so it can <b>never</b> block the
+  AVAssetWriter. Dropping a detection is fine;
+  dropping a recorded frame is not.
+end note
+synth ..> model : DEBUG substitute
+detector --> tracker
+tracker --> engine
+phoneB --> peer : DetectionTuple stream
+peer --> engine
+clock --> peer : shared timebase
+stereomath --> engine
+apiclient --> stereomath : solved CameraModel\n<size:10>fetched once, then scaled into\nthe capture pixel space</size>
+engine --> presentation
+presentation --> flash
+presentation --> banner
+engine ..> minicourt
+engine ..> announcer
+pairing ..> peer
+
+webscreen --> webscreen : deep link #run={id}&frame={n}\n<size:10>seeds the slc-restore stash so the web app\nrehydrates a finished run</size>
+
+note as nwired #FFF0F0
+  <b>"not yet wired" = the logic is unit-tested,
+  the view has no production call site yet.</b>
+
+  Mounted today: RecordView shows CallFlashView
+  and CallBannerView. That is the whole live UI.
+
+  Built, tested, never instantiated in Sources/:
+    MiniCourtView   <size:10>logic tested as CourtProjection
+                    in MiniCourtTests.swift</size>
+    PairingView     <size:10>logic tested as PairingModel
+                    in PairingModelTests.swift</size>
+    CallAnnouncer   <size:10>tested in LiveCallTests.swift</size>
+
+  Do not hunt for the code path that shows these.
+  It has not been written yet.
+end note
+nwired .. minicourt
+
+note as ndiff #FFFDF0
+  <b>Live path (here)  ..versus..  upload path (diagrams 3 & 4)</b>
+
+  detection : on-device Core ML   / server RF-DETR
+  geometry  : two phones, stereo  / one camera + homography
+  latency   : per-frame           / async job + 500 ms polling
+  timing    : ClockSync pair      / video timestamps
+  result    : a call mid-rally    / a run dir you review later
+end note
+
+@enduml
+
+
+' ===========================================================================
+'  7 of 7 — DATA SHAPES
+'  These are plain dicts and CSV rows. Nothing declares them. This is the
+'  map you would otherwise build by print()ing things.
+' ===========================================================================
+@startuml data_shapes
+title The records that flow between stages\n<size:11>//Mostly plain dicts and CSV rows — nothing in the code declares these//</size>
+
+skinparam shadowing false
+skinparam roundCorner 6
+skinparam class {
+  BackgroundColor #FFFFFF
+  BorderColor #666666
+}
+
+class "CSV detection row" as row <<ball_coordinates.csv>> #EEF4FF {
+  <size:10>tracking_common.CSV_FIELDNAMES</size>
+  ..
+  source_frame : int
+  timestamp_seconds : float
+  detected : bool
+  class_name : str
+  confidence : float
+  x_center, y_center : float
+  width, height : float
+  x_min, y_min, x_max, y_max : float
+  --
+  <size:10>One row per frame examined.
+  The interchange format between the
+  tracking pass and every detector.</size>
+}
+
+class "Detected hit" as hit <<dict>> #FFF6EC {
+  hit_frame : int
+  timestamp_seconds : float
+  score : float
+  candidate_x, candidate_y : float
+  detector : str
+  event_type : "wall"|"racket"|"floor"|"side_wall"
+  ..votes / fusion also carry..
+  impact_x, impact_y : float
+  impact_frame, impact_time
+  method, diagnostics
+  audio_assisted : bool
+}
+
+class "Judged hit (the verdict)" as verdict <<dict>> #EEF9F0 {
+  frame : int
+  timestamp_seconds : float
+  **call : "IN" | "OUT" | None**
+  **reason : str**
+  judge_source : "impact_estimate"|"detected_center"
+  margin_px : float
+  ..
+  wall_diagram : {x, y, ...}
+  target_zone : 1..8
+  court_position_ft, floor_zone
+  velocity : {speed_before, speed_after, ...}
+  rally_number, player_number
+  --
+  <size:10>call is None for racket/floor/side_wall.
+  <b>Verdicts are front-wall-only.</b></size>
+}
+
+class Point <<frozen dataclass>> #F6EEFF {
+  x : float
+  y : float
+}
+
+class Line <<frozen dataclass>> #F6EEFF {
+  left : Point
+  right : Point
+  --
+  y_at_x(x)
+  point_at(u)
+  **signed_distance_below(point)**
+  <size:10>perpendicular signed distance —
+  which is why a tilted calibration
+  still judges correctly</size>
+}
+
+class WallCorners <<frozen dataclass>> #F6EEFF {
+  top_left, top_right : Point
+  bottom_right, bottom_left : Point
+  --
+  x_bounds_at_y(y)
+  <size:10>Top corners = OUT line × side walls (15 ft).
+  Bottom = wall/floor seam. All four have exact
+  court coordinates, so they double as
+  camera-pose correspondences.</size>
+}
+
+class CameraModel #F6EEFF {
+  focal_px : float
+  center_px : (float, float)
+  rotation : 3x3  <size:10>world→camera</size>
+  camera_center_ft : (3,)
+  distortion : dict | None
+  fit_rms_px : float | None
+  frame_width, frame_height
+}
+
+class FloorMap #F6EEFF {
+  homography_court_from_image : 3x3
+  fit_rms_px, max_residual_px
+  landmark_count : int
+  --
+  image_to_court(px) → feet
+}
+
+class "job.json" as job <<the run record>> #F4F4F4 {
+  run_id, run_dir
+  **status : queued|running|complete|failed**
+  **stage : coarse|refine|judging|complete**
+  message : str
+  video_path, start_frame, end_frame, fps
+  frame_stride, inference_width
+  event_engine, fusion_3d
+  processed_frames, total_frames
+  hits : [Judged hit]
+  target_zones, floor_zones
+  hits_error, error
+  ..provenance, always recorded..
+  model_id, tracking_backend, device
+  app_version
+}
+
+class "calibration.json" as cal <<squash-calibration-v2>> #F4F4F4 {
+  lines : {out, tin}
+  wall_corners : 4 points
+  floor : landmarks + homography
+  frame_width, frame_height
+  <size:10>exactly as the browser posted it</size>
+}
+
+class "corrections.json" as corr <<corrections-v2>> #F4F4F4 {
+  frame : int
+  corrected : {type, call, ball{x,y},
+       frame_is_bounce, frame} | null
+  predicted : {type, call, source,
+       margin_px, ball}
+  agrees : {type, call, frame}
+  recorded_at, app_version
+  <size:10>one entry per frame, latest wins.
+  corrected = null means "undo".</size>
+}
+
+row --> hit : bounce engine\n<size:10>gb_model | votes | fusion</size>
+hit --> verdict : judge_hits()
+Line --> verdict : judge_ball(point, out, tin, corners)
+WallCorners --> verdict
+Point --* Line
+Point --* WallCorners
+cal --> Line : parsed into
+cal --> WallCorners
+cal --> CameraModel : solve_camera_model()
+cal --> FloorMap : load_floor_calibration()
+CameraModel ..> hit : fusion_3d only\n<size:10>(ballistic arcs in court feet)</size>
+FloorMap --> verdict : floor events →\ncourt_position_ft
+verdict --* job
+verdict ..> corr : the human disagrees
+
+note as nprov #FFFDF0
+  <b>Why job.json records model_id / backend / device / app_version:</b>
+  so any result can be attributed to the model version that
+  produced it. When a number looks wrong, check the provenance
+  before you check the algorithm.
+end note
+nprov .. job
+
+@enduml
