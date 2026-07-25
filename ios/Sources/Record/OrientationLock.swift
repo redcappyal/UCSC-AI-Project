@@ -28,11 +28,11 @@ enum OrientationLock {
         }
     }
 
-    /// Called by `RecordModel.startCamera` once the mount is resolved.
-    /// Narrows to the single mount capture resolves at configure time, so
-    /// that the device will not be able to flip to the other landscape
-    /// mid-session and leave the orientation advertised in `Hello`
-    /// describing a mount that is no longer real.
+    /// Called by `RecordModel.toggleRecording`'s start path once the mount is
+    /// re-resolved at record start. Narrows to the single mount the recording
+    /// commits to, so that the device will not be able to flip to the other
+    /// landscape mid-recording and leave the orientation advertised in
+    /// `Hello` describing a mount that is no longer real.
     static func pinnedMask(for orientation: CaptureSettings.CaptureOrientation) -> UIInterfaceOrientationMask {
         switch orientation {
         case .landscapeRight: return .landscapeRight
@@ -40,10 +40,13 @@ enum OrientationLock {
         }
     }
 
-    /// Called by `RecordModel.startCamera` once the interface orientation is
-    /// known. The mount an interface orientation implies, or nil when the
-    /// interface is portrait — portrait is not a capture mode, so the caller
-    /// falls back to a default rather than inventing a mount.
+    /// Called wherever an interface orientation needs mapping to a mount:
+    /// `RecordModel.startCamera` (an unpinned initial guess, before
+    /// `configure()`) and `RecordModel.toggleRecording`'s start path (the
+    /// resolution that actually gets pinned, at record start). The mount an
+    /// interface orientation implies, or nil when the interface is portrait —
+    /// portrait is not a capture mode, so callers fall back to a default (or,
+    /// for `toggleRecording`, refuse to start) rather than inventing a mount.
     static func captureOrientation(for interface: UIInterfaceOrientation) -> CaptureSettings.CaptureOrientation? {
         switch interface {
         case .landscapeRight: return .landscapeRight
@@ -64,15 +67,14 @@ final class OrientationPolicy {
     /// `onAppear` can run, so a default of `.all` would bring the app up
     /// portrait.
     private(set) var mask: UIInterfaceOrientationMask = OrientationLock.mask(for: .launch)
-    /// The mount `RecordModel.startCamera` pinned for the running capture
-    /// session, or nil before any session has pinned one — nothing in
-    /// production ever clears it back to nil, since there is no
-    /// capture-session teardown yet (see `releaseCapturePin`). `applyForTab`
-    /// consults this so a tab round trip back to Play re-asserts the pin
-    /// instead of the Play tab's wider resting `.landscape` mask — nothing
-    /// stops the capture session on tab exit, so without this the device
-    /// could flip mid-session the moment the operator glances at another tab
-    /// and back.
+    /// The mount `RecordModel.toggleRecording`'s start path pinned for the
+    /// running recording, or nil before any recording has pinned one — or
+    /// again after `releaseCapturePin` clears it once that recording stops.
+    /// `applyForTab` consults this so a tab round trip back to Play, mid-
+    /// recording, re-asserts the pin instead of the Play tab's wider resting
+    /// `.landscape` mask — nothing stops the recording on tab exit, so
+    /// without this the device could flip mid-recording the moment the
+    /// operator glances at another tab and back.
     private(set) var capturePin: UIInterfaceOrientationMask?
 
     /// Two-tier scene lookup: prefer the foreground-active scene, but a
@@ -82,23 +84,26 @@ final class OrientationPolicy {
     /// else happened to trigger another query. Falling back to any
     /// qualifying scene still reaches one.
     ///
-    /// Shared by `apply` (which re-asks UIKit for a rotation) and
-    /// `RecordModel.startCamera` (which reads the scene's
-    /// `interfaceOrientation` to resolve the mount) so the two can never pick
-    /// different scenes and disagree about which one is "the" active scene —
-    /// one lookup, one `requiresKeyWindow` knob, rather than two call sites
-    /// that could quietly diverge.
+    /// Shared by `apply` (which re-asks UIKit for a rotation) and both of
+    /// `RecordModel`'s orientation resolutions — `startCamera`'s unpinned
+    /// initial guess and `toggleRecording`'s start-path re-resolution, which
+    /// is the one that actually gets pinned — each of which reads the
+    /// scene's `interfaceOrientation` to resolve a mount. One lookup, one
+    /// `requiresKeyWindow` knob, rather than several call sites that could
+    /// quietly diverge and disagree about which scene is "the" active one —
+    /// `toggleRecording` in particular reuses this exact function rather than
+    /// writing its own scene lookup, since a second, divergent lookup was
+    /// already a review finding on this branch.
     ///
-    /// The two callers need different guarantees from it, which is what the
+    /// The callers need different guarantees from it, which is what the
     /// parameter is for. `apply` dereferences `scene.keyWindow` directly, so
     /// it needs `requiresKeyWindow: true` (the default) — a caller can then
     /// act on the result unconditionally instead of adding its own further
-    /// guard. `startCamera` only reads `scene.interfaceOrientation` to
-    /// resolve the capture mount, and that property is readable on a
-    /// foreground-active scene with no key window yet; requiring one there
-    /// would needlessly fall through to the `.landscapeRight` literal
+    /// guard. The mount resolutions only read `scene.interfaceOrientation`,
+    /// and that property is readable on a foreground-active scene with no key
+    /// window yet; requiring one there would needlessly fall through to a
     /// fallback for a scene that could otherwise have resolved the real
-    /// mount, so it passes `requiresKeyWindow: false`.
+    /// mount, so they pass `requiresKeyWindow: false`.
     static func activeWindowScene(requiresKeyWindow: Bool = true) -> UIWindowScene? {
         let scenes = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
         func qualifies(_ scene: UIWindowScene) -> Bool {
@@ -119,34 +124,49 @@ final class OrientationPolicy {
         scene.requestGeometryUpdate(.iOS(interfaceOrientations: newMask))
     }
 
-    /// Called once by `RecordModel.startCamera` when a capture session
-    /// starts. Pins the mask and remembers it as `capturePin`, so a later
-    /// tab round trip back to Play (`applyForTab`) re-asserts this exact
-    /// mount instead of the wider `.landscape` the Play tab permits at rest.
+    /// Called by `RecordModel.toggleRecording`'s start path once the mount is
+    /// re-resolved at record start (not by `startCamera`, which only sets an
+    /// unpinned initial value — see `CameraController.orientation`). Pins the
+    /// mask and remembers it as `capturePin`, so a later tab round trip back
+    /// to Play (`applyForTab`) re-asserts this exact mount instead of the
+    /// wider `.landscape` the Play tab permits at rest.
     func pinForCapture(_ pinnedMask: UIInterfaceOrientationMask) {
         capturePin = pinnedMask
         apply(pinnedMask)
     }
 
-    /// No production caller yet — there is no `stopCamera` or other teardown
-    /// in `RecordModel` that stops a running capture session, so a pin set at
-    /// configure time is meant to outlive every tab change for the app's
-    /// lifetime. This exists for the teardown hook `RecordModel` does not yet
-    /// have, and is exercised directly by `OrientationLockTests`.
+    /// Called by `RecordModel.toggleRecording`'s stop path once a recording
+    /// finishes, cleanly or not — that is the point the operator is meant to
+    /// be able to re-mount before the next rally. Clears `capturePin` AND
+    /// re-widens the live mask back to `.landscape` (`OrientationLock.mask(for:
+    /// .play)`): clearing the stored value alone would leave `mask` at
+    /// whichever mount `pinForCapture` last applied, since nothing re-asks
+    /// UIKit until something calls `apply`. Widening straight to Play's
+    /// resting mask here, rather than waiting on a later `applyForTab`, is
+    /// safe because the only production caller of `pinForCapture` is
+    /// `toggleRecording`'s start path, itself only reachable while Play is
+    /// the active tab (the record button lives in `RecordView`) — so a live
+    /// pin always implies Play is what is currently showing.
     func releaseCapturePin() {
         capturePin = nil
+        apply(OrientationLock.mask(for: .play))
     }
 
     /// Called by `RootTabView` on every tab change. For `.play`, prefers a
-    /// live `capturePin` over the tab's resting mask, so the pin a running
-    /// capture session set survives a round trip through another tab. This is
-    /// still worth keeping even though `RecordView`'s `.task` (and so
-    /// `startCamera`/`pinForCapture`) does re-fire on return to Play — it is
-    /// cancelled when Play disappears and restarts when it reappears: the
-    /// pin here makes the mask correct immediately, on the tab-change
-    /// callback, rather than waiting on the async re-run of `startCamera` to
-    /// get there. `OrientationLock.mask(for:)` itself stays pure and
-    /// capture-agnostic; this is the capture-aware layer on top of it.
+    /// live `capturePin` over the tab's resting mask, so a pin set by an
+    /// in-progress recording (`RecordModel.toggleRecording`'s start path)
+    /// survives a round trip through another tab. This one is load-bearing,
+    /// not just a fast path: `RecordView`'s `.task` (`startCamera`) does
+    /// re-fire on return to Play, but it no longer pins anything — mount
+    /// resolution and pinning both moved to record start, precisely so Play
+    /// stays at both-landscape while the operator is only framing. If a
+    /// recording is running when the operator glances at another tab and
+    /// back, this `capturePin` check is the only thing that re-narrows Play
+    /// to the recording's mount; without it, returning to Play would fall
+    /// back to the wider resting `.landscape` mask while a recording already
+    /// committed to one mount keeps writing. `OrientationLock.mask(for:)`
+    /// itself stays pure and capture-agnostic; this is the capture-aware
+    /// layer on top of it.
     func applyForTab(_ tab: RootTab) {
         switch tab {
         case .play: apply(capturePin ?? OrientationLock.mask(for: .play))

@@ -113,4 +113,36 @@ final class OrientationLockTests: XCTestCase {
         XCTAssertEqual(OrientationPolicy.shared.mask, .landscape,
                        "with the pin released, Play falls back to its resting mask")
     }
+
+    /// `releaseCapturePin` must not just forget the pin for the *next*
+    /// `applyForTab` call — it has to widen the live mask itself, right away.
+    /// The ordinary flow is stop-recording-while-still-on-Play, with no tab
+    /// change in between, so if this method only cleared `capturePin` and
+    /// left `mask` at whatever `pinForCapture` last set, the operator would
+    /// stay locked to the just-finished recording's mount with no way to
+    /// re-mount for the next rally — the exact failure this method exists to
+    /// fix. `.landscape` here is `OrientationLock.mask(for: .play)`, read
+    /// independently of whatever `releaseCapturePin` does internally, so this
+    /// can actually fail if the widening is missing.
+    func testReleaseCapturePinWidensTheLiveMaskWithNoTabChangeInBetween() {
+        let previousMask = OrientationPolicy.shared.mask
+        let previousPin = OrientationPolicy.shared.capturePin
+        defer {
+            if let previousPin {
+                OrientationPolicy.shared.pinForCapture(previousPin)
+            } else {
+                OrientationPolicy.shared.releaseCapturePin()
+            }
+            OrientationPolicy.shared.apply(previousMask)
+        }
+
+        OrientationPolicy.shared.pinForCapture(.landscapeRight)
+        XCTAssertEqual(OrientationPolicy.shared.mask, .landscapeRight)
+
+        // No `applyForTab` call here — unlike the round-trip test above.
+        OrientationPolicy.shared.releaseCapturePin()
+        XCTAssertNil(OrientationPolicy.shared.capturePin)
+        XCTAssertEqual(OrientationPolicy.shared.mask, .landscape,
+                       "releasing the pin must widen the live mask immediately")
+    }
 }

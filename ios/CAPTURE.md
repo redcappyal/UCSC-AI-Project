@@ -111,18 +111,25 @@ Run these on a Mac, in order, before trusting any of it:
    this as an error and the fix — removing the property's declaration default —
    was applied unverified), and `OrientationLockTests`/`LiveWiringTests`
    touching the `@MainActor` `OrientationPolicy` from XCTest.
-2. **Play tab locks to landscape, pinned at launch.** The pin lands within
-   milliseconds of app launch, not once the camera configures: `RecordView`'s
-   `.task { await model.startCamera() }` fires the instant Play (the launch
-   tab) first appears, and `RecordModel.startCamera` calls `pinForCapture`
-   *before* `camera.configure()` runs — long before the exposure note. There
-   is no window where both landscapes are selectable. Launch the simulator
-   held landscape-left: Play must lock to landscape-left immediately, and
-   rotating to landscape-right or portrait must be refused from the first
-   frame. Relaunch held landscape-right and confirm the opposite pin.
-3. **The pin holds across a tab round trip.** Whichever landscape got pinned
-   at launch, switch to Matches and back to Play — the pin must survive the
-   round trip, which is what `OrientationPolicy.capturePin` exists for.
+2. **Play tab stays both-landscape while framing, and narrows only once
+   recording starts.** `RecordModel.startCamera` (fired by `RecordView`'s
+   `.task`) no longer pins anything — it only seeds `camera.orientation` with
+   an initial guess so the preview and exposure meter have something to work
+   with. Launch the simulator in either landscape and confirm Play accepts
+   *both* landscape-left and landscape-right (portrait still refused) the
+   whole time recording is off. Then flip to the landscape opposite whatever
+   the simulator launched in and tap record: `RecordModel.toggleRecording`'s
+   start path must re-resolve the mount from the device's orientation at that
+   instant, call `camera.updateOrientation(_:)`, and only then pin — confirm
+   the mask narrows to the *flipped* mount, not the launch one.
+3. **The pin releases on stop, and holds across a tab round trip while
+   recording.** While recording, switch to Matches and back to Play — the
+   pinned mount must survive the round trip, which is what
+   `OrientationPolicy.capturePin` exists for. Then stop the recording: Play
+   must widen back to both-landscape immediately
+   (`OrientationPolicy.shared.releaseCapturePin()`, called from
+   `toggleRecording`'s stop path), so the operator can flip the mount again
+   before the next rally.
 4. **The web tabs still rotate.** Matches and Coach must reach portrait, or the
    `UISupportedInterfaceOrientations` superset is wrong.
 5. **180° normalization — needs a physical iPhone, no simulator camera.**
@@ -131,7 +138,7 @@ Run these on a Mac, in order, before trusting any of it:
    is inverted; swap the cases and update `CaptureOrientationTests`, which
    asserts the mapping and must change with it.
 
-Three known limits, all deliberate and none fixed by this branch:
+Two known limits, both deliberate and neither fixed by this branch:
 
 - **The peer mount guard is correct but unreachable.** `PeerSession` refuses a
   mismatched pair, but nothing in the app constructs a `PeerSession` carrying a
@@ -141,13 +148,6 @@ Three known limits, all deliberate and none fixed by this branch:
 - **Portrait-solved calibrations no longer load.** `CameraModel.scaled` refuses
   the aspect change rather than distorting geometry, so any calibration solved
   from portrait footage must be re-solved from landscape footage.
-- **Mount choice is effectively one-shot per app launch.** Nothing releases the
-  pin: `releaseCapturePin()` has no production caller, because `RecordModel`
-  holds its capture session for the app's entire lifetime — there is no
-  `stopCamera` or other teardown to call it from. An operator who launches the
-  app holding the phone one way and then mounts it the other way gets a pinned
-  wrong mount and a 180°-inverted recording, with no recovery short of
-  relaunching the app.
 
 When these are run, replace this section with what actually passed, the device
 model, and the date. A partially-run checklist recorded as complete is the

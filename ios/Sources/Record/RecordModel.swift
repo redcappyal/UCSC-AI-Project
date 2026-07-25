@@ -80,12 +80,14 @@ final class RecordModel: ObservableObject {
     private var nextDetectionSeq: UInt32 = 0
     private var pendingTuples: [DetectionTuple] = []
     private var lastFlushAt: TimeInterval = 0
-    /// The mount this session capture-locked to, resolved when the camera
-    /// configures and pinned there (see `startCamera`). The peer detection
-    /// path reads this (`detectionFrameSize` below, and the tuples it sizes);
-    /// the preview overlay and camera-model adoption still key off the
-    /// `CaptureSettings` statics directly, since both mounts share one frame
-    /// size and neither needed the extra indirection.
+    /// The mount this session is currently using. `startCamera` seeds an
+    /// unpinned initial value; `toggleRecording`'s start path re-resolves and
+    /// commits to it — see there for why it, not `startCamera`, is where this
+    /// stops being allowed to change. The peer detection path reads this
+    /// (`detectionFrameSize` below, and the tuples it sizes); the preview
+    /// overlay and camera-model adoption still key off the `CaptureSettings`
+    /// statics directly, since both mounts share one frame size and neither
+    /// needed the extra indirection.
     @Published private(set) var captureOrientation: CaptureSettings.CaptureOrientation
 
     /// The pixel space local detections are expressed in — the same space the
@@ -356,12 +358,16 @@ final class RecordModel: ObservableObject {
 
     func startCamera() async {
         do {
-            // Resolve the mount from the interface orientation, which the Play
-            // tab has already constrained to landscape, then pin the mask
-            // there. Pinning is what keeps the orientation advertised in Hello
-            // true for the session's whole life: without it a mid-session flip
-            // to the other landscape would leave the peer holding a mount
-            // description that is no longer real.
+            // Resolve an initial mount from the interface orientation, which
+            // the Play tab has already constrained to landscape, purely so
+            // the preview and the court-exposure meter below have a sensible
+            // mount to work with before anything is pinned. Deliberately NOT
+            // pinned here: the Play tab stays at both-landscape (`.landscape`)
+            // through the whole framing window, which is what lets the
+            // operator flip the mount before recording starts.
+            // `RecordModel.toggleRecording`'s start path is where the mount
+            // actually gets committed and pinned — see there for why record
+            // start, not camera start, has to be the point of no return.
             //
             // Uses OrientationPolicy's two-tier scene lookup (foreground-active,
             // else any scene) rather than a strict foreground-active-only
@@ -369,9 +375,10 @@ final class RecordModel: ObservableObject {
             // Center) can leave every scene `.foregroundInactive` for a
             // moment, and a strict check landing on `nil` there would fall
             // straight to the `.landscapeRight` literal below —
-            // indistinguishable from a real landscape-right resolution, which
-            // would force-rotate (and pin) a landscape-left mount 180 degrees
-            // while `camera.orientation` kept recording `.landscapeRight`.
+            // indistinguishable from a real landscape-right resolution. That
+            // only costs a wrong preview/metering default now, since nothing
+            // here pins; `toggleRecording`'s own resolution at record start is
+            // what has to get the real mount right.
             // Passes `requiresKeyWindow: false`: only `interfaceOrientation` is
             // read below, which is available on a scene with no key window
             // yet, unlike `apply`'s use of this same lookup.
@@ -382,7 +389,6 @@ final class RecordModel: ObservableObject {
             // a resolved orientation.
             captureOrientation = mount ?? .landscapeRight
             camera.orientation = captureOrientation
-            OrientationPolicy.shared.pinForCapture(OrientationLock.pinnedMask(for: captureOrientation))
 
             try await camera.configure()
             camera.start()
@@ -398,6 +404,10 @@ final class RecordModel: ObservableObject {
 
     func toggleRecording() async {
         if isRecording {
+            // Whether the write below finishes cleanly or fails, this rally's
+            // recording is over — release the pin so the operator can
+            // re-mount before the next one.
+            OrientationPolicy.shared.releaseCapturePin()
             do {
                 let url = try await camera.stopRecording()
                 let duration = recordingStartedAt.map {
@@ -412,7 +422,39 @@ final class RecordModel: ObservableObject {
                 errorText = error.localizedDescription
             }
         } else {
+            // Re-resolve the mount from the CURRENT interface orientation
+            // here, at record start — not whatever `startCamera` guessed at
+            // launch — because the framing window between camera start and
+            // record start is exactly when the operator is meant to be able
+            // to flip the mount. Reuses `startCamera`'s own scene lookup and
+            // mount mapping (`OrientationPolicy.activeWindowScene` +
+            // `OrientationLock.captureOrientation(for:)`) rather than a
+            // second lookup — a divergent second lookup was already a review
+            // finding on this branch.
+            let scene = OrientationPolicy.activeWindowScene(requiresKeyWindow: false)
+            guard let mount = scene.flatMap({
+                OrientationLock.captureOrientation(for: $0.interfaceOrientation)
+            }) else {
+                // The interface isn't resolved to either landscape mount
+                // right now — no scene, or a portrait transient mid-rotation.
+                // Pinning a guessed mount here is exactly the failure this
+                // change exists to prevent, so refuse the start rather than
+                // falling back to a default.
+                errorText = "Hold the phone in landscape to start recording."
+                return
+            }
             do {
+                captureOrientation = mount
+                // Must land, and actually apply to the live connection,
+                // before startRecording() below sizes the asset writer and
+                // before the mask narrows: getting the order wrong would
+                // leave the connection rotated for the old mount while the
+                // writer (and Hello, via captureOrientation above) already
+                // describe the new one — strictly worse than not resolving
+                // at record start at all.
+                await camera.updateOrientation(mount)
+                OrientationPolicy.shared.pinForCapture(OrientationLock.pinnedMask(for: mount))
+
                 try camera.startRecording()
                 isRecording = true
                 recordingStartedAt = Date()
