@@ -340,6 +340,44 @@ def plan_crops(record, crop, scale, rng, positives, negatives, jitter, min_visib
     return plans
 
 
+def _imread_unicode(path):
+    """cv2.imread that survives a non-ASCII path on Windows.
+
+    cv2 gets the UTF-8 bytes of a Python str and hands them to the CRT's
+    non-Unicode file API, so on a cp1252 box every non-ASCII path misses and
+    imread returns None with the file sitting right there. Reading the bytes in
+    Python and decoding them in memory sidesteps the path entirely. Returns None
+    for a missing or unreadable file, as imread did.
+    """
+    import cv2
+    import numpy as np
+
+    try:
+        data = np.fromfile(str(path), dtype=np.uint8)
+    except OSError:
+        return None
+    if data.size == 0:
+        return None
+    return cv2.imdecode(data, cv2.IMREAD_COLOR)
+
+
+def _imwrite_unicode(path, image, params=None):
+    """cv2.imwrite that survives a non-ASCII path on Windows.
+
+    The read-side failure is loud; this one is not. cv2.imwrite returns True and
+    writes a real file whose name is the UTF-8 bytes reinterpreted as cp1252, so
+    the COCO json ends up pointing at files that do not exist — how the
+    2026-07-24 dataset lost 961 of its 2,936 train crops. Raising rather than
+    returning a bool keeps a silent no-op off the table.
+    """
+    import cv2
+
+    ok, buffer = cv2.imencode(Path(path).suffix, image, params or [])
+    if not ok:
+        raise OSError(f"cv2 could not encode {path}")
+    buffer.tofile(str(path))
+
+
 def render_split(records, plans_by_record, out_dir, split, crop, quality):
     """Write crop JPEGs and the split's COCO json. Returns the manifest slice."""
     import cv2                            # lazy: geometry is testable without it
@@ -351,7 +389,7 @@ def render_split(records, plans_by_record, out_dir, split, crop, quality):
         plans = plans_by_record.get(record["path"])
         if not plans:
             continue
-        frame = cv2.imread(str(record["path"]))
+        frame = _imread_unicode(record["path"])
         if frame is None:
             continue
         scale = plans[0]["scale"]
@@ -364,8 +402,8 @@ def render_split(records, plans_by_record, out_dir, split, crop, quality):
             if tile.shape[0] != crop or tile.shape[1] != crop:
                 continue
             name = crop_file_name(record["path"].stem, index)
-            cv2.imwrite(str(images_dir / name), tile,
-                        [int(cv2.IMWRITE_JPEG_QUALITY), quality])
+            _imwrite_unicode(images_dir / name, tile,
+                             [int(cv2.IMWRITE_JPEG_QUALITY), quality])
             image_id = len(images) + 1
             images.append({"id": image_id, "file_name": name,
                            "width": crop, "height": crop,

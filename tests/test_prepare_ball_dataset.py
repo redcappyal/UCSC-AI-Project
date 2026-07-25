@@ -10,9 +10,10 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from prepare_ball_dataset import (
-    _clip_box, ascii_slug, burst_count, clip_and_frame, clip_scale_factors,
-    crop_file_name, plan_crops, polygon_aabb, polygon_points, slugified_clips,
-    split_by_clip, streak_metrics, thin_bursts,
+    _clip_box, _imread_unicode, _imwrite_unicode, ascii_slug, burst_count,
+    clip_and_frame, clip_scale_factors, crop_file_name, plan_crops,
+    polygon_aabb, polygon_points, slugified_clips, split_by_clip,
+    streak_metrics, thin_bursts,
 )
 
 
@@ -258,3 +259,24 @@ def test_slugified_clips_lists_only_the_offenders():
     records = [frame(clip="Bay-Club-1"), frame(clip="Rally ｜ One"),
                frame(clip="Bay-Club-1")]
     assert slugified_clips(records) == ["Rally ｜ One"]
+
+
+def test_unicode_path_survives_a_write_read_round_trip(tmp_path):
+    # cv2.imwrite returns True while writing a mojibake filename on Windows, so
+    # the COCO json ends up naming files that are not there. This is the guard.
+    cv2 = pytest.importorskip("cv2")
+    np = pytest.importorskip("numpy")
+
+    target = tmp_path / "Rally ｜ One_c0.jpg"
+    _imwrite_unicode(target, np.full((16, 16, 3), 128, dtype=np.uint8),
+                     [int(cv2.IMWRITE_JPEG_QUALITY), 95])
+
+    # The mojibake sibling is what this assertion is really looking for.
+    assert [p.name for p in tmp_path.iterdir()] == [target.name]
+    assert _imread_unicode(target).shape == (16, 16, 3)
+
+
+def test_imread_unicode_returns_none_for_a_missing_file(tmp_path):
+    pytest.importorskip("cv2")
+    # render_split skips frames it cannot read; that contract has to survive.
+    assert _imread_unicode(tmp_path / "absent.jpg") is None
