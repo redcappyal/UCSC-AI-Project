@@ -317,6 +317,8 @@ final class RecordModel: ObservableObject {
 
         stereoEngine = engine
         livePresentation = nil
+        liveTrack = []
+        liveImpact = nil
         flashClearWork?.cancel()
         flashPresentation = nil
 
