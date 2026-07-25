@@ -222,6 +222,72 @@ def test_main_cli_smoke(tmp_path, monkeypatch):
     stereo_offline.main()
 
     result = json.loads(out_path.read_text(encoding="utf-8"))
-    assert set(result.keys()) == {"impacts", "pair_agreement", "sample_counts"}
+    assert set(result.keys()) == {
+        "impacts", "pair_agreement", "sample_counts", "detector"}
     assert result["sample_counts"] == {"a": 0, "b": 0}
     assert result["impacts"] == []
+    # No model is present on disk in the test environment; describe() is
+    # best-effort and reports that absence rather than raising.
+    assert result["detector"] == {"backend": "yolox", "model": None}
+
+
+# --- detector provenance ----------------------------------------------------
+
+
+def test_fuse_clips_reports_injected_detector(monkeypatch):
+    # Injected infer means no model is loaded; provenance must say so rather
+    # than reading a manifest that is not there. This is what keeps the
+    # existing synthetic tests working with no model on disk.
+    cam_a, cam_b = make_fin_pair()
+    calibration_a = _synthetic_calibration(cam_a)
+    calibration_b = _synthetic_calibration(cam_b)
+    monkeypatch.setattr(stereo_offline, "_video_fps", lambda video_path: 60.0)
+    monkeypatch.setattr(stereo_offline, "_iter_frames",
+                        lambda video_path: iter(_fake_frames(5)))
+
+    result = stereo_offline.fuse_clips(
+        "a.mp4", calibration_a, "b.mp4", calibration_b,
+        infer_a=lambda frame: [], infer_b=lambda frame: [])
+
+    assert result["detector"] == {"backend": "injected"}
+
+
+def test_build_infer_defaults_to_yolox_for_stereo(monkeypatch):
+    calls = {}
+
+    class _Runner:
+        manifest = "MANIFEST"
+
+    monkeypatch.setattr(stereo_offline, "_load_ball_detector",
+                        lambda: _Runner())
+    monkeypatch.setattr(
+        stereo_offline, "_detect_frame",
+        lambda runner, frame, manifest: calls.setdefault(
+            "args", (runner, frame, manifest)) or [])
+
+    infer = stereo_offline._build_infer(None, 0.4)
+    infer("FRAME")
+
+    assert calls["args"][1] == "FRAME"
+    assert calls["args"][2] == "MANIFEST"
+
+
+def test_build_infer_honours_rfdetr_override(monkeypatch):
+    monkeypatch.setenv("STEREO_DETECTOR", "rfdetr")
+    seen = {}
+
+    def _fake_import():
+        def _get_model():
+            return "RFDETR_MODEL"
+
+        def _infer(model, frame, confidence):
+            seen["model"] = model
+            return []
+
+        return _get_model, _infer
+
+    monkeypatch.setattr(stereo_offline, "_import_rfdetr", _fake_import)
+    infer = stereo_offline._build_infer(None, 0.4)
+    infer("FRAME")
+
+    assert seen["model"] == "RFDETR_MODEL"
