@@ -78,8 +78,17 @@ def _detect_frame(runner, frame, manifest):
 
 
 def selected_detector():
+    """Read + validate STEREO_DETECTOR. The single source of truth for the
+    backend name: every caller (_build_infer and fuse_clips' provenance
+    stamp) goes through this, so an unknown value raises everywhere instead
+    of being silently reported as "yolox" on paths that never reach
+    _build_infer (e.g. a clip that decodes zero frames)."""
     import os
-    return os.environ.get("STEREO_DETECTOR", STEREO_DETECTOR_DEFAULT).strip().lower()
+    backend = os.environ.get("STEREO_DETECTOR", STEREO_DETECTOR_DEFAULT).strip().lower()
+    if backend not in ("yolox", "rfdetr"):
+        raise ValueError(
+            f"Unknown STEREO_DETECTOR {backend!r}; expected 'yolox' or 'rfdetr'")
+    return backend
 
 
 def _build_infer(model, confidence):
@@ -105,11 +114,32 @@ def _build_infer(model, confidence):
 
         return _infer
 
-    if backend != "yolox":
-        raise ValueError(
-            f"Unknown STEREO_DETECTOR {backend!r}; expected 'yolox' or 'rfdetr'")
+    # backend == "yolox" here: selected_detector() already validated the
+    # value, so this is the only other possibility.
+    if model is not None and not hasattr(model, "manifest"):
+        raise TypeError(
+            f"_build_infer got a `model` with no `.manifest` attribute while "
+            f"STEREO_DETECTOR={backend!r} selects the local YOLOX detector. "
+            f"`model` means a ball_model runner (from ball_model.load_detector()) "
+            f"here; it only means an RF-DETR tracking-model object when "
+            f"STEREO_DETECTOR=rfdetr. Pass model=None to load the default YOLOX "
+            f"runner, or set STEREO_DETECTOR=rfdetr if you meant to pass an "
+            f"RF-DETR model.")
 
     runner = model if model is not None else _load_ball_detector()
+
+    # `confidence` is intentionally unused below: the manifest's
+    # conf_threshold is the detector's own floor, baked in at export time,
+    # and owns filtering for the yolox branch. We only check that it does
+    # not silently swallow the caller's requested threshold (see the guard
+    # below).
+    if runner.manifest.conf_threshold > confidence:
+        raise ValueError(
+            f"manifest conf_threshold ({runner.manifest.conf_threshold!r}) is "
+            f"above the requested confidence ({confidence!r}); the detector "
+            f"already drops everything below its own conf_threshold before "
+            f"this call ever sees it, so the requested confidence would be "
+            f"silently unreachable.")
 
     def _infer(frame):
         return _detect_frame(runner, frame, runner.manifest)
@@ -130,10 +160,18 @@ def detections_to_track_samples(video_path, model=None, *, confidence=0.4,
     callable(frame_bgr) -> list of prediction dicts in
     inference_engine.infer_frame_predictions' normalized shape
     ({"x","y","width","height","confidence","class"}); default None means
-    build it from the real model (get_tracking_model() when model is None)
-    + infer_frame_predictions, built lazily on first frame so a clip that
-    decodes zero frames never touches the heavy inference stack. Selects
-    the ball prediction per frame via tracking_common's
+    build it via _build_infer(model, confidence), lazily on first frame so a
+    clip that decodes zero frames never touches the heavy inference stack.
+    _build_infer's backend is selected_detector() (STEREO_DETECTOR, default
+    "yolox"): by default it loads ball_model.load_detector() (when `model`
+    is None) and calls ball_detector.detect_frame, in which case `model`,
+    when given, must be a ball_model runner (something with a `.manifest`
+    attribute). STEREO_DETECTOR=rfdetr instead calls get_tracking_model()
+    (when `model` is None) + inference_engine.infer_frame_predictions, in
+    which case `model` means an RF-DETR tracking-model object. Passing a
+    `model` of the wrong shape for the selected backend raises TypeError
+    rather than failing later, mid-frame, with an opaque AttributeError.
+    Selects the ball prediction per frame via tracking_common's
     select_ball_prediction; frames with no accepted ball produce no
     sample. px = (x, y) center in RAW pixels.
     """
