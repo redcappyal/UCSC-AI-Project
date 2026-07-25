@@ -81,14 +81,17 @@ final class RecordModel: ObservableObject {
     private var pendingTuples: [DetectionTuple] = []
     private var lastFlushAt: TimeInterval = 0
     /// The mount this session capture-locked to, resolved when the camera
-    /// configures and pinned there (see `startCamera`). Everything that labels
-    /// a pixel space reads this.
-    @Published private(set) var captureOrientation: CaptureSettings.CaptureOrientation = .landscapeRight
+    /// configures and pinned there (see `startCamera`). The peer detection
+    /// path reads this (`detectionFrameSize` below, and the tuples it sizes);
+    /// the preview overlay and camera-model adoption still key off the
+    /// `CaptureSettings` statics directly, since both mounts share one frame
+    /// size and neither needed the extra indirection.
+    @Published private(set) var captureOrientation: CaptureSettings.CaptureOrientation
 
     /// The pixel space local detections are expressed in — the same space the
     /// peer is told to read them in via `Hello`. Derived from the resolved
     /// mount rather than from a constant, which is exactly what went wrong
-    /// before: hardcoded portrait constants labelled every tuple in a session
+    /// before: hardcoded constants labelled every tuple in a session
     /// that was capturing landscape.
     var detectionFrameSize: (width: Int, height: Int) {
         CaptureSettings.frameSize(for: captureOrientation)
@@ -359,13 +362,24 @@ final class RecordModel: ObservableObject {
             // true for the session's whole life: without it a mid-session flip
             // to the other landscape would leave the peer holding a mount
             // description that is no longer real.
-            let interface = UIApplication.shared.connectedScenes
-                .compactMap { $0 as? UIWindowScene }
-                .first { $0.activationState == .foregroundActive }?
-                .interfaceOrientation ?? .landscapeRight
-            captureOrientation = OrientationLock.captureOrientation(for: interface) ?? .landscapeRight
+            //
+            // Uses OrientationPolicy's two-tier scene lookup (foreground-active
+            // with a key window, else any scene with a key window) rather than
+            // a strict foreground-active-only check: a transient system
+            // interruption (an alert, Control Center) can leave every scene
+            // `.foregroundInactive` for a moment, and a strict check landing on
+            // `nil` there would fall straight to the `.landscapeRight` literal
+            // below — indistinguishable from a real landscape-right resolution,
+            // which would force-rotate (and pin) a landscape-left mount 180
+            // degrees while `camera.orientation` kept recording `.landscapeRight`.
+            let scene = OrientationPolicy.activeWindowScene()
+            let mount = scene.flatMap { OrientationLock.captureOrientation(for: $0.interfaceOrientation) }
+            // Last resort only, for the genuinely-no-scene case (or a portrait
+            // interface, which is not a capture mode): a fallback default, not
+            // a resolved orientation.
+            captureOrientation = mount ?? .landscapeRight
             camera.orientation = captureOrientation
-            OrientationPolicy.shared.apply(OrientationLock.pinnedMask(for: captureOrientation))
+            OrientationPolicy.shared.pinForCapture(OrientationLock.pinnedMask(for: captureOrientation))
 
             try await camera.configure()
             camera.start()

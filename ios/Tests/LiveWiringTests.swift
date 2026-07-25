@@ -18,11 +18,17 @@ final class LiveWiringTests: XCTestCase {
     /// Be honest about the reach of this test. Both mounts currently yield the
     /// same (3840, 2160) — `CaptureSettings.frameSize(for:)` ignores its
     /// argument by design — so the frame-size assertions compare equal
-    /// constants and would still pass if `detectionFrameSize` went back to
-    /// reading the `CaptureSettings` statics directly. What they DO catch is a
-    /// transposed or hardcoded literal (the original defect's actual shape),
-    /// and they become genuinely load-bearing the moment a mount with
-    /// different dimensions exists.
+    /// constants today. What keeps them from being vacuous by construction is
+    /// that `session` is built from the loop's `orientation`, not from
+    /// `model.captureOrientation`: the two sides trace back to independently
+    /// obtained values rather than one value fed into the same pure function
+    /// twice (which could never disagree no matter what `frameSize(for:)`
+    /// did, now or later). That independence is what lets them become
+    /// genuinely load-bearing the moment a mount with different dimensions
+    /// exists — an asymmetry in `frameSize(for:)`, or a break in how
+    /// `captureOrientation` reaches `detectionFrameSize`, would show up as a
+    /// mismatch here instead of being masked by both sides reading the same
+    /// subject.
     ///
     /// The mount assertion is the one that bites today: it fails if `init`
     /// ignores the parameter, which is the wiring this task adds.
@@ -33,7 +39,7 @@ final class LiveWiringTests: XCTestCase {
                            "init must honour the requested mount")
             let (transport, _) = LoopbackTransport.pair()
             let session = PeerSession(transport: transport, isInitiator: true, now: { 0 },
-                                      captureOrientation: model.captureOrientation)
+                                      captureOrientation: orientation)
             XCTAssertEqual(model.detectionFrameSize.width,
                            session.advertisedHello.frameW, "\(orientation)")
             XCTAssertEqual(model.detectionFrameSize.height,

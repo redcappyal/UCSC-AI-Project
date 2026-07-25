@@ -81,4 +81,36 @@ final class OrientationLockTests: XCTestCase {
         OrientationPolicy.shared.apply(.portraitUpsideDown)
         XCTAssertEqual(OrientationPolicy.shared.mask, .portraitUpsideDown)
     }
+
+    /// `applyForTab` must prefer a live capture pin over the Play tab's
+    /// resting `.landscape` mask — that preference is what keeps a running
+    /// capture session pinned through a Play → Matches → Play round trip,
+    /// since nothing else re-asserts the pin on tab exit and re-entry.
+    /// `OrientationPolicy.shared` is a singleton other tests read, so save
+    /// and restore both `mask` and `capturePin` with `defer`.
+    func testApplyForTabPreservesTheCapturePinOnReturnToPlay() {
+        let previousMask = OrientationPolicy.shared.mask
+        let previousPin = OrientationPolicy.shared.capturePin
+        defer {
+            if let previousPin {
+                OrientationPolicy.shared.pinForCapture(previousPin)
+            } else {
+                OrientationPolicy.shared.releaseCapturePin()
+            }
+            OrientationPolicy.shared.apply(previousMask)
+        }
+
+        OrientationPolicy.shared.pinForCapture(.landscapeRight)
+        OrientationPolicy.shared.applyForTab(.play)
+        XCTAssertEqual(OrientationPolicy.shared.mask, .landscapeRight,
+                       "a live capture pin must win over the tab's resting mask")
+
+        OrientationPolicy.shared.applyForTab(.matches)
+        XCTAssertEqual(OrientationPolicy.shared.mask, .all)
+
+        OrientationPolicy.shared.releaseCapturePin()
+        OrientationPolicy.shared.applyForTab(.play)
+        XCTAssertEqual(OrientationPolicy.shared.mask, .landscape,
+                       "with the pin released, Play falls back to its resting mask")
+    }
 }

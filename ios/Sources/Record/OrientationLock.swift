@@ -64,25 +64,74 @@ final class OrientationPolicy {
     /// `onAppear` can run, so a default of `.all` would bring the app up
     /// portrait.
     private(set) var mask: UIInterfaceOrientationMask = OrientationLock.mask(for: .launch)
+    /// The mount `RecordModel.startCamera` pinned for the running capture
+    /// session, or nil when no session has pinned one (or the pin was
+    /// released). `applyForTab` consults this so a tab round trip back to
+    /// Play re-asserts the pin instead of the Play tab's wider resting
+    /// `.landscape` mask — nothing stops the capture session on tab exit, so
+    /// without this the device could flip mid-session the moment the
+    /// operator glances at another tab and back.
+    private(set) var capturePin: UIInterfaceOrientationMask?
 
+    /// Two-tier scene lookup: prefer the foreground-active scene, but a
+    /// transient system interruption (an alert, Control Center) can leave
+    /// every scene `.foregroundInactive` for a moment, and returning nothing
+    /// there would leave a caller with no scene to act on until something
+    /// else happened to trigger another query. Falling back to any scene
+    /// with a key window still reaches one. Both predicates require a key
+    /// window so a caller can act on the result unconditionally — a
+    /// `.foregroundActive` scene with a nil `keyWindow` would otherwise need
+    /// its own further guard.
+    ///
+    /// Shared by `apply` (which re-asks UIKit for a rotation) and
+    /// `RecordModel.startCamera` (which reads the scene's
+    /// `interfaceOrientation` to resolve the mount) so the two can never pick
+    /// different scenes and disagree about which one is "the" active scene.
+    @MainActor
+    static func activeWindowScene() -> UIWindowScene? {
+        let scenes = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
+        return scenes.first(where: { $0.activationState == .foregroundActive && $0.keyWindow != nil })
+            ?? scenes.first(where: { $0.keyWindow != nil })
+    }
+
+    /// Sets `mask` and tells UIKit to re-ask the delegate for it, which is
+    /// what actually moves the device. UIKit does not poll, so skipping the
+    /// re-ask would leave the device on the stale orientation until
+    /// something else happened to trigger another query.
     func apply(_ newMask: UIInterfaceOrientationMask) {
         mask = newMask
-        // Prefer the foreground-active scene, but a transient system
-        // interruption (an alert, Control Center) can leave every scene
-        // `.foregroundInactive` for a moment. Returning early there would
-        // update `mask` without ever telling UIKit to re-ask, and UIKit does
-        // not poll — it would stay on the stale orientation until something
-        // else (a rotation, a tab switch) happened to trigger another query.
-        // Falling back to any scene with a key window still reaches UIKit.
-        // Both predicates require a key window so the call below is never
-        // partial: a `.foregroundActive` scene with a nil `keyWindow` would
-        // otherwise optional-chain away `setNeedsUpdateOfSupportedInterfaceOrientations()`
-        // and leave only `requestGeometryUpdate` running.
-        let scenes = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
-        guard let scene = scenes.first(where: { $0.activationState == .foregroundActive && $0.keyWindow != nil })
-            ?? scenes.first(where: { $0.keyWindow != nil }) else { return }
+        guard let scene = Self.activeWindowScene() else { return }
         scene.keyWindow?.rootViewController?.setNeedsUpdateOfSupportedInterfaceOrientations()
         scene.requestGeometryUpdate(.iOS(interfaceOrientations: newMask))
+    }
+
+    /// Called once by `RecordModel.startCamera` when a capture session
+    /// starts. Pins the mask and remembers it as `capturePin`, so a later
+    /// tab round trip back to Play (`applyForTab`) re-asserts this exact
+    /// mount instead of the wider `.landscape` the Play tab permits at rest.
+    func pinForCapture(_ pinnedMask: UIInterfaceOrientationMask) {
+        capturePin = pinnedMask
+        apply(pinnedMask)
+    }
+
+    /// Called when the capture session ends. Without this, `applyForTab`
+    /// would keep re-asserting a pin from a session that is no longer
+    /// running.
+    func releaseCapturePin() {
+        capturePin = nil
+    }
+
+    /// Called by `RootTabView` on every tab change. For `.play`, prefers a
+    /// live `capturePin` over the tab's resting mask, so the pin a running
+    /// capture session set survives a round trip through another tab —
+    /// nothing else re-asserts it, since leaving Play does not stop the
+    /// camera session. `OrientationLock.mask(for:)` itself stays pure and
+    /// capture-agnostic; this is the capture-aware layer on top of it.
+    func applyForTab(_ tab: RootTab) {
+        switch tab {
+        case .play: apply(capturePin ?? OrientationLock.mask(for: .play))
+        case .matches, .coach: apply(OrientationLock.mask(for: tab))
+        }
     }
 }
 
