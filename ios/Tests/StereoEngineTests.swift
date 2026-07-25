@@ -25,6 +25,32 @@ final class StereoEngineTests: XCTestCase {
         (goldens["trajectories"] as! [[String: Any]]).first { ($0["name"] as! String) == name }!
     }
 
+    private static let goldenData: [String: Any] = {
+        let url = Bundle(for: StereoEngineTests.self)
+            .url(forResource: "stereo_goldens", withExtension: "json")!
+        return try! JSONSerialization.jsonObject(
+            with: try! Data(contentsOf: url)) as! [String: Any]
+    }()
+
+    /// Pixel/timestamp samples for the "clean" golden trajectory, keyed to
+    /// whichever eye `camera` is: `left`'s camera-center x is 9.0 in the
+    /// fixture (`right`'s is 12.0), and that pairing is how the fixture ties
+    /// `samples_a` to the left eye and `samples_b` to the right one. Lifts
+    /// the sample construction `testCleanTrajectoryEmitsGoldenImpact` used to
+    /// build inline, so both tests share one source instead of duplicating it.
+    private static func goldenSamples(for camera: CameraModel) -> [TrackSample] {
+        let cameras = goldenData["cameras"] as! [String: Any]
+        let leftCenter = (cameras["left"] as! [String: Any])["camera_center_ft"] as! [Double]
+        let key = camera.cameraCenterFt == SIMD3(leftCenter[0], leftCenter[1], leftCenter[2])
+            ? "samples_a" : "samples_b"
+        let case_ = (goldenData["trajectories"] as! [[String: Any]])
+            .first { ($0["name"] as! String) == "clean" }!
+        return (case_[key] as! [[String: Any]]).map { s in
+            let px = s["px"] as! [Double]
+            return TrackSample(tS: s["t_s"] as! Double, px: SIMD2(px[0], px[1]))
+        }
+    }
+
     /// Feed the clean golden trajectory through the live paths and expect the
     /// same impact the batch authority produced.
     func testCleanTrajectoryEmitsGoldenImpact() {
@@ -34,17 +60,16 @@ final class StereoEngineTests: XCTestCase {
         var events: [StereoEvent] = []
         engine.onEvent = { events.append($0) }
 
-        let samplesA = case_["samples_a"] as! [[String: Any]]
-        let samplesB = case_["samples_b"] as! [[String: Any]]
+        let samplesA = Self.goldenSamples(for: left)
+        let samplesB = Self.goldenSamples(for: right)
         for s in samplesA {
-            engine.addLocalPixel(SIMD2((s["px"] as! [Double])[0], (s["px"] as! [Double])[1]),
-                                 tS: s["t_s"] as! Double)
+            engine.addLocalPixel(s.px, tS: s.tS)
         }
         let tuples = samplesB.enumerated().map { index, s in
             DetectionTuple(seq: UInt32(index),
-                           ptsNs: UInt64((s["t_s"] as! Double) * 1_000_000_000),
-                           x: Float((s["px"] as! [Double])[0]),
-                           y: Float((s["px"] as! [Double])[1]),
+                           ptsNs: UInt64(s.tS * 1_000_000_000),
+                           x: Float(s.px.x),
+                           y: Float(s.px.y),
                            conf: Float16(1.0), bboxH: Float16(10))
         }
         engine.addRemote(tuples)
@@ -52,7 +77,7 @@ final class StereoEngineTests: XCTestCase {
         engine.flushForTesting()
 
         let expected = (case_["impacts"] as! [[String: Any]]).first!
-        guard case .impact(let impact)? = events.first else {
+        guard case .impact(let impact, _)? = events.first else {
             return XCTFail("no impact emitted")
         }
         XCTAssertEqual(events.count, 1)
@@ -189,5 +214,24 @@ final class StereoEngineTests: XCTestCase {
         engine.processIfDue(now: 2.0)
         engine.flushForTesting()
         XCTAssertFalse(fired)
+    }
+
+    func testAnalyzeReturnsTheTrackThatProducedTheImpacts() {
+        // Reuses this class's existing `left` / `right` golden camera models and
+        // the same sample construction `testCleanTrajectoryEmitsGoldenImpact`
+        // uses. `analyze` must agree with `detectImpacts` exactly — it is the
+        // same computation, surfaced, not a second one.
+        let samplesLeft = Self.goldenSamples(for: left)
+        let samplesRight = Self.goldenSamples(for: right)
+        let timeline = stride(from: 0.0, to: 1.0, by: 1.0 / 240.0).map { $0 }
+
+        let viaDetect = StereoTrack.detectImpacts(left, samplesLeft,
+                                                  right, samplesRight,
+                                                  timelineS: timeline)
+        let analyzed = StereoTrack.analyze(left, samplesLeft,
+                                           right, samplesRight,
+                                           timelineS: timeline)
+        XCTAssertEqual(analyzed.impacts, viaDetect)
+        XCTAssertFalse(analyzed.track.isEmpty)
     }
 }

@@ -99,6 +99,15 @@ final class RecordModel: ObservableObject {
     /// it would be a second place for the `no_call` gate to be forgotten.
     @Published private(set) var livePresentation: CallPresentation?
 
+    /// The 3D track behind the most recent call, for the §8.10 post-rally
+    /// replay. Never derived from `stereoEvents` — that list is relayed JSON
+    /// with no geometry in it.
+    @Published private(set) var liveTrack: [TrackPoint3D] = []
+    /// The impact that produced `livePresentation`. `MiniCourtView` colours its
+    /// marker from this, so the replay always agrees with the call that was
+    /// made — the same reason `CallPresentation.color` is the one mapping.
+    @Published private(set) var liveImpact: StereoImpact?
+
     /// The §8.17 wash, which is *transient* where `livePresentation` is
     /// persistent. Separate state on purpose: binding the full-stage flash to
     /// the banner's value leaves an 82%-opacity verdict wash covering the
@@ -213,7 +222,7 @@ final class RecordModel: ObservableObject {
                 let engine = StereoEngine(localModel: localModel, remoteModel: adoptedRemote,
                                           remoteToLocal: { [weak peer] in peer?.clockSync.remoteToLocal($0) })
                 engine.onEvent = { [weak self, weak peer] event in
-                    guard case .impact(let impact) = event else { return }
+                    guard case .impact(let impact, let track) = event else { return }
                     let payload: [String: Any] = [
                         "surface": impact.surface,
                         "call": impact.call,
@@ -239,6 +248,8 @@ final class RecordModel: ObservableObject {
                     DispatchQueue.main.async {
                         self?.appendStereoEvent(json)
                         self?.livePresentation = presentation
+                        self?.liveTrack = track
+                        self?.liveImpact = impact
                         self?.showFlash(presentation)
                     }
                 }
@@ -290,10 +301,12 @@ final class RecordModel: ObservableObject {
         let engine = StereoEngine(localModel: local, remoteModel: remote,
                                   remoteToLocal: { $0 })
         engine.onEvent = { [weak self] event in
-            guard case .impact(let impact) = event else { return }
+            guard case .impact(let impact, let track) = event else { return }
             let presentation = CallPresentation.from(impact)
             DispatchQueue.main.async {
                 self?.livePresentation = presentation
+                self?.liveTrack = track
+                self?.liveImpact = impact
                 self?.showFlash(presentation)
             }
         }

@@ -40,7 +40,7 @@ final class LiveWiringTests: XCTestCase {
         engine.processIfDue(now: 100.0)
         engine.flushForTesting()
 
-        guard case .impact(let impact)? = events.first else {
+        guard case .impact(let impact, _)? = events.first else {
             return XCTFail("demo trajectory emitted no impact")
         }
         XCTAssertEqual(impact.surface, "front_wall")

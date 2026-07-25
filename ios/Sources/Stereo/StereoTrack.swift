@@ -3,7 +3,7 @@ import Foundation
 import simd
 
 struct TrackSample { let tS: Double; let px: SIMD2<Double> }
-struct TrackPoint3D { let tS: Double; let pointFt: SIMD3<Double>; let gapFt: Double }
+struct TrackPoint3D: Equatable { let tS: Double; let pointFt: SIMD3<Double>; let gapFt: Double }
 
 struct StereoImpact: Equatable {
     let tS: Double
@@ -88,11 +88,14 @@ enum StereoTrack {
         return evalPixelTrack(window, tS: tImpact, window: window.count)
     }
 
-    static func detectImpacts(_ a: CameraModel, _ samplesA: [TrackSample],
-                              _ b: CameraModel, _ samplesB: [TrackSample],
-                              timelineS: [Double]) -> [StereoImpact] {
+    /// The track and the impacts from one pass. `detectImpacts` built this
+    /// track and discarded it; the post-rally replay (§8.10) needs it, and
+    /// recomputing would be the same triangulation twice.
+    static func analyze(_ a: CameraModel, _ samplesA: [TrackSample],
+                        _ b: CameraModel, _ samplesB: [TrackSample],
+                        timelineS: [Double]) -> (track: [TrackPoint3D], impacts: [StereoImpact]) {
         let track = buildTrack3D(a, samplesA, b, samplesB, timelineS: timelineS)
-        guard track.count >= 3 else { return [] }
+        guard track.count >= 3 else { return (track, []) }
         var impacts: [StereoImpact] = []
         for surface in StereoMath.surfaces {
             let dists = track.map { StereoMath.planeDistance(surface: surface, point: $0.pointFt) }
@@ -147,6 +150,12 @@ enum StereoTrack {
             }
             merged.append(impact)
         }
-        return merged
+        return (track, merged)
+    }
+
+    static func detectImpacts(_ a: CameraModel, _ samplesA: [TrackSample],
+                              _ b: CameraModel, _ samplesB: [TrackSample],
+                              timelineS: [Double]) -> [StereoImpact] {
+        analyze(a, samplesA, b, samplesB, timelineS: timelineS).impacts
     }
 }
