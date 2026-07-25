@@ -24,21 +24,56 @@ press `Alt+D`. It previews all seven blocks. Requires Java.
 Note this sends the diagram source to a third-party server — it contains no secrets, but
 it is your call.
 
-**Locally, fully offline.**
+**Locally, fully offline.** This is the path these diagrams were verified with — OpenJDK 21
+plus PlantUML 1.2026.6.
 
 ```bash
 winget install Microsoft.OpenJDK.21
 ```
 
-then drop `plantuml.jar` next to the file and run:
+Download `plantuml.jar` from the [official releases](https://github.com/plantuml/plantuml/releases/latest),
+then:
 
 ```bash
-java -jar plantuml.jar docs/architecture.puml
+java -jar plantuml.jar -tpng -o diagrams docs/architecture.puml
 ```
 
-That writes one PNG per block (`system_context.png`, `python_modules.png`, …) into `docs/`.
+That writes one PNG per block (`system_context.png`, `python_modules.png`, …) into
+`docs/diagrams/`. To check syntax without rendering, swap `-tpng -o diagrams` for
+`-checkonly`.
+
 Those PNGs are **not** tracked — `.gitignore` allowlists `docs/**/*.puml` and `docs/**/*.md`
-only, deliberately, so nobody has to keep a rendered image in sync with the source.
+only, deliberately, so nobody has to keep a rendered image in sync with the source. Render
+them when you need them.
+
+### If you edit the diagrams, read this first
+
+PlantUML silently breaks an inline tag that spans a line break. A `<size:10>` or `<b>` span
+containing either a literal `\n` or a real newline **stops at the break**, and the closing
+`</size>` / `</b>` renders as visible garbage text in the image. It is not a parse error —
+the file compiles clean and the damage only shows up in the rendered PNG.
+
+Keep every inline tag opening and closing on one line. For multi-line small text, repeat the
+tag per line:
+
+```
+' wrong — leaks a literal </size> into the image
+component "**Thing**\n<size:10>first line\nsecond line</size>" as t
+
+' right
+component "**Thing**\n<size:10>first line</size>\n<size:10>second line</size>" as t
+```
+
+Two more traps, both silent: **curly quotes break a composite state declaration**
+(`state "…“x”…" as y {` fails to parse, though they are fine in components), and
+**angle-bracket placeholders** like `<run_id>` get eaten as tags — use `{run_id}`.
+
+This check catches the tag problem before you render — it should print nothing (the
+`autonumber` guard skips `autonumber "<b>[0]"`, whose unclosed tag is intentional):
+
+```bash
+awk '!/^autonumber/ {o=gsub(/<(b|i|u|s|size:[0-9]+)>/,""); c=gsub(/<\/(b|i|u|s|size)>/,""); if (o!=c) print NR": "$0}' docs/architecture.puml
+```
 
 ---
 
