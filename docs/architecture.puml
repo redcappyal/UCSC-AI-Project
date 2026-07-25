@@ -27,11 +27,11 @@ actor "Player\n<size:10>phone on a court mount</size>" as player
 
 package "Client surfaces" {
 
-  component "**Mobile browser**\nindex.html\n<size:10>ONE file: HTML + CSS + JS.\nNo build step, no framework,\nno bundler, no npm.</size>" as web
+  component "**Mobile browser**\nindex.html\n<size:10>ONE file: HTML + CSS + JS.</size>\n<size:10>No build step, no framework,</size>\n<size:10>no bundler, no npm.</size>" as web
 
   package "Native iOS app — ios/" {
     component "**Play tab** (native SwiftUI)\nRecordView / RecordModel\n<size:10>4K60 capture + live on-device calls</size>" as iosNative
-    component "**Matches + Coach tabs**\nWebScreen (WKWebView)\n<size:10>loads the SAME index.html\nwith #shell=1</size>" as iosWeb
+    component "**Matches + Coach tabs**\nWebScreen (WKWebView)\n<size:10>loads the SAME index.html</size>\n<size:10>with #shell=1</size>" as iosWeb
   }
 }
 
@@ -40,10 +40,10 @@ package "Server — one Flask process" {
   component "**job_runner.py**\ndaemon thread, Semaphore(1)\n<size:10>one tracking job at a time</size>" as jobs
 }
 
-database "**ui_runs/**  <size:10>(gitignored)</size>\n<size:10>ui_runs/{run_id}/\n  job.json          — authoritative run record\n  calibration.json  — the tapped geometry\n  ball_coordinates.csv\n  detected_hits.json\n  corrections.json / ground_truth.json\nui_runs/uploads/by-hash/{sha256}.mp4</size>" as store
+database "**ui_runs/**  <size:10>(gitignored)</size>\n<size:10>ui_runs/{run_id}/</size>\n<size:10>  job.json          — authoritative run record</size>\n<size:10>  calibration.json  — the tapped geometry</size>\n<size:10>  ball_coordinates.csv</size>\n<size:10>  detected_hits.json</size>\n<size:10>  corrections.json / ground_truth.json</size>\n<size:10>ui_runs/uploads/by-hash/{sha256}.mp4</size>" as store
 
-cloud "**Roboflow**\n<size:10>RF-DETR ball detector,\ndownloaded once to .roboflow-cache/</size>" as roboflow
-cloud "**OpenAI** <size:10>(optional)</size>\n<size:10>narrates the coaching report;\nfalls back to a local template</size>" as openai
+cloud "**Roboflow**\n<size:10>RF-DETR ball detector,</size>\n<size:10>downloaded once to .roboflow-cache/</size>" as roboflow
+cloud "**OpenAI** <size:10>(optional)</size>\n<size:10>narrates the coaching report;</size>\n<size:10>falls back to a local template</size>" as openai
 
 note as designspec #FFFDF0
   <b>DESIGN.md</b>  «spec»
@@ -109,31 +109,31 @@ skinparam roundCorner 8
 skinparam ArrowFontSize 11
 
 package "1 · Web layer" #EEF4FF {
-  component "**app.py**\n<size:10>routes, upload, run dirs,\ncoaching analytics, corrections</size>" as app
+  component "**app.py**\n<size:10>routes, upload, run dirs,</size>\n<size:10>coaching analytics, corrections</size>" as app
 }
 
 package "2 · Job layer" #EEF9F0 {
-  component "**job_runner.py**\n<size:10>run_tracking_job() · judge_hits()\nJOBS dict + job.json · thread + semaphore\nrally / player assignment</size>" as runner
+  component "**job_runner.py**\n<size:10>run_tracking_job() · judge_hits()</size>\n<size:10>JOBS dict + job.json · thread + semaphore</size>\n<size:10>rally / player assignment</size>" as runner
 }
 
 package "3 · Perception layer" #FFF6EC {
-  component "**inference_engine.py**\n<size:10>RF-DETR load + per-frame infer.\nThe ONLY place the model is configured.</size>" as infer
-  component "**tracking_common.py**\n<size:10>CSV schema, ball-class filter,\nmotion-consistent ball selection</size>" as common
+  component "**inference_engine.py**\n<size:10>RF-DETR load + per-frame infer.</size>\n<size:10>The ONLY place the model is configured.</size>" as infer
+  component "**tracking_common.py**\n<size:10>CSV schema, ball-class filter,</size>\n<size:10>motion-consistent ball selection</size>" as common
   component "**audio_events.py**\n<size:10>impact sounds → candidate windows</size>" as audio
 
   package "Bounce engines — pick ONE per run" #FFFFFF {
     component "**bounce_gb_model_detector.py**\n<size:10>engine = “gb_model”  ← DEFAULT</size>" as gb
     component "**detect_wall_hits.py**\n<size:10>engine = “votes”</size>" as votes
-    component "**event_engine.py**\n<size:10>engine = “fusion”\naudio × derivative × arcs\n+ squash sequence grammar</size>" as fusion
+    component "**event_engine.py**\n<size:10>engine = “fusion”</size>\n<size:10>audio × derivative × arcs</size>\n<size:10>+ squash sequence grammar</size>" as fusion
   }
 
-  component "**ballistic.py**\n<size:10>gravity-constrained 3D arcs\n(fusion_3d only)</size>" as ballistic
+  component "**ballistic.py**\n<size:10>gravity-constrained 3D arcs</size>\n<size:10>(fusion_3d only)</size>" as ballistic
   component "**classify_events.py**\n<size:10>wall / racket / unknown</size>" as classify
 }
 
 package "4 · Geometry layer" #F6EEFF {
-  component "**judge_call.py**\n<size:10>Point · Line · WallCorners\njudge_ball() → IN / OUT</size>" as judge
-  component "**court_model.py**\n<size:10>court in feet, floor homography,\nfull camera solve (CameraModel)</size>" as court
+  component "**judge_call.py**\n<size:10>Point · Line · WallCorners</size>\n<size:10>judge_ball() → IN / OUT</size>" as judge
+  component "**court_model.py**\n<size:10>court in feet, floor homography,</size>\n<size:10>full camera solve (CameraModel)</size>" as court
   component "**stereo_engine.py**\n<size:10>two-camera triangulation</size>" as stereo
 }
 
@@ -231,12 +231,12 @@ end note
 
 partition "stage = **coarse**" {
   :get_tracking_model()
-  <size:10>cached singleton — the first call downloads
-  RF-DETR and may take a minute</size>;
+  <size:10>cached singleton — the first call downloads</size>
+  <size:10>RF-DETR and may take a minute</size>;
 
   :**Coarse pass** — whole clip at frame_stride
-  <size:10>track_segments() at COARSE_INFERENCE_WIDTH=640
-  when stride > 1 — good enough to LOCATE hits</size>;
+  <size:10>track_segments() at COARSE_INFERENCE_WIDTH=640</size>
+  <size:10>when stride > 1 — good enough to LOCATE hits</size>;
   note right
     Two threads inside every pass:
     a decode producer feeding a
@@ -248,8 +248,8 @@ partition "stage = **coarse**" {
   :write ball_coordinates.csv;
 
   :**Audio analysis**
-  <size:10>fusion → extract_repeating_audio_windows()
-  else → extract_audio_candidates()</size>;
+  <size:10>fusion → extract_repeating_audio_windows()</size>
+  <size:10>else → extract_audio_candidates()</size>;
 
   :**Find hit candidates** — detect_hits_from_rows()
   <size:10>only to decide WHERE to look closely</size>;
@@ -258,8 +258,8 @@ partition "stage = **coarse**" {
 if (frame_stride > 1 and candidates found?) then (yes)
   partition "stage = **refine**" {
     :**Refine pass** — stride 1 around each candidate
-    <size:10>±max(12, 4×stride) frames, merged with audio
-    windows ±4, re-tracked at the full inference_width</size>;
+    <size:10>±max(12, 4×stride) frames, merged with audio</size>
+    <size:10>windows ±4, re-tracked at the full inference_width</size>;
     :rewrite ball_coordinates.csv;
   }
 else (no — already dense)
@@ -326,7 +326,6 @@ endlegend
 title Judge a clip — the request flow\n<size:11>//Upload → track → poll → judge → correct//</size>
 
 skinparam shadowing false
-skinparam ParticipantPadding 12
 skinparam ArrowFontSize 11
 autonumber "<b>[0]"
 
@@ -357,7 +356,7 @@ note right of API
 end note
 deactivate API
 
-UI -> API : POST /api/track\n<size:10>video_id, calibration_json, start/end,\nframe_stride, inference_width, event_engine</size>
+UI -> API : POST /api/track\n<size:10>video_id, calibration_json, start/end,</size>\n<size:10>frame_stride, inference_width, event_engine</size>
 activate API
 API -> FS : mkdir {run_id}/ + write calibration.json
 API -> JOB : start_tracking_job()\n<size:10>threading.Thread(daemon=True)</size>
@@ -415,7 +414,7 @@ state "**load**  <size:10>#p-load</size>" as load #EEF4FF
 state "**record**  <size:10>#p-record</size>" as record
 state "**label**  <size:10>#p-label</size>\n<size:10>dev bounce labeler</size>" as label
 
-state "Calibration + judge flow\n<size:10>the numbered steps: “4/11 · Review”</size>" as flow {
+state "Calibration + judge flow\n<size:10>the numbered steps, e.g. 4/11 · Review</size>" as flow {
   state "**frame**\n<size:10>pick a clean frame</size>" as frame
   state "**tap_out**\n<size:10>tap the OUT line</size>" as tapout
   state "**tap_tin**\n<size:10>tap the TIN</size>" as taptin
@@ -448,7 +447,7 @@ load --> frame : pick a file\n<size:10>#fileIn</size>
 load --> record : Record a clip
 load --> label : <size:10>[dev: label mode on]</size>
 record --> frame : judge a recording
-record --> tapout : **Calibrate here**\n<size:10>freezes the camera frame,\nreturns to record when done</size>
+record --> tapout : **Calibrate here**\n<size:10>freezes the camera frame,</size>\n<size:10>returns to record when done</size>
 
 state "Section roots\n<size:10>nav pill visible, no back chevron</size>" as roots #F4F4F4 {
   state "**matches**" as matches
@@ -457,7 +456,7 @@ state "Section roots\n<size:10>nav pill visible, no back chevron</size>" as root
 load --> matches
 load --> coach
 
-state "Roadmap placeholders\n<size:10>“Coming soon” — no implementation</size>" as roadmap #F4F4F4 {
+state "Roadmap placeholders\n<size:10>Coming soon — no implementation</size>" as roadmap #F4F4F4 {
   state "**live**" as live
   state "**stats**" as stats
   state "**shot_bot**" as shotbot
@@ -466,7 +465,7 @@ state "Roadmap placeholders\n<size:10>“Coming soon” — no implementation</s
 coach --> roadmap : feature cards\n<size:10>button[data-phase]</size>
 load --> live
 
-[*] --> track : **restore on boot**\n<size:10>tryRestoreSession() reads the\nslc-restore localStorage stash and\njumps straight to a finished run</size>
+[*] --> track : **restore on boot**\n<size:10>tryRestoreSession() reads the</size>\n<size:10>slc-restore localStorage stash and</size>\n<size:10>jumps straight to a finished run</size>
 
 note as nphase #FFFDF0
   <b>Three things the phase key does not tell you:</b>
@@ -499,28 +498,28 @@ skinparam ArrowFontSize 11
 
 package "Phone A — primary" {
   package "Capture — Record/" {
-    component "CameraController\n<size:10>4K60, exposure/WB/focus\nlocked once via lockForCourt()</size>" as cam
+    component "CameraController\n<size:10>4K60, exposure/WB/focus</size>\n<size:10>locked once via lockForCourt()</size>" as cam
     component "**RecordModel**\n<size:10>the live orchestrator</size>" as model
   }
 
   package "Detection — Tracking/" {
-    component "CoreMLBallDetector\n<size:10>Vision + Core ML on the ANE\n(computeUnits = .all)</size>" as detector
+    component "CoreMLBallDetector\n<size:10>Vision + Core ML on the ANE</size>\n<size:10>(computeUnits = .all)</size>" as detector
     component "BallTracker\n+ RingBuffer" as tracker
-    component "SyntheticBallDetector\n<size:10>DEBUG — drives the whole path\nwith no model file</size>" as synth
+    component "SyntheticBallDetector\n<size:10>DEBUG — drives the whole path</size>\n<size:10>with no model file</size>" as synth
   }
 
   package "Geometry — Stereo/" {
-    component "**StereoEngine**\n<size:10>triangulate → snap to plane\n→ impact → call</size>" as engine
+    component "**StereoEngine**\n<size:10>triangulate → snap to plane</size>\n<size:10>→ impact → call</size>" as engine
     component "CameraModel\nStereoMath / StereoTrack" as stereomath
   }
 
   package "Live UI — Live/" {
-    component "**CallFlashView**\n<size:10>full-stage verdict wash,\n150 ms in + 350 ms hold</size>" as flash
-    component "**CallBannerView**\n<size:10>persistent honest state,\nreserved height = no layout shift</size>" as banner
-    component "CallPresentation\n<size:10>gates on CONFIDENCE before call:\nno_call → “NO CALL · obstructed”</size>" as presentation
+    component "**CallFlashView**\n<size:10>full-stage verdict wash,</size>\n<size:10>150 ms in + 350 ms hold</size>" as flash
+    component "**CallBannerView**\n<size:10>persistent honest state,</size>\n<size:10>reserved height = no layout shift</size>" as banner
+    component "CallPresentation\n<size:10>gates on CONFIDENCE before call:</size>\n<size:10>no_call → “NO CALL · obstructed”</size>" as presentation
     component "MiniCourtView\n<size:10>post-rally replay</size>" as minicourt <<not yet wired>>
     component "PairingModel + PairingView\n<size:10>idle→searching→confirm→syncing→ready</size>" as pairing <<not yet wired>>
-    component "CallAnnouncer\n<size:10>AVSpeechSynthesizer,\nisEnabled = false by default</size>" as announcer <<not yet wired>>
+    component "CallAnnouncer\n<size:10>AVSpeechSynthesizer,</size>\n<size:10>isEnabled = false by default</size>" as announcer <<not yet wired>>
   }
 }
 
@@ -529,13 +528,13 @@ package "Phone B — secondary" {
 }
 
 package "Peer link — Peer/" {
-  component "PeerSession\n<size:10>BLETransport / WiFiP2PTransport /\nLoopbackTransport</size>" as peer
-  component "**ClockSync**\n<size:10>NTP-style min-RTT + clap anchor.\nBudget: ≤ 2 ms.</size>" as clock
+  component "PeerSession\n<size:10>BLETransport / WiFiP2PTransport /</size>\n<size:10>LoopbackTransport</size>" as peer
+  component "**ClockSync**\n<size:10>NTP-style min-RTT + clap anchor.</size>\n<size:10>Budget: ≤ 2 ms.</size>" as clock
 }
 
 package "Server-dependent, outside the live loop — API/" {
-  component "APIClient\n<size:10>api/calibration/latest\n**api/camera-model**  ← the camera pose\nsolve is server-side even here\napi/upload · api/track · api/track/status</size>" as apiclient
-  component "WebScreen (WKWebView)\n<size:10>Matches + Coach tabs load\nindex.html with #shell=1</size>" as webscreen
+  component "APIClient\n<size:10>api/calibration/latest</size>\n<size:10>**api/camera-model**  ← the camera pose</size>\n<size:10>solve is server-side even here</size>\n<size:10>api/upload · api/track · api/track/status</size>" as apiclient
+  component "WebScreen (WKWebView)\n<size:10>Matches + Coach tabs load</size>\n<size:10>index.html with #shell=1</size>" as webscreen
 }
 
 cam --> model : sample buffers
@@ -553,7 +552,7 @@ phoneB --> peer : DetectionTuple stream
 peer --> engine
 clock --> peer : shared timebase
 stereomath --> engine
-apiclient --> stereomath : solved CameraModel\n<size:10>fetched once, then scaled into\nthe capture pixel space</size>
+apiclient --> stereomath : solved CameraModel\n<size:10>fetched once, then scaled into</size>\n<size:10>the capture pixel space</size>
 engine --> presentation
 presentation --> flash
 presentation --> banner
@@ -561,20 +560,20 @@ engine ..> minicourt
 engine ..> announcer
 pairing ..> peer
 
-webscreen --> webscreen : deep link #run={id}&frame={n}\n<size:10>seeds the slc-restore stash so the web app\nrehydrates a finished run</size>
+webscreen --> webscreen : deep link #run={id}&frame={n}\n<size:10>seeds the slc-restore stash so the web app</size>\n<size:10>rehydrates a finished run</size>
 
 note as nwired #FFF0F0
-  <b>"not yet wired" = the logic is unit-tested,
-  the view has no production call site yet.</b>
+  <b>"not yet wired" = the logic is unit-tested,</b>
+  <b>the view has no production call site yet.</b>
 
   Mounted today: RecordView shows CallFlashView
   and CallBannerView. That is the whole live UI.
 
   Built, tested, never instantiated in Sources/:
-    MiniCourtView   <size:10>logic tested as CourtProjection
-                    in MiniCourtTests.swift</size>
-    PairingView     <size:10>logic tested as PairingModel
-                    in PairingModelTests.swift</size>
+    MiniCourtView   <size:10>logic tested as CourtProjection</size>
+                    <size:10>in MiniCourtTests.swift</size>
+    PairingView     <size:10>logic tested as PairingModel</size>
+                    <size:10>in PairingModelTests.swift</size>
     CallAnnouncer   <size:10>tested in LiveCallTests.swift</size>
 
   Do not hunt for the code path that shows these.
@@ -622,9 +621,9 @@ class "CSV detection row" as row <<ball_coordinates.csv>> #EEF4FF {
   width, height : float
   x_min, y_min, x_max, y_max : float
   --
-  <size:10>One row per frame examined.
-  The interchange format between the
-  tracking pass and every detector.</size>
+  <size:10>One row per frame examined.</size>
+  <size:10>The interchange format between the</size>
+  <size:10>tracking pass and every detector.</size>
 }
 
 class "Detected hit" as hit <<dict>> #FFF6EC {
@@ -655,8 +654,8 @@ class "Judged hit (the verdict)" as verdict <<dict>> #EEF9F0 {
   velocity : {speed_before, speed_after, ...}
   rally_number, player_number
   --
-  <size:10>call is None for racket/floor/side_wall.
-  <b>Verdicts are front-wall-only.</b></size>
+  <size:10>call is None for racket/floor/side_wall.</size>
+  <size:10><b>Verdicts are front-wall-only.</b></size>
 }
 
 class Point <<frozen dataclass>> #F6EEFF {
@@ -671,9 +670,9 @@ class Line <<frozen dataclass>> #F6EEFF {
   y_at_x(x)
   point_at(u)
   **signed_distance_below(point)**
-  <size:10>perpendicular signed distance —
-  which is why a tilted calibration
-  still judges correctly</size>
+  <size:10>perpendicular signed distance —</size>
+  <size:10>which is why a tilted calibration</size>
+  <size:10>still judges correctly</size>
 }
 
 class WallCorners <<frozen dataclass>> #F6EEFF {
@@ -681,10 +680,10 @@ class WallCorners <<frozen dataclass>> #F6EEFF {
   bottom_right, bottom_left : Point
   --
   x_bounds_at_y(y)
-  <size:10>Top corners = OUT line × side walls (15 ft).
-  Bottom = wall/floor seam. All four have exact
-  court coordinates, so they double as
-  camera-pose correspondences.</size>
+  <size:10>Top corners = OUT line × side walls (15 ft).</size>
+  <size:10>Bottom = wall/floor seam. All four have exact</size>
+  <size:10>court coordinates, so they double as</size>
+  <size:10>camera-pose correspondences.</size>
 }
 
 class CameraModel #F6EEFF {
@@ -738,8 +737,8 @@ class "corrections.json" as corr <<corrections-v2>> #F4F4F4 {
        margin_px, ball}
   agrees : {type, call, frame}
   recorded_at, app_version
-  <size:10>one entry per frame, latest wins.
-  corrected = null means "undo".</size>
+  <size:10>one entry per frame, latest wins.</size>
+  <size:10>corrected = null means "undo".</size>
 }
 
 row --> hit : bounce engine\n<size:10>gb_model | votes | fusion</size>
