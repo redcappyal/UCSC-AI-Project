@@ -19,6 +19,10 @@ final class PeerSession: ObservableObject {
     var role: PeerRole? { stateLock.lock(); defer { stateLock.unlock() }; return _role }
     let clockSync = ClockSync()
     var peerHello: Hello? { stateLock.lock(); defer { stateLock.unlock() }; return _peerHello }
+    /// What this device advertises. Exposed so callers can assert their
+    /// detection frame space matches the space the peer will read it in —
+    /// the two disagreeing is precisely the bug this file used to have.
+    var advertisedHello: Hello { stateLock.lock(); defer { stateLock.unlock() }; return myHello }
     var onRemoteDetections: (([DetectionTuple]) -> Void)?
     /// Fired on the transport delivery context (like onRemoteDetections) when
     /// a .calibration control message arrives. Phase 3: the payload carries
@@ -92,17 +96,24 @@ final class PeerSession: ObservableObject {
 
     init(transport: PeerTransport, isInitiator: Bool,
          now: @escaping () -> TimeInterval = ClockSync.hostNow,
-         heartbeatTimeout: TimeInterval = 3.0) {
+         heartbeatTimeout: TimeInterval = 3.0,
+         captureOrientation: CaptureSettings.CaptureOrientation = .landscapeRight) {
         self.transport = transport
         self.isInitiator = isInitiator
         self.now = now
         self.heartbeatTimeout = heartbeatTimeout
+        // Advertise the space this session actually captures in. Reading the
+        // CaptureSettings statics here instead is what made the guard below
+        // inert: both sides then advertise the same compile-time constants
+        // regardless of how they are really capturing.
+        let frame = CaptureSettings.frameSize(for: captureOrientation)
         self.myHello = Hello(protoVersion: peerProtoVersion,
                              appVersion: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "dev",
                              deviceModel: ProcessInfo.processInfo.hostName,
                              nonce: UInt32.random(in: .min ... .max),
-                             frameW: CaptureSettings.frameWidth,
-                             frameH: CaptureSettings.frameHeight)
+                             frameW: frame.width,
+                             frameH: frame.height,
+                             captureOrientation: captureOrientation)
         transport.onControl = { [weak self] in self?.handleControl($0) }
         transport.onDatagram = { [weak self] in self?.handleDatagram($0) }
         transport.onStateChange = { [weak self] in self?.handleTransportState($0) }
@@ -243,14 +254,20 @@ final class PeerSession: ObservableObject {
                 transport.stop()
                 return
             }
-            // Detection tuples are expressed in the advertised frame size.
-            // Two phones in different orientations (one portrait, one
-            // landscape-mounted) advertise transposed dimensions — nothing
-            // downstream would error, it would just triangulate transposed
-            // coordinates into confident, wrong line calls. Refuse instead.
-            guard theirs.frameW == CaptureSettings.frameWidth,
-                  theirs.frameH == CaptureSettings.frameHeight else {
-                setPhase(.failed("peer camera orientation doesn't match this phone — mount or hold both phones the same way (portrait or landscape) and reconnect"))
+            // Detection tuples are expressed in the advertised frame space.
+            // Compared against myHello, NOT against the CaptureSettings
+            // globals: the advertised value and the compared value are then
+            // the same value and cannot drift apart. Comparing against the
+            // globals is what made this guard a tautology — both sides built
+            // their hello from those same constants, so it could never fail.
+            //
+            // Orientation is compared explicitly because both mounts share
+            // one frame size; a nil orientation is a peer predating the field
+            // (portrait capture), which is a genuine mismatch.
+            guard theirs.frameW == myHello.frameW,
+                  theirs.frameH == myHello.frameH,
+                  theirs.captureOrientation == myHello.captureOrientation else {
+                setPhase(.failed("peer camera orientation doesn't match this phone — mount both phones the same way and reconnect"))
                 transport.stop()
                 return
             }

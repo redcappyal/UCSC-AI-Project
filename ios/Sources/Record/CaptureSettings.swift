@@ -52,12 +52,11 @@ enum CaptureSettings {
     /// same `frameSize(for:)`, so dimensions alone cannot tell them apart —
     /// which is why the mount has to travel explicitly on the wire.
     ///
-    /// Not yet enforced: `Hello` carries no mount today and `PeerSession`
-    /// compares frame dimensions only, so matching mounts is currently an
-    /// operator responsibility — `ios/PEER.md` documents this as a known
-    /// limit. Mixing mounts should be refused rather than absorbed, so the
-    /// operator learns the mount is wrong instead of the archive inheriting
-    /// it.
+    /// The mount travels explicitly in `Hello.captureOrientation`, and
+    /// `PeerSession` enforces the match at handshake (see its `.hello`
+    /// handler) by comparing the peer's hello against its own. Mixing mounts
+    /// is refused rather than absorbed, so the operator learns the mount is
+    /// wrong instead of the archive inheriting it.
     enum CaptureOrientation: String, Codable, Equatable, CaseIterable {
         case landscapeRight, landscapeLeft
     }

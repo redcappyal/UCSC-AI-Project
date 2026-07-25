@@ -11,6 +11,17 @@ struct Hello: Codable, Equatable {
     var nonce: UInt32
     var frameW: Int
     var frameH: Int
+    /// Which way the phone is mounted. Both mounts share one frame size, so
+    /// frameW/frameH cannot distinguish them — this can.
+    ///
+    /// Optional is load-bearing, not laziness. A required field makes a hello
+    /// from a build predating it THROW in JSONDecoder; ControlMessage.decode
+    /// returns nil and handleControl guards that away with no branch, so the
+    /// frame is dropped silently and pairing hangs in .searching with no
+    /// diagnostic. Optional decodes cleanly and nil reads as "legacy peer,
+    /// portrait capture" — a mismatch against any landscape session, refused
+    /// with a message that tells the operator what to do.
+    var captureOrientation: CaptureSettings.CaptureOrientation? = nil
 }
 
 struct SyncPing: Codable, Equatable { var pingID: UInt32; var t1: Double }
