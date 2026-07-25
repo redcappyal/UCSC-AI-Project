@@ -29,6 +29,13 @@ final class PeerSession: ObservableObject {
     /// .event control message arrives — carries a stereo-engine event
     /// (impact JSON, Phase 3) relayed from the primary.
     var onEvent: ((_ rallyID: UInt32, _ json: String) -> Void)?
+    /// Phase 4: synchronized rally recording. `action` is "start" or "stop";
+    /// `ptsNs` is the sender's host clock, for logging — actual alignment
+    /// comes from ClockSync, never from this field.
+    var onRecord: ((String, UInt64) -> Void)?
+    /// Phase 5: paired-upload identity. `videoID` is empty on the initial
+    /// announce and carries the real ID once that phone has uploaded.
+    var onSessionManifest: ((String, String) -> Void)?
 
     private let transport: PeerTransport
     private let isInitiator: Bool
@@ -159,6 +166,18 @@ final class PeerSession: ObservableObject {
         sendControl(.event(rallyID: rallyID, json: json))
     }
 
+    func sendRecord(action: String, ptsNs: UInt64) {
+        stateLock.lock(); defer { stateLock.unlock() }
+        guard internalPhase == .live || internalPhase == .ready else { return }
+        sendControl(.record(action: action, ptsNs: ptsNs))
+    }
+
+    func sendSessionManifest(sessionID: String, videoID: String) {
+        stateLock.lock(); defer { stateLock.unlock() }
+        guard internalPhase == .live || internalPhase == .ready else { return }
+        sendControl(.sessionManifest(sessionID: sessionID, videoID: videoID))
+    }
+
     func sendClapAnchor(localOnset: TimeInterval) {
         stateLock.lock(); defer { stateLock.unlock() }
         myClapOnset = localOnset
@@ -281,8 +300,10 @@ final class PeerSession: ObservableObject {
             onCalibration?(profileID, calibrationJSON)
         case .event(let rallyID, let json):
             onEvent?(rallyID, json)
-        case .record, .sessionManifest:
-            break   // consumed by Phase 4/5 code; parsing is already validated
+        case .record(let action, let ptsNs):
+            onRecord?(action, ptsNs)
+        case .sessionManifest(let sessionID, let videoID):
+            onSessionManifest?(sessionID, videoID)
         }
     }
 
