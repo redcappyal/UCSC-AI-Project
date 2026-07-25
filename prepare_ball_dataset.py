@@ -30,11 +30,13 @@ Usage: python prepare_ball_dataset.py --source "~/Desktop/Annotated Data/SquashA
 """
 
 import argparse
+import hashlib
 import json
 import math
 import random
 import re
 import statistics
+import unicodedata
 from collections import defaultdict
 from pathlib import Path
 
@@ -52,6 +54,11 @@ MIN_SOURCE_WIDTH = 960
 # this to reach the target is too far out of domain to rescale into it.
 SCALE_LIMITS = (0.5, 4.0)
 
+# Anything outside this set breaks a crop filename somewhere in the chain: cv2
+# on Windows, or a zip round-trip that loses the UTF-8 flag. See
+# docs/superpowers/specs/2026-07-24-ascii-crop-filenames-design.md.
+UNSAFE_CHARS = re.compile(r"[^A-Za-z0-9._-]+")
+
 
 def clip_and_frame(file_name):
     """('BayClub', 42) for a Roboflow frame name; (stem, None) if unparseable."""
@@ -59,6 +66,30 @@ def clip_and_frame(file_name):
     if not match:
         return Path(file_name).stem.split(".rf.")[0], None
     return match.group("clip"), int(match.group("frame"))
+
+
+def ascii_slug(stem):
+    """ASCII, filesystem-safe form of a source frame stem.
+
+    One source clip is a YouTube title carrying U+FF5C (｜, a sanitised "|"), and
+    a filename built from it is unusable on Windows twice over: cv2.imread
+    returns None for it, and cv2.imwrite reports success while writing a
+    mojibake name. Emitting ASCII is what makes the crop names portable.
+
+    NFKD runs first so accents transliterate (é -> e) instead of vanishing, but
+    it also turns U+FF5C into a literal "|" — valid ASCII, invalid in a Windows
+    filename — so the charset filter runs after it, never instead of it.
+
+    The transform is lossy, so a name that changed carries an 8-hex digest of
+    the original: two clips that collapse onto one base stay distinct, and the
+    suffix is stable per source name. A name already in the safe set is returned
+    untouched, which is what keeps this from renaming the whole dataset.
+    """
+    folded = unicodedata.normalize("NFKD", stem).encode("ascii", "ignore").decode("ascii")
+    slug = UNSAFE_CHARS.sub("_", folded).strip("._-") or "clip"
+    if slug == stem:
+        return slug
+    return f"{slug}-{hashlib.sha1(stem.encode('utf-8')).hexdigest()[:8]}"
 
 
 def polygon_points(segmentation):

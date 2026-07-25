@@ -1,6 +1,7 @@
 """prepare_ball_dataset: geometry, splitting and crop planning (no cv2 needed)."""
 
 import random
+import re
 import sys
 from pathlib import Path
 
@@ -9,8 +10,9 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from prepare_ball_dataset import (
-    _clip_box, burst_count, clip_and_frame, clip_scale_factors, plan_crops,
-    polygon_aabb, polygon_points, split_by_clip, streak_metrics, thin_bursts,
+    _clip_box, ascii_slug, burst_count, clip_and_frame, clip_scale_factors,
+    plan_crops, polygon_aabb, polygon_points, split_by_clip, streak_metrics,
+    thin_bursts,
 )
 
 
@@ -171,3 +173,55 @@ def test_plan_crops_is_deterministic_for_a_seed():
     first = plan_crops(record, rng=random.Random(7), **args)
     second = plan_crops(record, rng=random.Random(7), **args)
     assert [p["origin"] for p in first] == [p["origin"] for p in second]
+
+
+SAFE_NAME = re.compile(r"[A-Za-z0-9._-]+")
+
+
+def test_ascii_slug_leaves_a_clean_roboflow_name_alone():
+    # The 1,975 already-good crops must not be renamed by this change.
+    name = "Bay-Club-1_mov-0042_jpg.rf.abc123"
+    assert ascii_slug(name) == name
+
+
+def test_ascii_slug_replaces_the_fullwidth_bar_and_marks_the_change():
+    # The production case: a YouTube title whose "|" was sanitised to U+FF5C.
+    assert (ascii_slug("Squash Rally ｜ Best_mov-9_jpg.rf.d")
+            == "Squash_Rally_Best_mov-9_jpg.rf.d-cc74d589")
+
+
+def test_ascii_slug_transliterates_accents_rather_than_dropping_letters():
+    # NFKD first: "café" is still recognisably café, not "caf".
+    assert ascii_slug("café").startswith("cafe-")
+
+
+def test_ascii_slug_falls_back_when_no_character_survives():
+    # A wholly non-Latin title must still produce a usable, unique filename.
+    slug = ascii_slug("スカッシュ")
+    assert slug.startswith("clip-")
+    assert len(slug) == len("clip-") + 8
+
+
+def test_ascii_slug_handles_the_cp437_mojibake_form():
+    # What the U+FF5C name became on disk after the bad unzip; recovering a
+    # half-corrupted dataset must not trip over it either.
+    assert SAFE_NAME.fullmatch(ascii_slug("clip∩╜£name_mov-1_jpg.rf.a"))
+
+
+def test_ascii_slug_keeps_colliding_names_distinct():
+    # Two different titles collapse onto one base; the digest is the only thing
+    # stopping their crops from overwriting each other.
+    bar, question = ascii_slug("Rally ｜ One"), ascii_slug("Rally ? One")
+    assert bar.startswith("Rally_One-") and question.startswith("Rally_One-")
+    assert bar != question
+
+
+def test_ascii_slug_output_is_always_filename_safe():
+    for name in ["Squash ｜ Rally", 'a/b\\c:d*e?f"g<h>i|j', "  ", "..",
+                 "スカッシュ", "Bay-Club-1_mov-0042_jpg.rf.abc123"]:
+        assert SAFE_NAME.fullmatch(ascii_slug(name)), name
+
+
+def test_ascii_slug_is_deterministic():
+    # Regenerating the dataset must not reshuffle filenames.
+    assert ascii_slug("Squash ｜ Rally") == ascii_slug("Squash ｜ Rally")
