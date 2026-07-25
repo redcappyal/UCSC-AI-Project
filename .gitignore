@@ -36,6 +36,9 @@ venv/
 !eval_set/*.md
 # Design specs are durable project docs
 !docs/**/*.md
+# Architecture diagrams: the .puml source is the durable artifact (rendered
+# images are not committed — see docs/ARCHITECTURE.md for how to view them).
+!docs/**/*.puml
 !hardware/README.md
 # Printable mount parts + spec PDF: committed so teammates get them without
 # regenerating (source of truth stays the generator + markdown)

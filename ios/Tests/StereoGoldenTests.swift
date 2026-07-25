@@ -29,7 +29,7 @@ final class StereoGoldenTests: XCTestCase {
     }
 
     func testSchemaIsV2() {
-        XCTAssertEqual(Self.goldens["schema"] as? String, "stereo-goldens-v2")
+        XCTAssertEqual(Self.goldens["schema"] as? String, "stereo-goldens-v3")
     }
 
     func testProjectMatchesGoldenPixels() {
@@ -142,5 +142,48 @@ final class StereoGoldenTests: XCTestCase {
             ($0["impacts"] as! [[String: Any]]).map { $0["confidence"] as! String }
         })
         XCTAssertTrue(tiers.isSuperset(of: ["high", "one_view", "no_call"]))
+    }
+
+    /// Cross-language parity for the frame-space fix: Swift's `scaled` must
+    /// land on the same numbers court_model.scale_camera_model produced, and
+    /// a ray through the scaled pixel must reproduce the ray Python recorded
+    /// from the SOURCE model and pixel.
+    func testScaledModelGoldenParity() throws {
+        let case_ = Self.goldens["scaled_model"] as! [String: Any]
+        func decode(_ key: String) throws -> CameraModel {
+            try CameraModel.fromJSON(
+                try JSONSerialization.data(withJSONObject: case_[key]!))
+        }
+        let source = try decode("source")
+        XCTAssertEqual(source.frameWidth, 1080)
+        XCTAssertEqual(source.frameHeight, 1920)
+
+        let want = try decode("scaled")
+        let scaled = try source.scaled(toWidth: case_["to_width"] as! Double,
+                                       height: case_["to_height"] as! Double)
+        XCTAssertEqual(scaled.focalPx, want.focalPx, accuracy: 1e-9)
+        XCTAssertEqual(scaled.centerPx.x, want.centerPx.x, accuracy: 1e-9)
+        XCTAssertEqual(scaled.centerPx.y, want.centerPx.y, accuracy: 1e-9)
+        XCTAssertEqual(scaled.distortion!.k1, want.distortion!.k1)
+        XCTAssertEqual(scaled.distortion!.centerPx.x, want.distortion!.centerPx.x, accuracy: 1e-9)
+        XCTAssertEqual(scaled.distortion!.centerPx.y, want.distortion!.centerPx.y, accuracy: 1e-9)
+        XCTAssertEqual(scaled.distortion!.normPx, want.distortion!.normPx, accuracy: 1e-9)
+        XCTAssertEqual(scaled.frameWidth, want.frameWidth)
+        XCTAssertEqual(scaled.frameHeight, want.frameHeight)
+        XCTAssertEqual(scaled.rotation, source.rotation)
+        XCTAssertEqual(scaled.cameraCenterFt, source.cameraCenterFt)
+
+        for ray in case_["rays"] as! [[String: Any]] {
+            let wantOrigin = vec3(ray["origin_ft"]!), wantDir = vec3(ray["dir"]!)
+            // Source model through the source pixel: plain fromJSON/ray parity.
+            let (origin, dir) = source.ray(source.undistort(vec2(ray["px"]!)))
+            XCTAssertLessThan(simd_length(origin - wantOrigin), 1e-12)
+            XCTAssertLessThan(simd_length(dir - wantDir), 1e-12)
+            // Scaled model through the scaled pixel: the invariance itself.
+            let (originS, dirS) = scaled.ray(scaled.undistort(vec2(ray["scaled_px"]!)))
+            XCTAssertEqual(originS, wantOrigin)
+            XCTAssertLessThan(simd_length(dirS - wantDir), 1e-9,
+                              "px \(ray["scaled_px"]!)")
+        }
     }
 }

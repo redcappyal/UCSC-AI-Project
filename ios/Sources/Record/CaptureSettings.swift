@@ -37,8 +37,41 @@ enum CaptureSettings {
     /// Portrait frame geometry — the space every consumer works in, because
     /// the video connection rotates 90 degrees. Overlay mapping, peer
     /// detection tuples and the asset writer all key off these.
+    ///
+    /// This stays the default (handheld) geometry. A back-wall mount holds
+    /// the phone landscape instead, where the sensor's native readout is
+    /// already upright and rotation would only cost a copy — see
+    /// `CaptureOrientation` below for the per-mount alternative.
     static let frameWidth = sensorHeight
     static let frameHeight = sensorWidth
+
+    /// Handheld vs. mounted capture. The two phones in a paired session MUST
+    /// agree: detection tuples are expressed in `frameSize(for:)`'s space, and
+    /// a mismatched pair would triangulate transposed coordinates into
+    /// confident, silently wrong line calls. `PeerSession` enforces this at
+    /// handshake — see its `.hello` handler.
+    enum CaptureOrientation { case portrait, landscapeRight }
+
+    /// Rotation applied to the video connection: 90 for portrait (the sensor
+    /// reads out landscape and rotation stands it upright), 0 for
+    /// landscape-right (a landscape mount matches the sensor's native
+    /// readout, so no rotation is needed).
+    static func rotationAngle(for orientation: CaptureOrientation) -> CGFloat {
+        switch orientation {
+        case .portrait: return 90
+        case .landscapeRight: return 0
+        }
+    }
+
+    /// Frame geometry in the orientation's own space — what the video
+    /// connection and asset writer actually produce once `rotationAngle(for:)`
+    /// has been applied.
+    static func frameSize(for orientation: CaptureOrientation) -> (width: Int, height: Int) {
+        switch orientation {
+        case .portrait: return (frameWidth, frameHeight)
+        case .landscapeRight: return (sensorWidth, sensorHeight)
+        }
+    }
 
     static let frameRate: Double = 60
 

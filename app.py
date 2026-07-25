@@ -143,6 +143,12 @@ def public_job(job):
         "annotated_video_url",
         "csv_url",
         "error",
+        # Phase 5: paired-session identity. sync_manifest_path is deliberately
+        # NOT here — it is a server filesystem path, not client business.
+        "session_id",
+        "camera_role",
+        "peer_video_id",
+        "stereo_fuse_run_id",
     ):
         if key in job:
             response[key] = job[key]
@@ -1033,6 +1039,11 @@ def camera_model():
     Same input contract and always-200 convention as /api/camera-check; adds
     the solved model (court_model.CameraModel.to_dict) under "camera_model"
     when the solve succeeds. Phones exchange these solved models at pairing.
+
+    The solved frame size is echoed at the top level as well as inside the
+    model: every px-valued field is only meaningful in that pixel space, and
+    a client running a different capture resolution has to scale the model
+    (court_model.scale_camera_model) before casting rays through it.
     """
     payload = request.get_json(silent=True) or {}
     calibration = payload.get("calibration")
@@ -1045,6 +1056,8 @@ def camera_model():
     response = {"ok": True, **info}
     if model is not None and info.get("status") == "ok":
         response["camera_model"] = model.to_dict()
+        response["frame_width"] = model.frame_width
+        response["frame_height"] = model.frame_height
     return jsonify(response)
 
 
@@ -1156,6 +1169,33 @@ def track_clip():
     if fusion_3d not in {"", "1"}:
         return error_response("fusion_3d must be empty or 1.")
 
+    # Phase 5 (cloud fusion): optional paired-session metadata. All four are
+    # absent for a single-camera run, and absent must mean byte-identical
+    # behavior — so they only ever reach the job through extra_job_fields
+    # below, never as an explicit None.
+    session_id = request.form.get("session_id", "").strip()
+    camera_role = request.form.get("camera_role", "").strip()
+    if camera_role not in {"", "a", "b"}:
+        return error_response("Camera role must be a or b.")
+    # Either both or neither: a role with no session can never be paired, and a
+    # session whose two runs share a role can't be told apart at fuse time.
+    if bool(session_id) != bool(camera_role):
+        return error_response("A paired run needs both session_id and camera_role.")
+    peer_video_id = request.form.get("peer_video_id", "").strip()
+
+    # Deliberately NOT the calibration_json idiom: json.loads("") raises, which
+    # is precisely why a calibration is effectively required today. An absent
+    # manifest has to short-circuit before the parse.
+    sync_manifest_text = request.form.get("sync_manifest_json", "").strip()
+    sync_manifest = None
+    if sync_manifest_text:
+        try:
+            sync_manifest = json.loads(sync_manifest_text)
+        except json.JSONDecodeError:
+            return error_response("Sync manifest JSON was invalid.")
+        if not isinstance(sync_manifest, dict):
+            return error_response("Sync manifest JSON must be an object.")
+
     run_id = str(int(time.time() * 1000))
     run_dir = RUNS_DIR / run_id
     run_dir.mkdir(parents=True, exist_ok=True)
@@ -1193,6 +1233,15 @@ def track_clip():
     extra_job_fields = {}
     if calibration_warning:
         extra_job_fields["calibration_warning"] = calibration_warning
+    if session_id:
+        extra_job_fields["session_id"] = session_id
+        extra_job_fields["camera_role"] = camera_role
+    if peer_video_id:
+        extra_job_fields["peer_video_id"] = peer_video_id
+    if sync_manifest is not None:
+        manifest_path = run_dir / "sync_manifest.json"
+        manifest_path.write_text(json.dumps(sync_manifest, indent=2), encoding="utf-8")
+        extra_job_fields["sync_manifest_path"] = str(manifest_path)
     create_job(
         run_id,
         run_dir,

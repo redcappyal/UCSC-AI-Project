@@ -18,6 +18,8 @@ from pathlib import Path
 import cv2
 
 import court_model
+import stereo_engine
+import stereo_sync
 from audio_events import extract_audio_candidates, extract_repeating_audio_windows
 from bounce_gb_model_detector import DEFAULT_MODEL_PATH as BOUNCE_GB_MODEL_PATH
 from bounce_gb_model_detector import detect_hits_with_gb_model
@@ -132,12 +134,338 @@ def get_job(run_id):
     return job
 
 
+# --- Phase 5: paired sessions -----------------------------------------------
+#
+# A fuse run lives in its own directory named `stereo-<session_id>`. That name
+# is load-bearing twice over: it makes the claim atomic (whoever wins the mkdir
+# race owns the job), and it lets discovery skip fuse runs so one can never be
+# mistaken for a camera run.
+
+STEREO_FUSE_PREFIX = "stereo-"
+
+
+def stereo_fuse_run_id(session_id):
+    return f"{STEREO_FUSE_PREFIX}{session_id}"
+
+
+def session_runs(session_id):
+    """`{camera_role: job}` for the completed camera runs of one session.
+
+    Globs `ui_runs/*/job.json` the way /api/calibration/latest does — there is
+    no session index, and building one would be a second source of truth for
+    something the run dirs already record. A retried camera leaves two runs
+    under the same role; the newest wins.
+    """
+    found = {}
+    if not session_id:
+        return found
+    try:
+        candidates = sorted(RUNS_DIR.glob("*/job.json"))
+    except OSError:
+        return found
+
+    for job_path in candidates:
+        if job_path.parent.name.startswith(STEREO_FUSE_PREFIX):
+            continue
+        try:
+            job = json.loads(job_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if not isinstance(job, dict):
+            continue
+        if job.get("session_id") != session_id or job.get("status") != "complete":
+            continue
+        role = job.get("camera_role")
+        if role not in {"a", "b"}:
+            continue
+        previous = found.get(role)
+        # run_id is a millisecond wall-clock stamp, so string order is time
+        # order for same-width ids and a stable tiebreak otherwise.
+        if previous is None or str(job.get("run_id", "")) >= str(previous.get("run_id", "")):
+            found[role] = job
+    return found
+
+
+def maybe_start_stereo_fuse(session_id):
+    """Start the fuse job iff both roles are complete and nobody else claimed it.
+
+    Returns the fuse run_id when this caller started it, else None. Both
+    cameras finishing at once is the normal case, so the claim is the
+    directory create itself: `exist_ok=False` makes exactly one caller win.
+    """
+    runs = session_runs(session_id)
+    if set(runs) != {"a", "b"}:
+        return None
+
+    fuse_id = stereo_fuse_run_id(session_id)
+    fuse_dir = RUNS_DIR / fuse_id
+    try:
+        fuse_dir.mkdir(parents=True, exist_ok=False)
+    except FileExistsError:
+        return None            # someone else got there first
+    except OSError:
+        return None
+
+    run_a, run_b = runs["a"]["run_id"], runs["b"]["run_id"]
+    create_job(
+        fuse_id,
+        fuse_dir,
+        status="queued",
+        job_type="stereo_fuse",
+        message="Queued stereo fusion.",
+        session_id=session_id,
+        run_a=run_a,
+        run_b=run_b,
+        processed_frames=0,
+        total_frames=1,
+        # Deliberately NO video_path: build_eval_set keeps one run per
+        # video_sha, so a fuse run carrying role a's video could displace the
+        # mono run it was derived from and silently rebaseline the eval set.
+    )
+    for run_id in (run_a, run_b):
+        # Hydrate before updating. A completed run is usually gone from JOBS
+        # (the server may have restarted, or this may be a different process),
+        # and update_job would then build a one-key dict with no run_dir —
+        # which persist_job silently declines to write. Round-tripping the
+        # whole job keeps the fuse id and everything else.
+        existing = get_job(run_id)
+        if existing is not None:
+            update_job(run_id, **{**existing, "stereo_fuse_run_id": fuse_id})
+    start_stereo_fuse_job(fuse_id)
+    return fuse_id
+
+
+STEREO_TIMELINE_HZ = 120.0
+
+
+def _stereo_camera(run_dir, side):
+    """Solve one side's camera, in the pixel space its CSV is written in."""
+    calibration_path = Path(run_dir) / "calibration.json"
+    try:
+        calibration = json.loads(calibration_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise ValueError(f"side {side!r} calibration unreadable: {error}")
+    model, info = court_model.solve_camera_model(calibration)
+    if model is None:
+        raise ValueError(
+            f"side {side!r} calibration failed to solve "
+            f"(status={info.get('status')!r})")
+    return model, calibration
+
+
+def _stereo_hit_entry(impact, fps_a):
+    """One `stereo_engine.Impact` in the existing detected_hits vocabulary.
+
+    Speaking judge_hits' vocabulary rather than stereo_offline's is deliberate:
+    build_eval_set filters hits with `isinstance(frame, int)`, so a float frame
+    would match nothing and read as total detector failure. Stereo's own values
+    ride along losslessly in the additive `stereo` block.
+    """
+    x_ft, _y_ft, z_ft = (float(v) for v in impact.point_ft)
+
+    event_type = {
+        "front_wall": "wall",
+        "left_wall": "side_wall",
+        "right_wall": "side_wall",
+        "back_wall": "side_wall",
+        "floor": "floor",
+    }.get(impact.surface, "unknown")
+
+    # "down" is a tin hit — it ends the rally exactly as an out ball does, and
+    # the mono vocabulary has no third word for it.
+    call = {"in": "IN", "out": "OUT", "down": "OUT"}.get(impact.call)
+
+    # confidence is the engine's own signal for how the point was obtained, so
+    # method/view_count derive from it and stereo_engine needs no change (and
+    # the goldens do not move).
+    method, view_count = {
+        "high": ("plane_snap", 2),
+        "one_view": ("plane_snap", 1),
+        "no_call": ("triangulated", 2),
+    }.get(impact.confidence, ("triangulated", 2))
+
+    entry = {
+        # role a's clock and fps, so the frame joins role a's CSV and labels.
+        "frame": int(round(float(impact.t_s) * float(fps_a))),
+        "timestamp_seconds": float(impact.t_s),
+        "event_type": event_type,
+        "call": call,
+        "reason": f"stereo_{impact.surface}",
+        "judge_source": "stereo_plane_snap",
+        # A stereo call has no pixel margin. None is honest, and the mono
+        # schema already permits it.
+        "margin_px": None,
+        "view_count": view_count,
+        "method": method,
+        "stereo": {
+            "surface": impact.surface,
+            "point_ft": [float(v) for v in impact.point_ft],
+            "margin_ft": float(impact.margin_ft),
+            "confidence": impact.confidence,
+            "snap_disagreement_ft": (
+                None if impact.snap_disagreement_ft is None
+                else float(impact.snap_disagreement_ft)),
+        },
+    }
+
+    # Front-wall contacts carry the wall diagram and target zone the coaching
+    # analytics key off, computed straight from the 3D point: x across the
+    # 21 ft wall, y from the out line (0) down to the tin top (1), matching
+    # judge_call.wall_diagram_coordinates' convention.
+    if impact.surface == "front_wall":
+        span = court_model.OUT_LINE_HEIGHT_FT - court_model.TIN_TOP_HEIGHT_FT
+        diagram = {
+            "x": x_ft / court_model.COURT_WIDTH_FT,
+            "y": (court_model.OUT_LINE_HEIGHT_FT - z_ft) / span,
+            "x_reference": "stereo_court_frame",
+        }
+        entry["wall_diagram"] = diagram
+        entry["target_zone"] = target_zone_for_diagram(diagram)
+    return entry
+
+
+def run_stereo_fuse_job(run_id):
+    """Fuse the two camera runs of a paired session into one 3D result.
+
+    Reads both runs' ball_coordinates.csv rather than re-decoding video: the
+    detections are the expensive part and both runs already paid for them.
+    """
+    job = get_job(run_id) or {}
+    run_dir = Path(job.get("run_dir", RUNS_DIR / run_id))
+    try:
+        update_job(run_id, status="running", stage="fusing",
+                   message="Solving both cameras.")
+
+        run_a_id, run_b_id = job.get("run_a"), job.get("run_b")
+        job_a, job_b = get_job(run_a_id) or {}, get_job(run_b_id) or {}
+        dir_a = Path(job_a.get("run_dir", RUNS_DIR / str(run_a_id)))
+        dir_b = Path(job_b.get("run_dir", RUNS_DIR / str(run_b_id)))
+        fps_a = float(job_a.get("fps") or 60.0)
+        fps_b = float(job_b.get("fps") or 60.0)
+
+        model_a, _cal_a = _stereo_camera(dir_a, "a")
+        model_b, _cal_b = _stereo_camera(dir_b, "b")
+
+        update_job(run_id, message="Refining the clock offset.")
+        samples_a = stereo_sync.track_samples_from_csv(
+            dir_a / "ball_coordinates.csv", fps=fps_a)
+        samples_b = stereo_sync.track_samples_from_csv(
+            dir_b / "ball_coordinates.csv", fps=fps_b)
+
+        manifest = None
+        manifest_path = job_a.get("sync_manifest_path") or job_b.get("sync_manifest_path")
+        if manifest_path:
+            try:
+                manifest = json.loads(Path(manifest_path).read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                manifest = None
+        seed_s, seed_source = stereo_sync.seed_offset_from_manifest(manifest)
+
+        report = stereo_sync.refine_offset(
+            model_a, samples_a, model_b, samples_b, seed_s=seed_s)
+        report["seed"]["source"] = seed_source
+        report["schema"] = "stereo-sync-v1"
+        report["session_id"] = job.get("session_id")
+        report["runs"] = {"a": run_a_id, "b": run_b_id}
+        offset_s = float(report["refined"]["offset_s"])
+
+        update_job(run_id, message="Fusing tracks.")
+        # Samples b, restamped onto a's clock — build the track once and hand
+        # the same object to detect_impacts, so the file written to disk is
+        # provably the track the impacts came from.
+        aligned_b = [
+            stereo_engine.TrackSample(t_s=s.t_s + offset_s, px=s.px) for s in samples_b]
+        track = stereo_engine.build_track3d(
+            model_a, samples_a, model_b, aligned_b, hz=STEREO_TIMELINE_HZ)
+        impacts = stereo_engine.detect_impacts(
+            model_a, samples_a, model_b, aligned_b, track=track)
+
+        with (run_dir / "stereo_track.jsonl").open("w", encoding="utf-8") as handle:
+            for point in track:
+                handle.write(json.dumps({
+                    "t_s": float(point.t_s),
+                    "point_ft": [float(v) for v in point.point_ft],
+                    "gap_ft": float(point.gap_ft),
+                    "view_count": 2,
+                }, sort_keys=True) + "\n")
+
+        try:
+            image_px_a, court_xyz_a, _ = court_model._camera_correspondences(_cal_a)
+            image_px_b, court_xyz_b, _ = court_model._camera_correspondences(_cal_b)
+            report["pair_agreement"] = stereo_engine.pair_agreement(
+                model_a, list(zip(court_xyz_a, image_px_a)),
+                model_b, list(zip(court_xyz_b, image_px_b)))
+        except Exception as error:                   # noqa: BLE001 - reported, not raised
+            report["pair_agreement"] = {"error": str(error)}
+
+        (run_dir / "sync_report.json").write_text(
+            json.dumps(report, indent=2), encoding="utf-8")
+
+        hits = [_stereo_hit_entry(impact, fps_a) for impact in impacts]
+        player_assignment = assign_front_wall_hit_players(hits)
+        payload = {
+            "hits": hits,
+            "target_zones": build_target_zone_summary(hits),
+            "target_zones_by_player": build_player_target_zone_summaries(hits),
+            "player_assignment": player_assignment,
+            "rallies": player_assignment.get("rallies", []),
+            "stereo": {
+                "session_id": job.get("session_id"),
+                "run_a": run_a_id,
+                "run_b": run_b_id,
+                "offset_s": offset_s,
+                "offset_accepted": bool(report["refined"]["accepted"]),
+                "track_points": len(track),
+            },
+        }
+        (run_dir / "detected_hits.json").write_text(
+            json.dumps(payload, indent=2), encoding="utf-8")
+
+        update_job(
+            run_id,
+            status="complete",
+            stage="complete",
+            processed_frames=1,
+            hits=hits,
+            target_zones=payload["target_zones"],
+            target_zones_by_player=payload["target_zones_by_player"],
+            player_assignment=player_assignment,
+            message=(f"Fused {len(track)} track points into {len(hits)} calls "
+                     f"at offset {offset_s * 1000:.1f} ms."),
+        )
+    except Exception as error:                       # noqa: BLE001 - surfaced as job state
+        update_job(run_id, status="failed",
+                   error=f"Stereo fusion failed.\n\n{error}",
+                   message="Stereo fusion failed.")
+
+
+def try_start_stereo_fuse(session_id):
+    """`maybe_start_stereo_fuse`, but it can never damage its caller.
+
+    This runs at the tail of a finished tracking job. That run is already
+    complete and its artifacts are already on disk; nothing about fusing a
+    session may retroactively fail it.
+    """
+    if not session_id:
+        return None
+    try:
+        return maybe_start_stereo_fuse(session_id)
+    except Exception:
+        return None
+
+
 def create_job(run_id, run_dir, **fields):
     return update_job(run_id, run_id=run_id, run_dir=str(run_dir), **fields)
 
 
 def start_tracking_job(run_id):
     thread = threading.Thread(target=run_tracking_job, args=(run_id,), daemon=True)
+    thread.start()
+    return thread
+
+
+def start_stereo_fuse_job(run_id):
+    thread = threading.Thread(target=run_stereo_fuse_job, args=(run_id,), daemon=True)
     thread.start()
     return thread
 
@@ -1174,6 +1502,11 @@ def run_tracking_job(run_id):
                 message="Tracking complete.",
                 **extra_fields,
             )
+            # Phase 5: this run may be half of a paired session. The trigger is
+            # deliberately the last thing that happens and deliberately cannot
+            # raise — this run is already complete and its artifacts are
+            # already on disk.
+            try_start_stereo_fuse((get_job(run_id) or {}).get("session_id"))
         except Exception as error:
             update_job(
                 run_id,

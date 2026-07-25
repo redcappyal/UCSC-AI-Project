@@ -1,17 +1,23 @@
 import SwiftUI
 
 /// Live ball marker + short fading trail over the camera preview.
-/// Portrait capture is CaptureSettings.frameWidth x frameHeight; the preview
-/// letterboxes with resizeAspect, so map through the same aspect-fit rect.
+/// Capture frame geometry follows `orientation` (CaptureSettings.frameSize);
+/// the preview letterboxes with resizeAspect, so map through the same
+/// aspect-fit rect.
 struct OverlayView: View {
     let trail: [BallObservation]   // oldest first, newest last
-    static let contentSize = CGSize(width: CaptureSettings.frameWidth,
-                                    height: CaptureSettings.frameHeight)
+    /// Defaults to `.portrait` — today's handheld behaviour, unchanged.
+    var orientation: CaptureSettings.CaptureOrientation = .portrait
+
+    var contentSize: CGSize {
+        let size = CaptureSettings.frameSize(for: orientation)
+        return CGSize(width: size.width, height: size.height)
+    }
 
     var body: some View {
         GeometryReader { proxy in
             let videoRect = Geometry.aspectFitRect(
-                content: Self.contentSize, container: proxy.size)
+                content: contentSize, container: proxy.size)
             Canvas { context, _ in
                 for (index, observation) in trail.enumerated() {
                     let rect = Geometry.overlayRect(

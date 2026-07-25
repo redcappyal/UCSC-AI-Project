@@ -3,6 +3,7 @@
 Run from the repo root:  python tests/generate_stereo_goldens.py
 Writes tests/stereo_goldens.json and ios/Tests/Fixtures/stereo_goldens.json.
 """
+import dataclasses
 import json
 import sys
 from pathlib import Path
@@ -13,10 +14,51 @@ sys.path.insert(0, str(REPO / "tests"))
 
 import numpy as np
 
+import court_model
 import stereo_engine
 from stereo_engine import TrackSample
 from synthetic3d import make_camera
 from test_stereo_track import sample_camera, simulate_front_wall_shot
+
+
+def scaled_model_case():
+    """A model solved at 1080x1920 plus its 2160x3840 re-expression, with
+    rays through matching pixels in each space.
+
+    This is the parity anchor for the frame-space fix: Swift's
+    CameraModel.scaled(toWidth:height:) has to land on the same numbers as
+    court_model.scale_camera_model, and a ray through pixel p in the source
+    space has to equal the ray through 2p in the scaled one. Off-axis
+    corners are included deliberately -- a wrong principal point or an
+    unscaled distortion normalizer only shows up away from the center.
+    """
+    source_size, target_size = (1080.0, 1920.0), (2160.0, 3840.0)
+    source = make_camera(focal_px=900.0, center=(540.0, 960.0),
+                         position=(10.5, 30.5, 7.0), look_at=(10.5, 0.0, 4.5),
+                         frame_size=source_size)
+    source = dataclasses.replace(
+        source,
+        distortion={"model": "division_k1", "k1": -0.08,
+                    "center_px": [548.0, 952.0], "norm_px": 1100.0},
+        fit_rms_px=1.25, point_count=15)
+    scaled = court_model.scale_camera_model(source, *target_size)
+    factor = target_size[0] / source_size[0]
+
+    rays = []
+    for pixel in [(540.0, 960.0), (540.0, 12.0), (17.0, 960.0), (0.0, 0.0),
+                  (1079.0, 0.0), (0.0, 1919.0), (1079.0, 1919.0),
+                  (231.0, 1487.0), (908.0, 344.0)]:
+        origin, direction = source.ray(
+            court_model.undistort_point(pixel, source.distortion))
+        rays.append({
+            "px": list(pixel),
+            "scaled_px": [pixel[0] * factor, pixel[1] * factor],
+            "origin_ft": [float(v) for v in origin],
+            "dir": [float(v) for v in direction],
+        })
+    return {"source": source.to_dict(), "scaled": scaled.to_dict(),
+            "to_width": target_size[0], "to_height": target_size[1],
+            "rays": rays}
 
 
 def main():
@@ -85,7 +127,6 @@ def main():
                for y in (4.0, 12.0, 20.0, 28.0) for z in (1.0, 8.0)]
     obs_a = [(p, np.asarray(left.project(p))) for p in lattice]
     obs_b = [(p, np.asarray(right.project(p))) for p in lattice]
-    import dataclasses
     bias = np.array([0.0, 0.0, 0.5])
     biased_right = dataclasses.replace(
         right, camera_center_ft=right.camera_center_ft + bias)
@@ -104,13 +145,14 @@ def main():
     }
 
     goldens = {
-        "schema": "stereo-goldens-v2",
+        "schema": "stereo-goldens-v3",
         "cameras": {"left": left.to_dict(), "right": right.to_dict()},
         "triangulation_cases": triangulation_cases,
         "snap_cases": snap_cases,
         "call_cases": call_cases,
         "trajectories": trajectories,
         "pair_agreement": pair_case,
+        "scaled_model": scaled_model_case(),
     }
     payload = json.dumps(goldens, indent=2, sort_keys=True)
     (REPO / "tests" / "stereo_goldens.json").write_text(payload)

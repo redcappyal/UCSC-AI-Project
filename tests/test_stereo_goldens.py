@@ -6,6 +6,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import numpy as np
 
+import court_model
 import stereo_engine
 from stereo_engine import TrackSample
 from court_model import CameraModel
@@ -15,7 +16,7 @@ GOLDENS = Path(__file__).resolve().parent / "stereo_goldens.json"
 
 def load():
     data = json.loads(GOLDENS.read_text())
-    assert data["schema"] == "stereo-goldens-v2"
+    assert data["schema"] == "stereo-goldens-v3"
     left = CameraModel.from_dict(data["cameras"]["left"])
     right = CameraModel.from_dict(data["cameras"]["right"])
     return data, left, right
@@ -81,3 +82,28 @@ def test_pair_agreement_goldens():
         right, camera_center_ft=right.camera_center_ft + np.array(case["biased"]["bias_ft"]))
     biased = stereo_engine.pair_agreement(left, obs_a, biased_model, obs_b)
     assert biased["ok_pair"] is False and biased["ok_pair"] == case["biased"]["ok_pair"]
+
+
+def test_scaled_model_goldens():
+    """Pins the pixel-space scaling both runtimes have to agree on: the
+    source model at 1080x1920, its 2160x3840 re-expression, and rays cast
+    through matching pixels in each space."""
+    data, _left, _right = load()
+    case = data["scaled_model"]
+    source = CameraModel.from_dict(case["source"])
+    assert (source.frame_width, source.frame_height) == (1080.0, 1920.0)
+
+    scaled = court_model.scale_camera_model(
+        source, case["to_width"], case["to_height"])
+    assert scaled.to_dict() == case["scaled"]
+
+    for ray_case in case["rays"]:
+        origin, direction = source.ray(
+            court_model.undistort_point(ray_case["px"], source.distortion))
+        assert np.allclose(origin, ray_case["origin_ft"], atol=1e-12)
+        assert np.allclose(direction, ray_case["dir"], atol=1e-12)
+        # The invariance itself: the same ray through the scaled pixel.
+        origin_s, direction_s = scaled.ray(
+            court_model.undistort_point(ray_case["scaled_px"], scaled.distortion))
+        assert np.array_equal(origin_s, origin)
+        assert np.allclose(direction_s, direction, atol=1e-9)
