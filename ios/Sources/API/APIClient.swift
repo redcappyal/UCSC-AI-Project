@@ -53,9 +53,9 @@ struct APIClient: APIClientProtocol {
     }
 
     func startTrack(videoID: String, calibrationJSON: String, duration: Double,
-                    sessionID: String? = nil, cameraRole: String? = nil,
-                    peerVideoID: String? = nil,
-                    syncManifestJSON: String? = nil) async throws -> JobStatus {
+                    sessionID: String?, cameraRole: String?,
+                    peerVideoID: String?,
+                    syncManifestJSON: String?) async throws -> JobStatus {
         var request = URLRequest(url: baseURL.appending(path: "api/track"))
         request.httpMethod = "POST"
         request.setValue("application/x-www-form-urlencoded",

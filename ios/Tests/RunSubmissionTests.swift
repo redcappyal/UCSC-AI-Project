@@ -111,16 +111,17 @@ final class RunSubmissionTests: XCTestCase {
 
     func testUnpairedSubmissionSendsNoPairedFields() async {
         let api = MockAPIClient()
-        let submission = await RunSubmission(api: api, pollInterval: .milliseconds(1))
+        let submission = RunSubmission(api: api, pollInterval: .milliseconds(1))
         await submission.submit(videoURL: URL(fileURLWithPath: "/tmp/a.mp4"), duration: 3)
         XCTAssertNil(api.lastSessionID)
         XCTAssertNil(api.lastCameraRole)
+        XCTAssertNil(api.lastPeerVideoID)
         XCTAssertNil(api.lastSyncManifestJSON)
     }
 
     func testPairedSubmissionCarriesSessionAndRole() async {
         let api = MockAPIClient()
-        let submission = await RunSubmission(api: api, pollInterval: .milliseconds(1))
+        let submission = RunSubmission(api: api, pollInterval: .milliseconds(1))
         await submission.submit(videoURL: URL(fileURLWithPath: "/tmp/a.mp4"), duration: 3,
                                 sessionID: "S-1", cameraRole: "b",
                                 peerVideoID: "V-7", syncManifestJSON: "{\"clap_anchor_s\":0.01}")
