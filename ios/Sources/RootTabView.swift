@@ -11,9 +11,13 @@ struct RootTabView: View {
     // Observed so the web tabs are torn down and reloaded (via .id) when
     // the server override changes; WebScreen deliberately never reloads.
     @AppStorage(Config.serverBaseKey) private var serverBase = ""
+    // Bound selection rather than per-tab onAppear/onDisappear: SwiftUI does
+    // not guarantee their ordering across a tab switch, and the mask must be
+    // a function of which tab is showing, not of which callback ran last.
+    @State private var tab: RootTab = .play
 
     var body: some View {
-        TabView {
+        TabView(selection: $tab) {
             RecordView()
                 .overlay(alignment: .topLeading) {
                     Button { showServerSettings = true } label: {
@@ -45,14 +49,21 @@ struct RootTabView: View {
                 }
                 #endif
                 .tabItem { Label("Play", systemImage: "record.circle") }
+                .tag(RootTab.play)
             WebScreen(url: URL(string: Config.baseURL.absoluteString + "/#tab=matches&shell=1")!)
                 .id("matches-\(serverBase)")
                 .tabItem { Label("Matches", systemImage: "square.stack") }
+                .tag(RootTab.matches)
             WebScreen(url: URL(string: Config.baseURL.absoluteString + "/#tab=coach&shell=1")!)
                 .id("coach-\(serverBase)")
                 .tabItem { Label("Coach", systemImage: "figure.tennis") }
+                .tag(RootTab.coach)
         }
         .tint(Theme.accentBg)
         .background(Theme.bg)
+        .onAppear { OrientationPolicy.shared.apply(OrientationLock.mask(for: tab)) }
+        .onChange(of: tab) { _, newTab in
+            OrientationPolicy.shared.apply(OrientationLock.mask(for: newTab))
+        }
     }
 }

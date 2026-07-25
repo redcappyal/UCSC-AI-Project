@@ -38,11 +38,13 @@ targets:
         NSBluetoothAlwaysUsageDescription: Pairs with the second court camera to sync line calls.
         NSLocalNetworkUsageDescription: Finds and pairs with the second court camera on this court.
         NSBonjourServices: [_crosscourt._tcp]
-        # Portrait for handheld recording; landscape-right for a back-wall
-        # mount (Phase 4 mounted sessions) — the sensor's native readout is
-        # already upright there, see CaptureSettings.CaptureOrientation.
+        # Superset of every orientation any tab allows; OrientationLock does
+        # the per-tab narrowing at runtime. Portrait stays because the Matches
+        # and Coach webviews are portrait mobile UI — a runtime mask can only
+        # restrict what this list already permits, never extend it.
         UISupportedInterfaceOrientations:
-          [UIInterfaceOrientationPortrait, UIInterfaceOrientationLandscapeRight]
+          [UIInterfaceOrientationPortrait, UIInterfaceOrientationLandscapeLeft,
+           UIInterfaceOrientationLandscapeRight]
         # ASC 90474: exempts the (still not-all-orientations) bundle from the
         # iPad multitasking all-orientations requirement.
         UIRequiresFullScreen: true
