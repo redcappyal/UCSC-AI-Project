@@ -385,7 +385,15 @@ final class RecordModel: ObservableObject {
         flashClearWork?.cancel()
     }
 
+    /// Both the record stage and the live stage call this from their own
+    /// `.task`, now that `PlayRootView` shares one `RecordModel` between
+    /// them — idempotent so the second caller doesn't re-configure (and
+    /// re-flash) an already-running camera.
+    private var cameraStarted = false
+
     func startCamera() async {
+        guard !cameraStarted else { return }
+        cameraStarted = true
         do {
             try await camera.configure()
             camera.start()
@@ -395,6 +403,7 @@ final class RecordModel: ObservableObject {
             // footage usable as training data.
             exposureNote = CaptureSettings.summary(for: try await camera.lockForCourt())
         } catch {
+            cameraStarted = false      // let a retry re-enter
             errorText = error.localizedDescription
         }
     }

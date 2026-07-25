@@ -1,7 +1,10 @@
 import SwiftUI
 
 struct RecordView: View {
-    @StateObject private var model = RecordModel()
+    // Owned by `PlayRootView` now, not here — the live stage borrows the same
+    // instance via `LiveSessionModel.bind(record:)`, so it can no longer be a
+    // private @StateObject. Nothing else below reads anything but `model`.
+    @ObservedObject var model: RecordModel
 
     var body: some View {
         ZStack {
@@ -59,10 +62,10 @@ struct RecordView: View {
             }
         }
         #if DEBUG
-        // The plan put this beside RootTabView's peer-bench button, but the
-        // demo needs `model`, which lives here — RootTabView has no handle on
-        // RecordView's @StateObject. Same stage, same chip styling, offset so
-        // it clears the bench button above it.
+        // The plan put this beside PlayRootView's peer-bench button, but the
+        // demo cube overlays the live camera stage itself — it belongs here
+        // regardless of who owns `model` now. Same chip styling, offset so
+        // it clears where the bench button sits one screen up.
         .overlay(alignment: .topTrailing) {
             Button {
                 model.startStereoDemo(localModelJSON: StereoDemo.localModelJSON,
