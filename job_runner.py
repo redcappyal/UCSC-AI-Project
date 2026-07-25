@@ -124,12 +124,144 @@ def get_job(run_id):
     return job
 
 
+# --- Phase 5: paired sessions -----------------------------------------------
+#
+# A fuse run lives in its own directory named `stereo-<session_id>`. That name
+# is load-bearing twice over: it makes the claim atomic (whoever wins the mkdir
+# race owns the job), and it lets discovery skip fuse runs so one can never be
+# mistaken for a camera run.
+
+STEREO_FUSE_PREFIX = "stereo-"
+
+
+def stereo_fuse_run_id(session_id):
+    return f"{STEREO_FUSE_PREFIX}{session_id}"
+
+
+def session_runs(session_id):
+    """`{camera_role: job}` for the completed camera runs of one session.
+
+    Globs `ui_runs/*/job.json` the way /api/calibration/latest does — there is
+    no session index, and building one would be a second source of truth for
+    something the run dirs already record. A retried camera leaves two runs
+    under the same role; the newest wins.
+    """
+    found = {}
+    if not session_id:
+        return found
+    try:
+        candidates = sorted(RUNS_DIR.glob("*/job.json"))
+    except OSError:
+        return found
+
+    for job_path in candidates:
+        if job_path.parent.name.startswith(STEREO_FUSE_PREFIX):
+            continue
+        try:
+            job = json.loads(job_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if not isinstance(job, dict):
+            continue
+        if job.get("session_id") != session_id or job.get("status") != "complete":
+            continue
+        role = job.get("camera_role")
+        if role not in {"a", "b"}:
+            continue
+        previous = found.get(role)
+        # run_id is a millisecond wall-clock stamp, so string order is time
+        # order for same-width ids and a stable tiebreak otherwise.
+        if previous is None or str(job.get("run_id", "")) >= str(previous.get("run_id", "")):
+            found[role] = job
+    return found
+
+
+def maybe_start_stereo_fuse(session_id):
+    """Start the fuse job iff both roles are complete and nobody else claimed it.
+
+    Returns the fuse run_id when this caller started it, else None. Both
+    cameras finishing at once is the normal case, so the claim is the
+    directory create itself: `exist_ok=False` makes exactly one caller win.
+    """
+    runs = session_runs(session_id)
+    if set(runs) != {"a", "b"}:
+        return None
+
+    fuse_id = stereo_fuse_run_id(session_id)
+    fuse_dir = RUNS_DIR / fuse_id
+    try:
+        fuse_dir.mkdir(parents=True, exist_ok=False)
+    except FileExistsError:
+        return None            # someone else got there first
+    except OSError:
+        return None
+
+    run_a, run_b = runs["a"]["run_id"], runs["b"]["run_id"]
+    create_job(
+        fuse_id,
+        fuse_dir,
+        status="queued",
+        job_type="stereo_fuse",
+        message="Queued stereo fusion.",
+        session_id=session_id,
+        run_a=run_a,
+        run_b=run_b,
+        processed_frames=0,
+        total_frames=1,
+        # Deliberately NO video_path: build_eval_set keeps one run per
+        # video_sha, so a fuse run carrying role a's video could displace the
+        # mono run it was derived from and silently rebaseline the eval set.
+    )
+    for run_id in (run_a, run_b):
+        # Hydrate before updating. A completed run is usually gone from JOBS
+        # (the server may have restarted, or this may be a different process),
+        # and update_job would then build a one-key dict with no run_dir —
+        # which persist_job silently declines to write. Round-tripping the
+        # whole job keeps the fuse id and everything else.
+        existing = get_job(run_id)
+        if existing is not None:
+            update_job(run_id, **{**existing, "stereo_fuse_run_id": fuse_id})
+    start_stereo_fuse_job(fuse_id)
+    return fuse_id
+
+
+def run_stereo_fuse_job(run_id):
+    """Fuse the two camera runs of a paired session into one 3D result.
+
+    Filled in by Phase 5 Task 5; the trigger and its claim are Task 2 and are
+    independently testable without it.
+    """
+    update_job(run_id, status="complete", stage="complete", processed_frames=1,
+               message="Stereo fusion is not implemented yet.")
+
+
+def try_start_stereo_fuse(session_id):
+    """`maybe_start_stereo_fuse`, but it can never damage its caller.
+
+    This runs at the tail of a finished tracking job. That run is already
+    complete and its artifacts are already on disk; nothing about fusing a
+    session may retroactively fail it.
+    """
+    if not session_id:
+        return None
+    try:
+        return maybe_start_stereo_fuse(session_id)
+    except Exception:
+        return None
+
+
 def create_job(run_id, run_dir, **fields):
     return update_job(run_id, run_id=run_id, run_dir=str(run_dir), **fields)
 
 
 def start_tracking_job(run_id):
     thread = threading.Thread(target=run_tracking_job, args=(run_id,), daemon=True)
+    thread.start()
+    return thread
+
+
+def start_stereo_fuse_job(run_id):
+    thread = threading.Thread(target=run_stereo_fuse_job, args=(run_id,), daemon=True)
     thread.start()
     return thread
 
@@ -1092,6 +1224,11 @@ def run_tracking_job(run_id):
                 message="Tracking complete.",
                 **extra_fields,
             )
+            # Phase 5: this run may be half of a paired session. The trigger is
+            # deliberately the last thing that happens and deliberately cannot
+            # raise — this run is already complete and its artifacts are
+            # already on disk.
+            try_start_stereo_fuse((get_job(run_id) or {}).get("session_id"))
         except Exception as error:
             update_job(
                 run_id,
