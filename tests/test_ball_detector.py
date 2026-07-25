@@ -1,6 +1,8 @@
+import numpy as np
 import pytest
 
 import ball_detector
+import ball_model
 
 
 def _box(x, y, w=10.0, h=10.0, confidence=0.9):
@@ -76,11 +78,6 @@ def test_merge_detections_empty_input():
     assert ball_detector.merge_detections([], 0.65) == []
 
 
-import numpy as np
-
-import ball_model
-
-
 def _manifest(tmp_path, **overrides):
     fields = {
         "schema_version": "ball-model-v1", "name": "t", "version": 1,
@@ -94,51 +91,139 @@ def _manifest(tmp_path, **overrides):
     return ball_model.ModelManifest(**fields)
 
 
-class _FakeRunner:
-    """Emits one box at a fixed FULL-FRAME point, expressed tile-locally."""
+_MARKER = 255
 
-    def __init__(self, windows, target_xy, score=0.9):
-        self.windows = windows
-        self.target_xy = target_xy
+
+def _marker_frame(width, height, x, y):
+    """Black frame with a single lit pixel at FULL-FRAME (x, y)."""
+    frame = np.zeros((height, width, 3), dtype=np.uint8)
+    frame[y, x] = _MARKER
+    return frame
+
+
+def _tiles_seeing(x, y, frame_w=3840, frame_h=2160, tile=416, overlap=64):
+    """Indices into tile_windows() of every tile whose crop contains (x, y)."""
+    windows = ball_detector.tile_windows(frame_w, frame_h, tile, overlap)
+    return [i for i, (x0, y0) in enumerate(windows)
+            if x0 <= x < x0 + tile and y0 <= y < y0 + tile]
+
+
+class _MarkerRunner:
+    """Reports, tile-locally, the marker pixel it FINDS in each crop.
+
+    It is never told where the target is -- it reads the image it is handed. A
+    crop taken with the axes swapped, or padded anywhere but the top-left,
+    hands this runner a different picture, so the full-frame coordinate the
+    tests assert moves. A runner keyed on crop.shape alone cannot tell.
+    """
+
+    def __init__(self, score=0.9, class_index=0):
         self.score = score
+        self.class_index = class_index
         self.batch_sizes = []
+        self.boxes_emitted = 0
 
     def run_batch(self, crops):
         self.batch_sizes.append(len(crops))
         out = []
         for crop in crops:
-            index = len(out) + sum(self.batch_sizes[:-1])
-            x0, y0 = self.windows[index]
-            tx, ty = self.target_xy
-            local_x, local_y = tx - x0, ty - y0
-            h, w = crop.shape[:2]
-            if 0 <= local_x < w and 0 <= local_y < h:
-                out.append([(float(local_x), float(local_y), 10.0, 10.0,
-                             self.score, 0)])
-            else:
-                out.append([])
+            boxes = [(float(col), float(row), 10.0, 10.0,
+                      self.score, self.class_index)
+                     for row, col in np.argwhere(crop[:, :, 0] == _MARKER)]
+            self.boxes_emitted += len(boxes)
+            out.append(boxes)
         return out
 
 
+class _ShortRunner:
+    """Returns one result fewer than it was handed.
+
+    The realistic shape of this bug is a runner that omits tiles with no
+    detections; the consequence is identical either way.
+    """
+
+    def run_batch(self, crops):
+        return [[] for _ in crops[:-1]]
+
+
 def test_detect_frame_maps_tile_local_box_to_full_frame():
-    frame = np.zeros((2160, 3840, 3), dtype=np.uint8)
+    frame = _marker_frame(3840, 2160, 1500, 900)
     manifest = _manifest(None)
-    windows = ball_detector.tile_windows(3840, 2160, 416, 64)
-    runner = _FakeRunner(windows, target_xy=(1500, 900))
+    runner = _MarkerRunner()
 
     detections = ball_detector.detect_frame(runner, frame, manifest)
 
     assert len(detections) == 1
     assert detections[0]["x"] == pytest.approx(1500.0)
     assert detections[0]["y"] == pytest.approx(900.0)
+    # One tile sees this point, so the merge had nothing to hide behind.
+    assert runner.boxes_emitted == 1
+
+
+def test_detect_frame_maps_a_target_only_the_clamped_edge_tiles_can_see():
+    # The last row and column of tiles are clamped flush to the frame edge, so
+    # their origins are NOT stride multiples: 3424 and 1744, not 3520/2112.
+    assert _tiles_seeing(3820, 2140) == [65]
+    frame = _marker_frame(3840, 2160, 3820, 2140)
+    manifest = _manifest(None)
+    runner = _MarkerRunner()
+
+    detections = ball_detector.detect_frame(runner, frame, manifest)
+
+    assert len(detections) == 1
+    assert detections[0]["x"] == pytest.approx(3820.0)
+    assert detections[0]["y"] == pytest.approx(2140.0)
+
+
+def test_detect_frame_maps_a_target_whose_tile_lands_in_a_later_batch():
+    # Tile 37 of 66: with max_batch_tiles=16 it is in the third batch, so the
+    # origin it is paired with comes from a chunk, not from the flat window
+    # list. An off-by-a-chunk error only shows up here.
+    seen = _tiles_seeing(1500, 1200)
+    assert seen == [37] and min(seen) >= 16
+    frame = _marker_frame(3840, 2160, 1500, 1200)
+    manifest = _manifest(None, max_batch_tiles=16)
+    runner = _MarkerRunner()
+
+    detections = ball_detector.detect_frame(runner, frame, manifest)
+
+    assert len(runner.batch_sizes) > 1
+    assert len(detections) == 1
+    assert detections[0]["x"] == pytest.approx(1500.0)
+    assert detections[0]["y"] == pytest.approx(1200.0)
+
+
+def test_detect_frame_collapses_one_ball_seen_by_four_overlapping_tiles():
+    # (352, 352) is in both an x and a y overlap band.
+    assert len(_tiles_seeing(352, 352)) == 4
+    frame = _marker_frame(3840, 2160, 352, 352)
+    manifest = _manifest(None)
+    runner = _MarkerRunner()
+
+    detections = ball_detector.detect_frame(runner, frame, manifest)
+
+    assert runner.boxes_emitted == 4
+    assert len(detections) == 1
+    assert detections[0]["x"] == pytest.approx(352.0)
+    assert detections[0]["y"] == pytest.approx(352.0)
+
+
+def test_detect_frame_rejects_a_runner_returning_fewer_results_than_crops():
+    # Without strict zip this truncates in silence, and every box after the
+    # gap is added to the wrong tile origin.
+    frame = _marker_frame(3840, 2160, 1500, 900)
+    manifest = _manifest(None)
+
+    with pytest.raises(ValueError, match="shorter"):
+        ball_detector.detect_frame(_ShortRunner(), frame, manifest)
 
 
 def test_detect_frame_labels_class_ball_so_tracking_common_accepts_it():
     from tracking_common import is_ball_prediction
 
-    frame = np.zeros((416, 416, 3), dtype=np.uint8)
+    frame = _marker_frame(416, 416, 200, 200)
     manifest = _manifest(None)
-    runner = _FakeRunner([(0, 0)], target_xy=(200, 200))
+    runner = _MarkerRunner()
 
     detections = ball_detector.detect_frame(runner, frame, manifest)
 
@@ -149,19 +234,46 @@ def test_detect_frame_labels_class_ball_so_tracking_common_accepts_it():
     assert is_ball_prediction(detections[0])
 
 
+def test_detect_frame_rejects_negative_class_index_instead_of_wrapping():
+    frame = _marker_frame(416, 416, 200, 200)
+    manifest = _manifest(None, class_names=("ball", "player"))
+    runner = _MarkerRunner(class_index=-1)
+
+    # -1 indexes the LAST class name in Python; a mislabelled "player" would
+    # be indistinguishable from a real one downstream.
+    with pytest.raises(ValueError, match="-1"):
+        ball_detector.detect_frame(runner, frame, manifest)
+
+
+def test_detect_frame_rejects_class_index_past_the_manifest_names():
+    frame = _marker_frame(416, 416, 200, 200)
+    manifest = _manifest(None)
+    runner = _MarkerRunner(class_index=7)
+
+    with pytest.raises(ValueError, match="7"):
+        ball_detector.detect_frame(runner, frame, manifest)
+
+
+def test_detect_frame_rejects_non_square_input_size():
+    frame = _marker_frame(416, 416, 200, 200)
+    manifest = _manifest(None, input_size=(416, 320))
+
+    with pytest.raises(ValueError, match=r"416, 320"):
+        ball_detector.detect_frame(_MarkerRunner(), frame, manifest)
+
+
 def test_detect_frame_drops_boxes_below_manifest_conf_threshold():
-    frame = np.zeros((416, 416, 3), dtype=np.uint8)
+    frame = _marker_frame(416, 416, 200, 200)
     manifest = _manifest(None, conf_threshold=0.5)
-    runner = _FakeRunner([(0, 0)], target_xy=(200, 200), score=0.4)
+    runner = _MarkerRunner(score=0.4)
 
     assert ball_detector.detect_frame(runner, frame, manifest) == []
 
 
 def test_detect_frame_respects_max_batch_tiles():
-    frame = np.zeros((2160, 3840, 3), dtype=np.uint8)
+    frame = _marker_frame(3840, 2160, 1500, 900)
     manifest = _manifest(None, max_batch_tiles=16)
-    windows = ball_detector.tile_windows(3840, 2160, 416, 64)
-    runner = _FakeRunner(windows, target_xy=(1500, 900))
+    runner = _MarkerRunner()
 
     ball_detector.detect_frame(runner, frame, manifest)
 
@@ -170,11 +282,13 @@ def test_detect_frame_respects_max_batch_tiles():
 
 
 def test_detect_frame_pads_frame_smaller_than_tile():
-    frame = np.zeros((200, 300, 3), dtype=np.uint8)
+    # Top-left padding, so full-frame coordinates need no compensation.
+    frame = _marker_frame(300, 200, 100, 100)
     manifest = _manifest(None)
-    runner = _FakeRunner([(0, 0)], target_xy=(100, 100))
+    runner = _MarkerRunner()
 
     detections = ball_detector.detect_frame(runner, frame, manifest)
 
     assert len(detections) == 1
     assert detections[0]["x"] == pytest.approx(100.0)
+    assert detections[0]["y"] == pytest.approx(100.0)

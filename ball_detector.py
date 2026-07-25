@@ -82,6 +82,42 @@ def _crop(frame, x0, y0, tile):
     return padded
 
 
+def _tile_edge(input_size):
+    """The single tile edge, refusing a non-square manifest.
+
+    A (416, 320) manifest would otherwise silently cut 416x416 windows and feed
+    the network a shape it was never traced for.
+    """
+    try:
+        width, height = (int(v) for v in input_size)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            f"input_size must be a (width, height) pair, got {input_size!r}"
+        ) from exc
+    if width != height:
+        raise ValueError(
+            f"input_size must be square for the tiled sweep, got "
+            f"({width}, {height}); one square window per tile is the only "
+            f"shape the traced graph accepts.")
+    return width
+
+
+def _class_name(class_names, class_index):
+    """Manifest class name for an index, or a loud failure.
+
+    Never fabricates a label: a negative index would otherwise wrap onto the
+    last class name, and an over-range one onto a made-up string. Like
+    ball_model's manifest checks, an inconsistency raises rather than guesses.
+    """
+    index = int(class_index)
+    if not 0 <= index < len(class_names):
+        raise ValueError(
+            f"detector emitted class_index {index}, outside the manifest's "
+            f"{len(class_names)} class name(s) {tuple(class_names)}; the label "
+            f"is not guessed. Re-export the model and manifest together.")
+    return class_names[index]
+
+
 def detect_frame(runner, frame, manifest):
     """Full-frame detections from a tiled sweep.
 
@@ -89,7 +125,7 @@ def detect_frame(runner, frame, manifest):
     (cx, cy, w, h, score, class_index) in TILE-LOCAL pixels. This function owns
     the tile-local -> full-frame mapping and the cross-tile merge.
     """
-    tile = manifest.input_size[0]
+    tile = _tile_edge(manifest.input_size)
     frame_h, frame_w = frame.shape[:2]
     windows = tile_windows(frame_w, frame_h, tile, manifest.tile_overlap_px)
 
@@ -98,13 +134,15 @@ def detect_frame(runner, frame, manifest):
     for start in range(0, len(windows), batch):
         chunk = windows[start:start + batch]
         crops = [_crop(frame, x0, y0, tile) for x0, y0 in chunk]
-        for (x0, y0), boxes in zip(chunk, runner.run_batch(crops)):
+        # strict: a runner that drops empty tiles (or returns short for any
+        # other reason) would otherwise re-align every later result onto the
+        # wrong tile origin -- silently, which is the one failure this module
+        # exists to prevent.
+        for (x0, y0), boxes in zip(chunk, runner.run_batch(crops), strict=True):
             for cx, cy, width, height, score, class_index in boxes:
                 if score < manifest.conf_threshold:
                     continue
-                name = (manifest.class_names[int(class_index)]
-                        if int(class_index) < len(manifest.class_names)
-                        else str(class_index))
+                name = _class_name(manifest.class_names, class_index)
                 detections.append({
                     "x": float(cx) + x0,
                     "y": float(cy) + y0,
