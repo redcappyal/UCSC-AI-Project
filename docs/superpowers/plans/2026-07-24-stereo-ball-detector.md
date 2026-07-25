@@ -112,12 +112,15 @@ def test_describe_returns_none_when_unavailable(tmp_path):
     assert ball_model.describe(tmp_path / "nope") is None
 
 
-def test_describe_summarises_without_loading_torch(tmp_path):
+def test_describe_summarises_for_provenance_stamping(tmp_path):
     summary = ball_model.describe(_write_model(tmp_path))
     assert summary["name"] == "crosscourt-ball-416"
     assert summary["version"] == 1
-    assert summary["artifact_sha256"].startswith(
-        __import__("hashlib").sha256(b"not-a-real-torchscript").hexdigest()[:8])
+    assert summary["artifact_sha256"] == hashlib.sha256(
+        b"not-a-real-torchscript").hexdigest()
+    assert summary["conf_threshold"] == 0.25
+    assert summary["input_size"] == [416, 416]
+    assert summary["source_checkpoint"] == "best_ckpt.pth (epoch 100)"
 ```
 
 - [ ] **Step 2: Run to verify it fails**
