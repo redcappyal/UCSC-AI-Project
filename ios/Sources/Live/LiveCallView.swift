@@ -66,30 +66,21 @@ struct CallPresentation: Equatable {
     }
 }
 
-/// §8.17 call flash + §8.18 call banner.
+/// §8.17 call flash — a full-stage colour wash with the verdict word.
 ///
-/// The flash is a stage *overlay* — never inserted into the layout flow — and
-/// the banner reserves its height at all times, so a call appearing or
-/// clearing shifts nothing (§0.9).
-struct LiveCallView: View {
+/// Belongs on the **stage overlay layer**, never in the layout flow, so
+/// appearing and clearing shifts nothing (§0.9). Kept separate from the banner
+/// because DESIGN.md defines them as two components living in two different
+/// places: the wash is transient and over the video, the banner is persistent
+/// and beneath it.
+struct CallFlashView: View {
     let presentation: CallPresentation?
-
-    init(presentation: CallPresentation?) {
-        self.presentation = presentation
-    }
 
     /// §10: the flash is skipped entirely under reduced motion — the end state
     /// appears directly. A state change, not an animation.
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-    var body: some View {
-        VStack(spacing: 0) {
-            flash
-            banner
-        }
-    }
-
-    // MARK: - §8.17
+    var body: some View { flash }
 
     private var flash: some View {
         ZStack {
@@ -105,8 +96,16 @@ struct LiveCallView: View {
         .allowsHitTesting(false)          // display-only, like the analyzing scrim
         .animation(reduceMotion ? nil : .easeOut(duration: 0.25), value: presentation)
     }
+}
 
-    // MARK: - §8.18
+/// §8.18 call banner — the persistent one-line result under the stage.
+///
+/// Reserves its height at all times (the §8.7 reserved-space pattern) so a
+/// call appearing or clearing never shifts the layout beneath it.
+struct CallBannerView: View {
+    let presentation: CallPresentation?
+
+    var body: some View { banner }
 
     private var banner: some View {
         HStack(spacing: 8) {
@@ -138,5 +137,24 @@ struct LiveCallView: View {
                               style: StrokeStyle(lineWidth: 1,
                                                  dash: presentation == nil ? [4, 4] : []))
         )
+    }
+}
+
+/// The plan's composed entry point: flash over banner, for any host that wants
+/// both stacked rather than placed separately. `RecordView` places the two
+/// halves itself — the flash on the stage overlay layer, the banner under it —
+/// because that is where DESIGN.md puts them.
+struct LiveCallView: View {
+    let presentation: CallPresentation?
+
+    init(presentation: CallPresentation?) {
+        self.presentation = presentation
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            CallFlashView(presentation: presentation)
+            CallBannerView(presentation: presentation)
+        }
     }
 }
