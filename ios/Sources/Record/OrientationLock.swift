@@ -126,10 +126,13 @@ final class OrientationPolicy {
 
     /// Called by `RecordModel.toggleRecording`'s start path once the mount is
     /// re-resolved at record start (not by `startCamera`, which only sets an
-    /// unpinned initial value — see `CameraController.orientation`). Pins the
-    /// mask and remembers it as `capturePin`, so a later tab round trip back
-    /// to Play (`applyForTab`) re-asserts this exact mount instead of the
-    /// wider `.landscape` the Play tab permits at rest.
+    /// unpinned initial value — see `CameraController.orientation`), and only
+    /// AFTER `camera.startRecording()` has actually succeeded — pinning first
+    /// and having the recording then fail to start would strand the operator
+    /// locked to this mount with no running recording to ever release it
+    /// from. Pins the mask and remembers it as `capturePin`, so a later tab
+    /// round trip back to Play (`applyForTab`) re-asserts this exact mount
+    /// instead of the wider `.landscape` the Play tab permits at rest.
     func pinForCapture(_ pinnedMask: UIInterfaceOrientationMask) {
         capturePin = pinnedMask
         apply(pinnedMask)
@@ -143,10 +146,17 @@ final class OrientationPolicy {
     /// whichever mount `pinForCapture` last applied, since nothing re-asks
     /// UIKit until something calls `apply`. Widening straight to Play's
     /// resting mask here, rather than waiting on a later `applyForTab`, is
-    /// safe because the only production caller of `pinForCapture` is
-    /// `toggleRecording`'s start path, itself only reachable while Play is
-    /// the active tab (the record button lives in `RecordView`) — so a live
-    /// pin always implies Play is what is currently showing.
+    /// safe — but NOT because "a live pin implies Play is showing right now":
+    /// that's false in general, since a pin survives a mid-recording
+    /// excursion to Matches or Coach, where `applyForTab` has already applied
+    /// `.all` there. What actually makes the unconditional widen safe is that
+    /// the only production caller of THIS method is `toggleRecording`'s stop
+    /// path, itself only reachable from the record button, which exists
+    /// solely on Play — so whatever the pin's history, Play is the tab
+    /// showing at the moment this particular call runs. A future caller
+    /// reached from a context other than that record button (a scene-phase
+    /// teardown, a peer-initiated stop) would NOT share that guarantee and
+    /// must not reuse this unconditional widen without re-checking it.
     func releaseCapturePin() {
         capturePin = nil
         apply(OrientationLock.mask(for: .play))

@@ -120,8 +120,12 @@ Run these on a Mac, in order, before trusting any of it:
    whole time recording is off. Then flip to the landscape opposite whatever
    the simulator launched in and tap record: `RecordModel.toggleRecording`'s
    start path must re-resolve the mount from the device's orientation at that
-   instant, call `camera.updateOrientation(_:)`, and only then pin — confirm
-   the mask narrows to the *flipped* mount, not the launch one.
+   instant, call `camera.updateOrientation(_:)`, start the recording, and only
+   once that succeeds pin the mask — confirm it narrows to the *flipped*
+   mount, not the launch one. (The pin deliberately waits on a successful
+   `startRecording()`: pinning first and having the write fail to start would
+   strand the operator locked to that mount with no running recording to
+   release it from.)
 3. **The pin releases on stop, and holds across a tab round trip while
    recording.** While recording, switch to Matches and back to Play — the
    pinned mount must survive the round trip, which is what

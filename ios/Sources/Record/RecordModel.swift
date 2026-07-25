@@ -80,14 +80,18 @@ final class RecordModel: ObservableObject {
     private var nextDetectionSeq: UInt32 = 0
     private var pendingTuples: [DetectionTuple] = []
     private var lastFlushAt: TimeInterval = 0
-    /// The mount this session is currently using. `startCamera` seeds an
-    /// unpinned initial value; `toggleRecording`'s start path re-resolves and
-    /// commits to it — see there for why it, not `startCamera`, is where this
-    /// stops being allowed to change. The peer detection path reads this
-    /// (`detectionFrameSize` below, and the tuples it sizes); the preview
-    /// overlay and camera-model adoption still key off the `CaptureSettings`
-    /// statics directly, since both mounts share one frame size and neither
-    /// needed the extra indirection.
+    /// The mount this session is currently using. Before any recording,
+    /// `startCamera` freely re-seeds this with an unpinned guess every time
+    /// Play appears — there is nothing to protect yet. `toggleRecording`'s
+    /// start path is what commits to a mount: it only assigns this AFTER
+    /// `camera.startRecording()` actually succeeds, and only then does
+    /// `startCamera` stop touching it — guarded on `isRecording`, since a
+    /// tab round trip mid-recording still re-runs `startCamera` and would
+    /// otherwise stomp the recording's committed mount with a fresh guess.
+    /// The peer detection path reads this (`detectionFrameSize` below, and
+    /// the tuples it sizes); the preview overlay and camera-model adoption
+    /// still key off the `CaptureSettings` statics directly, since both
+    /// mounts share one frame size and neither needed the extra indirection.
     @Published private(set) var captureOrientation: CaptureSettings.CaptureOrientation
 
     /// The pixel space local detections are expressed in — the same space the
@@ -357,6 +361,16 @@ final class RecordModel: ObservableObject {
     }
 
     func startCamera() async {
+        // RecordView's `.task` re-fires this every time Play reappears —
+        // including a return from Matches/Coach while a recording that
+        // `toggleRecording`'s start path already resolved and pinned is still
+        // running. Re-seeding an unpinned guess here would overwrite the
+        // mount a running recording committed to, which is exactly what
+        // `captureOrientation`'s doc says stops happening once that path
+        // commits — bail out whole so nothing below touches
+        // `camera.orientation` or `captureOrientation` while a recording is
+        // in flight.
+        guard !isRecording else { return }
         do {
             // Resolve an initial mount from the interface orientation, which
             // the Play tab has already constrained to landscape, purely so
@@ -388,7 +402,14 @@ final class RecordModel: ObservableObject {
             // interface, which is not a capture mode): a fallback default, not
             // a resolved orientation.
             captureOrientation = mount ?? .landscapeRight
-            camera.orientation = captureOrientation
+            // Routed through `updateOrientation` rather than a direct
+            // `camera.orientation = ...` assignment, so `orientation` has one
+            // writer, always on `sessionQueue`, instead of this direct
+            // main-actor write racing `toggleRecording`'s queued one. There is
+            // no connection yet at this point (configure() hasn't run), so
+            // this always records the value and never fails — see
+            // `updateOrientation(_:)`'s doc for that branch.
+            await camera.updateOrientation(captureOrientation)
 
             try await camera.configure()
             camera.start()
@@ -443,23 +464,49 @@ final class RecordModel: ObservableObject {
                 errorText = "Hold the phone in landscape to start recording."
                 return
             }
+            // Remembered so a failed attempt below can put the connection
+            // back rather than leave it describing a mount no recording ever
+            // committed to. Read straight from `camera`, not from
+            // `captureOrientation`: this model property is intentionally not
+            // updated until a recording actually starts (see below), so
+            // before the first successful recording it can already differ
+            // from what the connection is currently rotated to.
+            let priorOrientation = camera.orientation
+            // Must land, and actually apply to the live connection, before
+            // startRecording() below sizes the asset writer: getting the
+            // order wrong would leave the connection rotated for the old
+            // mount while the writer already assumes the new one. Checked,
+            // not just awaited — an unsupported angle leaves the connection
+            // (and `camera.orientation`) at the previous mount, and pinning
+            // or recording against that silently-still-wrong rotation would
+            // be exactly the divergence this change exists to prevent.
+            guard await camera.updateOrientation(mount) else {
+                errorText = "Could not switch the camera to this mount."
+                return
+            }
             do {
-                captureOrientation = mount
-                // Must land, and actually apply to the live connection,
-                // before startRecording() below sizes the asset writer and
-                // before the mask narrows: getting the order wrong would
-                // leave the connection rotated for the old mount while the
-                // writer (and Hello, via captureOrientation above) already
-                // describe the new one — strictly worse than not resolving
-                // at record start at all.
-                await camera.updateOrientation(mount)
-                OrientationPolicy.shared.pinForCapture(OrientationLock.pinnedMask(for: mount))
-
                 try camera.startRecording()
+                // Only commit `captureOrientation` and the pin once the
+                // recording has actually started. Doing either before this
+                // point and having `startRecording()` then throw would
+                // strand the operator locked to this one mount with no
+                // running recording to ever release it from (`toggleRecording`'s
+                // STOP path, and so `releaseCapturePin()`, is only reachable
+                // while `isRecording` is true) — the same one-shot-per-launch
+                // failure this whole change exists to remove, just relocated
+                // to the failure path instead of removed.
+                captureOrientation = mount
+                OrientationPolicy.shared.pinForCapture(OrientationLock.pinnedMask(for: mount))
                 isRecording = true
                 recordingStartedAt = Date()
                 errorText = nil
             } catch {
+                // The recording never actually started: nothing above was
+                // committed (captureOrientation/pin are untouched), but the
+                // connection's rotation already changed. Put it back so
+                // `camera.orientation` doesn't keep describing a mount no
+                // recording committed to.
+                await camera.updateOrientation(priorOrientation)
                 errorText = error.localizedDescription
             }
         }
