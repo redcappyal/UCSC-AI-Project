@@ -399,7 +399,11 @@ def test_update_job_persists_atomically(tmp_path):
             job_runner.JOBS.pop(run_id, None)
 
 
-def test_upload_dedup_and_track_validation():
+def test_upload_dedup_and_track_validation(runs_dir):
+    # runs_dir is here for its redirect, not its value: it moves BY_HASH_DIR
+    # off the real upload store, which is what makes "exactly one file matches
+    # this hash" a fact about these two uploads rather than about whatever
+    # earlier runs left behind.
     import app as app_module
 
     client = app_module.app.test_client()
@@ -428,12 +432,8 @@ def test_upload_dedup_and_track_validation():
 
     assert ids[0] == ids[1]
     matches = list(app_module.BY_HASH_DIR.glob(f"{ids[0]}.*"))
-    try:
-        assert len(matches) == 1
-        assert app_module.video_path_for_id(ids[0]) == matches[0]
-    finally:
-        for match in matches:
-            match.unlink()
+    assert len(matches) == 1
+    assert app_module.video_path_for_id(ids[0]) == matches[0]
 
     assert client.get("/api/track/status/does-not-exist").status_code == 404
 
