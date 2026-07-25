@@ -136,7 +136,11 @@ representative names instead:
 - ASCII Roboflow name passes through byte-identical, no hash suffix.
 - U+FF5C fullwidth bar → `_`, hash appended (the actual production case).
 - `café` → `cafe` (NFKD transliteration, not character loss).
-- CJK / emoji-only stem → `clip-<hash>` fallback, never an empty filename.
+- A stem with no surviving ASCII at all (e.g. a bare CJK title with no
+  `_mov-N_jpg.rf.<hash>` tail) → `clip-<hash>` fallback, never an empty
+  filename. A real Roboflow stem always keeps that tail, which is already
+  ASCII, so this guards a theoretical all-non-Latin input rather than a case
+  the pipeline actually produces.
 - The CP437 mojibake form `∩╜£` (F1's on-disk artifact) also slugs safely.
 - Two different originals that collapse to the same base stay distinct.
 - Every output matches `^[A-Za-z0-9._-]+$`.

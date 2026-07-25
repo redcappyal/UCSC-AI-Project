@@ -12,8 +12,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from prepare_ball_dataset import (
     _clip_box, _imread_unicode, _imwrite_unicode, ascii_slug, burst_count,
     clip_and_frame, clip_scale_factors, crop_file_name, plan_crops,
-    polygon_aabb, polygon_points, slugified_clips, split_by_clip,
-    streak_metrics, thin_bursts,
+    polygon_aabb, polygon_points, render_split, slugified_clips,
+    split_by_clip, streak_metrics, thin_bursts,
 )
 
 
@@ -261,6 +261,16 @@ def test_slugified_clips_lists_only_the_offenders():
     assert slugified_clips(records) == ["Rally ｜ One"]
 
 
+def test_slugified_clips_tracks_stem_divergence_not_clip_divergence():
+    # A prior implementation slugged r["clip"] directly, but crop filenames
+    # are slugged from r["path"].stem. "abc." looks unsafe as a bare clip
+    # name (a trailing dot is stripped), but once it is embedded in
+    # "abc._mov-0000_jpg" the stem is already in canonical form and its crops
+    # carry no digest at all - the old implementation listed it anyway.
+    records = [frame(clip="abc.", number=0)]
+    assert slugified_clips(records) == []
+
+
 def test_unicode_path_survives_a_write_read_round_trip(tmp_path):
     # cv2.imwrite returns True while writing a mojibake filename on Windows, so
     # the COCO json ends up naming files that are not there. This is the guard.
@@ -280,3 +290,38 @@ def test_imread_unicode_returns_none_for_a_missing_file(tmp_path):
     pytest.importorskip("cv2")
     # render_split skips frames it cannot read; that contract has to survive.
     assert _imread_unicode(tmp_path / "absent.jpg") is None
+
+
+def test_render_split_raises_on_a_filename_collision_across_source_dirs(tmp_path):
+    # crop_file_name keys off path.stem, dropping the parent directory. Two
+    # source records with the same file name in different export split dirs
+    # (as Roboflow can emit) therefore plan to the same crop filename; the
+    # second write would silently clobber the first's pixels while the COCO
+    # json still ends up with two distinct `images` entries.
+    cv2 = pytest.importorskip("cv2")
+    np = pytest.importorskip("numpy")
+
+    stem = "Bay-Club-1_mov-0001_jpg"
+    train_dir, valid_dir = tmp_path / "train", tmp_path / "valid"
+    train_dir.mkdir()
+    valid_dir.mkdir()
+    path_a, path_b = train_dir / f"{stem}.jpg", valid_dir / f"{stem}.jpg"
+    image = np.full((32, 32, 3), 128, dtype=np.uint8)
+    for path in (path_a, path_b):
+        _imwrite_unicode(path, image, [int(cv2.IMWRITE_JPEG_QUALITY), 95])
+
+    def record(path):
+        return {"path": path, "clip": "Bay-Club-1", "frame": 1,
+                "width": 32, "height": 32,
+                "balls": [{"bbox": [8, 8, 4, 4], "streak": None}]}
+
+    record_a, record_b = record(path_a), record(path_b)
+    args = dict(crop=16, scale=1.0, positives=1, negatives=0,
+                jitter=0.0, min_visible=0.6)
+    plans_by_record = {
+        path_a: plan_crops(record_a, rng=random.Random(0), **args),
+        path_b: plan_crops(record_b, rng=random.Random(0), **args),
+    }
+
+    with pytest.raises(SystemExit):
+        render_split([record_a, record_b], plans_by_record, tmp_path, "train", 16, 95)

@@ -91,6 +91,13 @@ def ascii_slug(stem):
     form unchanged would let two source frames silently overwrite each
     other's crops, so the digest stays with every lossy transform, not just
     the charset one.
+
+    A residual risk survives this: a stem already shaped like a slug's output
+    (e.g. "Rally_One-4075aa34") is returned untouched, and a genuinely
+    different stem can slug to that same string (e.g. "Rally ｜ One") —
+    probability ~2⁻³² given the 8-hex digest. render_split's duplicate-
+    filename guard is what makes that acceptable: the collision surfaces as
+    a SystemExit naming both source paths, never a silent overwrite.
     """
     folded = unicodedata.normalize("NFKD", stem).encode("ascii", "ignore").decode("ascii")
     slug = UNSAFE_CHARS.sub("_", folded).strip("._-") or "clip"
@@ -105,12 +112,15 @@ def crop_file_name(source_stem, index):
 
 
 def slugified_clips(records):
-    """Clip names that could not be used verbatim in a filename.
+    """Clips whose crops carry a digest suffix in their filename.
 
-    Reported in the manifest so the digest suffix on those crops is
-    self-explaining; the readable name itself stays in each image's `clip`.
+    Crop filenames are slugged from `record["path"].stem`, not from `clip`
+    itself, so this checks the stem for divergence and reports the clip it
+    belongs to. Reported in the manifest so the digest suffix on those crops
+    is self-explaining; the readable name itself stays in each image's `clip`.
     """
-    return sorted({r["clip"] for r in records if ascii_slug(r["clip"]) != r["clip"]})
+    return sorted({r["clip"] for r in records
+                   if ascii_slug(r["path"].stem) != r["path"].stem})
 
 
 def polygon_points(segmentation):
@@ -367,8 +377,12 @@ def _imwrite_unicode(path, image, params=None):
     The read-side failure is loud; this one is not. cv2.imwrite returns True and
     writes a real file whose name is the UTF-8 bytes reinterpreted as cp1252, so
     the COCO json ends up pointing at files that do not exist — how the
-    2026-07-24 dataset lost 961 of its 2,936 train crops. Raising rather than
-    returning a bool keeps a silent no-op off the table.
+    2026-07-24 dataset lost 961 of its 2,936 train crops. This function raises
+    rather than returning a status, so — unlike cv2.imwrite — there is no path
+    through it that reports success without the file landing on disk. In
+    practice cv2.imencode raises cv2.error on a missing or unknown extension
+    rather than returning ok=False; the `if not ok` check below is a defensive
+    backstop, not the mechanism this guarantee actually rests on.
     """
     import cv2
 
@@ -379,12 +393,21 @@ def _imwrite_unicode(path, image, params=None):
 
 
 def render_split(records, plans_by_record, out_dir, split, crop, quality):
-    """Write crop JPEGs and the split's COCO json. Returns the manifest slice."""
+    """Write crop JPEGs and the split's COCO json. Returns the manifest slice.
+
+    `crop_file_name` keys off `record["path"].stem`, dropping the parent
+    directory, so two source records with the same file name in different
+    export split dirs would otherwise plan to the same crop filename and the
+    second write would silently overwrite the first's pixels while the COCO
+    json still carried two distinct `images` entries. `emitted` below turns
+    that into a loud failure instead.
+    """
     import cv2                            # lazy: geometry is testable without it
 
     images_dir = out_dir / split
     images_dir.mkdir(parents=True, exist_ok=True)
     images, annotations = [], []
+    emitted = {}                           # crop filename -> source path
     for record in records:
         plans = plans_by_record.get(record["path"])
         if not plans:
@@ -402,6 +425,12 @@ def render_split(records, plans_by_record, out_dir, split, crop, quality):
             if tile.shape[0] != crop or tile.shape[1] != crop:
                 continue
             name = crop_file_name(record["path"].stem, index)
+            other = emitted.get(name)
+            if other is not None and other != record["path"]:
+                raise SystemExit(
+                    f"crop filename collision in split {split!r}: {name!r} "
+                    f"would be written for both {other} and {record['path']}")
+            emitted[name] = record["path"]
             _imwrite_unicode(images_dir / name, tile,
                              [int(cv2.IMWRITE_JPEG_QUALITY), quality])
             image_id = len(images) + 1
