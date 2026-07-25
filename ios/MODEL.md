@@ -59,6 +59,22 @@ the source polygon. For a motion-streaked ball its endpoints are the position at
 the start and end of the exposure. Ignored by training; used by the tracker and
 `judge_call.py`.
 
+**Check the crops resolve before training on them.** Crop filenames inherit the
+source clip name, and one clip is a YouTube video whose title contains U+FF5C
+(`｜`), so 961 of 2936 train crops carry non-ASCII names. Zipping that on macOS
+and extracting on Windows without the UTF-8 flag honored decodes each UTF-8 byte
+as CP437 — `｜` (`EF BD 9C`) becomes `∩╜£` — leaving the COCO JSON correct and a
+third of the files unreachable. Recoverable with
+`name.encode('cp437').decode('utf-8')`, but cheaper to catch up front:
+
+    python -c "import json,os,sys; d=sys.argv[1]; s=sys.argv[2]; \
+      j=json.load(open(f'{d}/annotations/instances_{s}.json',encoding='utf-8')); \
+      m=[i['file_name'] for i in j['images'] if not os.path.exists(f'{d}/{s}/'+i['file_name'])]; \
+      print(len(m),'of',len(j['images']),'missing')" /path/to/ball_crops train
+
+See also the Windows `cv2.imread` limitation in §2, which bites the *correctly*
+named files for the same underlying reason.
+
 ## 2. Train (CUDA box)
 
 **RTX 50-series (Blackwell) needs a CUDA 12.8+ PyTorch.** Those GPUs are compute
@@ -67,25 +83,89 @@ training dies with "no kernel image is available for execution on the device."
 
     pip install torch torchvision --index-url https://download.pytorch.org/whl/cu128
 
-Verify before walking away:
+Verify before walking away. `is_available()` is not enough — it only confirms the
+driver handshake, while the failure above happens at *kernel launch*, hours in:
 
-    python -c "import torch; print(torch.cuda.is_available(), torch.cuda.get_device_capability())"
+    python -c "import torch; print(torch.cuda.is_available(), torch.cuda.get_device_capability(), torch.cuda.get_arch_list())"
+
+`sm_120` must appear in the arch list. Then force one real fp16 conv on the
+device; that is the check that actually proves kernels exist.
 
 Then YOLOX from source (the PyPI package lags), plus the Apache-2.0 COCO
 checkpoint `yolox_tiny.pth` from its releases page:
 
-    git clone https://github.com/Megvii-BaseDetection/YOLOX && cd YOLOX && pip install -v -e .
+    git clone https://github.com/Megvii-BaseDetection/YOLOX && cd YOLOX
+    pip install -v -e . --no-deps
+    pip install opencv-python loguru tqdm thop tabulate psutil tensorboard pycocotools ninja
+
+`--no-deps` is deliberate. YOLOX's `requirements.txt` pins
+`onnx-simplifier==0.4.10`, a 2022 C++ extension with no modern wheel, and we do
+not need it: §4 exports by tracing the PyTorch model directly, and coremltools
+has dropped its ONNX frontend anyway.
 
     BALL_CROPS=/path/to/ball_crops python -m yolox.tools.train \
         -f yolox_ball_exp.py -d 1 -b 32 --fp16 -c yolox_tiny.pth
 
 `-c` fine-tunes from COCO rather than starting cold; with 66 independent moments
-that is not optional. Drop to `-b 16` if 8 GB of VRAM runs out. Expect an
-overnight run for 300 epochs at 416.
+that is not optional. Measured, 456 of 462 tensors transfer — only the six
+`cls_preds` layers mismatch (80 classes → 1) and `load_ckpt` skips them.
 
 `yolox_ball_exp.py` documents every non-default setting inline — most
 importantly mosaic on / mixup off, no rotation or shear (the mount does not
-rotate), and no motion-blur augmentation.
+rotate), and no motion-blur augmentation. It also overrides
+`get_dataset`/`get_eval_dataset`, which is **not optional**: stock YOLOX
+hardcodes the COCO 2017 layout (`get_dataset` passes no `name` so `COCODataset`
+defaults to `train2017`, and `get_eval_dataset` hardcodes `val2017`), and reads no
+exp attribute for it. Without the overrides the run dies at startup looking for
+folders this dataset does not have.
+
+### Measured on an RTX 5060, 8 GB (2026-07-24)
+
+Python 3.12, torch 2.11.0+cu128, YOLOX 0.3.0.
+
+- **`-b 32` used 2118 MB of 8151.** The old "drop to `-b 16` if 8 GB runs out"
+  advice is unnecessary at 416 — and `-b` is not free to change, because
+  `basic_lr_per_img` multiplies by batch size, so batch *is* the LR schedule.
+- **~28 s/epoch** (92 iters at 0.298 s with mosaic, 0.258 s without), so
+  **~2.4 h for 300 epochs — not overnight.**
+- No `--cache`: `data_time` was 0.002 s against 0.298 s `iter_time`, so this is
+  compute-bound and caching only costs RAM.
+- **Val converged at epoch 100 and the remaining 200 epochs bought nothing** —
+  best AP[.5:.95] 0.4034 / AP@0.5 0.885 / AP@0.75 0.304 at epoch 100, versus
+  0.383 / 0.834 / 0.264 at epoch 300. Epochs 150–280 sat in 0.383–0.395.
+  `max_epoch` near 120 should reach the same place in ~1 h; confirm before
+  trusting it.
+- **Closing mosaic bought nothing measurable.** All 16 mosaic-free tail evals
+  (epochs 285–300) landed at 0.382–0.385 with best AP@0.75 0.284 — *below* epoch
+  100. Do not assume `no_aug_epochs` recovers localisation here.
+- Val AP is very noisy while LR is high — 0.836 at epoch 20, 0.123 at epoch 40,
+  0.740 at 50 — then rock-steady once LR anneals. 97 val images means each one is
+  ~1% of the metric. Training loss fell monotonically (4.9 → 2.6) the whole time,
+  so **treat early swings as noise, not divergence**; the signal to act on would
+  be val declining across several consecutive evals while train loss falls.
+
+### If the CUDA box is Windows
+
+Two things break, both because YOLOX never targeted Windows. Patch the clone;
+note that a re-clone silently reverts both.
+
+1. **`cv2.imread` cannot open non-ANSI paths** and returns `None`, so any crop
+   whose filename carries a character outside the active code page is unreadable
+   — this silently hit 961 of 2936 train crops, a third of the set. In
+   `yolox/data/datasets/coco.py` `load_image`, use
+   `cv2.imdecode(np.fromfile(path, dtype=np.uint8), cv2.IMREAD_COLOR)`.
+2. **The C++ `fast_cocoeval` op is never built** (`setup.py` skips `ext_modules`
+   on win32) and killed the run *after* training finished, during eval. The
+   subtlety: the *import* succeeds — `COCOeval_opt` JIT-builds lazily in
+   `__init__` — so it fails at construction with `RuntimeError("Ninja is
+   required...")`, which the stock `except ImportError` in
+   `yolox/evaluators/coco_evaluator.py` cannot catch, and widening it to
+   `except Exception` does not help either. Import `pycocotools.cocoeval.COCOeval`
+   directly. It is a drop-in, and the C++ op only matters at COCO's 5k-image
+   scale; val here is 97 images.
+
+Also expect wheel-only installs: with no MSVC compiler, every dependency must
+have a prebuilt wheel, which is why 3.12 rather than the newest Python.
 
 Apple Silicon is not a viable training path at this dataset size — measured, a
 local MPS run had not finished epoch 1 after ~19 minutes. Train on CUDA, then
