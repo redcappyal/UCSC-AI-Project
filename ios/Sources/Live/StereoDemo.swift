@@ -19,9 +19,11 @@ import simd
 ///     all, so a local-only synthetic detector produces zero impacts forever.
 ///
 /// The models are used **unadopted**: the demo works entirely in the goldens'
-/// own 1920×1080 space. `adoptedForCapture()` would throw here — the capture
-/// space is 4K in a different aspect, and `CameraModel.scaled` rejects an
-/// aspect change rather than silently distorting the geometry.
+/// own 1920×1080 space. `adoptedForCapture()` would not throw here — 1920×1080
+/// and the 4K capture target share the same 16:9 aspect, so it is a clean 2x
+/// scale — but the synthetic detections below are produced in the goldens'
+/// own 1920×1080 space too, so adopting the models while leaving the
+/// detections unadopted would mismatch the two.
 enum StereoDemo {
     /// Golden left camera, back wall at x = 9 ft.
     static let localModelJSON = """

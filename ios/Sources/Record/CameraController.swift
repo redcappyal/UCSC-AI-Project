@@ -18,11 +18,11 @@ final class CameraController: NSObject {
     }
 
     let session = AVCaptureSession()
-    /// Handheld vs. mounted capture — set before `configure()` runs, since it
-    /// drives both the video connection's rotation and the asset writer's
-    /// dimensions below. Defaults to `.portrait` (today's handheld behaviour,
-    /// unchanged).
-    var orientation: CaptureSettings.CaptureOrientation = .portrait
+    /// Which way the phone sits in its mount — set before `configure()` runs,
+    /// since it drives both the video connection's rotation and the asset
+    /// writer's dimensions below. `RecordModel.startCamera` resolves it from
+    /// the interface orientation and pins it there.
+    var orientation: CaptureSettings.CaptureOrientation = .landscapeRight
     /// Every video frame, on the output queue. RecordView wires this to
     /// BallTracker.process.
     var onVideoSample: ((CVPixelBuffer, TimeInterval) -> Void)?

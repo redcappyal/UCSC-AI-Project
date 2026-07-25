@@ -127,11 +127,15 @@ final class CameraFrameSpaceTests: XCTestCase {
     }
 
     func testAdoptedForCaptureLandsInTheLivePixelSpace() throws {
-        let adopted = try model().adoptedForCapture()
+        // Landscape source (1920x1080), matching capture's aspect: adoption
+        // is a clean 2x scale to 3840x2160, not the portrait 1080x1920 fixture
+        // every other test in this file uses, which now throws aspectMismatch
+        // against a landscape capture target.
+        let adopted = try model(frameSize: (1920, 1080)).adoptedForCapture()
         XCTAssertEqual(adopted.frameWidth, Double(CaptureSettings.frameWidth))
         XCTAssertEqual(adopted.frameHeight, Double(CaptureSettings.frameHeight))
         XCTAssertEqual(adopted.focalPx,
-                       900 * Double(CaptureSettings.frameWidth) / 1080, accuracy: 1e-12)
+                       900 * Double(CaptureSettings.frameWidth) / 1920, accuracy: 1e-12)
     }
 
     func testAdoptedForCaptureRejectsAnUnknownSourceSpace() throws {

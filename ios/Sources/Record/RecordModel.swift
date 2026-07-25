@@ -265,9 +265,11 @@ final class RecordModel: ObservableObject {
     /// would emit nothing, forever.
     ///
     /// The models are used unadopted, in their own solve pixel space. Calling
-    /// `adoptedForCapture()` here would throw: the capture space is a
-    /// different aspect ratio, and `CameraModel.scaled` refuses that rather
-    /// than distorting the geometry.
+    /// `adoptedForCapture()` here would not throw — the goldens' 1920×1080
+    /// shares the capture target's 16:9 aspect, so it is a clean 2x scale —
+    /// but the synthetic detections below are produced in that same
+    /// 1920×1080 space, so adopting the models while leaving the detections
+    /// unadopted would mismatch the two.
     func startStereoDemo(localModelJSON: String, remoteModelJSON: String) {
         // The demo's models are the goldens in their own unadopted 1920×1080
         // space. Installing its engine over a paired session's would keep

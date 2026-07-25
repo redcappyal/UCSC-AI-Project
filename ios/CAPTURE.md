@@ -6,7 +6,7 @@ and what breaks if the settings change.
 
 | Setting | Value | Enforced by |
 |---|---|---|
-| Resolution | 3840x2160 (portrait 2160x3840) | `applyCaptureFormat` via `bestFormatIndex` |
+| Resolution | 3840x2160 landscape, both mounts | `applyCaptureFormat` via `bestFormatIndex` |
 | Frame rate | 60 fps, min and max pinned | `activeVideoMin/MaxFrameDuration` |
 | Codec | HEVC, ~53 Mbps | `startRecording` |
 | Shutter | 1/1000, falling back to 1/500 | `solveExposure` |
@@ -15,6 +15,17 @@ and what breaks if the settings change.
 | Focus | Locked | `lockForCourt` |
 | Stabilisation | OFF | `configureSession` |
 | Lens | Ultrawide, main camera as fallback | `configureSession` |
+
+Capture is always landscape. The phone mounts on its side, and
+`CaptureSettings.rotationAngle(for:)` applies 0 or 180 so the recorded frame is upright
+whichever end the lens is at. Portrait is not a capture mode.
+
+**Migration: re-solve portrait calibrations.** `CameraModel.scaled` refuses to scale
+across an aspect change rather than distorting the geometry, and this change flips the
+capture aspect from portrait (9:16) to landscape (16:9). Any calibration solved from
+portrait footage will now throw `aspectMismatch` in `adoptedForCapture()` instead of
+loading. This is expected, not a bug — those calibrations need to be re-solved from
+landscape footage before they will load again.
 
 ## Why these are locked rather than automatic
 

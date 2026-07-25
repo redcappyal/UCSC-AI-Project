@@ -3,18 +3,27 @@ import XCTest
 @testable import SquashLineCalling
 
 final class CaptureOrientationTests: XCTestCase {
-    func testPortraitMatchesTodaysGeometry() {
-        let s = CaptureSettings.frameSize(for: .portrait)
-        XCTAssertEqual(s.width, CaptureSettings.sensorHeight)
-        XCTAssertEqual(s.height, CaptureSettings.sensorWidth)
-        XCTAssertEqual(CaptureSettings.rotationAngle(for: .portrait), 90)
+    func testBothMountsShareOneUprightLandscapeFrameSpace() {
+        // Identical dimensions for both mounts is the whole reason the wire
+        // needs an explicit orientation field: width/height cannot tell a
+        // landscape-left mount from a landscape-right one.
+        for orientation in CaptureSettings.CaptureOrientation.allCases {
+            let s = CaptureSettings.frameSize(for: orientation)
+            XCTAssertEqual(s.width, CaptureSettings.sensorWidth, "\(orientation)")
+            XCTAssertEqual(s.height, CaptureSettings.sensorHeight, "\(orientation)")
+        }
     }
 
-    func testLandscapeIsSensorNativeAndUnrotated() {
-        let s = CaptureSettings.frameSize(for: .landscapeRight)
-        XCTAssertEqual(s.width, CaptureSettings.sensorWidth)
-        XCTAssertEqual(s.height, CaptureSettings.sensorHeight)
+    func testRotationNormalizesEachMountUpright() {
+        // Landscape-right matches the sensor's native readout; landscape-left
+        // is that readout upside down, so it needs 180 to record upright.
         XCTAssertEqual(CaptureSettings.rotationAngle(for: .landscapeRight), 0)
+        XCTAssertEqual(CaptureSettings.rotationAngle(for: .landscapeLeft), 180)
+    }
+
+    func testFrameConstantsAreLandscape() {
+        XCTAssertEqual(CaptureSettings.frameWidth, 3840)
+        XCTAssertEqual(CaptureSettings.frameHeight, 2160)
     }
 
     func testMismatchedPeerFrameSizeIsRejected() {
