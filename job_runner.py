@@ -18,6 +18,8 @@ from pathlib import Path
 import cv2
 
 import court_model
+import stereo_engine
+import stereo_sync
 from audio_events import extract_audio_candidates, extract_repeating_audio_windows
 from bounce_gb_model_detector import DEFAULT_MODEL_PATH as BOUNCE_GB_MODEL_PATH
 from bounce_gb_model_detector import detect_hits_with_gb_model
@@ -225,14 +227,208 @@ def maybe_start_stereo_fuse(session_id):
     return fuse_id
 
 
+STEREO_TIMELINE_HZ = 120.0
+
+
+def _stereo_camera(run_dir, side):
+    """Solve one side's camera, in the pixel space its CSV is written in."""
+    calibration_path = Path(run_dir) / "calibration.json"
+    try:
+        calibration = json.loads(calibration_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise ValueError(f"side {side!r} calibration unreadable: {error}")
+    model, info = court_model.solve_camera_model(calibration)
+    if model is None:
+        raise ValueError(
+            f"side {side!r} calibration failed to solve "
+            f"(status={info.get('status')!r})")
+    return model, calibration
+
+
+def _stereo_hit_entry(impact, fps_a):
+    """One `stereo_engine.Impact` in the existing detected_hits vocabulary.
+
+    Speaking judge_hits' vocabulary rather than stereo_offline's is deliberate:
+    build_eval_set filters hits with `isinstance(frame, int)`, so a float frame
+    would match nothing and read as total detector failure. Stereo's own values
+    ride along losslessly in the additive `stereo` block.
+    """
+    x_ft, _y_ft, z_ft = (float(v) for v in impact.point_ft)
+
+    event_type = {
+        "front_wall": "wall",
+        "left_wall": "side_wall",
+        "right_wall": "side_wall",
+        "back_wall": "side_wall",
+        "floor": "floor",
+    }.get(impact.surface, "unknown")
+
+    # "down" is a tin hit — it ends the rally exactly as an out ball does, and
+    # the mono vocabulary has no third word for it.
+    call = {"in": "IN", "out": "OUT", "down": "OUT"}.get(impact.call)
+
+    # confidence is the engine's own signal for how the point was obtained, so
+    # method/view_count derive from it and stereo_engine needs no change (and
+    # the goldens do not move).
+    method, view_count = {
+        "high": ("plane_snap", 2),
+        "one_view": ("plane_snap", 1),
+        "no_call": ("triangulated", 2),
+    }.get(impact.confidence, ("triangulated", 2))
+
+    entry = {
+        # role a's clock and fps, so the frame joins role a's CSV and labels.
+        "frame": int(round(float(impact.t_s) * float(fps_a))),
+        "timestamp_seconds": float(impact.t_s),
+        "event_type": event_type,
+        "call": call,
+        "reason": f"stereo_{impact.surface}",
+        "judge_source": "stereo_plane_snap",
+        # A stereo call has no pixel margin. None is honest, and the mono
+        # schema already permits it.
+        "margin_px": None,
+        "view_count": view_count,
+        "method": method,
+        "stereo": {
+            "surface": impact.surface,
+            "point_ft": [float(v) for v in impact.point_ft],
+            "margin_ft": float(impact.margin_ft),
+            "confidence": impact.confidence,
+            "snap_disagreement_ft": (
+                None if impact.snap_disagreement_ft is None
+                else float(impact.snap_disagreement_ft)),
+        },
+    }
+
+    # Front-wall contacts carry the wall diagram and target zone the coaching
+    # analytics key off, computed straight from the 3D point: x across the
+    # 21 ft wall, y from the out line (0) down to the tin top (1), matching
+    # judge_call.wall_diagram_coordinates' convention.
+    if impact.surface == "front_wall":
+        span = court_model.OUT_LINE_HEIGHT_FT - court_model.TIN_TOP_HEIGHT_FT
+        diagram = {
+            "x": x_ft / court_model.COURT_WIDTH_FT,
+            "y": (court_model.OUT_LINE_HEIGHT_FT - z_ft) / span,
+            "x_reference": "stereo_court_frame",
+        }
+        entry["wall_diagram"] = diagram
+        entry["target_zone"] = target_zone_for_diagram(diagram)
+    return entry
+
+
 def run_stereo_fuse_job(run_id):
     """Fuse the two camera runs of a paired session into one 3D result.
 
-    Filled in by Phase 5 Task 5; the trigger and its claim are Task 2 and are
-    independently testable without it.
+    Reads both runs' ball_coordinates.csv rather than re-decoding video: the
+    detections are the expensive part and both runs already paid for them.
     """
-    update_job(run_id, status="complete", stage="complete", processed_frames=1,
-               message="Stereo fusion is not implemented yet.")
+    job = get_job(run_id) or {}
+    run_dir = Path(job.get("run_dir", RUNS_DIR / run_id))
+    try:
+        update_job(run_id, status="running", stage="fusing",
+                   message="Solving both cameras.")
+
+        run_a_id, run_b_id = job.get("run_a"), job.get("run_b")
+        job_a, job_b = get_job(run_a_id) or {}, get_job(run_b_id) or {}
+        dir_a = Path(job_a.get("run_dir", RUNS_DIR / str(run_a_id)))
+        dir_b = Path(job_b.get("run_dir", RUNS_DIR / str(run_b_id)))
+        fps_a = float(job_a.get("fps") or 60.0)
+        fps_b = float(job_b.get("fps") or 60.0)
+
+        model_a, _cal_a = _stereo_camera(dir_a, "a")
+        model_b, _cal_b = _stereo_camera(dir_b, "b")
+
+        update_job(run_id, message="Refining the clock offset.")
+        samples_a = stereo_sync.track_samples_from_csv(
+            dir_a / "ball_coordinates.csv", fps=fps_a)
+        samples_b = stereo_sync.track_samples_from_csv(
+            dir_b / "ball_coordinates.csv", fps=fps_b)
+
+        manifest = None
+        manifest_path = job_a.get("sync_manifest_path") or job_b.get("sync_manifest_path")
+        if manifest_path:
+            try:
+                manifest = json.loads(Path(manifest_path).read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                manifest = None
+        seed_s, seed_source = stereo_sync.seed_offset_from_manifest(manifest)
+
+        report = stereo_sync.refine_offset(
+            model_a, samples_a, model_b, samples_b, seed_s=seed_s)
+        report["seed"]["source"] = seed_source
+        report["schema"] = "stereo-sync-v1"
+        report["session_id"] = job.get("session_id")
+        report["runs"] = {"a": run_a_id, "b": run_b_id}
+        offset_s = float(report["refined"]["offset_s"])
+
+        update_job(run_id, message="Fusing tracks.")
+        # Samples b, restamped onto a's clock — build the track once and hand
+        # the same object to detect_impacts, so the file written to disk is
+        # provably the track the impacts came from.
+        aligned_b = [
+            stereo_engine.TrackSample(t_s=s.t_s + offset_s, px=s.px) for s in samples_b]
+        track = stereo_engine.build_track3d(
+            model_a, samples_a, model_b, aligned_b, hz=STEREO_TIMELINE_HZ)
+        impacts = stereo_engine.detect_impacts(
+            model_a, samples_a, model_b, aligned_b, track=track)
+
+        with (run_dir / "stereo_track.jsonl").open("w", encoding="utf-8") as handle:
+            for point in track:
+                handle.write(json.dumps({
+                    "t_s": float(point.t_s),
+                    "point_ft": [float(v) for v in point.point_ft],
+                    "gap_ft": float(point.gap_ft),
+                    "view_count": 2,
+                }, sort_keys=True) + "\n")
+
+        try:
+            image_px_a, court_xyz_a, _ = court_model._camera_correspondences(_cal_a)
+            image_px_b, court_xyz_b, _ = court_model._camera_correspondences(_cal_b)
+            report["pair_agreement"] = stereo_engine.pair_agreement(
+                model_a, list(zip(court_xyz_a, image_px_a)),
+                model_b, list(zip(court_xyz_b, image_px_b)))
+        except Exception as error:                   # noqa: BLE001 - reported, not raised
+            report["pair_agreement"] = {"error": str(error)}
+
+        (run_dir / "sync_report.json").write_text(
+            json.dumps(report, indent=2), encoding="utf-8")
+
+        hits = [_stereo_hit_entry(impact, fps_a) for impact in impacts]
+        player_assignment = assign_front_wall_hit_players(hits)
+        payload = {
+            "hits": hits,
+            "target_zones": build_target_zone_summary(hits),
+            "target_zones_by_player": build_player_target_zone_summaries(hits),
+            "player_assignment": player_assignment,
+            "rallies": player_assignment.get("rallies", []),
+            "stereo": {
+                "session_id": job.get("session_id"),
+                "run_a": run_a_id,
+                "run_b": run_b_id,
+                "offset_s": offset_s,
+                "offset_accepted": bool(report["refined"]["accepted"]),
+                "track_points": len(track),
+            },
+        }
+        (run_dir / "detected_hits.json").write_text(
+            json.dumps(payload, indent=2), encoding="utf-8")
+
+        update_job(
+            run_id,
+            status="complete",
+            stage="complete",
+            processed_frames=1,
+            hits=hits,
+            target_zones=payload["target_zones"],
+            target_zones_by_player=payload["target_zones_by_player"],
+            player_assignment=player_assignment,
+            message=(f"Fused {len(track)} track points into {len(hits)} calls "
+                     f"at offset {offset_s * 1000:.1f} ms."),
+        )
+    except Exception as error:                       # noqa: BLE001 - surfaced as job state
+        update_job(run_id, status="failed",
+                   error=f"Stereo fusion failed.\n\n{error}",
+                   message="Stereo fusion failed.")
 
 
 def try_start_stereo_fuse(session_id):
