@@ -171,6 +171,34 @@ Apple Silicon is not a viable training path at this dataset size — measured, a
 local MPS run had not finished epoch 1 after ~19 minutes. Train on CUDA, then
 bring the checkpoint back to a Mac for §4, which is macOS-only.
 
+## 2b. Export for the server
+
+The Flask stereo path (`stereo_offline.py`) needs the checkpoint as a self-contained
+artifact it can load without YOLOX — the whole point of the licensing constraint above is
+that YOLOX never runs at serving time. `export_ball_model.py` is the boundary: it runs
+in the **training** environment only (it imports `yolox`), traces the checkpoint to
+TorchScript, and writes a manifest beside it.
+
+    python export_ball_model.py \
+        --exp yolox_ball_exp.py \
+        --ckpt YOLOX_outputs/crosscourt-ball-416/best_ckpt.pth \
+        --out models/crosscourt-ball-416-v1 \
+        --version 1
+
+This writes `models/crosscourt-ball-416-v1/` containing `model.torchscript` and
+`manifest.json` (thresholds, input size, class names, the artifact's own sha256, and
+training provenance). `models/` is gitignored — the directory is reproducible from the
+checkpoint via the command above, so there is nothing to commit.
+
+The serving side (`ball_model.py`, `ball_detector.py`) needs only `torch` to load and
+run the traced artifact, never `yolox`. Two environment variables control it:
+
+- `BALL_MODEL_DIR` — points at the model directory (defaults to
+  `models/crosscourt-ball-416-v1` beside the repo root).
+- `STEREO_DETECTOR` — selects the backend for the stereo path: `yolox` (default) loads
+  this local detector; `rfdetr` restores the hosted RF-DETR model the single-camera
+  pipeline still uses.
+
 ## 3. Score before shipping (acceptance gate)
 
 Accept when BOTH hold:

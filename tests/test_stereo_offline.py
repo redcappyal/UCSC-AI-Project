@@ -359,3 +359,47 @@ def test_build_infer_honours_rfdetr_override(monkeypatch):
     infer("FRAME")
 
     assert seen["model"] == "RFDETR_MODEL"
+
+
+def test_build_infer_rejects_model_without_manifest(monkeypatch):
+    """The RF-DETR-object-under-yolox-default case: passing a `model` with no
+    `.manifest` attribute while STEREO_DETECTOR selects yolox (the default)
+    must raise TypeError up front, not wander into an opaque AttributeError
+    mid-frame. A defensive monkeypatch on _load_ball_detector proves the
+    guard fires before ever reaching that seam -- if the guard regressed,
+    this would blow up on the loader instead of failing the assertion below,
+    which would still fail the test either way, but this pins down why."""
+    monkeypatch.delenv("STEREO_DETECTOR", raising=False)
+
+    def _unexpected_load():
+        raise AssertionError(
+            "guard should have raised before loading a detector")
+
+    monkeypatch.setattr(stereo_offline, "_load_ball_detector", _unexpected_load)
+
+    with pytest.raises(TypeError, match="manifest"):
+        stereo_offline._build_infer(object(), 0.4)
+
+
+def test_build_infer_rejects_unreachable_confidence(monkeypatch):
+    """If the manifest's conf_threshold sits above the caller's requested
+    confidence, the caller's threshold would be silently unreachable dead
+    code -- the detector already drops everything below its own
+    conf_threshold before selection ever sees it. A defensive monkeypatch on
+    _detect_frame proves the guard fires before any inference runs."""
+    monkeypatch.delenv("STEREO_DETECTOR", raising=False)
+
+    class _Manifest:
+        conf_threshold = 0.9  # above the 0.4 confidence used below
+
+    class _Runner:
+        manifest = _Manifest()
+
+    def _unexpected_detect(runner, frame, manifest):
+        raise AssertionError(
+            "guard should have raised before running inference")
+
+    monkeypatch.setattr(stereo_offline, "_detect_frame", _unexpected_detect)
+
+    with pytest.raises(ValueError, match="conf_threshold"):
+        stereo_offline._build_infer(_Runner(), 0.4)

@@ -17,7 +17,7 @@ SCHEMA_VERSION = "ball-model-v1"
 DEFAULT_MODEL_DIR = Path(__file__).resolve().parent / "models" / "crosscourt-ball-416-v1"
 _EXPORT_HINT = (
     "Produce it in the training environment with export_ball_model.py "
-    "(see ios/MODEL.md §2)."
+    "(see ios/MODEL.md §2b)."
 )
 
 _MANIFEST_CACHE = {}
@@ -146,7 +146,7 @@ class TorchScriptRunner:
     [batch, n_anchors, 5 + n_classes] and this class only thresholds by
     objectness and reshapes. The Core ML artifact (ios/MODEL.md §4) is traced
     the other way -- raw head outputs, decode in Swift for ANE residency --
-    which is what manifest["decode"] distinguishes.
+    which is what manifest.decode distinguishes.
     """
 
     def __init__(self, module, manifest, torch_module):

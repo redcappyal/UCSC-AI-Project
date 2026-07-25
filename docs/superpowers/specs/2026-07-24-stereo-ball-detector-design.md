@@ -9,6 +9,26 @@ Puts the newly trained YOLOX-Tiny ball detector behind the stereo path's detecto
 seam, as a swappable, self-describing artifact — without altering the
 single-camera pipeline or the stereo geometry.
 
+## Scope: what this does and does not reach
+
+This change lands entirely inside `stereo_offline.py` — the standalone
+two-clip CLI/module that decodes video and calls a detector per frame. **It
+does not reach the app's fused stereo path.** Since this branch's base
+(`bcea937`), `origin/main` has merged "phase 5 cloud fusion":
+`job_runner.run_stereo_fuse_job` builds both clips' ball tracks by reading
+`ball_coordinates.csv` through `stereo_sync.track_samples_from_csv`, not by
+re-decoding video and calling a detector — `stereo_offline` is named only in a
+comment there. Those CSVs are written by the ordinary single-camera tracking
+job, which runs RF-DETR through `inference_engine.infer_frame_predictions` at
+`DEFAULT_INFERENCE_WIDTH` (960 px wide).
+
+So today, the fused 3D stereo result the app actually produces still gets its
+2D detections from RF-DETR at 960 px, exactly as before this branch, and
+carries no `detector` provenance block. This branch does exactly what it set
+out to do — give the stereo *path* a local, tiled, native-resolution
+detector — but a reader should not conclude the app's fused output uses
+YOLOX. It does not, yet. See Follow-up 5.
+
 ## Decision log (rulings that shaped this design)
 
 1. **Target today's committed stereo path, in an isolated worktree** (Ian). A
@@ -292,8 +312,28 @@ follow-up, not this change.
    marginally over budget at 2.02 s/frame; either raise the tile stride or
    build the tracker-guided crop before a CPU-only deployment.
 3. Retrain with `max_epoch ≈ 120` — the run converged at 100 of 300.
-4. **Make `export_ball_model.py` trace on the target device** instead of
-   always tracing with a CPU example tensor. As written it bakes YOLOX's
-   `decode_outputs` grid/stride tensors to CPU regardless of where the module
-   is later loaded, so the shipped TorchScript artifact cannot run on GPU at
-   all — discovered while gathering Task 7's GPU benchmark (see above).
+4. **Make `export_ball_model.py` trace on the target device**, and thread that
+   device through `ball_model.py`. Tracing is only half the lock: as written,
+   `export_ball_model.py` always traces with a CPU example tensor, baking
+   YOLOX's `decode_outputs` grid/stride tensors to CPU regardless of where the
+   module is later loaded — but `ball_model.py` independently pins every run
+   to CPU at the runtime end, too. `load_detector` hard-codes
+   `map_location="cpu"`, `TorchScriptRunner.run_batch` builds its input tensor
+   with no device placement, and the output is forced through `.cpu()` before
+   NMS. Re-tracing on CUDA alone would not produce a GPU run: the loaded
+   module and its input would still collide on device the same way §Measured
+   describes. A complete fix needs a `device` parameter threaded through both
+   `load_detector` and `run_batch`, plus a `trace_device` manifest field —
+   a CPU-traced and a CUDA-traced artifact are genuinely different files, and
+   the manifest should say which one a given `model.torchscript` is. Discovered
+   while gathering Task 7's GPU benchmark (see above).
+5. **Connect this detector to the app's actual fused path** (see "Scope" above).
+   `job_runner.run_stereo_fuse_job` currently builds both clips' ball tracks by
+   reading pre-existing `ball_coordinates.csv` files through
+   `stereo_sync.track_samples_from_csv`, and those CSVs come from the ordinary
+   RF-DETR single-camera job — it never calls `ball_detector`/`ball_model`
+   itself. Either `run_stereo_fuse_job` should route its 2D detections through
+   this branch's detector instead of `stereo_sync.track_samples_from_csv`, or
+   the CSVs it reads should themselves be produced by this detector for
+   stereo-tagged runs. Until one of those lands, the fused stereo result the
+   app actually serves does not benefit from this change.
