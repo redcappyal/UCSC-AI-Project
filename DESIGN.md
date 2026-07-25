@@ -757,6 +757,12 @@ Used by the call page's Bounce / Not-bounce toggle (§16, `p-track`) and
 - Both halves are always present and always the same size, so selection
   never reflows anything (§0.9).
 - No third state. A segment that needs one is a different component.
+- Exception: `p-pair`'s role picker may start with neither pill selected — no
+  role has a safe default (two phones both defaulting to primary would both
+  open a peer session and hang) — reverting to exactly one selected the
+  instant a role is picked. Not the third state above: that rule is about a
+  segment needing a third *visual mode*, not about a value nobody has chosen
+  yet.
 
 **§0.6 debt (web).** The shipping control is `min-height:38px` — below the
 44 px binding minimum. This is a pre-existing violation, not a sanctioned

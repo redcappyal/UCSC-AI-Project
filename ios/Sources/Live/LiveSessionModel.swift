@@ -153,7 +153,7 @@ final class LiveSessionModel: ObservableObject {
         guard session != nil else { return beginPairing() }
         switch pairing.step {
         case .idle, .failed: beginPairing()
-        case .confirm:       pairing.confirm()
+        case .confirm:       pairing.confirm(); republish()
         case .ready:         startRally()          // Task 7
         default:             break
         }

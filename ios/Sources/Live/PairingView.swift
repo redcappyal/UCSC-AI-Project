@@ -13,8 +13,13 @@ import SwiftUI
 /// arrives (§8.20, §0.9), and — idle state only — the §8.22 role segment.
 struct PairingView: View {
     @ObservedObject var model: LiveSessionModel
-    /// Tapping START RALLY hands off to `p-live` — the host owns that
-    /// transition, the same way `p-analyze` auto-advances.
+    /// Fires when `model.rally` becomes `.recording` — an automatic advance
+    /// to `p-live` (§16), the same pattern as `p-analyze`'s auto-advance, not
+    /// a tap outcome. Driven from `body`'s `.onChange(of: model.rally)`, which
+    /// is what makes this correct for both roles: the primary's own START
+    /// RALLY tap sets `rally` synchronously, and the secondary's `rally`
+    /// flips the same way the moment a remote record-start message lands,
+    /// with no tap on this phone at all.
     var onGoLive: () -> Void = {}
 
     var body: some View {
@@ -35,6 +40,22 @@ struct PairingView: View {
             .padding(.bottom, 24)
         }
         .task { await model.prepare() }
+        // §16: p-pair → p-live is an automatic advance on `rally` becoming
+        // `.recording`, not a side effect of whichever tap happened to cause
+        // it. Coupling this to the button (a prior shape of this file did)
+        // breaks on the secondary: `rally` can flip to `.recording` from a
+        // remote message while the secondary's own screen is still on
+        // Confirm, and the secondary's *next* tap — an ordinary CONFIRM,
+        // unrelated to the rally starting — would then be misread as the
+        // trigger. Observing `model.rally` itself fires at the actual moment
+        // it changes, for either role, independent of any tap. `onChange`
+        // only fires on a real change of the `Equatable` value, so this
+        // cannot double-fire while `rally` sits at `.recording`, and a second
+        // rally (a later `.recording` reached after leaving it) fires again
+        // the same way.
+        .onChange(of: model.rally) { _, newValue in
+            if newValue == .recording { onGoLive() }
+        }
     }
 
     // MARK: - §8.19 link status
@@ -151,17 +172,10 @@ struct PairingView: View {
     // MARK: - §7 the one primary
 
     private var primary: some View {
-        Button(action: {
-            model.primaryTapped()
-            // `rally == .recording` is the real state transition START RALLY
-            // causes (set synchronously inside `startRally()`, before this
-            // call returns) — not a string compare against the button's own
-            // display title, which is presentation, not state, and would
-            // silently break if the label copy ever changed. No other
-            // `primaryTapped()` branch touches `rally`, so this cannot fire
-            // early on a PAIR or CONFIRM tap.
-            if model.rally == .recording { onGoLive() }
-        }) {
+        // Navigation is not decided here — see the `.onChange(of: model.
+        // rally)` observation in `body` and `onGoLive`'s doc comment above.
+        // This action only ever advances the model's own state machine.
+        Button(action: { model.primaryTapped() }) {
             Text(model.primaryTitle)
                 .font(.system(.headline).weight(.bold))
                 .tracking(0.05 * 17)
