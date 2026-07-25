@@ -190,14 +190,76 @@ final class LiveSessionModelTests: XCTestCase {
         XCTAssertEqual(rig.secondary.rally, .recording)
     }
 
+    /// `RecordModel.toggleRecording()`'s start branch can throw and leave
+    /// `isRecording == false` with the reason swallowed into `errorText` —
+    /// before this fix, nothing read that back, so `startRally()` proceeded
+    /// straight into `rally == .recording` regardless. Reproducing the real
+    /// throw needs no seam: `CameraController` is a concrete, non-injectable
+    /// type, and `startRecording()`'s `AVAssetWriter` setup doesn't depend
+    /// on a running capture session, so it doesn't reliably fail in a test
+    /// host. So this simulates the state `toggleRecording()`'s catch branch
+    /// leaves behind (`isRecording = false`, `errorText` set) and drives
+    /// `reconcileRallyAfterStartAttempt()` directly — the exact
+    /// reconciliation `startRally()` schedules for itself once its own
+    /// toggle completes — rather than the real throw.
+    func testAStartThatFailsToActuallyRecordDoesNotLeaveRallyBelievingItIsRecording() {
+        let (model, _) = makeModel()
+        let record = RecordModel(detector: nil)
+        model.bind(record: record)
+
+        model.startRally()
+        XCTAssertEqual(model.rally, .recording, "setup: startRally() optimistically goes .recording")
+
+        // The real toggle this startRally() call scheduled hasn't run yet —
+        // it's chained behind a suspension point this synchronous test never
+        // reaches — so overwriting this state first is race-free, not a
+        // guess about scheduling order.
+        record.isRecording = false
+        record.errorText = "camera would not start"
+        model.reconcileRallyAfterStartAttempt()
+
+        XCTAssertEqual(model.rally, .failed("camera would not start"))
+        // Before this fix, `rally` would still read `.recording` here, and
+        // `stopRally()`'s own guard (`rally == .recording`) would then let a
+        // "stop" through to a toggle that — with `isRecording` false — would
+        // START the camera instead of stopping it, with no remaining exit.
+        // Confirm that door is shut: `rally` no longer says `.recording`, so
+        // `stopRally()` is a no-op.
+        model.stopRally()
+        XCTAssertEqual(model.rally, .failed("camera would not start"))
+    }
+
+    /// The guard this test targets is `startRally()`'s own `guard rally !=
+    /// .recording else { return }`. Deleting it and asserting only the
+    /// SECONDARY's `rally` (as this test used to) can't catch that: a
+    /// second call would re-toggle the PRIMARY's own camera and re-send
+    /// "start", and the secondary's own separate guard in
+    /// `handleRemoteRecord` (`if rally != .recording { startLocalRecording()
+    /// }`) ignores a repeated "start" regardless of whether the primary's
+    /// guard exists — so the secondary's state can't distinguish a working
+    /// guard from a deleted one. Assert the PRIMARY's own side instead:
+    /// its `rally` is unchanged, and — critically — its `RecordModel
+    /// .isRecording` is still true, i.e. the second call did not silently
+    /// stop the camera it was already recording on.
     func testASecondStartWhileRecordingIsIgnored() async {
         let rig = await makePairedRig()
         rig.primary.startRally()
         await settleCrossModelDelivery(until: { rig.secondary.rally == .recording })
+        // Let the primary's own first-start toggle actually finish (not
+        // just the secondary's delivery of it) before firing the second
+        // call, so `isRecording` reflects a completed start rather than an
+        // in-flight one.
+        await settleCrossModelDelivery(until: { rig.primaryRecord.isRecording })
         rig.primary.startRally()
-        XCTAssertEqual(rig.secondary.rally, .recording)
+        XCTAssertEqual(rig.primary.rally, .recording)
+        XCTAssertTrue(rig.primaryRecord.isRecording,
+                      "a second startRally() must not silently stop the camera it's already recording on")
     }
 
+    #if DEBUG
+    /// `handleDegraded(_:)` is `#if DEBUG`-only (production never calls it —
+    /// the 20 Hz pump would revert its write within 50 ms anyway), matching
+    /// this guard to it.
     func testSecondaryGainsALocalStopOnlyWhileDegraded() async {
         let rig = await makePairedRig()
         rig.primary.startRally()
@@ -209,6 +271,7 @@ final class LiveSessionModelTests: XCTestCase {
         rig.secondary.handleDegraded(false)
         XCTAssertFalse(rig.secondary.showsLocalStop)
     }
+    #endif
 
     func testRolesMapToTheServersCameraRoles() async {
         let rig = await makePairedRig()
@@ -287,8 +350,12 @@ final class LiveSessionModelTests: XCTestCase {
 
         let (primary, _) = makeModel(makeTransport: { _ in pair.0 })
         let (secondary, _) = makeModel(makeTransport: { _ in pair.1 })
-        let primaryRecord = RecordModel(detector: SyntheticBallDetector())
-        let secondaryRecord = RecordModel(detector: SyntheticBallDetector())
+        // No detector needed anywhere in this rig, and `SyntheticBallDetector`
+        // is `#if DEBUG`-only — matching `testPairIsReenabledAfterAPairingFailure`'s
+        // `RecordModel(detector: nil)` above keeps this file's one unguarded
+        // construction of `RecordModel` from depending on a DEBUG-only type.
+        let primaryRecord = RecordModel(detector: nil)
+        let secondaryRecord = RecordModel(detector: nil)
         primary.bind(record: primaryRecord)
         secondary.bind(record: secondaryRecord)
 
@@ -316,15 +383,31 @@ final class LiveSessionModelTests: XCTestCase {
         if case .confirm = secondary.pairing.step { secondary.primaryTapped() }
 
         let deadline = Date().addingTimeInterval(5.0)
+        var reachedReady = false
         while true {
             let primaryReady: Bool = { if case .ready = primary.pairing.step { return true }; return false }()
             let secondaryReady: Bool = { if case .ready = secondary.pairing.step { return true }; return false }()
             if primaryReady, secondaryReady,
                primary.sessionID != nil, secondary.sessionID == primary.sessionID {
+                reachedReady = true
                 break
             }
             guard Date() < deadline else { break }
             RunLoop.main.run(until: Date().addingTimeInterval(0.02))
+        }
+
+        // Assert the setup's own postcondition here, rather than letting a
+        // broken pairing fall through to whatever assertion the calling
+        // test happens to make first: that produces a confusing failure
+        // about e.g. `rally` when the actual problem is that the rig never
+        // reached `.ready` at all.
+        if !reachedReady {
+            XCTFail("""
+                makePairedRig setup did not reach ready in time: \
+                primary.step=\(primary.pairing.step), secondary.step=\(secondary.pairing.step), \
+                primary.sessionID=\(String(describing: primary.sessionID)), \
+                secondary.sessionID=\(String(describing: secondary.sessionID))
+                """)
         }
 
         return (primary, secondary, primaryRecord, secondaryRecord)

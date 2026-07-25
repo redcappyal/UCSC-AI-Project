@@ -66,7 +66,7 @@ final class LiveSessionModel: ObservableObject {
     private var submission = RunSubmission()
     /// Chains `RecordModel.toggleRecording()` calls so a fire-and-forget
     /// start and an awaited stop can never land out of the order they were
-    /// issued in. See `toggleRecordingChained()`.
+    /// issued in. See `toggleRecordingChained(ifRecordingIs:)`.
     private var recordingTransition: Task<Void, Never>?
 
     /// The server's paired-run role. Fixed by the pairing role: initiator = a.
@@ -169,18 +169,19 @@ final class LiveSessionModel: ObservableObject {
                                   orientation: record.camera.orientation)
         self.session = session
         // Order is load-bearing: attachStereo installs peer.onCalibration, so
-        // attachPeer's `self.peer = peer` has to happen first, and both must
-        // precede start() or a fast radio can deliver before we are listening.
+        // attachPeer's `self.peer = peer` has to happen first, and
+        // attachPeer/attachStereo/onRecord/onSessionManifest must *all*
+        // precede start() or a fast radio can deliver before we are
+        // listening for it.
         record.attachPeer(session)
         record.attachStereo(localModelJSON: localModelJSON)
-        let pairing = PairingModel(session: session)
-        pairing.onSessionEnded = { [weak self] in self?.endSession() }
-        self.pairing = pairing
-        pairing.start()
         // Task 7: rally start/stop and the paired-upload session identity.
         // Both fire on the transport delivery context (BLE/WiFi queues in
         // production), so both hop to main before touching any published
-        // state.
+        // state. Wired here — before pairing.start() — for the same reason
+        // attachPeer/attachStereo are: a fast radio must never be able to
+        // deliver a "record" or session-manifest control frame before these
+        // closures are installed to receive it.
         session.onRecord = { [weak self] action, _ in
             Task { @MainActor in self?.handleRemoteRecord(action) }
         }
@@ -190,11 +191,40 @@ final class LiveSessionModel: ObservableObject {
                 if !videoID.isEmpty { self?.peerVideoID = videoID }
             }
         }
+        let pairing = PairingModel(session: session)
+        pairing.onSessionEnded = { [weak self] in self?.endSession() }
+        self.pairing = pairing
+        pairing.start()
         startPump()
         republish()
     }
 
     func endSession() {
+        // A running recording must never be abandoned: left alone, the
+        // camera keeps rolling with no path back to it once `session`/
+        // `pairing` are torn down below, and the *next* rally start would
+        // toggle the abandoned recording *off* and publish its clip into
+        // the shared `finishedClip` — the exact inversion this fix exists
+        // to prevent. Chained (not a bare toggle) so it can't race an
+        // in-flight start/stop, and gated on `isRecording` for the same
+        // reason `finishRecordingAndSubmit()` is: toggling when the camera
+        // isn't actually recording would START it, not stop it.
+        if record?.isRecording == true {
+            let toggle = toggleRecordingChained(ifRecordingIs: true)
+            // Captures `record` itself (not `self`/`self.record`) so the
+            // clip this stop produces is discarded even if this
+            // `LiveSessionModel` — or its binding to this `RecordModel` — is
+            // gone by the time the toggle finishes.
+            Task { [record] in
+                await toggle.value
+                // Ending a session is a cancellation, not a completed
+                // rally: never submit this clip. Clearing it also keeps it
+                // from leaking into a later single-camera visit to this
+                // same RecordModel, the same reason
+                // `finishRecordingAndSubmit()` clears it after reading it.
+                record?.finishedClip = nil
+            }
+        }
         pumpTimer?.invalidate(); pumpTimer = nil
         session = nil
         engineReady = false
@@ -205,12 +235,15 @@ final class LiveSessionModel: ObservableObject {
         record?.detachPeer()
         // And the rally identity: a later re-pairing must be free to mint a
         // fresh sessionID (republish()'s mint guard is `sessionID == nil`),
-        // and a stale RallyState/local-stop flag from the session that just
-        // ended must not bleed into the next one.
+        // and a stale RallyState from the session that just ended must not
+        // bleed into the next one.
         rally = .idle
         sessionID = nil
         peerVideoID = nil
-        showsLocalStop = false
+        // No direct `showsLocalStop = false` here: republish() below
+        // recomputes it from `rally` (now `.idle`) on the very next line, so
+        // a second writer here would just be the "last one wins" pattern
+        // `updateShowsLocalStop`'s own doc argues against.
         republish()
     }
 
@@ -232,10 +265,17 @@ final class LiveSessionModel: ObservableObject {
     func startRally() {
         guard rally != .recording else { return }
         rally = .recording
-        toggleRecordingChained()
+        let toggle = toggleRecordingChained(ifRecordingIs: false)
         session?.goLive()
         session?.sendRecord(action: "start", ptsNs: UInt64(ClockSync.hostNow() * 1_000_000_000))
         republish()
+        // The toggle above is fire-and-forget; reconcile once it actually
+        // finishes rather than assuming it did what was asked — see
+        // `reconcileRallyAfterStartAttempt()`.
+        Task { [weak self] in
+            await toggle.value
+            self?.reconcileRallyAfterStartAttempt()
+        }
     }
 
     func stopRally() {
@@ -256,8 +296,12 @@ final class LiveSessionModel: ObservableObject {
     /// re-send, or the two phones would ping-pong record messages forever.
     private func startLocalRecording() {
         rally = .recording
-        toggleRecordingChained()
+        let toggle = toggleRecordingChained(ifRecordingIs: false)
         republish()
+        Task { [weak self] in
+            await toggle.value
+            self?.reconcileRallyAfterStartAttempt()
+        }
     }
 
     /// `RecordModel.toggleRecording()` is a toggle, not start/stop.
@@ -271,25 +315,72 @@ final class LiveSessionModel: ObservableObject {
     /// call started before issuing its own `toggleRecording()` — makes the
     /// order exactly the call order, regardless of how the two Tasks happen
     /// to be scheduled.
+    ///
+    /// `expected` guards the toggle itself, not just its ordering:
+    /// `record.isRecording` must read exactly that, right before the call,
+    /// for `toggleRecording()` to do what this call intends (`false` for a
+    /// start, `true` for a stop). `toggleRecording()` is a raw flip with no
+    /// notion of "start" or "stop" of its own, so calling it against a
+    /// camera state that already contradicts the intent flips it the wrong
+    /// way — most importantly, a stop issued while the camera never
+    /// actually confirmed it had started would *start* it instead. When
+    /// the guard fails, the call is skipped rather than forced;
+    /// `reconcileRallyAfterStartAttempt()` is what turns a skipped or
+    /// failed start into a visible `.failed` rally instead of a silent one.
     @discardableResult
-    private func toggleRecordingChained() -> Task<Void, Never> {
+    private func toggleRecordingChained(ifRecordingIs expected: Bool) -> Task<Void, Never> {
         let previous = recordingTransition
         let next = Task { [weak self] in
             await previous?.value
-            await self?.record?.toggleRecording()
+            guard let self, let record = self.record, record.isRecording == expected else { return }
+            await record.toggleRecording()
         }
         recordingTransition = next
         return next
     }
 
+    /// Reconciles `rally` against the camera's real state after a start
+    /// attempt's chained toggle finishes, rather than assuming the toggle
+    /// did what it was asked. `RecordModel.toggleRecording()`'s start
+    /// branch can throw and leave `isRecording == false` with the reason
+    /// swallowed into `errorText` — nobody else reads that back, so without
+    /// this a failed start would silently proceed as though the rally were
+    /// live: the camera never started, `rally == .recording` says
+    /// otherwise, and the next stop would then toggle the camera the wrong
+    /// way (see `toggleRecordingChained(ifRecordingIs:)`'s doc for why).
+    ///
+    /// Internal rather than private: this is exactly the reconciliation
+    /// `startRally()`/`startLocalRecording()` schedule for themselves once
+    /// their own toggle completes, exposed only so a test can drive it
+    /// synchronously. There is no seam to make the real
+    /// `CameraController.startRecording()` throw in a test host — its
+    /// `AVAssetWriter` setup does not depend on a running capture session,
+    /// so it does not reliably fail outside a device — so
+    /// `LiveSessionModelTests` simulates the state `toggleRecording()`'s
+    /// catch branch leaves behind and calls this directly instead of
+    /// exercising the real throw.
+    func reconcileRallyAfterStartAttempt() {
+        guard rally == .recording else { return }
+        guard record?.isRecording != true else { return }
+        rally = .failed(record?.errorText ?? "Recording did not start.")
+        republish()
+    }
+
     private func finishRecordingAndSubmit() {
         rally = .submitting
         republish()
-        let toggle = toggleRecordingChained()
+        // `ifRecordingIs: true`: a stop must depend on the camera's real
+        // state, never just on `rally` saying `.recording` — if the camera
+        // never actually confirmed it started, this call is skipped rather
+        // than issuing a toggle that would START it instead of stopping it.
+        let toggle = toggleRecordingChained(ifRecordingIs: true)
         Task { [weak self] in
             guard let self else { return }
             await toggle.value
-            guard let record = self.record else { return }
+            guard let record = self.record else {
+                self.rally = .failed("The camera model was no longer available.")
+                return self.republish()
+            }
             guard let clip = record.finishedClip else {
                 self.rally = .failed("The rally produced no clip.")
                 return self.republish()
@@ -353,10 +444,21 @@ final class LiveSessionModel: ObservableObject {
         showsLocalStop = degraded && rally == .recording
     }
 
-    /// Test seam for the degraded-link path, which needs no radio to assert.
+    #if DEBUG
+    /// Test seam for the degraded-link path, which needs no radio to
+    /// assert. `#if DEBUG`-gated so production code can never call a
+    /// method whose write is guaranteed to be reverted: `republish()`'s
+    /// 20 Hz pump always calls `updateShowsLocalStop(degraded:
+    /// isPairingDegraded)` right behind it (within 50 ms), deriving the
+    /// same field from the real `pairing.step` — so outside a synchronous
+    /// test, whatever this writes doesn't stick. It exists purely to let a
+    /// test assert the safety valve without starving a real link for
+    /// `heartbeatTimeout` seconds; it is not a state the pump can't
+    /// otherwise derive on its own.
     func handleDegraded(_ degraded: Bool) {
         updateShowsLocalStop(degraded: degraded)
     }
+    #endif
 
     // MARK: - §16's p-pair table, as flat state
 
