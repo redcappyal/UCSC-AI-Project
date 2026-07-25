@@ -19,6 +19,7 @@
     --accent-bg:#ffd60a; --accent-text:#000;
     --strip-bg:#000; --tick:rgba(255,255,255,.12);
     --out:#35e0ff;           /* fitted out-line edge */
+    --service:#ff9f43;       /* fitted service-line edge */
     --tin:#b4ff3a;           /* fitted tin edge */
     --in:#2ecc5e; --outcall:#e03a2f;   /* IN/OUT verdict colors only */
     /* Opaque neon timeline-marker hues — kept vivid to sit crisply over the
@@ -432,14 +433,17 @@
   .coachIntro{padding:12px 14px 0; color:var(--dim); font-size:14px; line-height:1.45}
   .coachOutcomeComparison{display:grid; grid-template-columns:repeat(2, minmax(0, 1fr)); gap:12px;
     padding:14px; border-top:1px solid var(--line)}
-  .coachOutcomeSection{min-width:0; border:1px solid var(--line); border-radius:10px; overflow:hidden;
+  /* Won/lost is a data split, not a call: the two sections separate by the
+     solid/dashed border grammar (§8.14 chips, §13 blank) and their headings,
+     never by green/red — those stay verdict-only (DESIGN.md §5.2, §18). */
+  .coachOutcomeSection{min-width:0; border:1px solid var(--line); border-radius:8px; overflow:hidden;
     background:color-mix(in srgb, var(--surface) 92%, var(--bg))}
+  .coachOutcomeSection.losing{border-style:dashed; background:transparent}
   .coachOutcomeHead{display:flex; align-items:flex-start; justify-content:space-between; gap:12px;
     padding:11px 12px; border-bottom:1px solid var(--line)}
   .coachOutcomeHead strong{font-size:17px; line-height:1.25}
   .coachOutcomeHead span{color:var(--dim); font-size:12px; line-height:1.35; text-align:right}
-  .coachOutcomeSection.winning .coachOutcomeHead{border-left:4px solid var(--in)}
-  .coachOutcomeSection.losing .coachOutcomeHead{border-left:4px solid var(--outcall)}
+  .coachOutcomeSection.losing .coachOutcomeHead{border-bottom-style:dashed}
   .coachOutcomeSection .coachMetrics{grid-template-columns:1fr; padding:10px}
   .coachOutcomeEmpty{padding:14px 12px; color:var(--dim); font-size:13px; line-height:1.4}
   .coachFeedback{padding:12px 14px; border-top:1px solid var(--line); font-size:16px; line-height:1.45; white-space:pre-wrap}

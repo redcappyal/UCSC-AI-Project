@@ -135,7 +135,8 @@ iOS app in Safari (add-to-home-screen capable).
 
 Each screen is a `<section id="p-…">` inside `<main>`, toggled with `.hidden`. The current
 phases: `p-load`, `p-record`, `p-frame`, `p-tap`, `p-review`, `p-tap-floor`, `p-clip`,
-`p-analyze`, `p-track`, `p-label`, `p-target`, and the roadmap phases `p-live`,
+`p-analyze`, `p-track`, `p-player1-report`, `p-player2-report`, `p-label`, `p-target`,
+and the roadmap phases `p-live`,
 `p-matches`, `p-coach`, `p-stats`, `p-shot-bot`, `p-sharing` (blueprints in §16). To add a screen,
 add a section and follow §17 — never add a second header, tab bar, or routing chrome
 beyond the §8.3 nav pill.
@@ -178,6 +179,7 @@ canonical set:
   --strip-bg:#000;      /* filmstrip + stage wells */
   --tick:rgba(255,255,255,.12);
   --out:#35e0ff;        /* fitted OUT-line edge (calibration) — cyan */
+  --service:#ff9f43;    /* fitted SERVICE-line edge (calibration) — amber */
   --tin:#b4ff3a;        /* fitted TIN edge (calibration) — lime */
   --in:#2ecc5e;         /* IN verdict fill  (verdicts ONLY) */
   --outcall:#e03a2f;    /* OUT verdict fill (verdicts ONLY) */
@@ -195,7 +197,7 @@ canonical set:
   --bg:#f5f5f7; --surface:#e9e9ee; --line:#e0e0e5; --dim:#6e6e76; --text:#000;
   --accent-bg:#ffd60a; --accent-text:#000;      /* accent is theme-invariant */
   --strip-bg:#e3e3e8; --tick:rgba(0,0,0,.14);
-  --out:#007da6; --tin:#557a00;                 /* darkened for contrast on light */
+  --out:#007da6; --service:#a84f00; --tin:#557a00;  /* darkened for contrast on light */
 }
 ```
 
@@ -259,12 +261,18 @@ shadows.
 |---|---|---|
 | **Accent / action** | `--accent-bg` + `--accent-text` | primary buttons, active nav/chip/segment states, trim handles, sliders, progress fill, active wizard mark |
 | **Verdict** | `--in` (green), `--outcall` (red) | verdict box fills, IN/OUT timeline markers, verdict text. Nothing else is ever green/red. |
-| **Calibration edges** | `--out` (cyan), `--tin` (lime) | fitted line overlays on the frame + inline references to them (`#instr b.out/.tin`) |
+| **Calibration edges** | `--out` (cyan), `--service` (amber), `--tin` (lime) | fitted line overlays on the frame + inline references to them (`#instr b.out/.service/.tin`) |
 | **Event markers** | `--mk-racket` cyan, `--mk-floor` amber, `--mk-side` purple, `--mk-unknown` gray | timeline bars + legend dots + label buttons. Single source of truth for both. |
 | **Status (canvas)** | §4.3 greens/golds/reds | JS-drawn annotations only |
 
-The distinction between **cyan/lime (where the lines are)** and **green/red (what the call
-is)** is intentional and load-bearing. Never "simplify" them into one family.
+The distinction between **calibration hues (where the lines are)** and **green/red (what
+the call is)** is intentional and load-bearing. Never "simplify" them into one family.
+`--service` amber and `--mk-floor` amber are close in hue but never share a surface — one
+lives on the calibration frame, the other on the timeline; keep it that way.
+
+Won/lost, correct/incorrect and other **data** splits are not verdicts. Separate them with
+the solid-vs-dashed border grammar (§8.14, §13) plus an explicit label — never by
+borrowing `--in`/`--outcall` (§8.17 is the worked example).
 
 ### 5.3 Contrast requirements
 
@@ -411,6 +419,13 @@ Radius 14, centered, `min-height:78px`, 13 px caption + 28 px `strong` word. Fou
 `.in` (green fill, `#03230c` ink) · `.out` (red fill, white ink) · `.neutral` (surface +
 border, for event classifications) · `.blank` (transparent + dashed `--line` border, dim —
 placeholder so the box always occupies identical space). Never show/hide the box itself.
+
+Above the verdict word sits `.verdictPlayer` — 13/800 uppercase, tracking `.04em`,
+inheriting the state's ink: *who hit it* ("Hit by Player 1", or "Player attribution
+unavailable"). It renders in **every** state, including the "Judging…" and "No call"
+placeholders, so the box never changes height as attribution resolves. A rally's first
+front-wall contact is judged against the service line, so its `strong` word is prefixed
+`SERVE ` (`SERVE IN` / `SERVE OUT`) — a prefix, never a fifth state or a new color.
 
 ### 8.8 Film strips & timelines (the app's signature)
 
@@ -560,6 +575,34 @@ uppercase, `--dim`) + a row of `button.small` utilities — "Debug targets" and 
 - Storage is on-device only: OPFS `recordings/` folder (blob + JSON sidecar carrying
   the calibration) with an IndexedDB fallback; no server round-trip.
 
+### 8.17 Coaching report panel (`.coachPlayerPanel`)
+
+The per-player report body on `p-player1-report` / `p-player2-report`. A §8.9 card
+("Player N report" + a right-aligned 13 dim source tag — `Local feedback` / `Ollama
+feedback` / `LLM feedback` / `Unavailable`) wrapping four stacked regions:
+
+1. `.coachIntro` — 14/400 `--dim` sentence naming what the report is built from.
+2. `.coachMetrics` — the **metric tile grid**: 2 columns (1 below 560 px), gap 10,
+   padding `12px 14px`. Each `.coachMetric` is the §8.9 card recipe shrunk to a tile —
+   radius 8, `1px --line`, `color-mix(--surface 86%, --bg)` fill, padding `10px 12px` —
+   holding a 13/400 `--dim` label, a 22/800 value, and a 12/400 `--dim` caption. Absent
+   values render as `—`, never a blank tile or a hidden row (reserved height, §0).
+3. `.coachOutcomeComparison` — the **won/lost split**: two `.coachOutcomeSection` peers
+   side by side (stacking below 560 px), each a nested card (radius 8, `1px --line`,
+   `color-mix(--surface 92%, --bg)`) with a `.coachOutcomeHead` (17/700 title left,
+   13 dim rally/shot counts right) over a single-column `.coachMetrics`. **Winning** is
+   the solid-bordered filled section; **losing** is `border-style:dashed` on a
+   transparent fill — the §8.14 chip grammar reused. This split is data, not a call, so
+   it never uses `--in`/`--outcall` (§5.2). Either side with no decided rallies shows
+   `.coachOutcomeEmpty` (13 dim sentence) in place of the tiles, so both sections are
+   always present.
+4. `.coachFeedback` — 16/400 prose, `white-space:pre-wrap`, above a hairline.
+
+The local template renders immediately; the LLM narration is fetched afterwards and
+**replaces the text in place** — the panel never shows a spinner and never changes
+height on arrival (§18). If the LLM is unreachable the local text simply stays and the
+source tag reports it.
+
 ---
 
 ## 9. Iconography
@@ -654,8 +697,8 @@ Copy for statuses is specific and actionable ("Tap the two ends of the out line"
 - Verdicts and telemetry: uppercase single words (IN, OUT, ANALYZING…).
 - Buttons: verb-first, ≤ 3 words ("Track ball", "Use this frame", "Judge frame").
 - Instructions: one sentence, present tense, name what the user sees ("Load a clip from
-  this phone to begin."). Colored keywords (`b.out`, `b.tin`) when referring to fitted
-  lines.
+  this phone to begin."). Colored keywords (`b.out`, `b.service`, `b.tin`) when referring
+  to fitted lines.
 - Domain terms exactly: *out line, tin, service line, front/side wall, floor, rally,
   bounce* (never "boundary", "net", etc.).
 - No exclamation marks, no praise ("Great!"), no anthropomorphism. The app states facts.
@@ -686,14 +729,15 @@ Each phase: header shows step label + proxied primary; `#instr` gives the one-li
 | `p-load` | Play section root — get a clip | "PLAY" heading · hero cards (§8.15): Judge a clip (accent, file input) / Record a clip (surface, working) / Live match (surface, SOON) · dev row | — (no chevron; section root) |
 | `p-record` | Record rallies + on-site calibration | stage = live camera preview · REC readout · Calibrate court + calibration status · Recordings card (§8.16) | "Record" ↔ "Stop" |
 | `p-frame` | Pick a clean calibration frame | overview rail · editor strip w/ playhead · readout · transport+steppers | "Use this frame" |
-| `p-tap` | Tap out line & tin on frame | stage-driven; clear-selection small button | "Looks right" (disabled until 2 taps) |
-| `p-review` | Approve fitted lines (cyan/lime on stage) | minimal; evidence is the stage | "Use these lines" |
+| `p-tap` | Tap out line, tin, then service line on frame | stage-driven; clear-selection small button | "Looks right" (disabled until the current line has a fit) |
+| `p-review` | Approve fitted lines (cyan/amber/lime on stage) | minimal; evidence is the stage | "Use these lines" |
 | `p-tap-floor` | Floor calibration wizard | `.floorRow`: diagram (progress marks) + prompt/side actions · skip-all / save-profile | "Use floor map" |
 | `p-clip` | Trim rally clip | debug engine seg (right-aligned) · overview · trim editor (yellow handles) · transport+readout row · start/end nudge steppers · frame summary | "Track ball" |
 | `p-analyze` | Honest processing | `.progressbox` stats + bar (+ stage ANALYZING pulse) | — (auto-advances) |
 | `p-track` | Review track, judge calls | control area keeps its pre-rally-visualization height so the video stage does not shrink; the added content scrolls inside that footprint · scrub hint lives in the header `#instr` line (detection failures replace it, `.warn`) · rally segmentation card (proportional neutral ribbon, active segment in accent, text winner chip for every rally) · overview w/ marker minis · hit timeline (neon bars, center playhead) · readout · transport — **Review pane:** frame input + "Player maps" row · verdict box; **Challenge pane:** type dropdown (In/Out folded into the front-wall options) · Bounce / Not-bounce toggle (`.corrSeg`) · panes switched by a floating Review \| Challenge pill (`.callTabs`, same liquid-glass style as `#navPill`, fixed bottom-center) | "Judge frame" |
 | `p-label` | Human bounce labeling | overview · label timeline · transport+zoom · 2-col type grid (dot+label) · delete (destructive = plain secondary, disabled until selection) | — |
-| `p-target` | Stats: targets & bounces | Front-wall targets card (court chart + meta) · Floor bounces card (SVG map + meta) | — |
+| `p-target` | Stats: targets & bounces (debug) | Front-wall targets card (court chart + meta) · Floor bounces card (SVG map + meta) | — |
+| `p-player1-report` / `p-player2-report` | Per-player coaching report — the last two steps of the judge flow | Player N front-wall map (§8.10 court chart + `.targetMeta`; serves excluded) · Player N report panel (§8.17) · P1 only: a `.row` "Player 2 report" secondary | — (back chevron only) |
 | `p-matches` | Matches section root (placeholder) | placeholder hero · Planned card (§8.14) | — (no chevron; section root) |
 | `p-coach` | Coach section root (hub) | three feature cards (§8.13) — no hero, no copy | — (no chevron; section root) |
 | `p-live` | Placeholder: live match | placeholder hero · Planned card (§8.14) | — (back chevron only) |
@@ -742,7 +786,8 @@ Review ↔ Challenge switch is a second instance of the same liquid-glass pill
 ## 18. Never do
 
 - No new fonts, weights, icon sets, or CDN/remote assets of any kind.
-- No second accent; no green/red outside verdicts; no cyan/lime outside calibration.
+- No second accent; no green/red outside verdicts (won/lost data splits included — §8.17);
+  no calibration hues (cyan/amber/lime) outside calibration.
 - No drop shadows on cards/buttons; no glass outside the nav pill; no decorative gradients
   outside the court miniature.
 - No spinners where real progress or evidence is possible; no fake progress.
