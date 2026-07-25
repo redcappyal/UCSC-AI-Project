@@ -74,3 +74,107 @@ def test_merge_detections_keeps_two_distinct_balls():
 
 def test_merge_detections_empty_input():
     assert ball_detector.merge_detections([], 0.65) == []
+
+
+import numpy as np
+
+import ball_model
+
+
+def _manifest(tmp_path, **overrides):
+    fields = {
+        "schema_version": "ball-model-v1", "name": "t", "version": 1,
+        "input_size": (416, 416), "decode": "in_graph", "conf_threshold": 0.25,
+        "nms_iou": 0.65, "class_names": ("ball",), "tile_overlap_px": 64,
+        "max_batch_tiles": 32, "artifact_sha256": "x", "source_checkpoint": "",
+        "trained_commit": "", "val_ap50_95": 0.0, "notes": "",
+        "model_dir": tmp_path,
+    }
+    fields.update(overrides)
+    return ball_model.ModelManifest(**fields)
+
+
+class _FakeRunner:
+    """Emits one box at a fixed FULL-FRAME point, expressed tile-locally."""
+
+    def __init__(self, windows, target_xy, score=0.9):
+        self.windows = windows
+        self.target_xy = target_xy
+        self.score = score
+        self.batch_sizes = []
+
+    def run_batch(self, crops):
+        self.batch_sizes.append(len(crops))
+        out = []
+        for crop in crops:
+            index = len(out) + sum(self.batch_sizes[:-1])
+            x0, y0 = self.windows[index]
+            tx, ty = self.target_xy
+            local_x, local_y = tx - x0, ty - y0
+            h, w = crop.shape[:2]
+            if 0 <= local_x < w and 0 <= local_y < h:
+                out.append([(float(local_x), float(local_y), 10.0, 10.0,
+                             self.score, 0)])
+            else:
+                out.append([])
+        return out
+
+
+def test_detect_frame_maps_tile_local_box_to_full_frame():
+    frame = np.zeros((2160, 3840, 3), dtype=np.uint8)
+    manifest = _manifest(None)
+    windows = ball_detector.tile_windows(3840, 2160, 416, 64)
+    runner = _FakeRunner(windows, target_xy=(1500, 900))
+
+    detections = ball_detector.detect_frame(runner, frame, manifest)
+
+    assert len(detections) == 1
+    assert detections[0]["x"] == pytest.approx(1500.0)
+    assert detections[0]["y"] == pytest.approx(900.0)
+
+
+def test_detect_frame_labels_class_ball_so_tracking_common_accepts_it():
+    from tracking_common import is_ball_prediction
+
+    frame = np.zeros((416, 416, 3), dtype=np.uint8)
+    manifest = _manifest(None)
+    runner = _FakeRunner([(0, 0)], target_xy=(200, 200))
+
+    detections = ball_detector.detect_frame(runner, frame, manifest)
+
+    assert detections[0]["class"] == "ball"
+    assert detections[0]["class_name"] == "ball"
+    # candidate_ball_predictions silently falls back to ALL predictions when
+    # nothing matches BALL_CLASS_NAMES, so a mislabel would not fail loudly.
+    assert is_ball_prediction(detections[0])
+
+
+def test_detect_frame_drops_boxes_below_manifest_conf_threshold():
+    frame = np.zeros((416, 416, 3), dtype=np.uint8)
+    manifest = _manifest(None, conf_threshold=0.5)
+    runner = _FakeRunner([(0, 0)], target_xy=(200, 200), score=0.4)
+
+    assert ball_detector.detect_frame(runner, frame, manifest) == []
+
+
+def test_detect_frame_respects_max_batch_tiles():
+    frame = np.zeros((2160, 3840, 3), dtype=np.uint8)
+    manifest = _manifest(None, max_batch_tiles=16)
+    windows = ball_detector.tile_windows(3840, 2160, 416, 64)
+    runner = _FakeRunner(windows, target_xy=(1500, 900))
+
+    ball_detector.detect_frame(runner, frame, manifest)
+
+    assert max(runner.batch_sizes) <= 16
+    assert sum(runner.batch_sizes) == 66
+
+
+def test_detect_frame_pads_frame_smaller_than_tile():
+    frame = np.zeros((200, 300, 3), dtype=np.uint8)
+    manifest = _manifest(None)
+    runner = _FakeRunner([(0, 0)], target_xy=(100, 100))
+
+    detections = ball_detector.detect_frame(runner, frame, manifest)
+
+    assert len(detections) == 1
+    assert detections[0]["x"] == pytest.approx(100.0)

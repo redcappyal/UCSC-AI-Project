@@ -63,3 +63,56 @@ def merge_detections(detections, iou_threshold):
         if all(iou(detection, k) <= iou_threshold for k in kept):
             kept.append(detection)
     return kept
+
+
+def _crop(frame, x0, y0, tile):
+    """Tile-sized crop, zero-padded when the frame is smaller than one tile.
+
+    Padding keeps the network input shape static, which the traced TorchScript
+    graph requires.
+    """
+    import numpy as np
+
+    patch = frame[y0:y0 + tile, x0:x0 + tile]
+    height, width = patch.shape[:2]
+    if height == tile and width == tile:
+        return patch
+    padded = np.zeros((tile, tile, patch.shape[2]), dtype=patch.dtype)
+    padded[:height, :width] = patch
+    return padded
+
+
+def detect_frame(runner, frame, manifest):
+    """Full-frame detections from a tiled sweep.
+
+    `runner.run_batch(crops)` returns, per crop, a list of
+    (cx, cy, w, h, score, class_index) in TILE-LOCAL pixels. This function owns
+    the tile-local -> full-frame mapping and the cross-tile merge.
+    """
+    tile = manifest.input_size[0]
+    frame_h, frame_w = frame.shape[:2]
+    windows = tile_windows(frame_w, frame_h, tile, manifest.tile_overlap_px)
+
+    detections = []
+    batch = max(1, manifest.max_batch_tiles)
+    for start in range(0, len(windows), batch):
+        chunk = windows[start:start + batch]
+        crops = [_crop(frame, x0, y0, tile) for x0, y0 in chunk]
+        for (x0, y0), boxes in zip(chunk, runner.run_batch(crops)):
+            for cx, cy, width, height, score, class_index in boxes:
+                if score < manifest.conf_threshold:
+                    continue
+                name = (manifest.class_names[int(class_index)]
+                        if int(class_index) < len(manifest.class_names)
+                        else str(class_index))
+                detections.append({
+                    "x": float(cx) + x0,
+                    "y": float(cy) + y0,
+                    "width": float(width),
+                    "height": float(height),
+                    "confidence": float(score),
+                    "class": name,
+                    "class_name": name,
+                })
+
+    return merge_detections(detections, manifest.nms_iou)
