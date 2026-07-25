@@ -14,7 +14,7 @@
 
 - **`prepare_ball_dataset.py` must stay importable without cv2 or numpy.** `tests/test_prepare_ball_dataset.py` opens with `"""prepare_ball_dataset: geometry, splitting and crop planning (no cv2 needed)."""` and runs in a bare interpreter. All cv2/numpy imports stay function-local, matching the existing `import cv2  # lazy: geometry is testable without it` inside `render_split`.
 - **Safe filename charset is exactly `[A-Za-z0-9._-]`.** Nothing else may appear in an emitted crop filename.
-- **Already-clean names must not change.** `Bay-Club-1_mov-0042_jpg.rf.abc123` → itself, no digest. This is not a whole-dataset rename.
+- **Only names already in canonical form skip the digest.** Canonical means safe charset *and* no leading/trailing `._-`; `Bay-Club-1_mov-0042_jpg.rf.abc123` → itself, no digest, because it already satisfies both. A name the charset filter leaves alone but stripping still shortens (e.g. `abc.` or `.hidden`) still earns the digest, since that strip is itself a lossy change. This is not a whole-dataset rename.
 - **Digest is `hashlib.sha1(original.encode("utf-8")).hexdigest()[:8]`**, computed on the *original* stem, appended after a `-`.
 - **Do not touch `cv2.VideoCapture` / `cv2.VideoWriter` call sites.** Measured working with a `｜` path (FFmpeg converts UTF-8 to wide chars itself). Changing them adds risk for no benefit.
 - **Test interpreter on this Windows box:** no single interpreter has both pytest and cv2. Use a pytest-only venv for the suite; `C:\Users\alann\Code\ball-detector-train\.venv` has cv2 5.0.0 + numpy 2.4.4 but no pytest. The `.venv` in CLAUDE.md does not exist here.

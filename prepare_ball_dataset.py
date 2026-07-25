@@ -82,8 +82,15 @@ def ascii_slug(stem):
 
     The transform is lossy, so a name that changed carries an 8-hex digest of
     the original: two clips that collapse onto one base stay distinct, and the
-    suffix is stable per source name. A name already in the safe set is returned
-    untouched, which is what keeps this from renaming the whole dataset.
+    suffix is stable per source name. Only a name already in canonical form —
+    safe charset *and* no leading or trailing "._-" — is returned untouched;
+    a name that the charset filter leaves alone but the strip still shortens
+    earns the digest too, because stripping is itself lossy: Win32 silently
+    discards trailing dots, so "abc." and "abc" are the same file on Windows,
+    and a leading dot hides a file on Unix. Collapsing either onto the bare
+    form unchanged would let two source frames silently overwrite each
+    other's crops, so the digest stays with every lossy transform, not just
+    the charset one.
     """
     folded = unicodedata.normalize("NFKD", stem).encode("ascii", "ignore").decode("ascii")
     slug = UNSAFE_CHARS.sub("_", folded).strip("._-") or "clip"

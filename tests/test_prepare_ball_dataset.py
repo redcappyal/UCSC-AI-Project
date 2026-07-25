@@ -184,6 +184,20 @@ def test_ascii_slug_leaves_a_clean_roboflow_name_alone():
     assert ascii_slug(name) == name
 
 
+def test_ascii_slug_digests_a_name_the_charset_filter_ignores_but_strip_shortens():
+    # "abc." and "abc" are the same file on Windows (trailing dots are
+    # silently discarded there), and ".hidden" is a hidden file on Unix, so
+    # strip() must still run on names the charset filter already accepts -
+    # and because that strip is lossy, the digest must stay too, or the
+    # stripped name would collide with the bare one below.
+    for stem, bare in [("abc.", "abc"), (".hidden", "hidden")]:
+        slug = ascii_slug(stem)
+        assert slug != stem
+        assert slug.startswith(f"{bare}-")
+        assert len(slug) == len(bare) + 1 + 8
+        assert slug != ascii_slug(bare)
+
+
 def test_ascii_slug_replaces_the_fullwidth_bar_and_marks_the_change():
     # The production case: a YouTube title whose "|" was sanitised to U+FF5C.
     assert (ascii_slug("Squash Rally ｜ Best_mov-9_jpg.rf.d")
