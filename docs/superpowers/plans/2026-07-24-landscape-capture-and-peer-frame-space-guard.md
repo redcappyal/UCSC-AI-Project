@@ -730,7 +730,8 @@ git add ios/Sources/Record/OrientationLock.swift ios/Tests/OrientationLockTests.
   `OrientationPolicy.shared.apply(_:)` (Task 3); `PeerSession.advertisedHello` (Task 2);
   `CaptureSettings.frameSize(for:)` (Task 1).
 - Produces: `RecordModel.captureOrientation: CaptureSettings.CaptureOrientation` (published,
-  private setter); `RecordModel.detectionFrameSize: (width: Int, height: Int)`.
+  private setter); `RecordModel.detectionFrameSize: (width: Int, height: Int)`;
+  `RecordModel.init(detector:captureOrientation:)` with both parameters defaulted.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -744,8 +745,7 @@ Append to `ios/Tests/LiveWiringTests.swift`, inside `final class LiveWiringTests
     /// them in.
     func testDetectionFrameSpaceMatchesTheAdvertisedHello() {
         for orientation in CaptureSettings.CaptureOrientation.allCases {
-            let model = RecordModel(detector: nil)
-            model.setCaptureOrientationForTesting(orientation)
+            let model = RecordModel(detector: nil, captureOrientation: orientation)
             let (transport, _) = LoopbackTransport.pair()
             let session = PeerSession(transport: transport, isInitiator: true, now: { 0 },
                                       captureOrientation: model.captureOrientation)
@@ -795,11 +795,21 @@ Replace lines 76-80 (the `peerFrameW`/`peerFrameH` comment and both `let`s):
         CaptureSettings.frameSize(for: captureOrientation)
     }
 
-    /// Test seam: production resolves the mount from the interface
-    /// orientation in `startCamera`, which needs a live window scene.
-    func setCaptureOrientationForTesting(_ orientation: CaptureSettings.CaptureOrientation) {
-        captureOrientation = orientation
-    }
+Then widen `init` (line ~35) so tests can choose a mount without a test-only mutator on the
+production type. Change the signature and set the property as the first statement in the
+body, leaving the rest of `init` exactly as it is:
+
+```swift
+    init(detector: BallDetecting? = CoreMLBallDetector(),
+         captureOrientation: CaptureSettings.CaptureOrientation = .landscapeRight) {
+        // Production overwrites this in `startCamera` once the interface
+        // orientation is known; the parameter exists so tests can pick a mount
+        // without a live window scene.
+        self.captureOrientation = captureOrientation
+```
+
+The five existing `RecordModel(detector:)` call sites in `LiveWiringTests` and
+`SyntheticDetectorTests` keep compiling unchanged — the new parameter is defaulted.
 ```
 
 Replace the two consumers. Line ~154 becomes:
