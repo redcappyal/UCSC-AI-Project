@@ -52,6 +52,26 @@ final class LiveSessionModel: ObservableObject {
     @Published var transportName = "ble"
     #endif
 
+    // MARK: - Rally lifecycle and paired upload (Task 7)
+
+    enum RallyState: Equatable { case idle, recording, submitting, submitted, failed(String) }
+
+    @Published private(set) var rally: RallyState = .idle
+    /// Only shown while the link is degraded: without it a dropped link
+    /// leaves the secondary recording 4K60 with no way to end the rally.
+    @Published private(set) var showsLocalStop = false
+    @Published private(set) var sessionID: String?
+
+    private var peerVideoID: String?
+    private var submission = RunSubmission()
+    /// Chains `RecordModel.toggleRecording()` calls so a fire-and-forget
+    /// start and an awaited stop can never land out of the order they were
+    /// issued in. See `toggleRecordingChained()`.
+    private var recordingTransition: Task<Void, Never>?
+
+    /// The server's paired-run role. Fixed by the pairing role: initiator = a.
+    var cameraRole: String? { role.map { $0 == .primary ? "a" : "b" } }
+
     private let api: APIClientProtocol
     private let makeTransport: (String) -> PeerTransport
     private weak var record: RecordModel?
@@ -157,6 +177,19 @@ final class LiveSessionModel: ObservableObject {
         pairing.onSessionEnded = { [weak self] in self?.endSession() }
         self.pairing = pairing
         pairing.start()
+        // Task 7: rally start/stop and the paired-upload session identity.
+        // Both fire on the transport delivery context (BLE/WiFi queues in
+        // production), so both hop to main before touching any published
+        // state.
+        session.onRecord = { [weak self] action, _ in
+            Task { @MainActor in self?.handleRemoteRecord(action) }
+        }
+        session.onSessionManifest = { [weak self] sessionID, videoID in
+            Task { @MainActor in
+                self?.sessionID = sessionID
+                if !videoID.isEmpty { self?.peerVideoID = videoID }
+            }
+        }
         startPump()
         republish()
     }
@@ -170,6 +203,14 @@ final class LiveSessionModel: ObservableObject {
         // 20 Hz pump keeps ticking a session nobody owns anymore, and a
         // stale call can keep showing for a rally that was just cancelled.
         record?.detachPeer()
+        // And the rally identity: a later re-pairing must be free to mint a
+        // fresh sessionID (republish()'s mint guard is `sessionID == nil`),
+        // and a stale RallyState/local-stop flag from the session that just
+        // ended must not bleed into the next one.
+        rally = .idle
+        sessionID = nil
+        peerVideoID = nil
+        showsLocalStop = false
         republish()
     }
 
@@ -185,10 +226,137 @@ final class LiveSessionModel: ObservableObject {
         }
     }
 
-    /// Task 7 wires the actual rally start (recording + `PeerSession.sendRecord`).
-    /// Stubbed here so the calibration/role/pairing gates in this file compile
-    /// and are testable standalone.
-    private func startRally() {}
+    /// Primary-only, and only once the engine exists — both enforced by
+    /// `computedPrimaryEnabled`. Recording is started locally first so a
+    /// dropped message can never leave this phone not recording.
+    func startRally() {
+        guard rally != .recording else { return }
+        rally = .recording
+        toggleRecordingChained()
+        session?.goLive()
+        session?.sendRecord(action: "start", ptsNs: UInt64(ClockSync.hostNow() * 1_000_000_000))
+        republish()
+    }
+
+    func stopRally() {
+        guard rally == .recording else { return }
+        session?.sendRecord(action: "stop", ptsNs: UInt64(ClockSync.hostNow() * 1_000_000_000))
+        finishRecordingAndSubmit()
+    }
+
+    private func handleRemoteRecord(_ action: String) {
+        switch action {
+        case "start": if rally != .recording { startLocalRecording() }
+        case "stop":  if rally == .recording { finishRecordingAndSubmit() }
+        default:      break
+        }
+    }
+
+    /// The secondary's half of a remote start — no goLive broadcast, no
+    /// re-send, or the two phones would ping-pong record messages forever.
+    private func startLocalRecording() {
+        rally = .recording
+        toggleRecordingChained()
+        republish()
+    }
+
+    /// `RecordModel.toggleRecording()` is a toggle, not start/stop.
+    /// `startRally()`'s kickoff is fire-and-forget while `stopRally()`'s path
+    /// awaits, so a fast stop right behind a start could otherwise race two
+    /// independent unstructured `Task`s against `toggleRecording()` with no
+    /// guaranteed order — whichever lands second would flip the *other*
+    /// direction (a "stop" landing first turns into a second start; the
+    /// queued "start" landing after that then turns into a stop). Chaining
+    /// through one stored `Task` — each call awaits whatever the previous
+    /// call started before issuing its own `toggleRecording()` — makes the
+    /// order exactly the call order, regardless of how the two Tasks happen
+    /// to be scheduled.
+    @discardableResult
+    private func toggleRecordingChained() -> Task<Void, Never> {
+        let previous = recordingTransition
+        let next = Task { [weak self] in
+            await previous?.value
+            await self?.record?.toggleRecording()
+        }
+        recordingTransition = next
+        return next
+    }
+
+    private func finishRecordingAndSubmit() {
+        rally = .submitting
+        republish()
+        let toggle = toggleRecordingChained()
+        Task { [weak self] in
+            guard let self else { return }
+            await toggle.value
+            guard let record = self.record else { return }
+            guard let clip = record.finishedClip else {
+                self.rally = .failed("The rally produced no clip.")
+                return self.republish()
+            }
+            // finishedClip is shared state with the single-camera flow:
+            // RecordView presents ResultsView whenever it is non-nil. The
+            // live path reports its own outcome through `rally`, so once
+            // it's been read here, clear it — otherwise a later
+            // single-camera visit to this same RecordModel would reopen a
+            // results sheet for a rally ResultsView never showed.
+            record.finishedClip = nil
+            await self.submission.submit(videoURL: clip.url, duration: clip.duration,
+                                         sessionID: self.sessionID,
+                                         cameraRole: self.cameraRole,
+                                         peerVideoID: self.peerVideoID,
+                                         syncManifestJSON: self.syncManifestJSON())
+            switch self.submission.phase {
+            case .complete:
+                self.rally = .submitted
+                // Best-effort enrichment only: fusion pairs on session_id +
+                // camera_role, so a lost manifest never blocks it.
+                if let sessionID = self.sessionID, let videoID = self.submission.completedRunID {
+                    self.session?.sendSessionManifest(sessionID: sessionID, videoID: videoID)
+                }
+            case .failed(let message): self.rally = .failed(message)
+            default:                   self.rally = .failed("Upload did not finish.")
+            }
+            self.republish()
+        }
+    }
+
+    /// Seeds the server's offset refinement with what the phones measured.
+    /// Primary-only — `job_runner` reads the manifest from whichever run
+    /// carries it, so sending it twice would be redundant.
+    ///
+    /// Always `offset_series`, never `clap_anchor_s`: `ClockSync.anchor` is
+    /// private, so the client cannot tell an anchored estimate from a network
+    /// one. It costs nothing — when the anchor is applied, `estimate.offset`
+    /// *is* the anchor value, and the server takes the median of a one-element
+    /// series, which returns it exactly. Only the report's `seed.source` label
+    /// differs.
+    private func syncManifestJSON() -> String? {
+        guard role == .primary, let estimate = session?.clockSync.estimate else { return nil }
+        let payload: [String: Any] = ["offset_series": [estimate.offset]]
+        guard let data = try? JSONSerialization.data(withJSONObject: payload) else { return nil }
+        return String(decoding: data, as: UTF8.self)
+    }
+
+    /// Single rule for the §16 "still recording, no way out" safety valve —
+    /// shown only while the rally is genuinely recording *and* the link is
+    /// down. `republish()` supplies `degraded` from the real `pairing.step`
+    /// at 20 Hz: the production path, automatic, wired to no button anywhere.
+    /// `handleDegraded(_:)` is a test seam that supplies it directly, so a
+    /// test can assert the safety valve without starving a real link for
+    /// `heartbeatTimeout` seconds. Both funnel through here so the rule
+    /// itself — not just the inputs to it — is written exactly once; keeping
+    /// two independent assignments to `showsLocalStop` would leave whichever
+    /// ran most recently as the value, an easy way to reintroduce a second
+    /// source of truth by accident.
+    private func updateShowsLocalStop(degraded: Bool) {
+        showsLocalStop = degraded && rally == .recording
+    }
+
+    /// Test seam for the degraded-link path, which needs no radio to assert.
+    func handleDegraded(_ degraded: Bool) {
+        updateShowsLocalStop(degraded: degraded)
+    }
 
     // MARK: - §16's p-pair table, as flat state
 
@@ -199,6 +367,26 @@ final class LiveSessionModel: ObservableObject {
         if status != linkStatus { linkStatus = status }
         if title != primaryTitle { primaryTitle = title }
         if enabled != primaryEnabled { primaryEnabled = enabled }
+
+        // Mint exactly once: the guard is `sessionID == nil`, and the
+        // assignment right below happens synchronously with no `await` in
+        // between — so the very next 20 Hz republish() (this same private
+        // method, called from the pump timer) already sees a non-nil
+        // sessionID and takes neither branch. One mint, one broadcast, per
+        // paired session; `endSession()` is what clears it for the next one.
+        if role == .primary, case .ready = pairing.step, sessionID == nil {
+            let minted = UUID().uuidString
+            sessionID = minted
+            session?.sendSessionManifest(sessionID: minted, videoID: "")
+        }
+        updateShowsLocalStop(degraded: isPairingDegraded)
+    }
+
+    /// The production input to `updateShowsLocalStop` — derived from the
+    /// real session's phase, unlike `handleDegraded(_:)`'s test-supplied one.
+    private var isPairingDegraded: Bool {
+        if case .degraded = pairing.step { return true }
+        return false
     }
 
     private var computedLinkStatus: String {

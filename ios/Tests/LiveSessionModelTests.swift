@@ -179,4 +179,154 @@ final class LiveSessionModelTests: XCTestCase {
         XCTAssertTrue(record.stereoEvents.isEmpty)
     }
     #endif
+
+    // MARK: - Task 7: rally lifecycle and paired upload
+
+    func testPrimaryBroadcastsRecordStartAndTheSecondaryFollows() async {
+        let rig = await makePairedRig()          // two bound models over loopback
+        rig.primary.startRally()
+        await settleCrossModelDelivery(until: { rig.secondary.rally == .recording })
+        XCTAssertEqual(rig.primary.rally, .recording)
+        XCTAssertEqual(rig.secondary.rally, .recording)
+    }
+
+    func testASecondStartWhileRecordingIsIgnored() async {
+        let rig = await makePairedRig()
+        rig.primary.startRally()
+        await settleCrossModelDelivery(until: { rig.secondary.rally == .recording })
+        rig.primary.startRally()
+        XCTAssertEqual(rig.secondary.rally, .recording)
+    }
+
+    func testSecondaryGainsALocalStopOnlyWhileDegraded() async {
+        let rig = await makePairedRig()
+        rig.primary.startRally()
+        await settleCrossModelDelivery(until: { rig.secondary.rally == .recording })
+        XCTAssertFalse(rig.secondary.showsLocalStop)
+        rig.secondary.handleDegraded(true)
+        // Otherwise a dropped link leaves it recording 4K60 with no way out.
+        XCTAssertTrue(rig.secondary.showsLocalStop)
+        rig.secondary.handleDegraded(false)
+        XCTAssertFalse(rig.secondary.showsLocalStop)
+    }
+
+    func testRolesMapToTheServersCameraRoles() async {
+        let rig = await makePairedRig()
+        XCTAssertEqual(rig.primary.cameraRole, "a")
+        XCTAssertEqual(rig.secondary.cameraRole, "b")
+    }
+
+    func testPrimaryMintsAndBroadcastsASessionID() async {
+        let rig = await makePairedRig()
+        XCTAssertNotNil(rig.primary.sessionID)
+        XCTAssertEqual(rig.secondary.sessionID, rig.primary.sessionID)
+    }
+
+    // MARK: - The paired rig
+
+    /// Spins until `done()` is true or a short deadline elapses.
+    ///
+    /// The hop `onRecord`/`onSessionManifest` use in
+    /// `LiveSessionModel.beginPairing()` to reach a *different* model's
+    /// main-actor-isolated state is a fresh, separate
+    /// `Task { @MainActor in ... }`: loopback delivers the underlying
+    /// control frame synchronously, inline in the caller's stack, but that
+    /// final hop is not part of that stack, so a synchronous assertion
+    /// immediately after e.g. `startRally()` would still see the
+    /// pre-delivery state. Spinning the run loop (rather than guessing how
+    /// many `Task.yield()`s the pending job needs) lets it actually run.
+    private func settleCrossModelDelivery(until done: () -> Bool) async {
+        let deadline = Date().addingTimeInterval(2.0)
+        while !done() {
+            guard Date() < deadline else { return }
+            await Task.yield()
+            RunLoop.main.run(until: Date().addingTimeInterval(0.01))
+        }
+    }
+
+    /// Two `LiveSessionModel`s, each bound to its own `RecordModel`, paired
+    /// over one `LoopbackTransport.pair()` and driven to `.ready` on both
+    /// sides. `primaryRecord`/`secondaryRecord` come along for the ride and
+    /// must be kept alive by the caller holding the whole tuple:
+    /// `bind(record:)` stores its argument `weak`, so with nothing else
+    /// retaining them they would be deallocated the instant this method
+    /// returns, silently turning every later `beginPairing()` guard
+    /// (`let record`) into a no-op.
+    ///
+    /// Does NOT hand-tick a synthetic clock the way `StereoWiringTests`/
+    /// `PairingModelTests` do (`for _ in 0..<40 { t += 0.1; ...tick... }`).
+    /// `beginPairing()` — reachable only through the public `primaryTapped()`
+    /// — unconditionally starts `RecordModel.attachPeer`'s real 20 Hz
+    /// `peer.tick(now: ClockSync.hostNow())` timer, and there is no seam to
+    /// suppress it. Feeding the same `PeerSession` a synthetic near-zero `t`
+    /// and then letting that real timer fire with a huge real host-uptime
+    /// `t` would make `tick()`'s `t - lastPeerActivityAt > heartbeatTimeout`
+    /// check see an enormous jump and degrade the link before anything could
+    /// ever observe `.ready`. Spinning the real run loop instead — as
+    /// `testPairIsReenabledAfterAPairingFailure` above already does — lets
+    /// the real timer do all of the ticking, in one consistent time domain,
+    /// exactly as production does.
+    private func makePairedRig() async -> (primary: LiveSessionModel, secondary: LiveSessionModel,
+                                            primaryRecord: RecordModel, secondaryRecord: RecordModel) {
+        let pair = LoopbackTransport.pair()
+
+        // beginPairing() constructs the PeerSession and calls its start()
+        // (which sends this side's hello) in one call. Whichever model's
+        // primaryTapped() below runs first would fire its hello before the
+        // other side's PeerSession — and its transport.onControl — exists to
+        // receive it; LoopbackTransport does not buffer, so an unwired
+        // onControl just drops the frame. Buffer both directions until both
+        // sessions exist, then release together, so neither hello is lost.
+        // (PairingModelTests.makeRig() sidesteps the same hazard by
+        // constructing both PeerSessions before calling either start(); that
+        // seam isn't reachable through LiveSessionModel's public surface, so
+        // this reproduces the same effect with a delivery hook instead.)
+        var buffered: [() -> Void] = []
+        pair.0.controlDeliveryHook = { frame, deliver in buffered.append { deliver(frame) } }
+        pair.1.controlDeliveryHook = { frame, deliver in buffered.append { deliver(frame) } }
+
+        let (primary, _) = makeModel(makeTransport: { _ in pair.0 })
+        let (secondary, _) = makeModel(makeTransport: { _ in pair.1 })
+        let primaryRecord = RecordModel(detector: SyntheticBallDetector())
+        let secondaryRecord = RecordModel(detector: SyntheticBallDetector())
+        primary.bind(record: primaryRecord)
+        secondary.bind(record: secondaryRecord)
+
+        await primary.prepare()
+        await secondary.prepare()
+        primary.role = .primary
+        secondary.role = .secondary
+
+        primary.primaryTapped()    // beginPairing(): builds + starts the primary session
+        secondary.primaryTapped()  // beginPairing(): builds + starts the secondary session
+
+        pair.0.controlDeliveryHook = nil
+        pair.1.controlDeliveryHook = nil
+        let queuedHellos = buffered
+        buffered = []
+        for send in queuedHellos { send() }
+
+        // Pull `pairing.step` up to date with the session's real phase
+        // (already `.confirming` on both sides now that the hellos landed)
+        // before deciding whether to confirm — `primaryTapped()`'s `.confirm`
+        // branch reads `pairing.step`, and nothing has resynced it yet.
+        primary.pairing.refresh()
+        secondary.pairing.refresh()
+        if case .confirm = primary.pairing.step { primary.primaryTapped() }
+        if case .confirm = secondary.pairing.step { secondary.primaryTapped() }
+
+        let deadline = Date().addingTimeInterval(5.0)
+        while true {
+            let primaryReady: Bool = { if case .ready = primary.pairing.step { return true }; return false }()
+            let secondaryReady: Bool = { if case .ready = secondary.pairing.step { return true }; return false }()
+            if primaryReady, secondaryReady,
+               primary.sessionID != nil, secondary.sessionID == primary.sessionID {
+                break
+            }
+            guard Date() < deadline else { break }
+            RunLoop.main.run(until: Date().addingTimeInterval(0.02))
+        }
+
+        return (primary, secondary, primaryRecord, secondaryRecord)
+    }
 }
