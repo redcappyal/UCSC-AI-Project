@@ -3,27 +3,26 @@ import SwiftUI
 
 /// `p-pair` — DESIGN.md §16's live-mode state table rendered.
 ///
-/// One primary action the whole way through (PAIR → CONFIRM → START RALLY,
-/// §7), a `.link-status` row that speaks in words (§8.19), and a `.pair-code`
+/// A thin renderer over `LiveSessionModel`: `linkStatus`, `primaryTitle`, and
+/// `primaryEnabled` already encode §16's whole state table, moved there
+/// specifically so the table is assertable without standing up this view
+/// (see `LiveSessionModelTests`). This view keeps no state logic of its own —
+/// one primary action the whole way through (PAIR → CONFIRM → START RALLY,
+/// §7), a `.link-status` row that speaks in words (§8.19), a `.pair-code`
 /// card that reserves its footprint so nothing below it jumps when the code
-/// arrives (§8.20, §0.9).
+/// arrives (§8.20, §0.9), and — idle state only — the §8.22 role segment.
 struct PairingView: View {
-    @ObservedObject var model: PairingModel
+    @ObservedObject var model: LiveSessionModel
     /// Tapping START RALLY hands off to `p-live` — the host owns that
     /// transition, the same way `p-analyze` auto-advances.
     var onGoLive: () -> Void = {}
-
-    /// Declared unconditionally even though only the DEBUG picker reads it:
-    /// a stored property inside `#if DEBUG` would give the struct a different
-    /// memberwise initializer in release than in debug, and every call site
-    /// would have to fork with it.
-    @State private var transportName = "ble"
 
     var body: some View {
         ZStack {
             Theme.bg.ignoresSafeArea()
             VStack(spacing: 18) {
                 linkStatus
+                roleSegment
                 pairCode
                 Spacer(minLength: 0)
                 #if DEBUG
@@ -35,6 +34,7 @@ struct PairingView: View {
             .padding(.top, 18)
             .padding(.bottom, 24)
         }
+        .task { await model.prepare() }
     }
 
     // MARK: - §8.19 link status
@@ -46,7 +46,7 @@ struct PairingView: View {
     private var linkStatus: some View {
         HStack(spacing: 9) {
             Circle().fill(Theme.dim).frame(width: 8, height: 8)
-            Text(model.statusLine)
+            Text(model.linkStatus)
                 .font(.system(.subheadline).monospacedDigit())
                 .foregroundStyle(Theme.dim)
                 .lineLimit(2)
@@ -55,6 +55,54 @@ struct PairingView: View {
         // Reserve two lines: the failure reason is shown verbatim and is
         // longer than "Not paired", and the row must not shove the card down.
         .frame(minHeight: 40, alignment: .leading)
+    }
+
+    // MARK: - §8.22 role segment
+
+    /// §8.22's two-way segment, built native at the full 44 px minimum
+    /// (§0.6) rather than inheriting the web control's 38 px debt. No
+    /// default selection: two phones both defaulting to primary would both
+    /// open a central and hang with nothing honest to show for it.
+    ///
+    /// Scoped to `p-pair`'s idle state only (§16) and hidden with `.opacity`,
+    /// never a conditional, so nothing below it shifts when it disappears
+    /// (§0.9) — it keeps its footprint the same way `.pair-code` does.
+    /// `allowsHitTesting`/`accessibilityHidden` follow the same condition so
+    /// an invisible pill can never register a tap or a VoiceOver swipe once
+    /// pairing has started (by which point `LiveSessionModel.role`'s setter
+    /// is a no-op anyway — belt and suspenders, not a correctness fix).
+    private var roleSegment: some View {
+        let isIdle = model.pairing.step == .idle
+        return HStack(spacing: 6) {
+            segmentHalf("THIS PHONE CALLS", role: .primary)
+            segmentHalf("THIS PHONE ASSISTS", role: .secondary)
+        }
+        .opacity(isIdle ? 1 : 0)
+        .allowsHitTesting(isIdle)
+        .accessibilityHidden(!isIdle)
+    }
+
+    /// One independent pill per §8.22 — no shared capsule, fill, or border
+    /// wrapping the pair. Unselected: 1 px `--line` border, transparent
+    /// background, inherited `--text` label, weight 600. Selected:
+    /// `--accent-bg` fill with `--accent-text`, border transparent, weight
+    /// 700 — never green/red, because selection is not a verdict (§0.3).
+    private func segmentHalf(_ title: String, role: PeerRole) -> some View {
+        let selected = model.role == role
+        return Button {
+            model.role = role
+        } label: {
+            Text(title)
+                .font(.system(.subheadline).weight(selected ? .bold : .semibold))
+                .tracking(0.05 * 15)
+                .foregroundStyle(selected ? Theme.accentText : Theme.text)
+                .frame(maxWidth: .infinity, minHeight: 44)
+                .background(selected ? Theme.accentBg : Color.clear, in: Capsule())
+                .overlay(
+                    Capsule().strokeBorder(selected ? Color.clear : Theme.line, lineWidth: 1)
+                )
+        }
+        .accessibilityLabel(title)
     }
 
     // MARK: - §8.20 pair code
@@ -72,7 +120,7 @@ struct PairingView: View {
                 .foregroundStyle(displayedCode == nil ? Theme.dim : Theme.text)
             if displayedCode != nil {
                 // A secondary text action, never a second filled primary (§7).
-                Button("Codes don't match") { model.rejectCode() }
+                Button("Codes don't match") { model.pairing.rejectCode() }
                     .font(.system(.subheadline).weight(.semibold))
                     .foregroundStyle(Theme.dim)
                     .frame(minHeight: 44)
@@ -92,74 +140,56 @@ struct PairingView: View {
                               style: StrokeStyle(lineWidth: 1,
                                                  dash: displayedCode == nil ? [4, 4] : []))
         )
-        .opacity(model.step == .idle ? 0 : 1)
+        .opacity(model.pairing.step == .idle ? 0 : 1)
     }
 
     private var displayedCode: String? {
-        if case .confirm(let code) = model.step { return code }
+        if case .confirm(let code) = model.pairing.step { return code }
         return nil
     }
 
     // MARK: - §7 the one primary
 
     private var primary: some View {
-        Button(action: primaryAction) {
-            Text(primaryTitle)
+        Button(action: {
+            model.primaryTapped()
+            // `rally == .recording` is the real state transition START RALLY
+            // causes (set synchronously inside `startRally()`, before this
+            // call returns) — not a string compare against the button's own
+            // display title, which is presentation, not state, and would
+            // silently break if the label copy ever changed. No other
+            // `primaryTapped()` branch touches `rally`, so this cannot fire
+            // early on a PAIR or CONFIRM tap.
+            if model.rally == .recording { onGoLive() }
+        }) {
+            Text(model.primaryTitle)
                 .font(.system(.headline).weight(.bold))
                 .tracking(0.05 * 17)
                 .foregroundStyle(Theme.accentText)
                 .frame(maxWidth: .infinity, minHeight: 48)
                 .background(Theme.accentBg, in: Capsule())
-                .opacity(primaryEnabled ? 1 : 0.4)
+                .opacity(model.primaryEnabled ? 1 : 0.4)
         }
-        .disabled(!primaryEnabled)
-    }
-
-    /// PAIR → CONFIRM → START RALLY, exactly the §16 table's Primary column.
-    private var primaryTitle: String {
-        switch model.step {
-        case .idle, .searching, .failed: return "PAIR"
-        case .confirm, .syncing:         return "CONFIRM"
-        case .ready:                     return "START RALLY"
-        case .live:                      return "RALLY LIVE"
-        case .degraded:                  return "START RALLY"
-        }
-    }
-
-    private var primaryEnabled: Bool {
-        switch model.step {
-        // Searching has no peer yet to act on; syncing needs no user action.
-        case .searching, .syncing, .live: return false
-        // A spent session cannot be restarted, so PAIR would be a dead tap.
-        case .idle, .failed:              return model.canPair
-        case .confirm:                    return model.canConfirm
-        case .ready:                      return true
-        // Degraded leaves recording untouched, so the primary is unaffected.
-        case .degraded:                   return false
-        }
-    }
-
-    private func primaryAction() {
-        switch model.step {
-        case .idle, .failed:  model.start()
-        case .confirm:        model.confirm()
-        case .ready:          model.goLive(); onGoLive()
-        case .searching, .syncing, .live, .degraded: break
-        }
+        .disabled(!model.primaryEnabled)
     }
 
     // MARK: - DEBUG
 
     #if DEBUG
     /// Same picker as the bench harness — the transport choice is still an
-    /// open Phase 1 question, so both radios stay reachable.
+    /// open Phase 1 question, so both radios stay reachable. Bound straight
+    /// to `model.transportName`: `LiveSessionModel.beginPairing()` reads
+    /// that exact property to build the transport, so a view-local copy
+    /// (the previous shape of this control, back when the view only knew
+    /// `PairingModel`) would silently disagree with what pairing actually
+    /// uses.
     private var transportPicker: some View {
-        Picker("Transport", selection: $transportName) {
+        Picker("Transport", selection: $model.transportName) {
             Text("Bluetooth").tag("ble")
             Text("Wi-Fi P2P").tag("wifi-p2p")
         }
         .pickerStyle(.segmented)
-        .disabled(model.step != .idle)
+        .disabled(model.pairing.step != .idle)
     }
     #endif
 }
