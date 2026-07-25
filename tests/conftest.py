@@ -23,11 +23,23 @@ def runs_dir(tmp_path, monkeypatch):
     /api/calibration/latest 404 case had to ask whether a stray calibration
     existed and settle for "the endpoint answered" when one did.
 
-    Redirecting RUNS_DIR at `tmp_path` removes the shared state instead of
-    depending on cleanup having worked, which is also what lets those tests
+    Redirecting RUNS_DIR at a tmp directory removes the shared state instead
+    of depending on cleanup having worked, which is also what lets those tests
     assert outright.
+
+    BY_HASH_DIR moves with it, at the same depth it sits in production
+    (`<runs>/uploads/by-hash`), so a test that uploads cannot reach the real
+    video store either. Nesting it two levels down matters: `RUNS_DIR/*/` is
+    globbed for runs, and a `by-hash` directly under RUNS_DIR would read as one.
+
+    RUNS_DIR is a subdirectory of tmp_path rather than tmp_path itself, so a
+    test can still use tmp_path for its own scratch files without those
+    landing inside the runs tree.
     """
     import app as app_module
 
-    monkeypatch.setattr(app_module, "RUNS_DIR", tmp_path)
-    return tmp_path
+    runs = tmp_path / "ui_runs"
+    runs.mkdir()
+    monkeypatch.setattr(app_module, "RUNS_DIR", runs)
+    monkeypatch.setattr(app_module, "BY_HASH_DIR", runs / "uploads" / "by-hash")
+    return runs

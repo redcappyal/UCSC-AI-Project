@@ -494,43 +494,37 @@ def test_track_rejects_a_clip_past_the_end_without_making_a_run(tmp_path, monkey
     assert list(runs_dir.iterdir()) == []
 
 
-def test_ground_truth_save_and_fetch_roundtrip():
+def test_ground_truth_save_and_fetch_roundtrip(runs_dir):
     import app as app_module
 
     client = app_module.app.test_client()
     run_id = "gt-route-test"
-    run_dir = app_module.RUNS_DIR / run_id
-    run_dir.mkdir(parents=True, exist_ok=True)
-    try:
-        response = client.post(f"/api/runs/{run_id}/ground_truth", json={
-            "events": [
-                {"frame": 60, "type": "wall"},
-                {"frame": 20, "type": "racket"},
-            ],
-        })
-        assert response.status_code == 200
-        assert response.get_json()["count"] == 2
+    (runs_dir / run_id).mkdir(parents=True, exist_ok=True)
 
-        fetched = client.get(f"/api/runs/{run_id}/ground_truth.json").get_json()
-        assert fetched["tolerance_frames"] == 1
-        # Events come back sorted by frame regardless of submitted order.
-        assert [e["frame"] for e in fetched["events"]] == [20, 60]
+    response = client.post(f"/api/runs/{run_id}/ground_truth", json={
+        "events": [
+            {"frame": 60, "type": "wall"},
+            {"frame": 20, "type": "racket"},
+        ],
+    })
+    assert response.status_code == 200
+    assert response.get_json()["count"] == 2
 
-        response = client.post(f"/api/runs/{run_id}/ground_truth", json={
-            "events": [{"frame": 5, "type": "volley_boast"}],
-        })
-        assert response.status_code == 400
+    fetched = client.get(f"/api/runs/{run_id}/ground_truth.json").get_json()
+    assert fetched["tolerance_frames"] == 1
+    # Events come back sorted by frame regardless of submitted order.
+    assert [e["frame"] for e in fetched["events"]] == [20, 60]
 
-        response = client.post("/api/runs/no-such-run/ground_truth", json={"events": []})
-        assert response.status_code == 404
-    finally:
-        import shutil
-        shutil.rmtree(run_dir, ignore_errors=True)
+    response = client.post(f"/api/runs/{run_id}/ground_truth", json={
+        "events": [{"frame": 5, "type": "volley_boast"}],
+    })
+    assert response.status_code == 400
+
+    response = client.post("/api/runs/no-such-run/ground_truth", json={"events": []})
+    assert response.status_code == 404
 
 
-def test_label_run_creation_from_uploaded_video(tmp_path):
-    import shutil
-
+def test_label_run_creation_from_uploaded_video(tmp_path, runs_dir):
     import app as app_module
     import cv2
     import numpy as np
@@ -557,25 +551,18 @@ def test_label_run_creation_from_uploaded_video(tmp_path):
             content_type="multipart/form-data",
         ).get_json()["video_id"]
 
-    run_dir = None
-    try:
-        data = client.post("/api/label_runs", json={"video_id": video_id}).get_json()
-        assert data["run_id"] == f"label-{video_id[:12]}"
-        assert data["label_only"] is True
-        assert data["start_frame"] == 0 and data["end_frame"] == 11
-        assert abs(data["fps"] - 30.0) < 0.1
+    data = client.post("/api/label_runs", json={"video_id": video_id}).get_json()
+    assert data["run_id"] == f"label-{video_id[:12]}"
+    assert data["label_only"] is True
+    assert data["start_frame"] == 0 and data["end_frame"] == 11
+    assert abs(data["fps"] - 30.0) < 0.1
 
-        run_dir = app_module.RUNS_DIR / data["run_id"]
-        meta = json.loads((run_dir / "label_run.json").read_text())
-        assert meta["video_path"].endswith(f"{video_id}.mp4")
+    run_dir = runs_dir / data["run_id"]
+    meta = json.loads((run_dir / "label_run.json").read_text())
+    assert meta["video_path"].endswith(f"{video_id}.mp4")
 
-        # ground truth saves into the label-only run like any other run
-        response = client.post(f"/api/runs/{data['run_id']}/ground_truth", json={
-            "events": [{"frame": 6, "type": "wall"}],
-        })
-        assert response.status_code == 200
-    finally:
-        if run_dir is not None:
-            shutil.rmtree(run_dir, ignore_errors=True)
-        for stray in app_module.BY_HASH_DIR.glob(f"{video_id}.*"):
-            stray.unlink()
+    # ground truth saves into the label-only run like any other run
+    response = client.post(f"/api/runs/{data['run_id']}/ground_truth", json={
+        "events": [{"frame": 6, "type": "wall"}],
+    })
+    assert response.status_code == 200
