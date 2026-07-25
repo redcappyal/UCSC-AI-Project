@@ -46,9 +46,9 @@ final class CaptureOrientationTests: XCTestCase {
     }
 
     /// The regression the guard existed for but could not have. Before this
-    /// change both sessions advertised the same compile-time portrait
-    /// constants, so no pair of PeerSessions could disagree no matter how
-    /// they were configured.
+    /// change both sessions advertised the same compile-time constants, so
+    /// no pair of PeerSessions could disagree no matter how they were
+    /// configured.
     func testOppositeLandscapeMountsAreRefused() {
         let pair = LoopbackTransport.pair()
         let primary = PeerSession(transport: pair.0, isInitiator: true, now: { 0 },
@@ -158,15 +158,34 @@ final class CaptureOrientationTests: XCTestCase {
     /// through JSON. Renaming a case (e.g. `landscapeRight` →
     /// `landscapeStandard`) type-checks as a pure refactor but silently
     /// changes the encoded bytes, breaking any cross-version pair where one
-    /// side has renamed and the other hasn't. Pin the literal string.
-    func testCaptureOrientationWireValueIsPinned() {
-        let hello = Hello(protoVersion: peerProtoVersion, appVersion: "dev", deviceModel: "x",
-                          nonce: 1, frameW: CaptureSettings.frameWidth,
-                          frameH: CaptureSettings.frameHeight,
-                          captureOrientation: .landscapeRight)
-        let data = try! ControlMessage.encode(.hello(hello))
-        XCTAssertTrue(String(decoding: data, as: UTF8.self).contains("landscapeRight"),
-                     "the raw wire value must stay \"landscapeRight\" — renaming the case " +
-                     "silently changes the bytes and breaks cross-version pairing")
+    /// side has renamed and the other hasn't. Pin every case's raw value —
+    /// pinning only one leaves the other exactly as breakable as no pin at
+    /// all.
+    ///
+    /// Also pins the JSON *key*, `"captureOrientation"` itself, not just its
+    /// value: a `CodingKeys` rename would break cross-version pairing just
+    /// as silently. This is what anchors
+    /// `testHelloWithoutOrientationKeyStillDecodes`'s negative assertion (the
+    /// key is ABSENT for a nil mount) — that check alone can never fail,
+    /// because under a renamed key "captureOrientation" is absent from the
+    /// wire unconditionally, nil mount or not, and the assertion would keep
+    /// passing for the wrong reason. Asserting here that the SAME literal
+    /// key is PRESENT for a real, non-nil mount proves it is the actual key
+    /// on the wire, so the other test's absence check means something.
+    func testCaptureOrientationWireValuesAndKeyArePinned() {
+        for orientation in CaptureSettings.CaptureOrientation.allCases {
+            let hello = Hello(protoVersion: peerProtoVersion, appVersion: "dev", deviceModel: "x",
+                              nonce: 1, frameW: CaptureSettings.frameWidth,
+                              frameH: CaptureSettings.frameHeight,
+                              captureOrientation: orientation)
+            let json = String(decoding: try! ControlMessage.encode(.hello(hello)), as: UTF8.self)
+            XCTAssertTrue(json.contains("captureOrientation"),
+                         "a non-nil mount must put the key on the wire, anchoring " +
+                         "testHelloWithoutOrientationKeyStillDecodes's absence check")
+            XCTAssertTrue(json.contains(orientation.rawValue),
+                         "the raw wire value for \(orientation) must stay " +
+                         "\"\(orientation.rawValue)\" — renaming the case silently " +
+                         "changes the bytes and breaks cross-version pairing")
+        }
     }
 }

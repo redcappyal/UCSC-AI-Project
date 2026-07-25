@@ -55,8 +55,8 @@ enum CaptureSettings {
     /// refuses a mismatched pair rather than absorbing it, so the operator
     /// learns the mount is wrong instead of the archive inheriting it.
     ///
-    /// The capture side is not wired to it yet: every `PeerSession` built
-    /// today takes the `.landscapeRight` default, so `CameraController`'s
+    /// The capture side is not wired to it yet: every `PeerSession` the app
+    /// builds takes the `.landscapeRight` default, so `CameraController`'s
     /// real mount never reaches the wire. Until a paired session is
     /// constructed with the resolved mount, a genuinely mixed pair still
     /// pairs — `ios/PEER.md` tracks this.
