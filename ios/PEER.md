@@ -65,10 +65,17 @@ Do not add it before approval — Automatic signing fails for everyone.
 
 ## Live path (spec Phase 4)
 
-`p-pair` (`PairingView` + `PairingModel`) maps `PeerSession.Phase` onto the
-DESIGN.md §16 state table; `p-live` is the record stage plus the §8.17 call
-flash and the §8.18 call banner. Recording never depends on the link: a
-dropped link shows "Link lost — still recording" and keeps writing locally.
+`LiveSessionModel` owns the whole live lifecycle — the calibration gate, the
+role choice, the `PeerSession`, the rally, and the paired upload — and
+publishes DESIGN.md §16's `p-pair` table as flat view state
+(`linkStatus`/`primaryTitle`/`primaryEnabled`/`showsStop`), so the table is
+assertable without a view. `PairingView` (`p-pair`) and `LiveStageView`
+(`p-live`) are thin renderers over it; `PairingModel` still does the pure
+`PeerSession.Phase` → step mapping underneath. `PlayRootView` owns
+`RecordModel` and presents `p-live` for exactly as long as a rally is running
+— driven by the rally, not by which screen started it. Recording never depends
+on the link: a dropped link shows "Link lost — still recording" and keeps
+writing locally.
 
 ### Bring-up without hardware
 
@@ -83,23 +90,70 @@ tell you is whether the link, the clock sync, or a real detector work.
 
 ### Two-phone bring-up (needs the hardware)
 
-1. Same build on both phones, both mounted in the **same** orientation.
+1. Same build on both phones, both mounted in the **same** orientation. A
+   mismatched pair now fails the handshake outright (see "Known limits"), and
+   the reason lands on the status row verbatim.
 2. A 4K calibration per phone, or an older one the adoption path can scale —
    note that adoption refuses an aspect-ratio change rather than distorting
    the model, so a portrait profile will not load for a landscape session.
-3. Pair: both phones to `p-pair`, PAIR on both, compare the 4-digit code,
-   CONFIRM on both. "Codes don't match" ends the session — use it, that is the
+3. Both phones: Play tab → **Live match**. Entering `p-pair` fetches *this*
+   phone's own solved camera model and validates that it can be adopted for
+   capture. While that is in flight the row reads "Checking this phone's court
+   calibration…" and PAIR is disabled; if it fails, the reason shows verbatim
+   and PAIR stays disabled. Deliberately at the gate — an unusable calibration
+   must fail before two people have walked to opposite corners.
+4. **Pick each phone's job, before PAIR.** One phone taps `THIS PHONE CALLS`
+   (the primary: it holds the `StereoEngine` and makes the calls), the other
+   `THIS PHONE ASSISTS` (the secondary: it streams detections, and its own
+   calibration, to the primary). There is no default — the row reads "Pick this
+   phone's job to start." and PAIR stays disabled until each phone has chosen.
+   Check both phones before tapping: two set to "calls" would both open a
+   central and never find each other. The role segment is visible in the idle
+   state only, and the choice is fixed for the life of the session.
+5. PAIR on both, compare the 4-digit code, CONFIRM on both. "Codes don't
+   match" ends the session and returns to idle — use it, that is the
    stranger's-phone case.
-4. Wait for `Paired · sync ±x ms`. If x does not settle under 5 ms the session
+6. Wait for `Paired · sync ±x ms`. If x does not settle under 5 ms the session
    will not leave syncing; that is the gate doing its job, not a hang.
-5. START RALLY.
+7. **START RALLY lights on the calling phone only, and only once the assisting
+   phone's calibration has arrived.** The assisting phone has no primary action
+   at all — its row reads "Paired · the other phone starts the rally". The
+   calling phone reads "Paired · waiting for the other phone's calibration"
+   with START RALLY disabled until that message lands and builds its
+   `StereoEngine`; a rally started without it would record perfectly and be
+   callable by nothing. The secondary sends that message on reaching `.ready`
+   and retries every pump turn until it goes out, so if the row never clears,
+   the link is the problem — end the session and pair again.
+8. START RALLY. Both phones show `p-live` — the assisting one with no tap on
+   it at all, since its rally starts from a control message. While the rally
+   runs there is no back button: STOP is the only exit. The calling phone
+   always has STOP; the assisting phone gains its own only while the link is
+   degraded ("Link lost — still recording"), so a dropped link cannot leave it
+   recording 4K60 with nothing able to end it.
+9. STOP. Each phone uploads its own clip independently under the same
+   **per-rally** `session_id` (`camera_role` "a" on the calling phone, "b" on
+   the assisting one); the server starts a `stereo-<session_id>` fuse run once
+   both runs complete. `p-live` pops back to `p-pair` with the pairing intact —
+   same clock sync, no second code — and START RALLY re-arms for the next rally
+   once that clip reports. A session runs as many rallies as the match needs;
+   only "Codes don't match" or ending the session returns to idle.
 
 ### Still needs hardware before any of this means anything
 
 - A real `BallDetector.mlpackage` in `ios/Model/` — the directory ships empty.
-- The Phase 1 transport selection bench (the table above is still blank) and
-  the thermal go/no-go at 4K60.
+- The Phase 1 transport selection bench (the table above is still blank,
+  `hardware/bench/` is empty) and the thermal go/no-go at 4K60.
 - The Phase 2 ≤ 2 ms sync assertion against a clap anchor.
 - Rolling-shutter correction is **not implemented**: `DetectionTuple.y` carries
   the row for it, but nothing applies `t_effective = PTS + (row/H)·readout`.
   Until it is, the sync budget is optimistic for fast cross-frame motion.
+- The live path above has only ever run over `LoopbackTransport` in
+  `LiveSessionModelTests`. The calibration exchange, the per-rally session
+  identity, and the server-side fuse it feeds have never crossed a real radio.
+- The orientation guard is now *able* to fire, but both phones default to
+  `.portrait`, so nothing outside `CaptureOrientationTests` exercises it. It
+  becomes a real gate only when a landscape mount is exposed.
+- The Swift suite itself needs a Mac: `xcodebuild`/`xcodegen` do not exist on
+  the Windows dev box, so nothing in `ios/` is compiled there. See
+  `docs/superpowers/plans/2026-07-25-ios-live-entry-point-MAC-CHECKLIST.md`
+  for what a Mac still owes this change.
