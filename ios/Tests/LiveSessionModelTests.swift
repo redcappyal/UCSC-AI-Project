@@ -50,6 +50,29 @@ private struct StubAPI: APIClientProtocol {
     func trackStatus(runID: String) async throws -> JobStatus { throw APIError.badResponse }
 }
 
+/// Records the `.calibration` frames the secondary actually put on the wire.
+///
+/// A reference type rather than a captured local (the shape
+/// `testASecondStartWhileRecordingIsIgnored` uses for its own counter) for two
+/// reasons: the hook that fills it is installed inside `handshake(...)` while
+/// the assertions live in the test that called it, and it has to survive a
+/// *second* `handshake(...)` on the same two models — the re-pairing case —
+/// and keep accumulating across both.
+///
+/// No locking: `LoopbackTransport` delivers synchronously on the caller's own
+/// stack, and the only thing that sends a `.calibration` is
+/// `LiveSessionModel.republish()`, which is `@MainActor`.
+private final class CalibrationCounter {
+    private(set) var profileIDs: [String] = []
+    private(set) var payloads: [String] = []
+    var count: Int { payloads.count }
+
+    func record(profileID: String, payloadJSON: String) {
+        profileIDs.append(profileID)
+        payloads.append(payloadJSON)
+    }
+}
+
 @MainActor
 final class LiveSessionModelTests: XCTestCase {
     /// A model with no camera bound and a stub API — enough to assert every
@@ -417,9 +440,10 @@ final class LiveSessionModelTests: XCTestCase {
     ///
     /// `primaryEnabled` is deliberately not asserted: in `.ready` it also
     /// requires `engineReady`, which is set from `RecordModel.onStereoReady` —
-    /// fired only when a peer `.calibration` message builds the StereoEngine,
-    /// and nothing in production sends one yet. That gap is orthogonal to this
-    /// fix, so asserting on it here would say nothing about it either way.
+    /// fired only when a peer `.calibration` message builds the StereoEngine.
+    /// That gate is orthogonal to this fix (and is what Task 10c's
+    /// `testThePrimarysEngineIsBuiltFromTheSecondarysCalibration` covers), so
+    /// asserting on it here would say nothing about *this* one either way.
     /// `primaryTitle` is the value that was actually stuck, so that is what is
     /// asserted.
     func testASecondRallyStartsOnTheSamePairing() async {
@@ -519,6 +543,195 @@ final class LiveSessionModelTests: XCTestCase {
     }
     #endif
 
+    // MARK: - Task 10c: the secondary's calibration exchange
+
+    /// The showstopper this closes: `sendCalibration` had no production caller
+    /// at all. The receiving half was fully wired — `RecordModel.attachStereo`
+    /// installs `peer.onCalibration`, which builds the primary's
+    /// `StereoEngine` and fires `onStereoReady` → `engineReady` — but nothing
+    /// ever sent, so on real hardware `engineReady` stayed `false` forever,
+    /// `computedPrimaryEnabled`'s `.ready` case (`role == .primary &&
+    /// engineReady`) never enabled START RALLY, and no rally could begin.
+    ///
+    /// Asserts the payload is the *solved, unadopted* camera-model JSON, byte
+    /// for byte the string `prepare()` fetched and `attachStereo` was handed —
+    /// then re-runs the receiver's own two decode steps
+    /// (`CameraModel.fromJSON` + `adoptedForCapture()`) on it. A mismatch here
+    /// is silent in production: `onCalibration`'s guard is one long `guard
+    /// let ... else { return }`, so a payload it cannot parse simply never
+    /// builds an engine and looks exactly like a message that never arrived.
+    func testSecondarySendsItsSolvedCameraModelOnReachingReady() async {
+        let rig = await makePairedRig()
+
+        XCTAssertEqual(rig.calibrations.count, 1,
+                       "the secondary must send its camera model on reaching .ready")
+        XCTAssertEqual(rig.calibrations.payloads, [StubAPI.adoptableCameraModelJSON],
+                       "the wire must carry the solved model verbatim, not a re-encoded or pre-adopted one")
+        // The run ID `StubAPI.fixtureCalibration` reports is "7".
+        XCTAssertEqual(rig.calibrations.profileIDs, ["calibration-run-7"],
+                       "the profileID must name the calibration the model was solved from")
+
+        guard let payload = rig.calibrations.payloads.first,
+              let data = payload.data(using: .utf8),
+              let model = try? CameraModel.fromJSON(data),
+              (try? model.adoptedForCapture()) != nil else {
+            return XCTFail("""
+                the payload must survive exactly what the receiver does to it — \
+                CameraModel.fromJSON then adoptedForCapture() — or the engine is \
+                silently never built
+                """)
+        }
+    }
+
+    /// The assertion that actually proves a rally can start: the primary's
+    /// engine gate flips, and START RALLY enables.
+    ///
+    /// This is the full production chain, not a stand-in for it — the
+    /// secondary's `republish()` → `PeerSession.sendCalibration` → loopback →
+    /// the primary's `handleControl` → `RecordModel.attachStereo`'s
+    /// `onCalibration` → a real `StereoEngine` built from two real
+    /// `CameraModel`s → `onStereoReady` → `LiveSessionModel.engineReady`.
+    ///
+    /// One honest limitation: both rig halves fetch the same
+    /// `StubAPI.adoptableCameraModelJSON`, so the two camera models are
+    /// identical and the pair has a zero baseline — a `StereoEngine` that
+    /// could never triangulate anything. That is fine for what is under test
+    /// (`StereoEngine.init` is non-throwing and validates nothing, so the gate
+    /// flips on construction either way, exactly as on device), and the
+    /// triangulation math itself is covered by `StereoEngineTests` /
+    /// `StereoGoldenTests` against real two-camera fixtures. What this proves
+    /// is the *wiring*: that a message is sent, arrives, parses, and enables
+    /// the button.
+    func testThePrimarysEngineIsBuiltFromTheSecondarysCalibration() async {
+        let rig = await makePairedRig()
+        await settleCrossModelDelivery(until: { rig.primary.engineReady })
+
+        XCTAssertTrue(rig.primary.engineReady,
+                      "the secondary's calibration must build the primary's StereoEngine")
+        XCTAssertFalse(rig.secondary.engineReady,
+                       "only the primary owns an engine — attachStereo's handler guards on role")
+        XCTAssertEqual(rig.primary.primaryTitle, "START RALLY")
+        XCTAssertTrue(rig.primary.primaryEnabled,
+                      "START RALLY must actually enable — this is the dead end being closed")
+        XCTAssertNotEqual(rig.primary.linkStatus,
+                          "Paired · waiting for the other phone's calibration",
+                          "and the status line must stop saying it is still waiting")
+    }
+
+    /// `republish()` runs at 20 Hz for the whole life of a pairing and the
+    /// secondary sits in `.ready` the entire time, so an unguarded send would
+    /// put a fresh camera model on a constrained BLE link twenty times a
+    /// second. Counts frames rather than state: a re-send is idempotent from
+    /// the primary's point of view (it just rebuilds the engine), so the wire
+    /// is the only place the difference shows.
+    func testTheCalibrationIsSentOnceNotOnEveryRepublish() async {
+        let rig = await makePairedRig()
+        await settleCrossModelDelivery(until: { rig.primary.engineReady })
+        XCTAssertEqual(rig.calibrations.count, 1, "setup: exactly one send so far")
+
+        spinPump(seconds: 0.5)   // ~10 more turns of the 0.05 s republish pump
+
+        XCTAssertEqual(rig.calibrations.count, 1,
+                       "the 20 Hz republish must not re-send the camera model")
+    }
+
+    /// The second-rally path (`finishRally` → `PeerSession.endRally()`) returns
+    /// the session `.live → .ready`, and reaching `.ready` is what triggers the
+    /// send — so the guard has to distinguish "first time ready" from "ready
+    /// again after a rally". The primary's engine already exists by then; a
+    /// re-send would rebuild it for nothing.
+    ///
+    /// Note the guard's job is even broader on the secondary than the name of
+    /// this test suggests: only the primary ever calls `goLive()`, so the
+    /// secondary's own session never leaves `.ready` at all — the entire rally
+    /// is one long stretch of `.ready` republishes. The primary's `endRally()`
+    /// round trip is covered here too by driving a real rally through both.
+    ///
+    /// Rally 1 ends on `.failed("The rally produced no clip.")` rather than
+    /// `.submitted`, for the reason `testASecondRallyStartsOnTheSamePairing`
+    /// documents: a test host has no capture session, so `stopRecording()`
+    /// always ends in `CameraError.recordingEmpty`. Irrelevant here — every
+    /// terminal outcome goes through the same `finishRally`, which is where
+    /// the session is handed back to `.ready`.
+    func testReturningToReadyAfterARallyDoesNotResendTheCalibration() async {
+        let rig = await makePairedRig()
+        await settleCrossModelDelivery(until: { rig.primary.engineReady })
+        XCTAssertEqual(rig.calibrations.count, 1, "setup: exactly one send so far")
+
+        rig.primary.startRally()
+        await settleCrossModelDelivery(until: { rig.secondary.rally == .recording })
+        await settleCrossModelDelivery(until: { rig.primaryRecord.isRecording })
+        rig.primary.stopRally()
+        await settleCrossModelDelivery(until: {
+            rig.primary.rally != .recording && rig.primary.rally != .submitting
+        })
+        await settleCrossModelDelivery(until: {
+            rig.secondary.rally != .recording && rig.secondary.rally != .submitting
+        })
+        await settleCrossModelDelivery(until: { rig.primary.primaryTitle == "START RALLY" })
+        guard case .ready = rig.primary.pairing.step else {
+            return XCTFail("setup: the primary's session must be back to ready, got \(rig.primary.pairing.step)")
+        }
+        guard case .ready = rig.secondary.pairing.step else {
+            return XCTFail("setup: the secondary's session must be ready, got \(rig.secondary.pairing.step)")
+        }
+
+        spinPump(seconds: 0.4)
+
+        XCTAssertEqual(rig.calibrations.count, 1,
+                       "returning to .ready after a rally must not re-send — the engine already exists")
+        XCTAssertTrue(rig.primary.engineReady,
+                      "and the engine the one exchange built must still be there for rally 2")
+
+        // Teardown: both cameras really rolled above. Confirm the rally's own
+        // stop took them down, rather than leaving AVAssetWriters running
+        // past this test.
+        await settleCrossModelDelivery(until: {
+            !rig.primaryRecord.isRecording && !rig.secondaryRecord.isRecording
+        })
+        XCTAssertFalse(rig.primaryRecord.isRecording,
+                       "teardown: no AVAssetWriter should be left running past this test")
+        XCTAssertFalse(rig.secondaryRecord.isRecording)
+    }
+
+    /// The other half of "once per session": once, but once *per session*. A
+    /// guard that never reset would not fix the dead end, only defer it by one
+    /// pairing — `endSession()` calls `record.detachPeer()`, which throws the
+    /// primary's `StereoEngine` and `localModel` away, so the second pairing
+    /// needs the exchange just as much as the first did.
+    ///
+    /// Re-pairs the same two models over the same (stateless) loopback pair,
+    /// which is why `handshake(...)` is factored out of `makePairedRig`. The
+    /// flag itself is private and unreadable from here; the wire count and
+    /// `engineReady` are the observable surface, and they are the two things
+    /// that actually matter.
+    func testAFreshSessionAfterTeardownSendsTheCalibrationAgain() async {
+        let rig = await makePairedRig()
+        await settleCrossModelDelivery(until: { rig.primary.engineReady })
+        XCTAssertEqual(rig.calibrations.count, 1, "setup: exactly one send so far")
+        XCTAssertTrue(rig.primary.engineReady, "setup: the first pairing built the engine")
+
+        rig.primary.endSession()
+        rig.secondary.endSession()
+        XCTAssertFalse(rig.primary.engineReady,
+                       "setup: teardown drops the engine gate along with the engine itself")
+
+        let reachedReady = await handshake(primary: rig.primary, secondary: rig.secondary,
+                                           pair: rig.pair, calibrations: rig.calibrations)
+        XCTAssertTrue(reachedReady, """
+            setup: the second pairing did not reach ready in time: \
+            primary.step=\(rig.primary.pairing.step), secondary.step=\(rig.secondary.pairing.step)
+            """)
+
+        XCTAssertEqual(rig.calibrations.count, 2,
+                       "a re-pairing must perform the exchange again, or the guard has just moved the dead end")
+        await settleCrossModelDelivery(until: { rig.primary.engineReady })
+        XCTAssertTrue(rig.primary.engineReady,
+                      "the second pairing must rebuild the engine detachPeer() threw away")
+        XCTAssertTrue(rig.primary.primaryEnabled,
+                      "so START RALLY enables on the second pairing too")
+    }
+
     // MARK: - The paired rig
 
     /// Spins until `done()` is true or a short deadline elapses.
@@ -550,44 +763,23 @@ final class LiveSessionModelTests: XCTestCase {
     /// returns, silently turning every later `beginPairing()` guard
     /// (`let record`) into a no-op.
     ///
-    /// Does NOT hand-tick a synthetic clock the way `StereoWiringTests`/
-    /// `PairingModelTests` do (`for _ in 0..<40 { t += 0.1; ...tick... }`).
-    /// `beginPairing()` — reachable only through the public `primaryTapped()`
-    /// — unconditionally starts `RecordModel.attachPeer`'s real 20 Hz
-    /// `peer.tick(now: ClockSync.hostNow())` timer, and there is no seam to
-    /// suppress it. Feeding the same `PeerSession` a synthetic near-zero `t`
-    /// and then letting that real timer fire with a huge real host-uptime
-    /// `t` would make `tick()`'s `t - lastPeerActivityAt > heartbeatTimeout`
-    /// check see an enormous jump and degrade the link before anything could
-    /// ever observe `.ready`. Spinning the real run loop instead — as
-    /// `testPairIsReenabledAfterAPairingFailure` above already does — lets
-    /// the real timer do all of the ticking, in one consistent time domain,
-    /// exactly as production does.
+    /// The handshake itself — and the reasoning about why it spins the real
+    /// run loop instead of hand-ticking a synthetic clock — lives in
+    /// `handshake(...)` below, which a test can also run a second time on
+    /// these same models to re-pair them.
+    ///
     /// `pair` (the raw `LoopbackTransport` half-pair) comes along too, past
-    /// the point where this method's own use of `controlDeliveryHook` has
-    /// been cleared (`nil`ed out below once the buffered hellos are
-    /// released) — so a caller can install its own hook afterward, e.g. to
-    /// count wire frames, without stepping on setup's.
+    /// the point where `handshake(...)`'s own use of `pair.0`'s
+    /// `controlDeliveryHook` has been cleared (`nil`ed out there once the
+    /// buffered hellos are released) — so a caller can install its own hook
+    /// on that half afterward, e.g. to count wire frames, without stepping on
+    /// setup's. `pair.1`'s hook is deliberately *not* free: `handshake(...)`
+    /// leaves the `.calibration` counter installed on it (see `calibrations`).
     private func makePairedRig() async -> (primary: LiveSessionModel, secondary: LiveSessionModel,
                                             primaryRecord: RecordModel, secondaryRecord: RecordModel,
-                                            pair: (LoopbackTransport, LoopbackTransport)) {
+                                            pair: (LoopbackTransport, LoopbackTransport),
+                                            calibrations: CalibrationCounter) {
         let pair = LoopbackTransport.pair()
-
-        // beginPairing() constructs the PeerSession and calls its start()
-        // (which sends this side's hello) in one call. Whichever model's
-        // primaryTapped() below runs first would fire its hello before the
-        // other side's PeerSession — and its transport.onControl — exists to
-        // receive it; LoopbackTransport does not buffer, so an unwired
-        // onControl just drops the frame. Buffer both directions until both
-        // sessions exist, then release together, so neither hello is lost.
-        // (PairingModelTests.makeRig() sidesteps the same hazard by
-        // constructing both PeerSessions before calling either start(); that
-        // seam isn't reachable through LiveSessionModel's public surface, so
-        // this reproduces the same effect with a delivery hook instead.)
-        var buffered: [() -> Void] = []
-        pair.0.controlDeliveryHook = { frame, deliver in buffered.append { deliver(frame) } }
-        pair.1.controlDeliveryHook = { frame, deliver in buffered.append { deliver(frame) } }
-
         let (primary, _) = makeModel(makeTransport: { _ in pair.0 })
         let (secondary, _) = makeModel(makeTransport: { _ in pair.1 })
         // No detector needed anywhere in this rig, and `SyntheticBallDetector`
@@ -604,38 +796,9 @@ final class LiveSessionModelTests: XCTestCase {
         primary.role = .primary
         secondary.role = .secondary
 
-        primary.primaryTapped()    // beginPairing(): builds + starts the primary session
-        secondary.primaryTapped()  // beginPairing(): builds + starts the secondary session
-
-        pair.0.controlDeliveryHook = nil
-        pair.1.controlDeliveryHook = nil
-        let queuedHellos = buffered
-        buffered = []
-        for send in queuedHellos { send() }
-
-        // Pull `pairing.step` up to date with the session's real phase
-        // (already `.confirming` on both sides now that the hellos landed)
-        // before deciding whether to confirm — `primaryTapped()`'s `.confirm`
-        // branch reads `pairing.step`, and nothing has resynced it yet.
-        primary.pairing.refresh()
-        secondary.pairing.refresh()
-        if case .confirm = primary.pairing.step { primary.primaryTapped() }
-        if case .confirm = secondary.pairing.step { secondary.primaryTapped() }
-
-        let deadline = Date().addingTimeInterval(5.0)
-        var reachedReady = false
-        while true {
-            let primaryReady: Bool = { if case .ready = primary.pairing.step { return true }; return false }()
-            let secondaryReady: Bool = { if case .ready = secondary.pairing.step { return true }; return false }()
-            if primaryReady, secondaryReady,
-               primary.sessionID != nil, secondary.sessionID == primary.sessionID {
-                reachedReady = true
-                break
-            }
-            guard Date() < deadline else { break }
-            RunLoop.main.run(until: Date().addingTimeInterval(0.02))
-        }
-
+        let calibrations = CalibrationCounter()
+        let reachedReady = await handshake(primary: primary, secondary: secondary,
+                                           pair: pair, calibrations: calibrations)
         // Assert the setup's own postcondition here, rather than letting a
         // broken pairing fall through to whatever assertion the calling
         // test happens to make first: that produces a confusing failure
@@ -650,6 +813,107 @@ final class LiveSessionModelTests: XCTestCase {
                 """)
         }
 
-        return (primary, secondary, primaryRecord, secondaryRecord, pair)
+        return (primary, secondary, primaryRecord, secondaryRecord, pair, calibrations)
+    }
+
+    /// The pairing handshake itself: PAIR on both models, exchange hellos,
+    /// confirm, and spin the real run loop until both sides are `.ready` and
+    /// share a `sessionID`. Returns whether that happened before the deadline.
+    ///
+    /// Extracted from `makePairedRig` so a test can run it a *second* time
+    /// against the same two models after `endSession()`. That re-pairing is
+    /// the only way to observe from outside that the once-per-session
+    /// calibration guard really resets — the flag itself is private, and a
+    /// second fresh rig would prove nothing (its flag starts clear anyway).
+    /// Reusing the same `LoopbackTransport` pair is sound: it is stateless
+    /// (`stop()` only emits `.disconnected`, nothing latches), each new
+    /// `PeerSession`'s `init` re-points `onControl`/`onStateChange` at itself,
+    /// and `start()` re-emits `.connected` — so a second pairing genuinely
+    /// runs the whole handshake again.
+    ///
+    /// beginPairing() constructs the PeerSession and calls its start()
+    /// (which sends this side's hello) in one call. Whichever model's
+    /// primaryTapped() below runs first would fire its hello before the
+    /// other side's PeerSession — and its transport.onControl — exists to
+    /// receive it; LoopbackTransport does not buffer, so an unwired
+    /// onControl just drops the frame. Buffer both directions until both
+    /// sessions exist, then release together, so neither hello is lost.
+    /// (PairingModelTests.makeRig() sidesteps the same hazard by
+    /// constructing both PeerSessions before calling either start(); that
+    /// seam isn't reachable through LiveSessionModel's public surface, so
+    /// this reproduces the same effect with a delivery hook instead.)
+    ///
+    /// Does NOT hand-tick a synthetic clock the way `StereoWiringTests`/
+    /// `PairingModelTests` do (`for _ in 0..<40 { t += 0.1; ...tick... }`).
+    /// `beginPairing()` — reachable only through the public `primaryTapped()`
+    /// — unconditionally starts `RecordModel.attachPeer`'s real 20 Hz
+    /// `peer.tick(now: ClockSync.hostNow())` timer, and there is no seam to
+    /// suppress it. Feeding the same `PeerSession` a synthetic near-zero `t`
+    /// and then letting that real timer fire with a huge real host-uptime
+    /// `t` would make `tick()`'s `t - lastPeerActivityAt > heartbeatTimeout`
+    /// check see an enormous jump and degrade the link before anything could
+    /// ever observe `.ready`. Spinning the real run loop instead — as
+    /// `testPairIsReenabledAfterAPairingFailure` above already does — lets
+    /// the real timer do all of the ticking, in one consistent time domain,
+    /// exactly as production does.
+    private func handshake(primary: LiveSessionModel, secondary: LiveSessionModel,
+                           pair: (LoopbackTransport, LoopbackTransport),
+                           calibrations: CalibrationCounter) async -> Bool {
+        var buffered: [() -> Void] = []
+        pair.0.controlDeliveryHook = { frame, deliver in buffered.append { deliver(frame) } }
+        pair.1.controlDeliveryHook = { frame, deliver in buffered.append { deliver(frame) } }
+
+        primary.primaryTapped()    // beginPairing(): builds + starts the primary session
+        secondary.primaryTapped()  // beginPairing(): builds + starts the secondary session
+
+        pair.0.controlDeliveryHook = nil
+        // Counts what the secondary actually puts on the wire, installed here
+        // rather than left to the calling test: the calibration goes out
+        // during the wait loop below (`republish()` sends it the moment the
+        // secondary's own pump observes `.ready`), so a hook installed after
+        // this method returned would count zero and prove nothing.
+        pair.1.controlDeliveryHook = { frame, deliver in
+            if let message = ControlMessage.decode(frame),
+               case .calibration(let profileID, let payloadJSON) = message {
+                calibrations.record(profileID: profileID, payloadJSON: payloadJSON)
+            }
+            deliver(frame)
+        }
+        let queuedHellos = buffered
+        buffered = []
+        for send in queuedHellos { send() }
+
+        // Pull `pairing.step` up to date with the session's real phase
+        // (already `.confirming` on both sides now that the hellos landed)
+        // before deciding whether to confirm — `primaryTapped()`'s `.confirm`
+        // branch reads `pairing.step`, and nothing has resynced it yet.
+        primary.pairing.refresh()
+        secondary.pairing.refresh()
+        if case .confirm = primary.pairing.step { primary.primaryTapped() }
+        if case .confirm = secondary.pairing.step { secondary.primaryTapped() }
+
+        let deadline = Date().addingTimeInterval(5.0)
+        while true {
+            let primaryReady: Bool = { if case .ready = primary.pairing.step { return true }; return false }()
+            let secondaryReady: Bool = { if case .ready = secondary.pairing.step { return true }; return false }()
+            if primaryReady, secondaryReady,
+               primary.sessionID != nil, secondary.sessionID == primary.sessionID {
+                return true
+            }
+            guard Date() < deadline else { return false }
+            RunLoop.main.run(until: Date().addingTimeInterval(0.02))
+        }
+    }
+
+    /// Spins the real run loop with nothing to wait for, so the 0.05 s
+    /// republish pump gets many chances to do something it must not do.
+    /// `settleCrossModelDelivery` cannot express that: it returns on its first
+    /// pass when the condition is already true, which for a "must not happen"
+    /// assertion is zero pump ticks of evidence.
+    private func spinPump(seconds: TimeInterval) {
+        let deadline = Date().addingTimeInterval(seconds)
+        while Date() < deadline {
+            RunLoop.main.run(until: Date().addingTimeInterval(0.01))
+        }
     }
 }

@@ -89,6 +89,21 @@ final class LiveSessionModel: ObservableObject {
     private weak var record: RecordModel?
     private var session: PeerSession?
     private var localModelJSON: String?
+    /// Names *which* calibration `localModelJSON` was solved from: the server
+    /// run ID `prepare()` already has in hand, prefixed so the value is
+    /// self-describing on the wire and in a log.
+    ///
+    /// The receiving side ignores it today (`RecordModel.attachStereo`'s
+    /// `onCalibration` handler binds it to `_`), so this is chosen to be
+    /// *honest* rather than load-bearing. The spec's eventual identity for
+    /// this field is a per-fin `camera_id` like `"<court>-left-fin"` — an
+    /// optional calibration-v2 field that nothing in this client stores yet,
+    /// so inventing one here would be a label with no provenance behind it.
+    /// The calibration run ID is provenance this phone genuinely has.
+    private var localProfileID: String?
+    /// Whether this session's one `.calibration` exchange has already gone
+    /// out. Cleared wherever `session` is assigned — see `republish()`.
+    private var didSendCalibration = false
     private var pumpTimer: Timer?
     private var isPreparing = false
 
@@ -144,7 +159,13 @@ final class LiveSessionModel: ObservableObject {
             let json = try await api.fetchSolvedCameraModel(calibrationJSON: latest.calibrationJSON)
             guard let data = json.data(using: .utf8) else { throw APIError.badResponse }
             _ = try CameraModel.fromJSON(data).adoptedForCapture()
+            // `json`, not the adopted model: this is the string both
+            // `record.attachStereo(localModelJSON:)` and (on the secondary)
+            // the `.calibration` message carry, and the receiving side runs
+            // its own `adoptedForCapture()` against its own capture space.
+            // Sending an already-adopted model would be adopting it twice.
             localModelJSON = json
+            localProfileID = "calibration-run-\(latest.runID)"
             calibration = .ready
         } catch {
             // §16 shows a failure reason verbatim, so prefer the server's own
@@ -180,6 +201,16 @@ final class LiveSessionModel: ObservableObject {
                                   isInitiator: role == .primary,
                                   orientation: record.camera.orientation)
         self.session = session
+        // Arms this session's one calibration exchange (see `republish()`).
+        // Cleared at *both* sites that assign `self.session` — here and
+        // `endSession()` — because the two are not the same event and only
+        // one of them is reachable on the retry path: `primaryTapped()`'s
+        // `.failed` branch builds a fresh session straight through here
+        // without `endSession()` running first. A secondary that had already
+        // sent on the session that then failed must send again on the new
+        // one, or the retry pairs successfully and still never enables
+        // START RALLY.
+        didSendCalibration = false
         // Order is load-bearing: attachStereo installs peer.onCalibration, so
         // attachPeer's `self.peer = peer` has to happen first, and
         // attachPeer/attachStereo/onRecord/onSessionManifest must *all*
@@ -277,6 +308,14 @@ final class LiveSessionModel: ObservableObject {
         rally = .idle
         sessionID = nil
         peerVideoID = nil
+        // And the calibration exchange, for the same reason and by the same
+        // rule as `sessionID` above: it belonged to the session that just
+        // ended. `record?.detachPeer()` a few lines up threw away the
+        // primary's `StereoEngine` and its `localModel`, so a re-pairing that
+        // did not send again would leave `engineReady` false forever and
+        // START RALLY permanently disabled — the exact dead end this send
+        // exists to close, merely deferred by one pairing.
+        didSendCalibration = false
         // No direct `showsLocalStop = false` here: republish() below
         // recomputes it from `rally` (now `.idle`) on the very next line, so
         // a second writer here would just be the "last one wins" pattern
@@ -632,6 +671,37 @@ final class LiveSessionModel: ObservableObject {
             let minted = UUID().uuidString
             sessionID = minted
             session?.sendSessionManifest(sessionID: minted, videoID: "")
+        }
+
+        // The secondary's half of the same once-per-session pattern, and the
+        // one thing that makes a paired rally possible at all: this message
+        // is what builds the primary's `StereoEngine`
+        // (`RecordModel.attachStereo`'s `onCalibration` handler), which fires
+        // `onStereoReady`, which sets `engineReady`, which is half of
+        // `computedPrimaryEnabled`'s `.ready` case. Without it START RALLY
+        // never enables on real hardware and no rally can ever begin.
+        //
+        // `.ready` is the earliest correct moment as well as the specified
+        // one: `PeerSession.sendCalibration` gates on `.live || .ready` and
+        // silently drops anything sent before that.
+        //
+        // Exactly once, by the same construction as the mint above — the
+        // flag is set synchronously with the send, with no `await` between,
+        // so the very next 20 Hz republish() takes neither branch. The flag
+        // is also what makes *returning* to `.ready` a no-op rather than a
+        // re-send: `endRally()` puts the session back to `.ready` after every
+        // rally, and the primary's engine already exists by then. It is
+        // cleared only where `self.session` is assigned (`beginPairing()`,
+        // `endSession()`), never by a phase change, so "ready again" is never
+        // mistaken for "first ready".
+        //
+        // On the secondary the session in fact never leaves `.ready` at all —
+        // only the primary calls `goLive()` — so this guard is load-bearing
+        // for the whole length of every rally, not just at the seam.
+        if role == .secondary, case .ready = pairing.step, !didSendCalibration,
+           let localModelJSON, let localProfileID {
+            didSendCalibration = true
+            session?.sendCalibration(profileID: localProfileID, payloadJSON: localModelJSON)
         }
         updateShowsLocalStop(degraded: isPairingDegraded)
         updateShowsStop()
