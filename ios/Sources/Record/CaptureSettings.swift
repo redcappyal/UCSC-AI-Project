@@ -34,43 +34,58 @@ enum CaptureSettings {
     static let sensorWidth = 3840
     static let sensorHeight = 2160
 
-    /// Portrait frame geometry — the space every consumer works in, because
-    /// the video connection rotates 90 degrees. Overlay mapping, peer
-    /// detection tuples and the asset writer all key off these.
+    /// Landscape frame geometry — the space every consumer works in. Overlay
+    /// mapping, peer detection tuples and the asset writer all key off these.
     ///
-    /// This stays the default (handheld) geometry. A back-wall mount holds
-    /// the phone landscape instead, where the sensor's native readout is
-    /// already upright and rotation would only cost a copy — see
-    /// `CaptureOrientation` below for the per-mount alternative.
-    static let frameWidth = sensorHeight
-    static let frameHeight = sensorWidth
+    /// Capture is always landscape: the phone sits on its side in a back-wall
+    /// mount, where the sensor's readout is already the right way round.
+    /// Both mounts (see `CaptureOrientation`) produce these same dimensions,
+    /// because `rotationAngle(for:)` normalizes the frame upright either way.
+    static let frameWidth = sensorWidth
+    static let frameHeight = sensorHeight
 
-    /// Handheld vs. mounted capture. The two phones in a paired session MUST
-    /// agree: detection tuples are expressed in `frameSize(for:)`'s space, and
-    /// a mismatched pair would triangulate transposed coordinates into
-    /// confident, silently wrong line calls. `PeerSession` enforces this at
-    /// handshake — see its `.hello` handler.
-    enum CaptureOrientation { case portrait, landscapeRight }
+    /// Which way the phone sits in its mount. The cases differ only in which
+    /// end the lens is at, which is what decides the rotation needed to bring
+    /// the frame upright.
+    ///
+    /// The two phones in a paired session MUST agree. Both cases yield the
+    /// same `frameSize(for:)`, so dimensions alone cannot tell them apart —
+    /// which is why the mount travels explicitly in `Hello.captureOrientation`.
+    /// `PeerSession` compares it against its own hello at handshake and
+    /// refuses a mismatched pair rather than absorbing it, so the operator
+    /// learns the mount is wrong instead of the archive inheriting it.
+    ///
+    /// The capture side is wired to it on the live path:
+    /// `LiveSessionModel.beginPairing()` builds its `PeerSession` with
+    /// `record.camera.orientation`, so this phone's real mount is what goes
+    /// on the wire. One caveat, tracked in `ios/PEER.md`: that read happens at
+    /// pairing time, when only `startCamera`'s unpinned guess exists — a
+    /// mount flipped between pairing and the first START RALLY is committed by
+    /// `RecordModel.applyRecording` but not re-advertised.
+    enum CaptureOrientation: String, Codable, Equatable, CaseIterable {
+        case landscapeRight, landscapeLeft
+    }
 
-    /// Rotation applied to the video connection: 90 for portrait (the sensor
-    /// reads out landscape and rotation stands it upright), 0 for
-    /// landscape-right (a landscape mount matches the sensor's native
-    /// readout, so no rotation is needed).
+    /// Rotation applied to the video connection so the recorded frame comes
+    /// out absolute-upright whichever way the phone is mounted: 0 for
+    /// landscape-right (the sensor's native readout), 180 for landscape-left
+    /// (that same readout upside down).
+    ///
+    /// Normalizing here rather than downstream is what keeps solo footage —
+    /// which is also the training archive — the right way up when there is no
+    /// peer to catch a wrong mount.
     static func rotationAngle(for orientation: CaptureOrientation) -> CGFloat {
         switch orientation {
-        case .portrait: return 90
         case .landscapeRight: return 0
+        case .landscapeLeft: return 180
         }
     }
 
-    /// Frame geometry in the orientation's own space — what the video
-    /// connection and asset writer actually produce once `rotationAngle(for:)`
-    /// has been applied.
+    /// Frame geometry the video connection and asset writer actually produce
+    /// once `rotationAngle(for:)` has been applied. Identical for both mounts
+    /// by design — that is what normalization buys.
     static func frameSize(for orientation: CaptureOrientation) -> (width: Int, height: Int) {
-        switch orientation {
-        case .portrait: return (frameWidth, frameHeight)
-        case .landscapeRight: return (sensorWidth, sensorHeight)
-        }
+        (frameWidth, frameHeight)
     }
 
     static let frameRate: Double = 60

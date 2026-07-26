@@ -18,11 +18,30 @@ final class CameraController: NSObject {
     }
 
     let session = AVCaptureSession()
-    /// Handheld vs. mounted capture — set before `configure()` runs, since it
-    /// drives both the video connection's rotation and the asset writer's
-    /// dimensions below. Defaults to `.portrait` (today's handheld behaviour,
-    /// unchanged).
-    var orientation: CaptureSettings.CaptureOrientation = .portrait
+    /// Which way the phone sits in its mount — the source of truth for both
+    /// the video connection's rotation and the asset writer's dimensions
+    /// below. `updateOrientation(_:)` below is the ONLY writer, always on
+    /// `sessionQueue` — `RecordModel` never assigns this property directly,
+    /// so there is one write path, not a direct write from the main actor
+    /// racing a queued one.
+    ///
+    /// `RecordModel.startCamera` calls `updateOrientation(_:)` with an
+    /// initial guess before `configure()` runs, purely so the preview and
+    /// the court-exposure meter have something sensible to work with — that
+    /// value is deliberately NOT pinned, which is what lets the Play tab
+    /// stay at both-landscape (`.landscape`) through the whole framing
+    /// window. `RecordModel.applyRecording`'s start path is what actually
+    /// commits to a mount: it re-resolves the interface orientation at
+    /// record start and calls `updateOrientation(_:)` again — this has to
+    /// land before `startRecording()` sizes the asset writer, so it comes
+    /// first — but the orientation mask is only pinned, and this model's own
+    /// `captureOrientation` only assigned, AFTER `startRecording()` actually
+    /// succeeds; a failed start reverts this property back rather than leave
+    /// it describing a recording that never began. Either caller can also
+    /// leave this at its PREVIOUS value rather than the one it asked for, if
+    /// the connection can't support the requested angle — see
+    /// `updateOrientation(_:)`'s return value for when and why.
+    var orientation: CaptureSettings.CaptureOrientation = .landscapeRight
     /// Every video frame, on the output queue. RecordView wires this to
     /// BallTracker.process.
     var onVideoSample: ((CVPixelBuffer, TimeInterval) -> Void)?
@@ -124,8 +143,9 @@ final class CameraController: NSObject {
         }
 
         if let connection = videoOutput.connection(with: .video) {
-            // Portrait upright to match the locked UI orientation, or 0 for a
-            // landscape mount, whose sensor readout is already upright.
+            // 0 for landscape-right (the sensor's native readout) or 180 for
+            // landscape-left (that readout upside down) — see
+            // CaptureSettings.rotationAngle(for:).
             let angle = CaptureSettings.rotationAngle(for: orientation)
             if connection.isVideoRotationAngleSupported(angle) {
                 connection.videoRotationAngle = angle
@@ -136,6 +156,68 @@ final class CameraController: NSObject {
             // solve. A calibrated camera has to stay geometrically rigid.
             if connection.isVideoStabilizationSupported {
                 connection.preferredVideoStabilizationMode = .off
+            }
+        }
+    }
+
+    /// Re-resolves `orientation`, applying the matching rotation to the live
+    /// video connection when one already exists — the counterpart to
+    /// `configureSession()`'s one-time `videoRotationAngle` set above, needed
+    /// now that the mount can be chosen again at record start
+    /// (`RecordModel.applyRecording`) rather than only once, before
+    /// `configure()` ever runs. This is also the ONLY writer of `orientation`
+    /// (see its doc) — `RecordModel.startCamera`'s pre-configure seed goes
+    /// through here too, not a direct assignment, so every write is
+    /// `sessionQueue`-confined rather than a mix of that and the main actor.
+    ///
+    /// Two outcomes, both deliberate:
+    /// - **No live connection yet** (`configure()` hasn't run — this is
+    ///   `startCamera`'s pre-configure seed): there is nothing to apply or
+    ///   diverge from, so this simply records `newOrientation` and returns
+    ///   `true`. `configureSession()` reads `orientation` to set the
+    ///   connection's INITIAL rotation once it runs.
+    /// - **A connection exists:** `isVideoRotationAngleSupported` is checked
+    ///   FIRST, not as a courtesy. Setting an unsupported `videoRotationAngle`
+    ///   directly is a programmer error AVFoundation raises on — the opposite
+    ///   of a silent no-op — so this guard is what keeps that from crashing a
+    ///   connection that genuinely cannot rotate to the requested angle. If
+    ///   unsupported, `orientation` is left at its PREVIOUS value and this
+    ///   returns `false`: updating it while the connection kept the old
+    ///   rotation would be exactly the divergence this whole change exists to
+    ///   prevent. If supported, the connection is rotated, `orientation` is
+    ///   updated to match, and this returns `true`.
+    ///
+    /// AVFoundation allows setting `videoRotationAngle` on a running
+    /// connection at any time — no `beginConfiguration()`/
+    /// `commitConfiguration()` bracket needed, unlike adding or removing
+    /// inputs and outputs — but the connection is still session state, so
+    /// the mutation goes through `sessionQueue` like every other touch of
+    /// `session` in this file.
+    ///
+    /// Callers that need the connection correct before their next step
+    /// (`applyRecording` awaits this, checks the `Bool`, and only then calls
+    /// `startRecording()`, which reads `orientation` synchronously to size
+    /// the asset writer — the mask is pinned later still, only once that
+    /// recording actually starts) can await it and act on the result: it only
+    /// returns once the change has actually applied on `sessionQueue` — or
+    /// definitively failed to — not merely been scheduled.
+    @discardableResult
+    func updateOrientation(_ newOrientation: CaptureSettings.CaptureOrientation) async -> Bool {
+        await withCheckedContinuation { (continuation: CheckedContinuation<Bool, Never>) in
+            sessionQueue.async {
+                guard let connection = self.videoOutput.connection(with: .video) else {
+                    self.orientation = newOrientation
+                    continuation.resume(returning: true)
+                    return
+                }
+                let angle = CaptureSettings.rotationAngle(for: newOrientation)
+                guard connection.isVideoRotationAngleSupported(angle) else {
+                    continuation.resume(returning: false)
+                    return
+                }
+                connection.videoRotationAngle = angle
+                self.orientation = newOrientation
+                continuation.resume(returning: true)
             }
         }
     }
@@ -239,8 +321,9 @@ final class CameraController: NSObject {
             .appendingPathComponent("rally-\(Int(Date().timeIntervalSince1970)).mp4")
         let writer = try AVAssetWriter(outputURL: url, fileType: .mp4)
 
-        // Same orientation the video connection was rotated for above: 4K
-        // rotated upright in portrait, or the sensor's native 4K landscape.
+        // Same geometry for both mounts (CaptureSettings.frameSize(for:)):
+        // rotationAngle(for:) above already normalizes the frame upright
+        // either way, so the writer always sees 4K landscape.
         let frameSize = CaptureSettings.frameSize(for: orientation)
         let video = AVAssetWriterInput(mediaType: .video, outputSettings: [
             AVVideoCodecKey: CaptureSettings.videoCodec,

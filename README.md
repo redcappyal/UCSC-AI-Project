@@ -92,8 +92,9 @@ the built-in local coaching template and displays the reason.
 .venv/bin/python -m pytest tests/ -q
 ```
 
-348 tests, about a minute. They run without the model runtime — `requirements-test.txt` is
-the light dependency set CI installs, and it deliberately excludes `inference`/torch.
+394 tests, about 30 seconds. They run without the model runtime — `requirements-test.txt` is
+the light dependency set CI installs, and it deliberately excludes `inference`/torch. The
+stereo detector's one real-model test is marked `requires_model` and deselected by default.
 
 ---
 

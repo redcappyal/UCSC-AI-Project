@@ -308,9 +308,15 @@ final class LiveSessionModel: ObservableObject {
         #else
         let transport = makeTransport("ble")
         #endif
+        // The session's real mount, not the `.landscapeRight` default: the
+        // handshake guard compares `captureOrientation` explicitly (both
+        // mounts share one frame size, so dimensions alone cannot tell a
+        // landscape-left phone from a landscape-right one), and it can only
+        // catch a genuinely mixed pair if what each phone advertises is what
+        // it is actually capturing in.
         let session = PeerSession(transport: transport,
                                   isInitiator: role == .primary,
-                                  orientation: record.camera.orientation)
+                                  captureOrientation: record.camera.orientation)
         self.session = session
         // Fresh per pairing, and never reused: `armRallyIdentity()` prefixes
         // every rally id with it, so ids minted by two different pairings

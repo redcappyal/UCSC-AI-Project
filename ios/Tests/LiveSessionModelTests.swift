@@ -7,22 +7,26 @@ import XCTest
 /// `LiveSessionModel` (it only calls `latestCalibration` and
 /// `fetchSolvedCameraModel`), so they throw loudly rather than fake success.
 ///
-/// Deliberately NOT `StereoDemo.localModelJSON`: that fixture is pinned to its
-/// own 1920x1080 landscape aspect (its doc comment: used *unadopted*, because
-/// `adoptedForCapture()` would throw for it). `LiveSessionModel.prepare()`
-/// calls `adoptedForCapture()`, which always targets
-/// `CaptureSettings.frameWidth x frameHeight` (2160x3840, portrait). A
-/// landscape fixture would make every "calibration ready" test fail with
-/// `ScaleError.aspectMismatch` instead of reaching `.ready`.
-/// `adoptableCameraModelJSON` below uses the same 1080x1920 portrait aspect
+/// `LiveSessionModel.prepare()` calls `adoptedForCapture()`, which always
+/// targets `CaptureSettings.frameWidth x frameHeight` — now 3840x2160,
+/// landscape, since capture is landscape-only. A fixture of any other aspect
+/// makes every "calibration ready" test fail with `ScaleError.aspectMismatch`
+/// instead of reaching `.ready`, so `adoptableCameraModelJSON` below is the
+/// same 1920x1080 16:9 source
 /// `CameraFrameSpaceTests.testAdoptedForCaptureLandsInTheLivePixelSpace`
-/// already proves adopts cleanly (a clean 2x scale to 2160x3840).
+/// already proves adopts cleanly (a clean 2x scale to 3840x2160). It was a
+/// 1080x1920 portrait model until capture flipped to landscape.
+///
+/// Deliberately still a fixture of its own rather than `StereoDemo`'s pair:
+/// those two are the *geometry* goldens, used unadopted on purpose, and
+/// borrowing one here would couple this suite's calibration gate to whatever
+/// the stereo goldens do next.
 private struct StubAPI: APIClientProtocol {
     static let adoptableCameraModelJSON = """
-    {"focal_px":1600.0,"center_px":[1080.0,1920.0],\
+    {"focal_px":1600.0,"center_px":[960.0,540.0],\
     "rotation":[[1.0,0.0,0.0],[0.0,1.0,0.0],[0.0,0.0,1.0]],\
     "camera_center_ft":[9.0,31.95,7.0],"distortion":null,\
-    "frame_width":1080.0,"frame_height":1920.0}
+    "frame_width":1920.0,"frame_height":1080.0}
     """
 
     private static let fixtureCalibration = try! LatestCalibration(responseData: Data(
@@ -221,10 +225,15 @@ final class LiveSessionModelTests: XCTestCase {
 
     /// DESIGN.md §16's `p-pair` table: `Failed → PAIR (retry)`. Reached via
     /// the real failure that motivated the fix — `PeerSession`'s
-    /// capture-orientation guard — by pairing this model's session (built
-    /// portrait, via `beginPairing()`) against a hand-built secondary that
-    /// advertises `.landscapeRight` instead. Both ends independently reject
-    /// the other's hello, so no cooperation from a "remote app" is needed.
+    /// capture-orientation guard — by pairing this model's session against a
+    /// hand-built secondary mounted the other way round. `beginPairing()`
+    /// builds its session from `record.camera.orientation`, which for a
+    /// `RecordModel` that has never run `startCamera()` is
+    /// `CameraController`'s `.landscapeRight` default, so the secondary is
+    /// built `.landscapeLeft` to mismatch it. Both mounts share one frame
+    /// size, so it is `Hello.captureOrientation` — not the dimensions — that
+    /// this trips. Both ends independently reject the other's hello, so no
+    /// cooperation from a "remote app" is needed.
     ///
     /// `primaryTitle`/`primaryEnabled` are cached by `republish()`, a private
     /// method only invoked from a few call sites — notably `startPump()`'s
@@ -245,12 +254,12 @@ final class LiveSessionModelTests: XCTestCase {
         // Wired before the primary session exists, so its hello (sent by
         // beginPairing() below) is not lost to an unwired `onControl`.
         let secondary = PeerSession(transport: pair.1, isInitiator: false,
-                                    orientation: .landscapeRight)
+                                    captureOrientation: .landscapeLeft)
 
-        model.primaryTapped()   // beginPairing(): builds the primary session (portrait)
-                                 // and starts its 0.05 s pump
-        secondary.start()       // sends the secondary's (landscape) hello — the primary
-                                 // rejects it as an orientation mismatch and fails
+        model.primaryTapped()   // beginPairing(): builds the primary session
+                                // (.landscapeRight) and starts its 0.05 s pump
+        secondary.start()       // sends the secondary's .landscapeLeft hello — the
+                                // primary rejects it as a mount mismatch and fails
 
         let deadline = Date().addingTimeInterval(2.0)
         while true {

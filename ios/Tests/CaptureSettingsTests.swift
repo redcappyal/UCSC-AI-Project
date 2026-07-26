@@ -128,15 +128,4 @@ final class CaptureSettingsTests: XCTestCase {
         XCTAssertTrue(summary.contains("ISO 2500"), summary)
         XCTAssertTrue(summary.lowercased().contains("dim"), summary)
     }
-
-    // MARK: portrait geometry
-
-    func testPortraitFrameSizeIsTheRotatedSensorSize() {
-        // Everything downstream (overlay, peer tuples, writer) works in the
-        // rotated space; the 90 degree connection rotation is what makes it so.
-        XCTAssertEqual(CaptureSettings.frameWidth, CaptureSettings.sensorHeight)
-        XCTAssertEqual(CaptureSettings.frameHeight, CaptureSettings.sensorWidth)
-        XCTAssertEqual(CaptureSettings.frameWidth, 2160)
-        XCTAssertEqual(CaptureSettings.frameHeight, 3840)
-    }
 }

@@ -10,6 +10,45 @@ final class LiveWiringTests: XCTestCase {
         XCTAssertNil(model.livePresentation)
     }
 
+    /// The invariant the original bug broke: RecordModel labelled every
+    /// detection tuple with hardcoded constants while PeerSession advertised
+    /// its own, so the space tuples were expressed in could disagree with the
+    /// space the peer was told to read them in.
+    ///
+    /// Be honest about the reach of this test. Both mounts currently yield the
+    /// same (3840, 2160) — `CaptureSettings.frameSize(for:)` ignores its
+    /// argument by design — so the frame-size assertions compare equal
+    /// constants today. What keeps them from being vacuous by construction is
+    /// that `model` and `session` derive the same arranged orientation (the
+    /// loop's `orientation`) through independent paths, rather than one side
+    /// reading the other's output: the model's path runs through its own
+    /// `init` and `detectionFrameSize`; the session's runs through its own
+    /// `init` and `advertisedHello`. Once `frameSize(for:)` distinguishes the
+    /// mounts, a break in how `captureOrientation` reaches
+    /// `detectionFrameSize` shows up as a mismatch here instead of being
+    /// masked by both sides reading the same subject twice.
+    ///
+    /// The mount assertion is the one that bites today: it fails if `init`
+    /// ignores the parameter, which is the wiring this task adds.
+    func testDetectionFrameSpaceMatchesTheAdvertisedHello() {
+        for orientation in CaptureSettings.CaptureOrientation.allCases {
+            let model = RecordModel(detector: nil, captureOrientation: orientation)
+            XCTAssertEqual(model.captureOrientation, orientation,
+                           "init must honour the requested mount")
+            let (transport, _) = LoopbackTransport.pair()
+            let session = PeerSession(transport: transport, isInitiator: true, now: { 0 },
+                                      captureOrientation: orientation)
+            XCTAssertEqual(model.detectionFrameSize.width,
+                           session.advertisedHello.frameW, "\(orientation)")
+            XCTAssertEqual(model.detectionFrameSize.height,
+                           session.advertisedHello.frameH, "\(orientation)")
+        }
+    }
+
+    func testCaptureOrientationDefaultsToLandscapeRight() {
+        XCTAssertEqual(RecordModel(detector: nil).captureOrientation, .landscapeRight)
+    }
+
     #if DEBUG
 
     // MARK: - The demo fixture's own geometry

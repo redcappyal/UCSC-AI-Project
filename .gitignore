@@ -55,6 +55,9 @@ venv/
 !requirements.txt
 !requirements-test.txt
 !README.md
+# pytest config (marker registration + default -m deselect); needed by
+# everyone running `pytest tests/`, not just CI.
+!pytest.ini
 # Offline label sets from label_hits.py: the CSV plus the sidecar that says
 # which video its frame numbers index into. Small, and the eval set needs them.
 # Exact suffix, so scratch copies ("wall_hits copy.csv") stay ignored.

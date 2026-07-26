@@ -20,7 +20,7 @@ The venv is `.venv`; everything runs through it. System `python3` has no flask o
 
 ```bash
 .venv/bin/python app.py                  # http://127.0.0.1:5188
-.venv/bin/python -m pytest tests/ -q     # 348 tests, ~35s
+.venv/bin/python -m pytest tests/ -q     # 394 tests, ~30s
 ```
 
 Editing a `*.py` that has a paired `tests/test_*.py` auto-runs that file (PostToolUse
@@ -54,3 +54,7 @@ Matches and Coach are webviews). Both talk to the same Flask pipeline.
 - Stereo math is implemented twice, Python and Swift, against one shared fixture. After
   changing `stereo_engine.py`, run `python tests/generate_stereo_goldens.py`; it rewrites
   both `tests/stereo_goldens.json` and `ios/Tests/Fixtures/stereo_goldens.json`.
+- `stereo_offline.py` defaults to a locally trained YOLOX ball detector
+  (`ball_model.py` + `ball_detector.py`), needing `models/crosscourt-ball-416-v1/`
+  (gitignored; export it with `export_ball_model.py` — see `ios/MODEL.md` §2b) and
+  `torch`. YOLOX itself stays training-only and never becomes a runtime dependency.

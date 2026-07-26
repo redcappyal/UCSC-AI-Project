@@ -55,12 +55,27 @@ Do not add it before approval — Automatic signing fails for everyone.
 
 ## Known limits (by design, Plan A)
 - Peer link does not survive backgrounding; keep both apps foregrounded.
-- Capture is 4K60: portrait 2160×3840 handheld, landscape 3840×2160 for a
-  mounted session (`CaptureSettings.CaptureOrientation`). **Both phones must
-  run the same orientation** — mixed orientations give transposed pixel
-  spaces that triangulate to plausible-looking nonsense. `PeerSession` now
-  advertises and checks `CaptureSettings.frameSize(for:)`, so a mismatched
-  pair fails the handshake instead of producing confident, wrong calls.
+- Capture is 4K60 landscape (3840x2160) in both mounts; `CaptureSettings.rotationAngle`
+  normalizes landscape-left upright with 180. **Both phones must run the same mount** —
+  `PeerSession` enforces it at handshake by comparing the peer's advertised frame size
+  AND `captureOrientation` against its own `myHello`, and refuses the pair otherwise.
+  A peer on a build predating the `captureOrientation` field advertises none, which cannot
+  match either mount and is refused with the same message. `peerProtoVersion`
+  deliberately stays at 1 so those peers reach this specific, actionable error instead of
+  a generic version mismatch.
+- The capture side **is** wired to this on the live path:
+  `LiveSessionModel.beginPairing()` builds its `PeerSession` with
+  `record.camera.orientation`, so each phone advertises the mount it is actually
+  capturing in. Two caveats, both real:
+  - The mount is read at *pairing* time, when only `startCamera`'s unpinned initial
+    guess exists. `RecordModel.applyRecording`'s start path re-resolves and pins the
+    mount at record start, and that later value is **not** re-advertised — so a phone
+    flipped between CONFIRM and the first START RALLY captures in one mount while
+    `Hello` still claims the other. The Play tab is landscape-locked throughout, so
+    this is a flip between the two landscapes, not a portrait excursion.
+  - `PeerBenchView`'s DEBUG session still takes the `.landscapeRight` default. It
+    never records, so nothing is mislabelled; it just means the bench cannot
+    exercise the mismatch path.
 - Detections flow one way (secondary → primary); events flow back in Phase 3.
 
 ## Live path (spec Phase 4)
@@ -79,23 +94,31 @@ writing locally.
 
 ### Bring-up without hardware
 
-There is a DEBUG stereo demo — the cube button on the record stage, under the
-peer-bench button. It builds a `StereoEngine` from the validated golden camera
-pair and drives it with a court-feet trajectory projected through both models,
-so the full engine → `CallPresentation` → flash/banner path runs on one device
-with no peer and no ball model. It should resolve to `IN · high confidence`.
+There is a DEBUG stereo demo — the cube button on `p-record` (Play → **Record a
+clip**). The peer bench is no longer next to it: it moved to the Play root's
+toolbar when `PlayRootView` took over the tab. The demo builds a `StereoEngine`
+from the validated golden camera pair and drives it with a court-feet
+trajectory projected through both models, so the full engine →
+`CallPresentation` → flash/banner path runs on one device with no peer and no
+ball model. It should resolve to `IN · high confidence`.
 
 That demo exercises everything except the radio and the camera. What it cannot
 tell you is whether the link, the clock sync, or a real detector work.
 
 ### Two-phone bring-up (needs the hardware)
 
-1. Same build on both phones, both mounted in the **same** orientation. A
-   mismatched pair now fails the handshake outright (see "Known limits"), and
-   the reason lands on the status row verbatim.
-2. A 4K calibration per phone, or an older one the adoption path can scale —
-   note that adoption refuses an aspect-ratio change rather than distorting
-   the model, so a portrait profile will not load for a landscape session.
+1. Same build on both phones, both in the **same** landscape mount — both
+   lenses at the same end. Capture is landscape-only now and the Play tab is
+   locked to it (`OrientationLock`), so the only way to get this wrong is to
+   mount one phone landscape-left and the other landscape-right. A mismatched
+   pair fails the handshake outright (see "Known limits"), and the reason lands
+   on the status row verbatim. Set the mount **before** tapping PAIR: the mount
+   that goes on the wire is the one resolved at pairing time.
+2. A 4K **landscape** calibration per phone, or an older one the adoption path
+   can scale — note that adoption refuses an aspect-ratio change rather than
+   distorting the model, so a portrait (9:16) profile will not load at all now
+   that capture targets 3840×2160. That is a change from before: portrait
+   profiles used to be the ones that worked.
 3. Both phones: Play tab → **Live match**. Entering `p-pair` fetches *this*
    phone's own solved camera model and validates that it can be adopted for
    capture. While that is in flight the row reads "Checking this phone's court
@@ -150,9 +173,13 @@ tell you is whether the link, the clock sync, or a real detector work.
 - The live path above has only ever run over `LoopbackTransport` in
   `LiveSessionModelTests`. The calibration exchange, the per-rally session
   identity, and the server-side fuse it feeds have never crossed a real radio.
-- The orientation guard is now *able* to fire, but both phones default to
-  `.portrait`, so nothing outside `CaptureOrientationTests` exercises it. It
-  becomes a real gate only when a landscape mount is exposed.
+- The mount guard has never been tried on two real phones. It is a genuine gate
+  now — the live path advertises `record.camera.orientation` and the guard
+  compares mounts explicitly — but the only coverage is `CaptureOrientationTests`
+  and `LiveSessionModelTests` over `LoopbackTransport`. Deliberately mis-mount
+  one phone during bring-up and confirm both refuse.
+- Nothing re-advertises the mount after pairing (see "Known limits"), so the
+  flip-after-CONFIRM case is untested and, today, undetected.
 - The Swift suite itself needs a Mac: `xcodebuild`/`xcodegen` do not exist on
   the Windows dev box, so nothing in `ios/` is compiled there. See
   `docs/superpowers/plans/2026-07-25-ios-live-entry-point-MAC-CHECKLIST.md`
