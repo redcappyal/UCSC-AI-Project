@@ -399,8 +399,15 @@ def test_update_job_persists_atomically(tmp_path):
             job_runner.JOBS.pop(run_id, None)
 
 
-def test_upload_dedup_and_track_validation():
+def test_upload_dedup_and_track_validation(tmp_path, monkeypatch):
     import app as app_module
+
+    # Uploads land under ui_runs/ otherwise, leaving strays in the checkout
+    # whenever an assertion fires before the hand-rolled cleanup. RUNS_DIR
+    # needs redirecting too: /api/track creates its run dir before it rejects
+    # an unknown video_id, so even the 404 case below leaves one behind.
+    monkeypatch.setattr(app_module, "BY_HASH_DIR", tmp_path / "by-hash")
+    monkeypatch.setattr(app_module, "RUNS_DIR", tmp_path / "runs")
 
     client = app_module.app.test_client()
 
@@ -428,56 +435,57 @@ def test_upload_dedup_and_track_validation():
 
     assert ids[0] == ids[1]
     matches = list(app_module.BY_HASH_DIR.glob(f"{ids[0]}.*"))
-    try:
-        assert len(matches) == 1
-        assert app_module.video_path_for_id(ids[0]) == matches[0]
-    finally:
-        for match in matches:
-            match.unlink()
+    assert len(matches) == 1
+    assert app_module.video_path_for_id(ids[0]) == matches[0]
 
     assert client.get("/api/track/status/does-not-exist").status_code == 404
 
 
-def test_ground_truth_save_and_fetch_roundtrip():
+def test_ground_truth_save_and_fetch_roundtrip(tmp_path, monkeypatch):
     import app as app_module
+
+    # Not just tidiness: the fetch below goes through the run-file route, whose
+    # send_from_directory response the test client never closes. On Windows the
+    # open handle blocks deleting the run dir, so a hand-rolled rmtree would
+    # leave ground_truth.json behind for the next session to trip over.
+    monkeypatch.setattr(app_module, "RUNS_DIR", tmp_path)
 
     client = app_module.app.test_client()
     run_id = "gt-route-test"
-    run_dir = app_module.RUNS_DIR / run_id
-    run_dir.mkdir(parents=True, exist_ok=True)
-    try:
-        response = client.post(f"/api/runs/{run_id}/ground_truth", json={
-            "events": [
-                {"frame": 60, "type": "wall"},
-                {"frame": 20, "type": "racket"},
-            ],
-        })
-        assert response.status_code == 200
-        assert response.get_json()["count"] == 2
+    (tmp_path / run_id).mkdir(parents=True, exist_ok=True)
 
-        fetched = client.get(f"/api/runs/{run_id}/ground_truth.json").get_json()
-        assert fetched["tolerance_frames"] == 1
-        # Events come back sorted by frame regardless of submitted order.
-        assert [e["frame"] for e in fetched["events"]] == [20, 60]
+    response = client.post(f"/api/runs/{run_id}/ground_truth", json={
+        "events": [
+            {"frame": 60, "type": "wall"},
+            {"frame": 20, "type": "racket"},
+        ],
+    })
+    assert response.status_code == 200
+    assert response.get_json()["count"] == 2
 
-        response = client.post(f"/api/runs/{run_id}/ground_truth", json={
-            "events": [{"frame": 5, "type": "volley_boast"}],
-        })
-        assert response.status_code == 400
+    fetched = client.get(f"/api/runs/{run_id}/ground_truth.json").get_json()
+    assert fetched["tolerance_frames"] == 1
+    # Events come back sorted by frame regardless of submitted order.
+    assert [e["frame"] for e in fetched["events"]] == [20, 60]
 
-        response = client.post("/api/runs/no-such-run/ground_truth", json={"events": []})
-        assert response.status_code == 404
-    finally:
-        import shutil
-        shutil.rmtree(run_dir, ignore_errors=True)
+    response = client.post(f"/api/runs/{run_id}/ground_truth", json={
+        "events": [{"frame": 5, "type": "volley_boast"}],
+    })
+    assert response.status_code == 400
+
+    response = client.post("/api/runs/no-such-run/ground_truth", json={"events": []})
+    assert response.status_code == 404
 
 
-def test_label_run_creation_from_uploaded_video(tmp_path):
-    import shutil
-
+def test_label_run_creation_from_uploaded_video(tmp_path, monkeypatch):
     import app as app_module
     import cv2
     import numpy as np
+
+    # The route creates its run dir under RUNS_DIR and resolves the video out
+    # of BY_HASH_DIR; both point into ui_runs/ unless redirected here.
+    monkeypatch.setattr(app_module, "RUNS_DIR", tmp_path / "runs")
+    monkeypatch.setattr(app_module, "BY_HASH_DIR", tmp_path / "by-hash")
 
     video_path = tmp_path / "tiny.mp4"
     # mp4v, not avc1: Linux opencv-python-headless ships no H.264 encoder,
@@ -501,25 +509,18 @@ def test_label_run_creation_from_uploaded_video(tmp_path):
             content_type="multipart/form-data",
         ).get_json()["video_id"]
 
-    run_dir = None
-    try:
-        data = client.post("/api/label_runs", json={"video_id": video_id}).get_json()
-        assert data["run_id"] == f"label-{video_id[:12]}"
-        assert data["label_only"] is True
-        assert data["start_frame"] == 0 and data["end_frame"] == 11
-        assert abs(data["fps"] - 30.0) < 0.1
+    data = client.post("/api/label_runs", json={"video_id": video_id}).get_json()
+    assert data["run_id"] == f"label-{video_id[:12]}"
+    assert data["label_only"] is True
+    assert data["start_frame"] == 0 and data["end_frame"] == 11
+    assert abs(data["fps"] - 30.0) < 0.1
 
-        run_dir = app_module.RUNS_DIR / data["run_id"]
-        meta = json.loads((run_dir / "label_run.json").read_text())
-        assert meta["video_path"].endswith(f"{video_id}.mp4")
+    run_dir = app_module.RUNS_DIR / data["run_id"]
+    meta = json.loads((run_dir / "label_run.json").read_text())
+    assert meta["video_path"].endswith(f"{video_id}.mp4")
 
-        # ground truth saves into the label-only run like any other run
-        response = client.post(f"/api/runs/{data['run_id']}/ground_truth", json={
-            "events": [{"frame": 6, "type": "wall"}],
-        })
-        assert response.status_code == 200
-    finally:
-        if run_dir is not None:
-            shutil.rmtree(run_dir, ignore_errors=True)
-        for stray in app_module.BY_HASH_DIR.glob(f"{video_id}.*"):
-            stray.unlink()
+    # ground truth saves into the label-only run like any other run
+    response = client.post(f"/api/runs/{data['run_id']}/ground_truth", json={
+        "events": [{"frame": 6, "type": "wall"}],
+    })
+    assert response.status_code == 200
