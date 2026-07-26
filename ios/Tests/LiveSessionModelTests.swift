@@ -393,6 +393,132 @@ final class LiveSessionModelTests: XCTestCase {
         XCTAssertEqual(rig.secondary.sessionID, rig.primary.sessionID)
     }
 
+    // MARK: - Task 10b: one pairing, many rallies
+
+    /// The one-rally-per-session dead end, end to end on the model.
+    ///
+    /// `startRally()` moved the peer session to `.live` and nothing ever moved
+    /// it back — `goLive()` was `.ready → .live` only, `tick`'s `.ready, .live`
+    /// branch never left `.live` except to degrade, and degrade-recovery
+    /// restored it. So from the first rally onward `computedPrimaryTitle`
+    /// returned "RALLY LIVE" and `computedPrimaryEnabled` returned `false`
+    /// permanently: no second rally, and no re-pair either (the `.live` case
+    /// short-circuits before `canPair` is consulted). `LiveSessionModel` is a
+    /// `@StateObject` on `PlayRootView`, so backing out to Play did not clear
+    /// it — only killing the app did.
+    ///
+    /// Rally 1 lands on `.failed("The rally produced no clip.")` rather than
+    /// `.submitted`, and that is not a weakness here: a test host has no
+    /// capture session, so `CameraController.stopRecording()` always ends in
+    /// `CameraError.recordingEmpty` and no clip is ever published (the same
+    /// reason `RecordModel.publishFinishedClipForTesting` exists). What this
+    /// test needs is only that the rally *ended* — every terminal outcome goes
+    /// through the same `finishRally`, which is where the session is released.
+    ///
+    /// `primaryEnabled` is deliberately not asserted: in `.ready` it also
+    /// requires `engineReady`, which is set from `RecordModel.onStereoReady` —
+    /// fired only when a peer `.calibration` message builds the StereoEngine,
+    /// and nothing in production sends one yet. That gap is orthogonal to this
+    /// fix, so asserting on it here would say nothing about it either way.
+    /// `primaryTitle` is the value that was actually stuck, so that is what is
+    /// asserted.
+    func testASecondRallyStartsOnTheSamePairing() async {
+        let rig = await makePairedRig()
+        let mintedSessionID = rig.primary.sessionID
+        XCTAssertNotNil(mintedSessionID, "setup: the primary mints one on reaching ready")
+
+        rig.primary.startRally()
+        await settleCrossModelDelivery(until: { rig.secondary.rally == .recording })
+        await settleCrossModelDelivery(until: { rig.primaryRecord.isRecording })
+        XCTAssertEqual(rig.primary.primaryTitle, "RALLY LIVE", "setup: rally 1 is live")
+        XCTAssertTrue(rig.primary.showsStop)
+
+        rig.primary.stopRally()
+        // Two settles rather than one: the camera stop and the 0.05 s pump that
+        // republishes `primaryTitle` from the refreshed `pairing.step` are
+        // separate waits, and one shared deadline would let a slow stop eat the
+        // budget for the title flip — the very thing under test.
+        await settleCrossModelDelivery(until: {
+            rig.primary.rally != .recording && rig.primary.rally != .submitting
+        })
+        await settleCrossModelDelivery(until: { rig.primary.primaryTitle == "START RALLY" })
+
+        XCTAssertEqual(rig.primary.primaryTitle, "START RALLY",
+                       "the pairing must offer the next rally, not strand on RALLY LIVE")
+        guard case .ready = rig.primary.pairing.step else {
+            return XCTFail("the session must be back to ready, got \(rig.primary.pairing.step)")
+        }
+        XCTAssertFalse(rig.primary.showsStop, "no rally is running, so there is nothing to stop")
+        XCTAssertFalse(rig.primary.showsLocalStop)
+        await settleCrossModelDelivery(until: { rig.secondary.rally != .recording })
+
+        // The pairing's identity survives the rally: both phones' clips keep
+        // sharing one `session_id`, which is what the server fuses on.
+        XCTAssertEqual(rig.primary.sessionID, mintedSessionID, "sessionID must not be re-minted")
+        XCTAssertEqual(rig.secondary.sessionID, mintedSessionID)
+
+        rig.primary.startRally()
+        XCTAssertEqual(rig.primary.rally, .recording)
+        XCTAssertTrue(rig.primary.showsStop)
+        await settleCrossModelDelivery(until: { rig.secondary.rally == .recording })
+        XCTAssertEqual(rig.secondary.rally, .recording,
+                       "the secondary must follow the primary into the second rally too")
+        XCTAssertEqual(rig.primary.sessionID, mintedSessionID)
+
+        // Teardown: rally 2 really is recording on both phones. Stop it here
+        // rather than leaving two AVAssetWriters running past this test.
+        rig.primary.stopRally()
+        await settleCrossModelDelivery(until: {
+            !rig.primaryRecord.isRecording && !rig.secondaryRecord.isRecording
+        })
+        XCTAssertFalse(rig.primaryRecord.isRecording,
+                       "teardown: no AVAssetWriter should be left running past this test")
+        XCTAssertFalse(rig.secondaryRecord.isRecording)
+    }
+
+    #if DEBUG
+    /// DESIGN.md §16's `p-live` table promises the mini-court "clears again
+    /// when `START RALLY` begins the next one" — a promise that only became
+    /// reachable once a session could run a second rally at all. Without the
+    /// clear, rally 2 opens on rally 1's verdict: the banner still reads the
+    /// old call and the mini-court still draws the old track.
+    ///
+    /// Uses the DEBUG stereo demo to populate exactly the fields a real call
+    /// would (no peer, no ball model needed — the same seam
+    /// `testEndSessionClearsRecordModelsLiveCallState` uses), then starts a
+    /// rally on a `LiveSessionModel` bound to that same `RecordModel`. The
+    /// assertions are taken synchronously right after `startRally()`, so the
+    /// demo's own 0.05 s pump cannot slip another call in between.
+    func testStartingTheNextRallyClearsThePreviousCall() async {
+        let (model, _) = makeModel()
+        let record = RecordModel(detector: nil)
+        model.bind(record: record)
+
+        record.startStereoDemo(localModelJSON: StereoDemo.localModelJSON,
+                               remoteModelJSON: StereoDemo.remoteModelJSON)
+        await settleCrossModelDelivery(until: { record.livePresentation != nil })
+        XCTAssertNotNil(record.livePresentation, "setup: the demo never produced a call")
+        XCTAssertFalse(record.liveTrack.isEmpty, "setup: the demo never produced a track")
+
+        model.startRally()
+
+        XCTAssertNil(record.livePresentation, "a new rally must not open on the last one's verdict")
+        XCTAssertNil(record.liveImpact)
+        XCTAssertTrue(record.liveTrack.isEmpty)
+        XCTAssertNil(record.flashPresentation)
+        XCTAssertTrue(record.stereoEvents.isEmpty)
+
+        // Teardown: `startRally()`'s chained start is real (there is no seam to
+        // stub the camera), so stop what it began before `record` goes out of
+        // scope — same reason as
+        // `testAStartThatFailsToActuallyRecordDoesNotLeaveRallyBelievingItIsRecording`.
+        await settleCrossModelDelivery(until: { record.isRecording })
+        if record.isRecording { await record.setRecording(false, owner: .live) }
+        XCTAssertFalse(record.isRecording,
+                       "teardown: no AVAssetWriter should be left running past this test")
+    }
+    #endif
+
     // MARK: - The paired rig
 
     /// Spins until `done()` is true or a short deadline elapses.

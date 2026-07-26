@@ -971,6 +971,16 @@ must not be dismissable while the camera is still rolling, since nothing else ca
 the rally — `p-pair`'s primary reads a disabled "RALLY LIVE", and the record stage
 refuses to touch a recording the live layer owns.
 
+**A rally ends; the pairing does not.** Ending a rally is not ending the session. When
+the rally stops, `p-live` pops and the phone is back on `p-pair` — same pairing, same
+clock sync, same session identity, no re-pairing and no second code to compare — and once
+that rally's clip has reported, the row returns to Ready (primary) above with `START
+RALLY` live again for the next one. A session runs as many rallies as the match needs;
+only "Codes don't match" and ending the session return `p-pair` to Idle. This is also
+what makes the `p-live` table's "clears again when `START RALLY` begins the next one"
+(below) something the user can actually reach: the call banner and mini-court are cleared
+by the *start* of the next rally, so no rally ever opens on the previous one's verdict.
+
 **The `SOON` tag is per client.** §8.15's rule is a question about one surface — does
 tapping *this* card lead to a working experience — and the two clients now answer
 differently: web's `p-live` is still a roadmap placeholder, so the web card keeps its
@@ -990,6 +1000,7 @@ own live path lands, not when native's did.
 | Ready (primary) | "Paired · sync ±1.4 ms" (tabular, §0.8) | START RALLY | the calling phone's StereoEngine already exists; tapping hands off to `p-live` |
 | Ready, awaiting peer calibration (primary) | "Paired · waiting for the other phone's calibration" | START RALLY (disabled) | the StereoEngine does not exist until the secondary's calibration arrives; starting would record a rally nothing can call |
 | Ready (secondary) | "Paired · the other phone starts the rally" | — (no primary action) | the engine lives on the primary, so only the primary can honestly know a rally is callable |
+| Rally live, or its clip still uploading | "Paired · sync ±1.4 ms" | RALLY LIVE (disabled) | what `p-pair` reads underneath `p-live` during the rally, and again after `p-live` pops while that rally's clip uploads. Transient, not terminal: the row goes back to Ready above the moment the upload reports, and the next rally starts from there. §7 — disabled, never hidden, because there is no tap here that can fire |
 | Degraded | "Link lost — still recording" | — (unaffected) | never a silent downgrade; recording continues |
 | Failed | the session's failure reason, verbatim | PAIR (retry) | e.g. the capture-orientation frame-size guard |
 

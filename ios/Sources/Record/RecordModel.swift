@@ -367,6 +367,25 @@ final class RecordModel: ObservableObject {
         stereoEngine = nil
         localModel = nil
 
+        clearLiveCall()
+
+        nextDetectionSeq = 0
+        pendingTuples.removeAll()
+        lastFlushAt = 0
+    }
+
+    /// Clears the call *readout* — banner, flash, mini-court geometry, engine
+    /// event list — without touching the peer, the engine, or the local model
+    /// behind it. That split is the whole point: `detachPeer()` above tears the
+    /// session down and reuses this for the display half, while a new rally on
+    /// an existing pairing needs exactly this half and none of the rest.
+    ///
+    /// DESIGN.md §16's `p-live` table promises the mini-court "clears again
+    /// when `START RALLY` begins the next one". Until a session could run more
+    /// than one rally that promise had no call site; `LiveSessionModel`'s rally
+    /// start is now it. Written once, here, so the two callers cannot drift
+    /// into clearing different subsets of the same readout.
+    func clearLiveCall() {
         livePresentation = nil
         liveTrack = []
         liveImpact = nil
@@ -374,10 +393,6 @@ final class RecordModel: ObservableObject {
         flashClearWork = nil
         flashPresentation = nil
         stereoEvents = []
-
-        nextDetectionSeq = 0
-        pendingTuples.removeAll()
-        lastFlushAt = 0
     }
 
     #if DEBUG

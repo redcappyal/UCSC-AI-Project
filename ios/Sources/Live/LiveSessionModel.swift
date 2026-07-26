@@ -69,7 +69,17 @@ final class LiveSessionModel: ObservableObject {
     @Published private(set) var sessionID: String?
 
     private var peerVideoID: String?
-    private var submission = RunSubmission()
+
+    /// Which rally on this pairing the model's state currently belongs to.
+    /// Bumped by `beginRally()`, and by `endSession()` so a session torn down
+    /// mid-rally cannot be written to afterwards either.
+    ///
+    /// A rally's *finishing* work — the upload plus the server-side tracking
+    /// poll — can outlive its recording by minutes, and (see `finishRally`) it
+    /// is genuinely still running on the secondary when the next rally starts.
+    /// Everything scheduled by one rally therefore captures this value and
+    /// refuses to write anything once it no longer matches.
+    private var rallyGeneration = 0
 
     /// The server's paired-run role. Fixed by the pairing role: initiator = a.
     var cameraRole: String? { role.map { $0 == .primary ? "a" : "b" } }
@@ -256,6 +266,14 @@ final class LiveSessionModel: ObservableObject {
         // fresh sessionID (republish()'s mint guard is `sessionID == nil`),
         // and a stale RallyState from the session that just ended must not
         // bleed into the next one.
+        //
+        // The generation bump is what makes that `.idle` stick: a rally whose
+        // upload/tracking was still in flight when the session ended would
+        // otherwise land minutes later and overwrite it with `.submitted` /
+        // `.failed` for a session that no longer exists. Same mechanism the
+        // next rally uses to disown the previous one's finishing work — see
+        // `finishRally`.
+        rallyGeneration += 1
         rally = .idle
         sessionID = nil
         peerVideoID = nil
@@ -278,12 +296,37 @@ final class LiveSessionModel: ObservableObject {
         }
     }
 
+    /// Everything a new rally needs to be true before it begins, in one place
+    /// so the primary's own start and the secondary's remote-driven one cannot
+    /// drift apart.
+    ///
+    /// The `clearLiveCall()` is DESIGN.md §16's `p-live` promise that the
+    /// mini-court and call banner "clear again when `START RALLY` begins the
+    /// next one" — unreachable while a session could only ever run one rally,
+    /// and now the thing that keeps rally 2 from opening on rally 1's verdict.
+    private func beginRally() {
+        rallyGeneration += 1
+        rally = .recording
+        record?.clearLiveCall()
+    }
+
     /// Primary-only, and only once the engine exists — both enforced by
     /// `computedPrimaryEnabled`. Recording is started locally first so a
     /// dropped message can never leave this phone not recording.
+    ///
+    /// `.submitting` is refused alongside `.recording`, so this phone never
+    /// starts a rally on top of one of its own that is still finishing. §7
+    /// already keeps the tap from existing — the peer session stays `.live`
+    /// until `finishRally` releases it, and `computedPrimaryEnabled` reads
+    /// `.live` as disabled — so this guard is about anything reaching the
+    /// model around the screen. Starting anyway would work mechanically
+    /// (`rallyGeneration` disowns the old rally's finish), but the previous
+    /// rally's outcome and its session manifest would then be dropped without
+    /// ever being shown. The secondary's `startLocalRecording()` deliberately
+    /// does *not* copy this guard — see there.
     func startRally() {
-        guard rally != .recording else { return }
-        rally = .recording
+        guard rally != .recording, rally != .submitting else { return }
+        beginRally()
         let start = setRecordingChained(true)
         session?.goLive()
         session?.sendRecord(action: "start", ptsNs: UInt64(ClockSync.hostNow() * 1_000_000_000))
@@ -313,8 +356,16 @@ final class LiveSessionModel: ObservableObject {
 
     /// The secondary's half of a remote start — no goLive broadcast, no
     /// re-send, or the two phones would ping-pong record messages forever.
+    ///
+    /// Unlike `startRally()` this must follow the primary into the next rally
+    /// even from `.submitting`: the two phones upload and track independently,
+    /// the primary only ever learns when *its own* submission finished, and the
+    /// wire protocol carries no "I'm still busy" message. Refusing here would
+    /// silently leave the secondary not recording a rally the primary is
+    /// calling. `rallyGeneration` is what makes that safe — the still-running
+    /// finish work for the previous rally can no longer write this model.
     private func startLocalRecording() {
-        rally = .recording
+        beginRally()
         let start = setRecordingChained(true)
         republish()
         Task { [weak self] in
@@ -393,13 +444,55 @@ final class LiveSessionModel: ObservableObject {
         // a stoppable state, only the optimistic assumption (set at the top
         // of `startRally()`/`startLocalRecording()`) that it had.
         session?.sendRecord(action: "stop", ptsNs: UInt64(ClockSync.hostNow() * 1_000_000_000))
-        rally = .failed(record?.errorText ?? "Recording did not start.")
+        // Trivially the current generation: this runs only while `rally ==
+        // .recording` (guarded above), and neither `startRally()` nor
+        // `handleRemoteRecord`'s "start" branch can begin another rally from
+        // there — so nothing can have bumped it since this attempt began.
+        // Routed through `finishRally` anyway because this is a rally ending,
+        // and every rally ending has to release the peer session.
+        finishRally(.failed(record?.errorText ?? "Recording did not start."),
+                    generation: rallyGeneration)
+    }
+
+    /// Applies a rally's terminal outcome and hands the peer session back to
+    /// `.ready`, so the same pairing can run another rally. The one exit from
+    /// a rally — both the normal stop path and the failed-start reconcile
+    /// above go through it — so no path can leave `PeerSession` stuck `.live`.
+    ///
+    /// `generation` is what makes it safe for a rally's finishing work to land
+    /// late. On the secondary that work really is still running when the next
+    /// rally starts: each phone uploads and tracks its own clip, the primary
+    /// only knows when its own finished, and the wire protocol is fixed. An
+    /// ungated late write would set `rally = .submitted` for a rally that is
+    /// currently recording — `PlayRootView` would pop `p-live` out from under
+    /// a rolling camera, `stopRally()`'s own `rally == .recording` guard would
+    /// then refuse to stop it, and the dead end this change closes would be
+    /// back in a worse form. A superseded finish therefore writes nothing at
+    /// all — not `rally`, and not the session phase, which the running rally
+    /// owns. The `Bool` says whether it applied.
+    @discardableResult
+    private func finishRally(_ outcome: RallyState, generation: Int) -> Bool {
+        guard generation == rallyGeneration else { return false }
+        rally = outcome
+        session?.endRally()
         republish()
+        return true
     }
 
     private func finishRecordingAndSubmit() {
+        let generation = rallyGeneration
         rally = .submitting
         republish()
+        // One `RunSubmission` per rally rather than one per model. `submit`
+        // runs an upload plus a poll of the server-side tracking job, and on
+        // the secondary the previous rally's is genuinely still running when
+        // the next one's begins (see `finishRally`). Two concurrent `submit`
+        // calls on one object interleave their writes to the single `phase`
+        // this method reads straight back as the rally's outcome — a rally
+        // could report the other one's result. Nothing observes this object
+        // (it is not `@Published` and no view reaches it), so scoping it to
+        // the rally costs nothing and removes the shared state entirely.
+        let submission = RunSubmission()
         // The stop depends on the camera's real state and on this layer
         // owning it, never on `rally` saying `.recording` — if the camera
         // never actually confirmed it started, or is rolling for the record
@@ -410,37 +503,51 @@ final class LiveSessionModel: ObservableObject {
             guard let self else { return }
             await stop.value
             guard let record = self.record else {
-                self.rally = .failed("The camera model was no longer available.")
-                return self.republish()
+                // Two statements, not `return self.finishRally(...)`: this
+                // closure returns Void and `finishRally` returns Bool, so the
+                // old `return self.republish()` shape does not carry over.
+                self.finishRally(.failed("The camera model was no longer available."),
+                                 generation: generation)
+                return
             }
             // `liveClip`, not the raw clip: a clip the record stage owns is
             // invisible here, so a plain recording can never be submitted as
             // this rally's paired footage.
             guard let clip = record.liveClip else {
-                self.rally = .failed("The rally produced no clip.")
-                return self.republish()
+                self.finishRally(.failed("The rally produced no clip."), generation: generation)
+                return
             }
             // The live path reports its own outcome through `rally`, so once
             // the clip has been read here, clear it — otherwise a later live
             // visit to this same RecordModel would find a stale one waiting.
             record.liveClip = nil
-            await self.submission.submit(videoURL: clip.url, duration: clip.duration,
-                                         sessionID: self.sessionID,
-                                         cameraRole: self.cameraRole,
-                                         peerVideoID: self.peerVideoID,
-                                         syncManifestJSON: self.syncManifestJSON())
-            switch self.submission.phase {
+            await submission.submit(videoURL: clip.url, duration: clip.duration,
+                                    sessionID: self.sessionID,
+                                    cameraRole: self.cameraRole,
+                                    peerVideoID: self.peerVideoID,
+                                    syncManifestJSON: self.syncManifestJSON())
+            switch submission.phase {
             case .complete:
-                self.rally = .submitted
-                // Best-effort enrichment only: fusion pairs on session_id +
-                // camera_role, so a lost manifest never blocks it.
-                if let sessionID = self.sessionID, let videoID = self.submission.completedRunID {
+                // Order is load-bearing and verified, not assumed:
+                // `finishRally` has just put the session back in `.ready`, and
+                // `sendSessionManifest`'s gate is `.live || .ready` — the same
+                // gate every other `PeerSession` sender uses — so the
+                // post-rally manifest that carries this phone's uploaded video
+                // ID still goes out exactly as it did when the session stayed
+                // `.live` forever. Best-effort enrichment either way: fusion
+                // pairs on session_id + camera_role, so a lost manifest never
+                // blocks it. Skipped entirely when `finishRally` reports the
+                // rally was superseded — a newer rally's manifest has already
+                // been broadcast and a stale videoID must not overwrite it.
+                if self.finishRally(.submitted, generation: generation),
+                   let sessionID = self.sessionID, let videoID = submission.completedRunID {
                     self.session?.sendSessionManifest(sessionID: sessionID, videoID: videoID)
                 }
-            case .failed(let message): self.rally = .failed(message)
-            default:                   self.rally = .failed("Upload did not finish.")
+            case .failed(let message):
+                self.finishRally(.failed(message), generation: generation)
+            default:
+                self.finishRally(.failed("Upload did not finish."), generation: generation)
             }
-            self.republish()
         }
     }
 

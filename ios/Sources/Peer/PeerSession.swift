@@ -142,6 +142,39 @@ final class PeerSession: ObservableObject {
         if internalPhase == .ready { setPhase(.live) }
     }
 
+    /// `goLive()`'s inverse: the rally is over, so hand the session back to
+    /// `.ready` and let the same pairing run another one. A no-op from every
+    /// other phase, exactly as `goLive()` is a no-op outside `.ready`.
+    ///
+    /// Without this there is no transition out of `.live` at all — `tick`'s
+    /// `.ready, .live` branch only ever leaves it to degrade — so the first
+    /// rally left the session `.live` for the rest of the app's life, and
+    /// `p-pair`'s one primary read a permanently disabled "RALLY LIVE".
+    ///
+    /// `.degraded` is handled rather than ignored, and deliberately *not* by
+    /// forcing the current phase: while the link really is down the phase must
+    /// stay `.degraded` (§16's "Link lost" row is never a silent downgrade,
+    /// and forcing `.ready` here would only make `tick` re-degrade on its next
+    /// pass, flickering the status row). What has to change is the phase
+    /// `tick`'s recovery branch will *restore* — captured in
+    /// `phaseBeforeDegraded` when the link dropped. If that says `.live`, a
+    /// recovery after the rally ended would put the session back into a rally
+    /// that is already over; rewriting it to `.ready` makes recovery land
+    /// where a finished rally belongs. Only `.live` is rewritten: a degrade
+    /// captured from `.searching`/`.syncing`/`.confirming` (transport
+    /// disconnect, `handleTransportState`) is none of this method's business.
+    func endRally() {
+        stateLock.lock(); defer { stateLock.unlock() }
+        switch internalPhase {
+        case .live:
+            setPhase(.ready)
+        case .degraded:
+            if phaseBeforeDegraded == .live { phaseBeforeDegraded = .ready }
+        default:
+            break
+        }
+    }
+
     func end() {
         stateLock.lock(); defer { stateLock.unlock() }
         setPhase(.ended)

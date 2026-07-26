@@ -104,6 +104,43 @@ final class PairingModelTests: XCTestCase {
         XCTAssertTrue(rig.primary.statusLine.hasPrefix("Paired · sync ±"))
     }
 
+    /// §16: a rally ending is not the session ending. The screen goes back to
+    /// the **Ready** row — same sync figure, START RALLY live again for the
+    /// next rally — not to Idle, and not stuck on Live, which is exactly where
+    /// it used to strand: `PeerSession` had no transition out of `.live` at
+    /// all, so `p-pair`'s one primary read a permanently disabled "RALLY LIVE"
+    /// from the first rally onward.
+    ///
+    /// Driven through the session rather than a new `PairingModel` control:
+    /// `LiveSessionModel` calls `session.endRally()` directly, exactly as it
+    /// calls `session.goLive()` directly, so adding a mirror here would be
+    /// production API with no production caller. `refresh()` is what the 20 Hz
+    /// pump does.
+    func testARallyEndingReturnsTheScreenToTheReadyRow() {
+        let rig = makeRig()
+        rig.secondary.start(); rig.primary.start()
+        rig.primary.confirm(); rig.secondary.confirm()
+        var t = 0.0
+        for _ in 0..<40 { t += 0.1; rig.primary.pump(now: t); rig.secondary.pump(now: t) }
+        rig.primary.goLive()
+        XCTAssertEqual(rig.primary.step, .live)
+        XCTAssertFalse(rig.primary.canGoLive, "setup: a rally is already running")
+
+        rig.primarySession.endRally()
+        rig.primary.refresh()
+
+        guard case .ready(let syncMs) = rig.primary.step else {
+            return XCTFail("expected ready, got \(rig.primary.step)")
+        }
+        XCTAssertTrue(syncMs.isFinite)
+        XCTAssertTrue(rig.primary.canGoLive,
+                      "START RALLY must be live again — the pairing runs more than one rally")
+        XCTAssertTrue(rig.primary.statusLine.hasPrefix("Paired · sync ±"),
+                      "got \(rig.primary.statusLine)")
+        // Not the `.ended`/Idle path: the session is still perfectly good.
+        XCTAssertTrue(rig.primary.canPair)
+    }
+
     // MARK: - Honest failure states
 
     func testSilencedLinkDegradesAndSaysRecordingContinues() {
