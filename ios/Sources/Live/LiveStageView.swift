@@ -74,7 +74,7 @@ struct LiveStageView: View {
     /// link stays visible mid-rally"), so it is the same component, not a
     /// second visual language for the same information.
     private var linkStatus: some View {
-        HStack(spacing: 9) {
+        HStack(spacing: 8) {
             Circle().fill(Theme.dim).frame(width: 8, height: 8)
             Text(live.linkStatus)
                 .font(.system(.subheadline).monospacedDigit())

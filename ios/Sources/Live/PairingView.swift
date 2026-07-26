@@ -49,7 +49,7 @@ struct PairingView: View {
     /// claim the verdict family (§0.3 reserves green/red for IN/OUT), so this
     /// component is built so that mistake cannot be made.
     private var linkStatus: some View {
-        HStack(spacing: 9) {
+        HStack(spacing: 8) {
             Circle().fill(Theme.dim).frame(width: 8, height: 8)
             Text(model.linkStatus)
                 .font(.system(.subheadline).monospacedDigit())
@@ -125,10 +125,19 @@ struct PairingView: View {
                 .foregroundStyle(displayedCode == nil ? Theme.dim : Theme.text)
             if displayedCode != nil {
                 // A secondary text action, never a second filled primary (§7).
-                Button("Codes don't match") { model.pairing.rejectCode() }
-                    .font(.system(.subheadline).weight(.semibold))
-                    .foregroundStyle(Theme.dim)
-                    .frame(minHeight: 44)
+                // §0.6: the frame lives inside the label closure, not outside
+                // the Button, so the full 44 pt is part of the tappable
+                // region — see `LiveStageView.stop`'s comment for the same
+                // bug class (framing outside the label leaves only the
+                // Text's ~20 pt intrinsic height hit-testable). This is the
+                // stranger's-phone escape hatch (§8.20), so it must actually
+                // be reachable across its whole reserved height.
+                Button { model.pairing.rejectCode() } label: {
+                    Text("Codes don't match")
+                        .font(.system(.subheadline).weight(.semibold))
+                        .foregroundStyle(Theme.dim)
+                        .frame(minHeight: 44)
+                }
             } else {
                 Color.clear.frame(height: 44)
             }

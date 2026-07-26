@@ -661,8 +661,8 @@ floor bounce`, never a colored call.
 A row reporting the pairing/link state as words, never as color alone. A naive green
 "connected" dot would silently claim the verdict family (§0.3 reserves green/red for
 IN/OUT), so this component is built so that mistake can't happen: an 8 px `--dim` fill
-dot (decorative only, carries no meaning by itself) followed by an explicit sentence-case
-word — `Not paired` / `Looking for the other phone…` / `Codes match?` / `Syncing
+dot (decorative only, carries no meaning by itself), an 8 px gap (§4.5), then an explicit
+sentence-case word — `Not paired` / `Looking for the other phone…` / `Codes match?` / `Syncing
 clocks…` / `Paired · sync ±1.4 ms` / `Link lost — still recording` / the session's
 failure reason, verbatim. The sync-quality figure is tabular numerals (§0.8) since it is
 a number that updates.
@@ -902,7 +902,7 @@ Each phase: header shows step label + proxied primary; `#instr` gives the one-li
 
 | Phase | Purpose | Body (top→bottom) | Primary (proxied) |
 |---|---|---|---|
-| `p-load` | Play section root — get a clip | "PLAY" heading · hero cards (§8.15): Judge a clip (accent, file input) / Record a clip (surface, working) / Live match (surface, `SOON` on web only — see the per-client note below) · dev row | — (no chevron; section root) |
+| `p-load` | Play section root — get a clip | "PLAY" heading · hero cards (§8.15): Judge a clip (accent, file input) / Record a clip (surface, working) / Live match (surface, `SOON` on web only — see the per-client note below) · dev row (native has neither the heading nor the dev row — see §3.2's native-shell note) | — (no chevron; section root) |
 | `p-record` | Record rallies + on-site calibration | stage = live camera preview · REC readout · Calibrate court + calibration status · Recordings card (§8.16) | "Record" ↔ "Stop" |
 | `p-frame` | Pick a clean calibration frame | overview rail · editor strip w/ playhead · readout · transport+steppers | "Use this frame" |
 | `p-tap` | Tap out line, tin, then service line on frame | stage-driven; clear-selection small button | "Looks right" (disabled until the current line has a fit) |
@@ -916,7 +916,7 @@ Each phase: header shows step label + proxied primary; `#instr` gives the one-li
 | `p-player1-report` / `p-player2-report` | Per-player coaching report — the last two steps of the judge flow | Player N front-wall map (§8.10 court chart + `.targetMeta`; serves excluded) · Player N report panel (§8.21) · P1 only: a `.row` "Player 2 report" secondary | — (back chevron only) |
 | `p-matches` | Matches section root (placeholder) | placeholder hero · Planned card (§8.14) | — (no chevron; section root) |
 | `p-coach` | Coach section root (hub) | three feature cards (§8.13) — no hero, no copy | — (no chevron; section root) |
-| `p-pair` | Pair with a second phone for a live two-camera session | link-status row (§8.19) · pair-code (§8.20) once codes are exchanged, with its "Codes don't match" secondary text action · DEBUG transport picker (BLE / Wi-Fi) · role segment (§8.22), idle state only | "PAIR" → "CONFIRM" → "START RALLY" |
+| `p-pair` | Pair with a second phone for a live two-camera session | link-status row (§8.19) · role segment (§8.22), idle state only · pair-code (§8.20) once codes are exchanged, with its "Codes don't match" secondary text action · DEBUG transport picker (BLE / Wi-Fi) | "PAIR" → "CONFIRM" → "START RALLY" |
 | `p-live` | Live two-camera rally: verdict flash, honest-state banner, post-rally replay | stage = live camera preview (shared with `p-record`) · link-status row (persistent — a lost link stays visible mid-rally) · call-flash (§8.17) + call-banner (§8.18) overlaying the stage · post-rally mini-court replay (§8.10), visible once a call lands · mini-court replay is primary-only in v1 (the secondary receives relayed event JSON, which carries no 3D track) · STOP ends the rally: the primary always has it; the secondary only gains its own STOP while the link is degraded, so a dropped link cannot leave it recording indefinitely | "STOP" (primary, whenever the rally is live; secondary, only while degraded) |
 | `p-stats` | Placeholder: stats + trends | placeholder hero · Planned card (§8.14) | — (back chevron only) |
 | `p-shot-bot` | Placeholder: shot selection | placeholder hero · Planned card (§8.14) | — (back chevron only) |
@@ -1001,7 +1001,7 @@ own live path lands, not when native's did.
 | Ready, awaiting peer calibration (primary) | "Paired · waiting for the other phone's calibration" | START RALLY (disabled) | the StereoEngine does not exist until the secondary's calibration arrives; starting would record a rally nothing can call |
 | Ready (secondary) | "Paired · the other phone starts the rally" | — (no primary action) | the engine lives on the primary, so only the primary can honestly know a rally is callable |
 | Rally live, or its clip still uploading | "Paired · sync ±1.4 ms" | RALLY LIVE (disabled) | what `p-pair` reads underneath `p-live` during the rally, and again after `p-live` pops while that rally's clip uploads. Transient, not terminal: the row goes back to Ready above the moment the upload reports, and the next rally starts from there. §7 — disabled, never hidden, because there is no tap here that can fire |
-| Degraded | "Link lost — still recording" | — (unaffected) | never a silent downgrade; recording continues |
+| Degraded | "Link lost — still recording" | START RALLY (disabled) | never a silent downgrade; the primary reads `START RALLY` but is disabled here — recording continues regardless of the link |
 | Failed | the session's failure reason, verbatim | PAIR (retry) | e.g. the capture-orientation frame-size guard |
 
 `p-live` states drive `.call-flash` (§8.17) and `.call-banner` (§8.18). The mini-court
