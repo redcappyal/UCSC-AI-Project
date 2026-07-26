@@ -416,6 +416,91 @@ final class LiveSessionModelTests: XCTestCase {
         XCTAssertEqual(rig.secondary.sessionID, rig.primary.sessionID)
     }
 
+    // MARK: - Task 10d: sessionID must not survive a beginPairing() retry
+
+    /// The showstopper this closes: `sessionID` was cleared in `endSession()`
+    /// but not in `beginPairing()`, and DESIGN.md §16's `Failed → PAIR
+    /// (retry)` row calls `beginPairing()` straight through — the exact path
+    /// `primaryTapped()`'s `.failed` branch takes, without `endSession()`
+    /// running first. Left uncleared, the retry's fresh `PeerSession` would
+    /// pair successfully while `republish()`'s mint guard (`sessionID ==
+    /// nil`) stayed shut forever, so the new pairing would run rallies that
+    /// upload under the *previous* pairing's identity (or, on the secondary,
+    /// under whatever it already had) — the server's `session_id` +
+    /// `camera_role` pairing would never match and fusion would silently
+    /// never run.
+    ///
+    /// Reaches the failure the same way `testPairIsReenabledAfterAPairingFailure`
+    /// does — a real `PeerSession.Phase.failed` — but *after* both sides have
+    /// already reached `.ready` and minted/shared a `sessionID`, which that
+    /// test cannot reach (its failure fires during the very first hello,
+    /// before `.ready` is possible). There is no production seam for "make an
+    /// already-paired link renegotiate hello and fail," so this drives the
+    /// same `handleControl` `.hello` guard `testMismatchedPeerFrameSizeIsRejected`
+    /// exercises, directly over the raw transport halves the rig exposes —
+    /// bypassing each side's own (still-healthy) `PeerSession` object
+    /// entirely, exactly as a stray/duplicated hello delivered by a
+    /// misbehaving transport would. A wrong `protoVersion` is the simplest
+    /// guard to trip: `PeerSession.handleControl` checks it before frame size,
+    /// so there is no need to compute a correctly-mismatched orientation.
+    func testARetryAfterAPairingFailureMintsAFreshSessionIDRatherThanKeepingTheStaleOne() async {
+        let rig = await makePairedRig()
+        let mintedSessionID = rig.primary.sessionID
+        XCTAssertNotNil(mintedSessionID, "setup: the first pairing must mint a sessionID")
+        XCTAssertEqual(rig.secondary.sessionID, mintedSessionID, "setup: and broadcast it")
+
+        // Fail both real sessions independently, without ever calling
+        // `endSession()` — the exact gap this fix closes. Delivered straight
+        // over the raw transport halves (`rig.pair`), not through either
+        // side's own `PeerSession`, so this reaches `handleControl` even
+        // though both sessions are already `.ready` and would otherwise
+        // never receive another `.hello` at all.
+        let bogusHello = ControlMessage.hello(
+            Hello(protoVersion: peerProtoVersion + 1, appVersion: "dev",
+                  deviceModel: "test", nonce: 0, frameW: 0, frameH: 0))
+        let bogusFrame = try! ControlMessage.encode(bogusHello)
+        rig.pair.1.sendControl(bogusFrame)   // delivered to the primary's session
+        rig.pair.0.sendControl(bogusFrame)   // delivered to the secondary's session
+
+        await settleCrossModelDelivery(until: {
+            if case .failed = rig.primary.pairing.step, case .failed = rig.secondary.pairing.step {
+                return true
+            }
+            return false
+        })
+        guard case .failed = rig.primary.pairing.step else {
+            return XCTFail("setup: expected the primary to fail, got \(rig.primary.pairing.step)")
+        }
+        guard case .failed = rig.secondary.pairing.step else {
+            return XCTFail("setup: expected the secondary to fail, got \(rig.secondary.pairing.step)")
+        }
+        XCTAssertTrue(rig.primary.primaryEnabled, "setup: §16's Failed row must still offer PAIR (retry)")
+        XCTAssertEqual(rig.primary.primaryTitle, "PAIR")
+        // The bug's precondition: reaching `.failed` alone — with no
+        // `beginPairing()` retry yet — must not by itself touch `sessionID`.
+        XCTAssertEqual(rig.primary.sessionID, mintedSessionID,
+                       "setup: failing must not itself clear or change the stale id")
+
+        // The retry: `primaryTapped()` on a `.failed` step calls
+        // `beginPairing()` directly, exactly as `handshake(...)` reproduces
+        // here by re-running the same helper `makePairedRig` used the first
+        // time — this is the only thing that changed between the two calls.
+        let reachedReady = await handshake(primary: rig.primary, secondary: rig.secondary,
+                                           pair: rig.pair, calibrations: rig.calibrations)
+        XCTAssertTrue(reachedReady, """
+            the retry did not reach ready in time: \
+            primary.step=\(rig.primary.pairing.step), secondary.step=\(rig.secondary.pairing.step)
+            """)
+
+        XCTAssertNotNil(rig.primary.sessionID)
+        XCTAssertNotEqual(rig.primary.sessionID, mintedSessionID,
+                          "a re-pair after a failure must mint a fresh sessionID rather than silently " +
+                          "keeping the previous pairing's — otherwise the manifest for this pairing's " +
+                          "rallies is never (re-)broadcast and the server can never fuse them")
+        XCTAssertEqual(rig.secondary.sessionID, rig.primary.sessionID,
+                       "and the secondary must actually receive the new broadcast, not just keep its own stale copy")
+    }
+
     // MARK: - Task 10b: one pairing, many rallies
 
     /// The one-rally-per-session dead end, end to end on the model.

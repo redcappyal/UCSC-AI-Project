@@ -211,6 +211,20 @@ final class LiveSessionModel: ObservableObject {
         // one, or the retry pairs successfully and still never enables
         // START RALLY.
         didSendCalibration = false
+        // Same reasoning, same pattern, for the rally identity: `republish()`'s
+        // mint guard is `sessionID == nil`, and `endSession()` is not the only
+        // place `self.session` gets reassigned — the `.failed` retry above
+        // walks straight through here instead. Left uncleared, a primary that
+        // had already minted and broadcast a sessionID on the pairing that
+        // just failed would carry it into the new session, the mint guard
+        // would stay closed forever, and the fresh pairing would never
+        // broadcast an identity for its own rallies to upload under.
+        // `peerVideoID` is the same kind of per-session leftover — stale
+        // regardless of role, and wrong for whatever session and rally come
+        // next — so it is cleared here for the same reason `endSession()`
+        // clears both together.
+        sessionID = nil
+        peerVideoID = nil
         // Order is load-bearing: attachStereo installs peer.onCalibration, so
         // attachPeer's `self.peer = peer` has to happen first, and
         // attachPeer/attachStereo/onRecord/onSessionManifest must *all*
