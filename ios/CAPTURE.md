@@ -6,7 +6,7 @@ and what breaks if the settings change.
 
 | Setting | Value | Enforced by |
 |---|---|---|
-| Resolution | 3840x2160 (portrait 2160x3840) | `applyCaptureFormat` via `bestFormatIndex` |
+| Resolution | 3840x2160 landscape, both mounts | `applyCaptureFormat` via `bestFormatIndex` |
 | Frame rate | 60 fps, min and max pinned | `activeVideoMin/MaxFrameDuration` |
 | Codec | HEVC, ~53 Mbps | `startRecording` |
 | Shutter | 1/1000, falling back to 1/500 | `solveExposure` |
@@ -15,6 +15,17 @@ and what breaks if the settings change.
 | Focus | Locked | `lockForCourt` |
 | Stabilisation | OFF | `configureSession` |
 | Lens | Ultrawide, main camera as fallback | `configureSession` |
+
+Capture is always landscape. The phone mounts on its side, and
+`CaptureSettings.rotationAngle(for:)` applies 0 or 180 so the recorded frame is upright
+whichever end the lens is at. Portrait is not a capture mode.
+
+**Migration: re-solve portrait calibrations.** `CameraModel.scaled` refuses to scale
+across an aspect change rather than distorting the geometry, and this change flips the
+capture aspect from portrait (9:16) to landscape (16:9). Any calibration solved from
+portrait footage will now throw `aspectMismatch` in `adoptedForCapture()` instead of
+loading. This is expected, not a bug — those calibrations need to be re-solved from
+landscape footage before they will load again.
 
 ## Why these are locked rather than automatic
 
@@ -80,3 +91,68 @@ simulator.
 - **Flicker.** 1/1000 under mains-driven lighting can band or pulse. A few
   minutes of test footage at the venue settles it; if it bands, 1/500 is the
   out.
+
+## Landscape capture — verification status
+
+**Nothing on the landscape-capture branch has been compiled or run.** It was
+written on a Windows machine where `xcodebuild`, `xcodegen` and `swift` are all
+absent, and the repo has no macOS CI (`.github/workflows/tests.yml` is pytest
+only). Every Swift change is verified by inspection and adversarial review, not
+by a build. Four review rounds found real defects — including one probable
+compile error and one bug that would have recorded upside-down footage — so
+treat "reviewed" as meaningfully different from "working".
+
+Run these on a Mac, in order, before trusting any of it:
+
+1. **It builds and the suite passes.**
+   `cd ios && xcodegen generate && xcodebuild test -scheme SquashLineCalling -destination 'platform=iOS Simulator,name=iPhone 15,OS=17.0.1'`
+   Two things are most likely to fail first: `RecordModel.init` assigning
+   `captureOrientation` before `tracker` is initialized (a review predicted
+   this as an error and the fix — removing the property's declaration default —
+   was applied unverified), and `OrientationLockTests`/`LiveWiringTests`
+   touching the `@MainActor` `OrientationPolicy` from XCTest.
+2. **Play tab stays both-landscape while framing, and narrows only once
+   recording starts.** `RecordModel.startCamera` (fired by `RecordView`'s
+   `.task`) no longer pins anything — it only seeds `camera.orientation` with
+   an initial guess so the preview and exposure meter have something to work
+   with. Launch the simulator in either landscape and confirm Play accepts
+   *both* landscape-left and landscape-right (portrait still refused) the
+   whole time recording is off. Then flip to the landscape opposite whatever
+   the simulator launched in and tap record: `RecordModel.toggleRecording`'s
+   start path must re-resolve the mount from the device's orientation at that
+   instant, call `camera.updateOrientation(_:)`, start the recording, and only
+   once that succeeds pin the mask — confirm it narrows to the *flipped*
+   mount, not the launch one. (The pin deliberately waits on a successful
+   `startRecording()`: pinning first and having the write fail to start would
+   strand the operator locked to that mount with no running recording to
+   release it from.)
+3. **The pin releases on stop, and holds across a tab round trip while
+   recording.** While recording, switch to Matches and back to Play — the
+   pinned mount must survive the round trip, which is what
+   `OrientationPolicy.capturePin` exists for. Then stop the recording: Play
+   must widen back to both-landscape immediately
+   (`OrientationPolicy.shared.releaseCapturePin()`, called from
+   `toggleRecording`'s stop path), so the operator can flip the mount again
+   before the next rally.
+4. **The web tabs still rotate.** Matches and Coach must reach portrait, or the
+   `UISupportedInterfaceOrientations` superset is wrong.
+5. **180° normalization — needs a physical iPhone, no simulator camera.**
+   Mount or hold the phone **landscape-left**, record, play back. The video
+   must be upright. If it is upside down, `rotationAngle(for:)`'s 0/180 mapping
+   is inverted; swap the cases and update `CaptureOrientationTests`, which
+   asserts the mapping and must change with it.
+
+Two known limits, both deliberate and neither fixed by this branch:
+
+- **The peer mount guard is correct but unreachable.** `PeerSession` refuses a
+  mismatched pair, but nothing in the app constructs a `PeerSession` carrying a
+  real mount — `PeerBenchView` (DEBUG) takes the default and `attachPeer` has
+  no production caller. Two phones in opposite mounts still pair. Wiring the
+  pairing path is separate work.
+- **Portrait-solved calibrations no longer load.** `CameraModel.scaled` refuses
+  the aspect change rather than distorting geometry, so any calibration solved
+  from portrait footage must be re-solved from landscape footage.
+
+When these are run, replace this section with what actually passed, the device
+model, and the date. A partially-run checklist recorded as complete is the
+failure mode this branch exists to remove.

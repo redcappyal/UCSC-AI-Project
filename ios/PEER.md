@@ -55,19 +55,20 @@ Do not add it before approval — Automatic signing fails for everyone.
 
 ## Known limits (by design, Plan A)
 - Peer link does not survive backgrounding; keep both apps foregrounded.
-- Capture is 4K60: portrait 2160×3840 handheld, landscape 3840×2160 for a
-  mounted session (`CaptureSettings.CaptureOrientation`). **Both phones must
-  run the same orientation** — mixed orientations give transposed pixel
-  spaces that triangulate to plausible-looking nonsense.
-- ⚠️ **The frame-space guard does not currently catch that.** `PeerSession`
-  compares `theirs.frameW/frameH` against the *static* portrait constants
-  `CaptureSettings.frameWidth/frameHeight`, and builds its own hello from the
-  same statics — so the advertised value does not depend on the session's
-  orientation and the comparison can never fail on an orientation mismatch.
-  `RecordModel.peerFrameW/peerFrameH` are hardcoded to the same statics, so
-  detection tuples are labelled portrait even in a landscape session. Until
-  both read `CaptureSettings.frameSize(for:)`, treat "both phones in the same
-  orientation" as an operator responsibility, not something the app enforces.
+- Capture is 4K60 landscape (3840x2160) in both mounts; `CaptureSettings.rotationAngle`
+  normalizes landscape-left upright with 180. **Both phones must run the same mount** —
+  `PeerSession` enforces it at handshake by comparing the peer's advertised frame size
+  AND `captureOrientation` against its own `myHello`, and refuses the pair otherwise.
+  A peer on a build predating the `captureOrientation` field advertises none, which cannot
+  match either mount and is refused with the same message. `peerProtoVersion`
+  deliberately stays at 1 so those peers reach this specific, actionable error instead of
+  a generic version mismatch.
+- The capture side is not wired to any of this yet: every `PeerSession` the app builds takes
+  the `.landscapeRight` default, so `CameraController.orientation` (`RecordModel.toggleRecording`'s
+  start path resolves the mount from the interface orientation and pins it there, but
+  `PeerSession` is still never constructed with it) never reaches the wire. Until a future task
+  constructs `PeerSession` with the session's actual resolved mount, a genuinely mixed pair still
+  pairs.
 - Detections flow one way (secondary → primary); events flow back in Phase 3.
 
 ## Live path (spec Phase 4)
