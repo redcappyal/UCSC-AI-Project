@@ -102,6 +102,10 @@ enum APIError: LocalizedError, Equatable {
     case badResponse
     case http(Int, String?)
     case noCalibration
+    /// `RunSubmission.submit` gave up polling a run the server never finished.
+    /// Carries the bound it waited, so the message can state it rather than
+    /// making the reader go and look it up.
+    case trackingTimedOut(Duration)
 
     var errorDescription: String? {
         switch self {
@@ -109,6 +113,14 @@ enum APIError: LocalizedError, Equatable {
         case .http(let code, let message): return message ?? "Server error (\(code))."
         case .noCalibration:
             return "No court calibration found. Calibrate one run from the web app first."
+        case .trackingTimedOut(let limit):
+            // Round up, so a bound that is not a whole number of minutes is
+            // never reported as less time than was actually waited.
+            let minutes = Int((limit.components.seconds + 59) / 60)
+            return """
+                The server stopped reporting on this clip after \(minutes) min. \
+                It may still finish on its own — check Matches.
+                """
         }
     }
 }

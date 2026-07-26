@@ -207,10 +207,12 @@ stereo-demo cube stays on the record stage — it needs `RecordModel`.
 13. **While the link is degraded, the secondary exposes its own STOP.** Otherwise a
     dropped link leaves it recording 4K60 indefinitely with no way to end the rally —
     the honest counterpart to "Link lost — still recording" actually being survivable.
-14. Each phone submits independently — primary `camera_role: "a"`, secondary `"b"` — and
-    the primary attaches `sync_manifest_json` built from `ClockSync`: `clap_anchor_s`
-    when anchored, otherwise `offset_series`. `job_runner` reads the manifest from
-    whichever run carries it, so only one phone needs to send it.
+14. Each phone submits independently — primary `camera_role: "a"`, secondary `"b"`.
+    Neither attaches a `sync_manifest_json`: the parameter is plumbed the whole way
+    through (`RunSubmission.submit` → `APIClient.startTrack`) but the value is `nil`, so
+    `stereo_sync.seed_offset_from_manifest` returns `(0.0, "none")` and the server's own
+    ±50 ms search finds the offset. See Deliberate v1 narrowing for why sending the
+    `ClockSync` estimate was worse than sending nothing.
 15. After its own upload, each phone sends `.sessionManifest` with its real `videoID`;
     the peer passes it as `peer_video_id` if it has not uploaded yet. **Best-effort
     only** — fusion pairs on `session_id` + `camera_role`, so a late or lost manifest
@@ -279,12 +281,13 @@ both-or-neither on session/role; the client never sends one without the other.
 
 | Condition | Behavior |
 |---|---|
-| No calibration, or server unreachable | PAIR disabled, reason verbatim in `.link-status`; PAIR becomes retry (§16 Failed row) |
+| No calibration, or server unreachable | Reason verbatim in `.link-status`; PAIR stays **enabled** as the retry and re-runs the fetch (§16's "Calibration fetch failed" row). Enabled with or without a role picked — the retry concerns this phone's calibration, not its job |
 | Calibration present but not adoptable | Same, with the adoption error verbatim — caught at the gate, not inside `attachStereo` |
 | Orientation mismatch | The existing `PeerSession` guard's message, verbatim (now able to fire) |
 | Peer calibration never arrives | Primary holds START RALLY disabled against "Paired · waiting for the other phone's calibration" — never a rally nothing can call |
 | Link lost mid-rally | `.degraded` → "Link lost — still recording"; recording continues; the secondary gains its own STOP so the rally can still be ended; STOP still uploads with session and role, so the server fuses if the peer's run also lands |
-| Upload failure | Per-phone "Try again", mirroring `ResultsView`; one phone failing never blocks the other |
+| Upload failure | Per-phone and independent — one phone failing never blocks the other. The reason appears verbatim in `.link-status` once the rally ends (§16's "Rally ended badly" row), and the clip is **kept**: `liveClip` is cleared only on a successful upload, so the recording survives the failure. A "Try again" affordance mirroring `ResultsView` is a follow-up, not v1 — §7 allows one primary per phase and that primary is START RALLY |
+| Tracking never finishes (worker died; HTTP layer healthy, so nothing throws) | `RunSubmission` caps the poll at 20 min and fails with the reason, so the rally routes through `finishRally` and releases the peer session instead of stranding at `.submitting` forever. The server-side run and its auto-fuse are unaffected — `try_start_stereo_fuse` is triggered by the run completing, never by this poll |
 | Stereo demo while paired | Unchanged — `startStereoDemo` already refuses when `peer != nil` |
 
 ## Testing
@@ -317,6 +320,37 @@ Full suite (348 Python + the Swift suite) must pass. `/verify` covers `p-load`, 
 and `p-live` at a 390 × 844 phone viewport in both themes per §0.12.
 
 ## Deliberate v1 narrowing
+
+**No `sync_manifest_json` is sent.** An earlier shape of this change had the primary
+attach `{"offset_series": [ClockSync.estimate.offset]}`. That is not a weaker seed than
+the server wants — it is a different quantity, and it broke every fusion run:
+
+- `ClockSync`'s offset is `remote − local` on each device's **capture host clock**
+  (`CMClockGetHostTimeClock()`, seconds since that phone booted). Two phones differ by
+  their uptime difference — routinely hours.
+- The sign is inverted. `stereo_sync.py` defines the offset as "seconds ADDED to
+  `camera_role` `b`'s timestamps to place both tracks on `a`'s clock" and `job_runner`
+  applies exactly that, so the server wants `t_a − t_b` while the primary measures
+  `t_b − t_a`.
+- Fatally, the server's timestamps are **clip-relative**: `track_samples_from_csv` reads
+  `timestamp_seconds`, which `tracking_common.py` writes as `source_frame / source_fps`,
+  so both clips start near t=0. The seed the search wants is the **recording-start skew**
+  between the phones — tens of milliseconds, which is why `refine_offset`'s
+  `coarse_range_s` is `0.05`. A clock offset does not appear in it at all.
+
+The result was silent: `_timeline` found no overlap at a seed of tens of thousands of
+seconds, `refine_offset` bailed with `refined.offset_s` still at the seed, and the fuse
+completed with an empty track and zero impacts — on every rally. Sending nothing is
+strictly better, because then the seed is `0.0` and the ±50 ms search works.
+
+The client does not currently know either phone's recording-start instant in a shared
+frame, so it has no seed worth sending and `seed_source: "none"` is the correct outcome.
+The follow-up that closes it: the `.record` message already carries `ptsNs`, which
+`PeerSession` hands to `onRecord` and `LiveSessionModel` currently discards. Exchanging
+each phone's recording-start host time, mapping the peer's through
+`ClockSync.remoteToLocal`, and sending `t_a_start − t_b_start` is a seed in the right
+quantity, on the right clock, with the right sign. The plumbing and the wire protocol are
+unchanged, so that is a value change when it lands, not a redesign.
 
 The predecessor spec lists "Post-rally 3D mini-court replay on both phones" as a goal.
 This change delivers it on the **primary only**: the secondary's view of a call arrives

@@ -30,9 +30,27 @@ private struct StubAPI: APIClientProtocol {
 
     var cameraModel: Result<String, Error>
 
+    /// When true, only the *first* `fetchSolvedCameraModel` fails; every later
+    /// one returns the adoptable model. Lets a test drive
+    /// `prepare()` → `.failed` → retry → `.ready` through the real code path
+    /// rather than by poking `calibration` directly.
+    var recoversAfterFirstFailure = false
+
+    /// How many times `fetchSolvedCameraModel` has actually been called. A
+    /// reference type so it survives the struct being copied into
+    /// `LiveSessionModel` — a retry that silently no-ops and a retry that
+    /// really re-fetches are otherwise indistinguishable from outside.
+    /// `@unchecked Sendable` for the same reason `MockAPIClient.Cursor` is:
+    /// `APIClientProtocol` is `Sendable`, and every call here is made from
+    /// `@MainActor` code.
+    final class Attempts: @unchecked Sendable { var count = 0 }
+    let attempts = Attempts()
+
     func latestCalibration() async throws -> LatestCalibration { Self.fixtureCalibration }
 
     func fetchSolvedCameraModel(calibrationJSON: String) async throws -> String {
+        attempts.count += 1
+        if recoversAfterFirstFailure, attempts.count > 1 { return Self.adoptableCameraModelJSON }
         switch cameraModel {
         case .success(let json): return json
         case .failure(let error): throw error
@@ -129,12 +147,61 @@ final class LiveSessionModelTests: XCTestCase {
         XCTAssertFalse(model.primaryEnabled)
     }
 
-    func testCalibrationFailureShowsTheReasonVerbatimAndBlocksPair() async {
+    /// Amended for the calibration-retry fix: this used to assert
+    /// `XCTAssertFalse(model.primaryEnabled)`, which pinned down the dead end
+    /// rather than the design. DESIGN.md §16 and the spec's error table both
+    /// promise `Failed → PAIR (retry)`, and `prepare()` runs from exactly one
+    /// place (`PairingView`'s `.task`, once per appearance) — so a disabled
+    /// PAIR here meant a failed fetch was permanent until the user backed out
+    /// to Play and re-entered. The reason-verbatim half is unchanged and still
+    /// asserted; only the enabled-ness expectation flipped.
+    ///
+    /// Enabled with `role` still nil, deliberately: the retry re-fetches this
+    /// phone's own camera model, which is independent of which job it will do.
+    func testCalibrationFailureShowsTheReasonVerbatimAndOffersARetry() async {
         let (model, _) = makeModel(cameraModel: .failure(APIError.http(404, "No calibration on this phone.")))
         await model.prepare()
         XCTAssertEqual(model.calibration, .failed("No calibration on this phone."))
         XCTAssertEqual(model.linkStatus, "No calibration on this phone.")
-        XCTAssertFalse(model.primaryEnabled)
+        XCTAssertNil(model.role, "setup: no role picked, and the retry must not need one")
+        XCTAssertEqual(model.primaryTitle, "PAIR")
+        XCTAssertTrue(model.primaryEnabled,
+                      "§16's Failed row offers PAIR as the retry — a disabled one is a dead end")
+    }
+
+    /// The retry actually retrying. `primaryEnabled` reading `true` above is
+    /// only half the promise: §7 forbids a primary that advertises a tap which
+    /// cannot fire, and before this fix `primaryTapped()` on a failed
+    /// calibration fell through to `beginPairing()`, whose own
+    /// `guard case .ready = calibration` made it a silent no-op.
+    ///
+    /// Counts real fetches rather than watching state alone — a tap that
+    /// no-ops and a tap that re-fetches both leave `calibration` where it was
+    /// if the second fetch happens to fail the same way, so the count is what
+    /// distinguishes them.
+    func testTappingPairAfterACalibrationFailureRefetchesAndRecovers() async {
+        let api = StubAPI(cameraModel: .failure(APIError.http(503, "Server unreachable.")),
+                          recoversAfterFirstFailure: true)
+        let model = LiveSessionModel(api: api, makeTransport: { _ in LoopbackTransport.pair().0 })
+
+        await model.prepare()
+        XCTAssertEqual(model.calibration, .failed("Server unreachable."),
+                       "setup: the first fetch must fail")
+        XCTAssertEqual(api.attempts.count, 1)
+        XCTAssertTrue(model.primaryEnabled, "setup: §16's retry must be offered")
+
+        model.primaryTapped()   // the retry — `prepare()` again, not `beginPairing()`
+        // `primaryTapped()` schedules `prepare()` on a `Task`, so let it run.
+        await settleCrossModelDelivery(until: { model.calibration == .ready })
+
+        XCTAssertEqual(api.attempts.count, 2, """
+            the tap must re-run prepare(): before this fix it fell through to beginPairing(), \
+            whose own `guard case .ready = calibration` silently refused, so the only recovery \
+            was backing out to Play and re-entering
+            """)
+        XCTAssertEqual(model.calibration, .ready)
+        XCTAssertEqual(model.linkStatus, "Pick this phone's job to start.",
+                       "and the row moves on to the next thing actually blocking a pairing")
     }
 
     func testPairStaysDisabledUntilARoleIsChosen() async {
@@ -1060,6 +1127,126 @@ final class LiveSessionModelTests: XCTestCase {
         // Teardown: rally 2 really is recording on both phones. Stop it here
         // rather than leaving two AVAssetWriters running past this test.
         rig.primary.stopRally()
+        await settleCrossModelDelivery(until: {
+            !rig.primaryRecord.isRecording && !rig.secondaryRecord.isRecording
+        })
+        XCTAssertFalse(rig.primaryRecord.isRecording,
+                       "teardown: no AVAssetWriter should be left running past this test")
+        XCTAssertFalse(rig.secondaryRecord.isRecording)
+    }
+
+    // MARK: - A rally's terminal outcome has to be visible somewhere
+
+    /// `RallyState.failed(String)` was set and rendered *nowhere*.
+    /// `LiveStageView` reads only `rally == .recording`, `PairingView` does not
+    /// read `rally` at all, and `computedLinkStatus` never consulted it — so a
+    /// failed upload, which on a court means the ordinary "server unreachable",
+    /// looked exactly like a successful one: `p-live` popped and `p-pair` read
+    /// a cheerful "Paired · sync ±1.4 ms" over a rally that was silently lost.
+    ///
+    /// Asserts against the reason `rally` actually carries rather than a
+    /// hardcoded string: in a test host the stop always ends in
+    /// `CameraError.recordingEmpty` (no capture session), so the reason is "The
+    /// rally produced no clip." rather than an upload error. Which failure
+    /// produced it is not what is under test — that the row shows *the* reason,
+    /// verbatim, is.
+    func testAFailedRallyShowsItsReasonInTheLinkStatusRow() async {
+        let rig = await makePairedRig()
+        await settleCrossModelDelivery(until: { rig.primary.engineReady })
+
+        rig.primary.startRally()
+        await settleCrossModelDelivery(until: { rig.secondary.rally == .recording })
+        await settleCrossModelDelivery(until: { rig.primaryRecord.isRecording })
+        rig.primary.stopRally()
+        await settleCrossModelDelivery(until: {
+            rig.primary.rally != .recording && rig.primary.rally != .submitting
+        })
+        await settleCrossModelDelivery(until: { rig.primary.primaryTitle == "START RALLY" })
+
+        guard case .failed(let reason) = rig.primary.rally else {
+            return XCTFail("setup: expected the rally to end .failed, got \(rig.primary.rally)")
+        }
+        // Stated rather than assumed: the row only speaks for the rally while
+        // the session is `.ready` (every other step has something more urgent
+        // to say), and `.ready` is where `finishRally` leaves it. A `.degraded`
+        // link here would make the assertion below fail for an unrelated
+        // reason, so name the precondition.
+        guard case .ready = rig.primary.pairing.step else {
+            return XCTFail("setup: the session must be back to ready, got \(rig.primary.pairing.step)")
+        }
+        XCTAssertEqual(rig.primary.linkStatus, reason, """
+            a rally that ended badly must say so, verbatim, the same way a calibration failure \
+            does — otherwise the only record of it is a RallyState nothing renders
+            """)
+        // §7: the row reports, it does not take the tap away. START RALLY is
+        // still the phase's one primary and it still fires.
+        XCTAssertEqual(rig.primary.primaryTitle, "START RALLY")
+        XCTAssertTrue(rig.primary.primaryEnabled,
+                      "a failed rally must not disable the next one — that would be a second dead end")
+
+        // And the row clears when the next rally begins, rather than carrying a
+        // dead rally's verdict into a live one (§16's rule for the mini-court,
+        // applied to the same seam).
+        rig.primary.startRally()
+        XCTAssertNotEqual(rig.primary.linkStatus, reason,
+                          "starting the next rally must clear the previous one's failure")
+
+        await settleCrossModelDelivery(until: { rig.secondary.rally == .recording })
+        await settleCrossModelDelivery(until: { rig.primaryRecord.isRecording })
+        rig.primary.stopRally()
+        await settleCrossModelDelivery(until: {
+            rig.primary.rally != .recording && rig.primary.rally != .submitting
+                && rig.secondary.rally != .recording && rig.secondary.rally != .submitting
+        })
+        XCTAssertFalse(rig.primaryRecord.isRecording,
+                       "teardown: no AVAssetWriter should be left running past this test")
+        XCTAssertFalse(rig.secondaryRecord.isRecording)
+    }
+
+    // MARK: - Teardown must not leave the peer recording
+
+    /// `teardownPairing()` stopped the local camera but never told the peer, so
+    /// a pairing torn down mid-rally left the secondary recording 4K60 until
+    /// its own 3 s heartbeat timeout noticed the link was gone — a rally's
+    /// worth of 4K60 on a phone that thinks it is still working.
+    ///
+    /// Driven through `endSession()` rather than §16's `Failed → PAIR (retry)`
+    /// path, because that is the only route on which the fix is *observable*:
+    /// both callers share `teardownPairing()` verbatim, but on the retry path
+    /// the session is already `.failed`, so `sendRecord`'s own
+    /// `.live || .ready` gate correctly refuses the frame and the secondary's
+    /// degraded-link STOP (§16) is what saves it instead. Here the session is
+    /// `.live`, so the frame goes out and the secondary follows it down.
+    func testTearingDownAPairingMidRallyTellsThePeerToStopRecording() async {
+        let rig = await makePairedRig()
+        await settleCrossModelDelivery(until: { rig.primary.engineReady })
+
+        rig.primary.startRally()
+        await settleCrossModelDelivery(until: { rig.secondary.rally == .recording })
+        await settleCrossModelDelivery(until: { rig.primaryRecord.isRecording })
+        XCTAssertEqual(rig.secondary.rally, .recording, "setup: the secondary really is recording")
+
+        var stopFramesDelivered = 0
+        rig.pair.0.controlDeliveryHook = { frame, deliver in
+            if let message = ControlMessage.decode(frame), case .record("stop", _) = message {
+                stopFramesDelivered += 1
+            }
+            deliver(frame)
+        }
+
+        rig.primary.endSession()
+        rig.pair.0.controlDeliveryHook = nil
+
+        XCTAssertEqual(stopFramesDelivered, 1, """
+            teardown must send .record("stop") while it still has a session to send it through — \
+            without it the secondary keeps recording until its 3 s heartbeat timeout
+            """)
+        await settleCrossModelDelivery(until: {
+            rig.secondary.rally != .recording && rig.secondary.rally != .submitting
+        })
+        XCTAssertNotEqual(rig.secondary.rally, .recording,
+                          "and the secondary must actually act on it, not just receive it")
+
         await settleCrossModelDelivery(until: {
             !rig.primaryRecord.isRecording && !rig.secondaryRecord.isRecording
         })

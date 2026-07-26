@@ -109,6 +109,23 @@ final class LiveSessionModel: ObservableObject {
 
     private var peerVideoID: String?
 
+    /// The id of the last clip a rally on this model handed to `RunSubmission`.
+    ///
+    /// Exists because a failed upload now *keeps* `RecordModel.liveClip` (see
+    /// `finishRecordingAndSubmit`), so the next rally can find a clip already
+    /// sitting there. Without this, a rally whose own stop produced nothing —
+    /// the camera refused, or the writer came back empty — would pick up the
+    /// previous rally's clip and upload it under *this* rally's `session_id`,
+    /// while the peer uploaded the real one. The server would then triangulate
+    /// two different rallies as one: the same wrong-answer-not-missing-answer
+    /// failure `rallySessionID`'s doc is built to prevent.
+    ///
+    /// Never reset — not in `teardownPairing()`, not between pairings.
+    /// `FinishedClip.id` is a fresh `UUID` per clip, so a stale value here can
+    /// only ever fail to match, which is exactly the intended behaviour. There
+    /// is nothing for a reset to fix and a reset could only reopen the hole.
+    private var submittedClipID: FinishedClip.ID?
+
     /// Which rally on this pairing the model's state currently belongs to.
     /// Bumped by `beginRally()`, and by `teardownPairing()` so a pairing torn
     /// down mid-rally — by `endSession()` *or* by a `beginPairing()` retry —
@@ -222,6 +239,32 @@ final class LiveSessionModel: ObservableObject {
     // MARK: - The one primary (§7)
 
     func primaryTapped() {
+        // DESIGN.md §16's `Failed → PAIR (retry)`, applied to the *calibration*
+        // gate as well as the pairing one.
+        //
+        // `prepare()` runs from exactly one place, `PairingView`'s `.task`,
+        // which fires once per appearance. So before this, a failed fetch — a
+        // server unreachable from a court is the expected case, not an exotic
+        // one — was terminal: `computedPrimaryEnabled`'s first guard returned
+        // false forever, `beginPairing()`'s own `guard case .ready` made
+        // `primaryTapped()` a no-op even if something did enable the button,
+        // and the only recovery was backing out to Play and re-entering. Both
+        // §16 and the spec's error table promise a retry here.
+        //
+        // Checked before the `session` branch, and correct there: `prepare()`
+        // refuses to run once `calibration` is `.ready`, so `.failed` is only
+        // reachable on a phone that has never paired — `session` is nil in this
+        // state by construction, and `beginPairing()` would refuse anyway.
+        //
+        // A double tap is safe without a latch of its own: `prepare()`'s
+        // `isPreparing` guard makes the second call a no-op, and its first act
+        // is to publish `.loading` and `republish()`, which disables the button
+        // (`computedPrimaryEnabled`'s `.loading` case) and swaps the row to
+        // "Checking this phone's court calibration…".
+        if case .failed = calibration {
+            Task { [weak self] in await self?.prepare() }
+            return
+        }
         guard session != nil else { return beginPairing() }
         switch pairing.step {
         case .idle, .failed: beginPairing()
@@ -336,7 +379,27 @@ final class LiveSessionModel: ObservableObject {
     /// * `isRevertingRole` — a one-statement re-entrancy latch inside `role`'s
     ///   `didSet`, always false outside it.
     /// * `cameraRole` — computed from `role`, so it follows it.
+    /// * `submittedClipID` — a `UUID` that can only ever fail to match a
+    ///   later clip, which is the behaviour it exists to produce. Clearing it
+    ///   would reopen the hole it closes; see its own doc.
     private func teardownPairing() {
+        // Tell the peer first, while there is still a session to tell it
+        // through. The local stop below only ever stops *this* phone; without
+        // this frame a primary taking §16's `Failed → PAIR (retry)` mid-rally
+        // left the secondary recording 4K60 until its own 3 s heartbeat
+        // timeout noticed the link was gone.
+        //
+        // Gated on `rally == .recording` so an ordinary teardown does not put a
+        // meaningless "stop" on the wire — the peer's `handleRemoteRecord`
+        // would ignore it anyway, but a frame that means nothing is not worth
+        // sending. Best-effort by nature: `sendRecord`'s own gate is
+        // `.live || .ready`, so on the path where the session already failed
+        // this is correctly a no-op, and the secondary's degraded-link STOP
+        // (§16) remains its backstop.
+        if rally == .recording {
+            session?.sendRecord(action: "stop",
+                                ptsNs: UInt64(ClockSync.hostNow() * 1_000_000_000))
+        }
         // A running recording — or one that is about to start via a
         // transition still queued behind an earlier one — must never be
         // abandoned: left alone, the camera keeps rolling (or starts
@@ -794,14 +857,34 @@ final class LiveSessionModel: ObservableObject {
             // `liveClip`, not the raw clip: a clip the record stage owns is
             // invisible here, so a plain recording can never be submitted as
             // this rally's paired footage.
-            guard let clip = record.liveClip else {
+            //
+            // The `submittedClipID` half is what makes it safe to *keep* the
+            // clip past a failed upload (below): a clip some earlier rally has
+            // already claimed is not this rally's footage, and this rally must
+            // report that it produced none rather than upload someone else's.
+            guard let clip = record.liveClip, clip.id != self.submittedClipID else {
                 self.finishRally(.failed("The rally produced no clip."), generation: generation)
                 return
             }
-            // The live path reports its own outcome through `rally`, so once
-            // the clip has been read here, clear it — otherwise a later live
-            // visit to this same RecordModel would find a stale one waiting.
-            record.liveClip = nil
+            self.submittedClipID = clip.id
+            // The clip is deliberately NOT cleared here. It used to be — read
+            // it, immediately nil it, then upload — so a failed upload had
+            // already destroyed the only reference to the recording it failed
+            // to send. "Server unreachable" is the *expected* case on a court,
+            // which turned the ordinary failure into an unrecoverable one: no
+            // clip to retry with and no path back to the file on disk. The
+            // clear now happens on exactly one path — the success branch below
+            // — so the reference outlives every outcome that might still want
+            // it, and `rally` carries the reason (surfaced by
+            // `computedLinkStatus`).
+            //
+            // Claiming the id *before* the `await`, rather than clearing the
+            // clip at the next `beginRally()`, is deliberate: `beginRally()`
+            // runs on main outside this funnel, so a clear there would race
+            // this read — the next rally could start in the one main-actor hop
+            // between the stop publishing this clip and this continuation
+            // resuming, and blank the clip out from under its own upload. The
+            // id is claimed synchronously with the read, so there is no window.
             await submission.submit(videoURL: clip.url, duration: clip.duration,
                                     sessionID: upload.sessionID,
                                     cameraRole: upload.cameraRole,
@@ -827,6 +910,23 @@ final class LiveSessionModel: ObservableObject {
                 // session_id + camera_role and never reads `peer_video_id`, so
                 // a lost one blocks nothing. Skipped entirely when
                 // `finishRally` reports the rally was superseded.
+                //
+                // The one and only place the clip is released, and only now
+                // that the server actually has it.
+                //
+                // Identity-checked rather than a bare `record.liveClip = nil`:
+                // this upload can outlive its rally by minutes (see
+                // `finishRally`), so by the time it completes the field may
+                // already hold the *next* rally's clip, published by that
+                // rally's stop and not yet read by its own submit. Clearing
+                // blindly would delete a clip nobody has uploaded, and that
+                // rally would go on to report it produced none. Release only
+                // what this upload sent.
+                //
+                // Not gated on the generation check below, deliberately: the
+                // clip really was uploaded, so it is spent whether or not this
+                // rally's outcome is still the one being displayed.
+                if record.liveClip?.id == clip.id { record.liveClip = nil }
                 if self.finishRally(.submitted, generation: generation),
                    let sessionID = upload.sessionID, let videoID = submission.completedRunID {
                     self.session?.sendSessionManifest(sessionID: sessionID, videoID: videoID)
@@ -839,22 +939,50 @@ final class LiveSessionModel: ObservableObject {
         }
     }
 
-    /// Seeds the server's offset refinement with what the phones measured.
-    /// Primary-only — `job_runner` reads the manifest from whichever run
-    /// carries it, so sending it twice would be redundant.
+    /// Deliberately always `nil`: this client does not currently know either
+    /// phone's recording-start instant in a shared frame, so it has no seed
+    /// worth sending, and `seed_source: "none"` — the server's own ±50 ms
+    /// search from `0.0` — is the correct outcome.
     ///
-    /// Always `offset_series`, never `clap_anchor_s`: `ClockSync.anchor` is
-    /// private, so the client cannot tell an anchored estimate from a network
-    /// one. It costs nothing — when the anchor is applied, `estimate.offset`
-    /// *is* the anchor value, and the server takes the median of a one-element
-    /// series, which returns it exactly. Only the report's `seed.source` label
-    /// differs.
-    private func syncManifestJSON() -> String? {
-        guard role == .primary, let estimate = session?.clockSync.estimate else { return nil }
-        let payload: [String: Any] = ["offset_series": [estimate.offset]]
-        guard let data = try? JSONSerialization.data(withJSONObject: payload) else { return nil }
-        return String(decoding: data, as: UTF8.self)
-    }
+    /// It used to send `["offset_series": [session.clockSync.estimate.offset]]`.
+    /// Three conventions have to agree for that to mean anything, and none of
+    /// them did:
+    ///
+    /// * **Wrong clock.** `ClockSync`'s offset is `remote − local` on each
+    ///   device's *capture host clock* (`CMClockGetHostTimeClock()`, i.e.
+    ///   seconds since that phone booted). Two phones differ by their uptime
+    ///   difference — routinely hours.
+    /// * **Wrong sign.** `stereo_sync.py`'s stated convention is "seconds ADDED
+    ///   to camera_role `b`'s timestamps to place both tracks on camera_role
+    ///   `a`'s clock", and `job_runner` applies exactly that
+    ///   (`t_s = s.t_s + offset_s`). The server therefore wants `t_a − t_b`;
+    ///   the primary's `ClockSync` measures `t_b − t_a`.
+    /// * **Wrong quantity entirely**, which is fatal on its own. The server's
+    ///   timestamps are *clip-relative*: `stereo_sync.track_samples_from_csv`
+    ///   reads `timestamp_seconds`, which `tracking_common.py` writes as
+    ///   `source_frame / source_fps`, so both clips start near t=0. The seed
+    ///   the search actually wants is the **recording-start skew** between the
+    ///   two phones — tens of milliseconds, which is why `refine_offset`'s
+    ///   `coarse_range_s` is `0.05`. A clock offset does not appear in it.
+    ///
+    /// What that cost, on every rally, silently: `stereo_sync._timeline` found
+    /// no overlap at a seed of tens of thousands of seconds and returned an
+    /// empty grid, so `refine_offset` bailed with `refined.offset_s` still *at*
+    /// the seed, and the fuse completed with an empty track and zero impacts.
+    /// Strictly worse than sending nothing — with no manifest the seed is
+    /// `0.0` and the ±50 ms search actually works.
+    ///
+    /// The follow-up that would make a real seed possible: the `.record`
+    /// message already carries `ptsNs`, which `PeerSession` delivers to
+    /// `onRecord` and this file currently discards. Exchanging each phone's
+    /// recording-start host time, mapping the peer's through
+    /// `ClockSync.remoteToLocal` to put both on one clock, and sending
+    /// `t_a_start − t_b_start` would be a seed in the right quantity, on the
+    /// right clock, with the right sign. Until then the plumbing stays wired —
+    /// `RunSubmission.submit` and `APIClient.startTrack` still take the
+    /// parameter, and the wire protocol is unchanged — and only the value is
+    /// nil.
+    private func syncManifestJSON() -> String? { nil }
 
     /// Single rule for the §16 "still recording, no way out" safety valve —
     /// shown only while the rally is genuinely recording *and* the link is
@@ -979,6 +1107,31 @@ final class LiveSessionModel: ObservableObject {
         }
         if session == nil && role == nil { return "Pick this phone's job to start." }
         if case .ready = pairing.step {
+            // A rally that ended badly says so — verbatim, in the same row and
+            // by the same rule as a calibration failure two lines up.
+            //
+            // Without this, `RallyState.failed` was set and rendered *nowhere*:
+            // `LiveStageView` reads only `rally == .recording`, `PairingView`
+            // does not read `rally` at all, and this property never consulted
+            // it. So a failed upload — "server unreachable", the expected case
+            // on a court — looked exactly like a successful one: `p-live`
+            // popped, `p-pair` read a cheerful "Paired · sync ±1.4 ms", and the
+            // rally the user just played was simply gone.
+            //
+            // Scoped to `.ready` deliberately. Every other `pairing.step` has
+            // something more urgent to say (searching, degraded, or the
+            // session's own failure reason), and `.ready` is exactly where
+            // `finishRally` leaves the session after any terminal outcome, so
+            // this is the state the user is actually standing in when they read
+            // it. It clears the moment the next rally starts (`beginRally()`
+            // sets `.recording`), which is also §16's rule for the mini-court.
+            //
+            // No retry affordance is offered here on purpose: §7 allows one
+            // primary per phase, and that primary is START RALLY — the tap that
+            // *can* fire. The clip is kept (see `finishRecordingAndSubmit`), so
+            // a re-submit affordance is a bounded follow-up, not something this
+            // row has foreclosed.
+            if case .failed(let reason) = rally { return reason }
             if role == .primary {
                 return engineReady ? pairing.statusLine
                                    : "Paired · waiting for the other phone's calibration"
@@ -999,7 +1152,19 @@ final class LiveSessionModel: ObservableObject {
     }
 
     private var computedPrimaryEnabled: Bool {
-        guard case .ready = calibration, role != nil else { return false }
+        switch calibration {
+        case .loading: return false
+        // §16's `Failed → PAIR (retry)`, for the calibration gate:
+        // `primaryTapped()` re-runs `prepare()` from here. Deliberately does
+        // *not* also require a role — the retry re-fetches this phone's own
+        // solved camera model, which has nothing to do with which job the phone
+        // will eventually do, and requiring a role first would leave a user who
+        // has not picked one staring at a dead screen with no way to retry the
+        // thing that actually failed. §7 holds: this tap fires.
+        case .failed: return true
+        case .ready: break
+        }
+        guard role != nil else { return false }
         guard session != nil else { return true }
         switch pairing.step {
         case .searching, .syncing, .live, .degraded: return false

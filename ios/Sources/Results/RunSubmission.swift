@@ -17,10 +17,53 @@ final class RunSubmission: ObservableObject {
 
     private let api: APIClientProtocol
     private let pollInterval: Duration
+    private let pollTimeout: Duration
 
-    init(api: APIClientProtocol = APIClient(), pollInterval: Duration = .seconds(1)) {
+    /// `pollTimeout` bounds the tracking poll below. It is not a guess about
+    /// how long a clip *should* take; it is the point past which continuing to
+    /// wait is worse than admitting we do not know.
+    ///
+    /// Why a cap has to exist at all: a job whose worker died still answers
+    /// `"running"` forever. The HTTP layer is perfectly healthy, so nothing
+    /// throws, and an uncapped loop never leaves `submit`. On the live path
+    /// that strands `LiveSessionModel.rally` at `.submitting` permanently —
+    /// `startRally()` refuses, `finishRally` never runs, so `endRally()` never
+    /// runs, `pairing.step` stays `.live`, and the primary reads a disabled
+    /// "RALLY LIVE" with no tap that can fire. `LiveSessionModel` is a
+    /// `@StateObject` on `PlayRootView`, so backing out to Play does not clear
+    /// it either: only killing the app recovers. That is the same dead end
+    /// `testASecondRallyStartsOnTheSamePairing` exists to forbid, reached
+    /// through a different door.
+    ///
+    /// Why 20 minutes, for a 4K60 rally clip:
+    ///
+    /// * `job_runner.TRACKING_JOB_SEMAPHORE` is `Semaphore(1)` — the server
+    ///   tracks exactly one clip at a time, and `run_tracking_job` only sets
+    ///   `status="running"` after acquiring it. A paired rally therefore
+    ///   *serializes*: the second phone's run sits `queued` for the whole of
+    ///   the first phone's pass before starting its own. The honest unit is
+    ///   two passes, not one, plus whatever else is already queued.
+    /// * One pass over a rally-length clip is minutes, not tens of minutes:
+    ///   the coarse stage strides frames (`frame_stride`, 4 by default) at
+    ///   `COARSE_INFERENCE_WIDTH` and only refines segments around candidate
+    ///   hits.
+    /// * The same client already grants a single request on the same clip 15
+    ///   minutes (`APIClient`'s `timeoutIntervalForResource`, for the upload).
+    ///   A poll bound below that would be the client contradicting itself.
+    ///
+    /// The asymmetry is what settles it. Tripping early is cheap and
+    /// recoverable: the run keeps going server-side, and the stereo fuse is
+    /// triggered by `run_tracking_job` completing
+    /// (`try_start_stereo_fuse`, its last statement) — never by this poll — so
+    /// a rally that outruns this bound still fuses and still lands in Matches.
+    /// The clip is kept too (see `LiveSessionModel.finishRecordingAndSubmit`).
+    /// Not tripping at all is a permanent app-level dead end. So this is set
+    /// generously and treated as a backstop, not a deadline anyone should meet.
+    init(api: APIClientProtocol = APIClient(), pollInterval: Duration = .seconds(1),
+         pollTimeout: Duration = .seconds(20 * 60)) {
         self.api = api
         self.pollInterval = pollInterval
+        self.pollTimeout = pollTimeout
     }
 
     var completedRunID: String? {
@@ -49,10 +92,28 @@ final class RunSubmission: ObservableObject {
                 sessionID: sessionID, cameraRole: cameraRole,
                 peerVideoID: peerVideoID, syncManifestJSON: syncManifestJSON)
 
+            // Measured from the first poll, not from `submit`'s entry: the
+            // upload above can legitimately take minutes on a 4K60 clip and
+            // already has `URLSession`'s own resource timeout over it, so
+            // charging it against the tracking bound would shorten the bound by
+            // an unrelated amount.
+            //
+            // `ContinuousClock`, not `Date`: this must not be movable by a
+            // clock adjustment mid-rally, and it must keep counting while the
+            // phone is asleep in someone's pocket between rallies.
+            let deadline = ContinuousClock.now + pollTimeout
             while job.status == "queued" || job.status == "running" {
                 phase = .tracking(progress: job.progress ?? 0,
                                   message: job.message ?? "Analyzing…")
                 try await Task.sleep(for: pollInterval)
+                // Checked after the sleep and before the next status call, so
+                // the bound is enforced even against a server that answers
+                // instantly and forever. Throwing (rather than breaking) routes
+                // it through the same `catch` every other failure uses, so the
+                // caller sees one shape of outcome: `.failed(message)`.
+                guard ContinuousClock.now < deadline else {
+                    throw APIError.trackingTimedOut(pollTimeout)
+                }
                 guard let runID = job.runID else { throw APIError.badResponse }
                 job = try await api.trackStatus(runID: runID)
             }
