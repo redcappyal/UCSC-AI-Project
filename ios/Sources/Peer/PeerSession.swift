@@ -22,9 +22,12 @@ final class PeerSession: ObservableObject {
     /// What this device advertises. Exposed for `LiveWiringTests`, which
     /// asserts a session's detection frame space matches the space it
     /// advertises here — the two disagreeing is precisely the bug this file
-    /// used to have. Also here for the pairing wiring that doesn't exist yet:
-    /// `RecordModel.attachPeer` does not read this today, since nothing
-    /// constructs its `PeerSession` with the session's real mount.
+    /// used to have.
+    ///
+    /// The live path does construct its session with the real mount:
+    /// `LiveSessionModel.beginPairing()` passes `record.camera.orientation`.
+    /// `PeerBenchView`'s DEBUG session still takes the `.landscapeRight`
+    /// default, which is fine — the bench never records.
     var advertisedHello: Hello { stateLock.lock(); defer { stateLock.unlock() }; return myHello }
     var onRemoteDetections: (([DetectionTuple]) -> Void)?
     /// Fired on the transport delivery context (like onRemoteDetections) when
@@ -36,6 +39,13 @@ final class PeerSession: ObservableObject {
     /// .event control message arrives — carries a stereo-engine event
     /// (impact JSON, Phase 3) relayed from the primary.
     var onEvent: ((_ rallyID: UInt32, _ json: String) -> Void)?
+    /// Phase 4: synchronized rally recording. `action` is "start" or "stop";
+    /// `ptsNs` is the sender's host clock, for logging — actual alignment
+    /// comes from ClockSync, never from this field.
+    var onRecord: ((String, UInt64) -> Void)?
+    /// Phase 5: paired-upload identity. `videoID` is empty on the initial
+    /// announce and carries the real ID once that phone has uploaded.
+    var onSessionManifest: ((String, String) -> Void)?
 
     private let transport: PeerTransport
     private let isInitiator: Bool
@@ -145,6 +155,39 @@ final class PeerSession: ObservableObject {
         if internalPhase == .ready { setPhase(.live) }
     }
 
+    /// `goLive()`'s inverse: the rally is over, so hand the session back to
+    /// `.ready` and let the same pairing run another one. A no-op from every
+    /// other phase, exactly as `goLive()` is a no-op outside `.ready`.
+    ///
+    /// Without this there is no transition out of `.live` at all — `tick`'s
+    /// `.ready, .live` branch only ever leaves it to degrade — so the first
+    /// rally left the session `.live` for the rest of the app's life, and
+    /// `p-pair`'s one primary read a permanently disabled "RALLY LIVE".
+    ///
+    /// `.degraded` is handled rather than ignored, and deliberately *not* by
+    /// forcing the current phase: while the link really is down the phase must
+    /// stay `.degraded` (§16's "Link lost" row is never a silent downgrade,
+    /// and forcing `.ready` here would only make `tick` re-degrade on its next
+    /// pass, flickering the status row). What has to change is the phase
+    /// `tick`'s recovery branch will *restore* — captured in
+    /// `phaseBeforeDegraded` when the link dropped. If that says `.live`, a
+    /// recovery after the rally ended would put the session back into a rally
+    /// that is already over; rewriting it to `.ready` makes recovery land
+    /// where a finished rally belongs. Only `.live` is rewritten: a degrade
+    /// captured from `.searching`/`.syncing`/`.confirming` (transport
+    /// disconnect, `handleTransportState`) is none of this method's business.
+    func endRally() {
+        stateLock.lock(); defer { stateLock.unlock() }
+        switch internalPhase {
+        case .live:
+            setPhase(.ready)
+        case .degraded:
+            if phaseBeforeDegraded == .live { phaseBeforeDegraded = .ready }
+        default:
+            break
+        }
+    }
+
     func end() {
         stateLock.lock(); defer { stateLock.unlock() }
         setPhase(.ended)
@@ -161,16 +204,44 @@ final class PeerSession: ObservableObject {
 
     /// Phase 3: the payload carries the SOLVED camera-model JSON
     /// (CameraModel.fromJSON-parseable), not raw wizard taps.
-    func sendCalibration(profileID: String, payloadJSON: String) {
+    ///
+    /// Returns whether the frame actually reached the transport — see
+    /// `sendSessionManifest` below for why every gated sender reports that.
+    @discardableResult
+    func sendCalibration(profileID: String, payloadJSON: String) -> Bool {
         stateLock.lock(); defer { stateLock.unlock() }
-        guard internalPhase == .live || internalPhase == .ready else { return }
-        sendControl(.calibration(profileID: profileID, calibrationJSON: payloadJSON))
+        guard internalPhase == .live || internalPhase == .ready else { return false }
+        return sendControl(.calibration(profileID: profileID, calibrationJSON: payloadJSON))
     }
 
     func sendEvent(rallyID: UInt32, json: String) {
         stateLock.lock(); defer { stateLock.unlock() }
         guard internalPhase == .live || internalPhase == .ready else { return }
         sendControl(.event(rallyID: rallyID, json: json))
+    }
+
+    func sendRecord(action: String, ptsNs: UInt64) {
+        stateLock.lock(); defer { stateLock.unlock() }
+        guard internalPhase == .live || internalPhase == .ready else { return }
+        sendControl(.record(action: action, ptsNs: ptsNs))
+    }
+
+    /// Returns whether the frame actually reached the transport.
+    ///
+    /// The gate below reads `internalPhase` — authoritative and lock-guarded —
+    /// while a caller that decides "have I sent this yet?" from the
+    /// `@Published` `phase` *mirror* is reading a value that lags whenever
+    /// `setPhase` ran off-main (it hops to main asynchronously). A caller that
+    /// latches a once-per-something flag optimistically therefore has a real
+    /// window in which the flag latches, this gate drops the frame, and
+    /// nothing ever re-arms. Reporting the outcome lets every such caller
+    /// latch on what happened rather than on what it assumed would happen;
+    /// `@discardableResult` keeps the fire-and-forget call sites unchanged.
+    @discardableResult
+    func sendSessionManifest(sessionID: String, videoID: String) -> Bool {
+        stateLock.lock(); defer { stateLock.unlock() }
+        guard internalPhase == .live || internalPhase == .ready else { return false }
+        return sendControl(.sessionManifest(sessionID: sessionID, videoID: videoID))
     }
 
     func sendClapAnchor(localOnset: TimeInterval) {
@@ -302,8 +373,10 @@ final class PeerSession: ObservableObject {
             onCalibration?(profileID, calibrationJSON)
         case .event(let rallyID, let json):
             onEvent?(rallyID, json)
-        case .record, .sessionManifest:
-            break   // consumed by Phase 4/5 code; parsing is already validated
+        case .record(let action, let ptsNs):
+            onRecord?(action, ptsNs)
+        case .sessionManifest(let sessionID, let videoID):
+            onSessionManifest?(sessionID, videoID)
         }
     }
 
@@ -337,9 +410,16 @@ final class PeerSession: ObservableObject {
         clockSync.applyAnchor(localEventTime: mine, remoteEventTime: theirs)
     }
 
-    private func sendControl(_ message: ControlMessage) {
-        guard let data = try? ControlMessage.encode(message) else { return }
+    /// Returns whether the message was encodable and handed to the transport.
+    /// Encoding a `ControlMessage` built from valid Swift values does not
+    /// realistically fail, but the gated senders above promise their callers
+    /// "this actually went out" — so the one place that could silently swallow
+    /// it says so rather than being assumed.
+    @discardableResult
+    private func sendControl(_ message: ControlMessage) -> Bool {
+        guard let data = try? ControlMessage.encode(message) else { return false }
         transport.sendControl(data)
+        return true
     }
 
     private func setPhase(_ newPhase: Phase) {

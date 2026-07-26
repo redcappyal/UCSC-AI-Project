@@ -1,4 +1,5 @@
 // ios/Sources/Live/LiveCallView.swift
+import Foundation
 import SwiftUI
 
 /// Presentation-only mapping from an impact to what the screen says.
@@ -35,24 +36,64 @@ struct CallPresentation: Equatable {
     }
 
     static func from(_ impact: StereoImpact) -> CallPresentation {
+        // Only these two fields decide what the screen says — see
+        // `from(call:confidence:)`, which is also what the secondary's relayed
+        // JSON reaches, so both roles are gated by one piece of code.
+        from(call: impact.call, confidence: impact.confidence)
+    }
+
+    /// The secondary's view of a call.
+    ///
+    /// The secondary owns no `StereoEngine` (`RecordModel.attachStereo` is
+    /// primary-only), so the only thing it ever has is the JSON the primary
+    /// put on the wire — `{surface, call, margin_ft, confidence, t_s}`, built
+    /// in that same file's `engine.onEvent`. DESIGN.md §16's `p-live` states
+    /// table draws no role distinction for the banner or the flash, and the
+    /// spec's deliberate v1 narrowing is only about the mini-court (which
+    /// needs the 3D track this payload genuinely does not carry) — so the two
+    /// fields that decide the banner are read straight out of it and pushed
+    /// through the *same* mapping the primary's own impact takes. No
+    /// `StereoImpact` is reconstructed: the payload carries no geometry, and
+    /// inventing a point to fill one in would be a lie that later readers
+    /// could take seriously.
+    ///
+    /// `nil` — not a presentation — when the payload is not an object or is
+    /// missing either field: a banner is a claim that a call happened, and
+    /// there is nothing here to claim. An unrecognised *value* is a different
+    /// case and deliberately does reach the mapping, which degrades it to
+    /// `NO CALL · obstructed` (`verdictWord`'s `default`).
+    static func fromRelayedEvent(json: String) -> CallPresentation? {
+        guard let data = json.data(using: .utf8),
+              let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+              let call = object["call"] as? String,
+              let confidence = object["confidence"] as? String else { return nil }
+        return from(call: call, confidence: confidence)
+    }
+
+    /// The one gate, for both roles and both sources of a call.
+    ///
+    /// Takes the two fields rather than a `StereoImpact` so the secondary's
+    /// relayed JSON can reach it without a fabricated impact — the mapping
+    /// never read anything else anyway.
+    private static func from(call: String, confidence: String) -> CallPresentation {
         // Order is load-bearing. Confidence first: when nothing snapped we do
         // not reliably know the surface either, so "floor bounce" would assert
         // geometry the engine did not resolve. "obstructed" is the honest word.
-        if impact.confidence == "no_call" {
+        if confidence == "no_call" {
             return CallPresentation(word: "NO CALL", detail: "obstructed", isVerdict: false)
         }
         // A floor bounce is not a line verdict, whatever the confidence.
-        if impact.call == "bounce" {
+        if call == "bounce" {
             return CallPresentation(word: "NO CALL", detail: "floor bounce", isVerdict: false)
         }
-        guard let word = verdictWord(impact.call) else {
+        guard let word = verdictWord(call) else {
             // Impact JSON can arrive relayed from the peer; an unrecognised
             // call is a bug or a version skew, and either way it is not
             // something to render as a confident verdict.
             return CallPresentation(word: "NO CALL", detail: "obstructed", isVerdict: false)
         }
         // §8.18: verdicts always carry a confidence phrase, never a bare word.
-        let detail = impact.confidence == "high" ? "high confidence" : "one view"
+        let detail = confidence == "high" ? "high confidence" : "one view"
         return CallPresentation(word: word, detail: detail, isVerdict: true)
     }
 

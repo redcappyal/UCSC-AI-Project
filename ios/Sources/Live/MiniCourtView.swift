@@ -57,6 +57,23 @@ enum CourtProjection {
 /// Per §16 it is never visible before a call — the host reserves its footprint
 /// and shows it once a rally resolves, so nothing shifts (§0.9).
 struct MiniCourtView: View {
+    /// The footprint a host reserves for this view, filled or blank (§0.9).
+    ///
+    /// Published as a constant rather than left to each host to guess: the
+    /// reserved space and the rendered view have to be the *same* height or
+    /// the replay draws past its slot and over whatever sits below it. The
+    /// value is this view's natural height at the default Dynamic Type size —
+    /// two panels of `.caption` (16) + 4 spacing + canvas (92) = 112, plus the
+    /// 8 pt gap between them.
+    ///
+    /// It is not a promise the panels depend on: the canvases are flexible
+    /// (`maxHeight: .infinity`), so whatever height a host actually imposes is
+    /// divided between the two panels and the labels take the rest. That is
+    /// what keeps reserved and rendered identical at *every* type size, not
+    /// just the default one — a fixed 92 pt canvas plus a caption that grows
+    /// with Dynamic Type cannot do that.
+    static let reservedHeight: CGFloat = 232
+
     let track: [TrackPoint3D]
     let impact: StereoImpact?
 
@@ -107,7 +124,12 @@ struct MiniCourtView: View {
                     context.fill(Path(ellipseIn: dot), with: .color(markerColor))
                 }
             }
-            .frame(height: 92)
+            // Takes whatever the host reserved, minus the label row — see
+            // `reservedHeight`. `Canvas` already accepts the size proposed to
+            // it; the explicit `maxHeight` says so at the call site, so this
+            // panel is never mistaken for a fixed 92 pt box that a too-small
+            // reservation would silently overflow.
+            .frame(maxHeight: .infinity)
             .background(Theme.surface, in: RoundedRectangle(cornerRadius: 8))
         }
     }

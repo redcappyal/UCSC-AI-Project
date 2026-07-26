@@ -107,6 +107,10 @@ final class PairingModel: ObservableObject {
         syncFromSession()
     }
 
+    /// Republish without advancing the session's timers. `RecordModel.attachPeer`
+    /// already ticks the peer at 20 Hz; a second `pump` here would tick it twice.
+    func refresh() { syncFromSession() }
+
     // MARK: - Mapping
 
     static let notPairedLine = "Not paired"

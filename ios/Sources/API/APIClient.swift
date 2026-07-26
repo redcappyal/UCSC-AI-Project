@@ -3,10 +3,20 @@ import Foundation
 protocol APIClientProtocol: Sendable {
     func latestCalibration() async throws -> LatestCalibration
     func upload(videoURL: URL) async throws -> UploadResponse
-    func startTrack(videoID: String, calibrationJSON: String,
-                    duration: Double) async throws -> JobStatus
+    func startTrack(videoID: String, calibrationJSON: String, duration: Double,
+                    sessionID: String?, cameraRole: String?,
+                    peerVideoID: String?, syncManifestJSON: String?) async throws -> JobStatus
     func trackStatus(runID: String) async throws -> JobStatus
     func fetchSolvedCameraModel(calibrationJSON: String) async throws -> String
+}
+
+extension APIClientProtocol {
+    func startTrack(videoID: String, calibrationJSON: String,
+                    duration: Double) async throws -> JobStatus {
+        try await startTrack(videoID: videoID, calibrationJSON: calibrationJSON,
+                             duration: duration, sessionID: nil, cameraRole: nil,
+                             peerVideoID: nil, syncManifestJSON: nil)
+    }
 }
 
 struct APIClient: APIClientProtocol {
@@ -42,13 +52,15 @@ struct APIClient: APIClientProtocol {
         return try JSONDecoder().decode(UploadResponse.self, from: data)
     }
 
-    func startTrack(videoID: String, calibrationJSON: String,
-                    duration: Double) async throws -> JobStatus {
+    func startTrack(videoID: String, calibrationJSON: String, duration: Double,
+                    sessionID: String?, cameraRole: String?,
+                    peerVideoID: String?,
+                    syncManifestJSON: String?) async throws -> JobStatus {
         var request = URLRequest(url: baseURL.appending(path: "api/track"))
         request.httpMethod = "POST"
         request.setValue("application/x-www-form-urlencoded",
                          forHTTPHeaderField: "Content-Type")
-        let form = Multipart.formURLEncoded([
+        var fields: [(String, String)] = [
             ("video_id", videoID),
             ("calibration_json", calibrationJSON),
             ("start_time", "0"),
@@ -57,8 +69,17 @@ struct APIClient: APIClientProtocol {
             ("inference_width", "960"),
             ("event_engine", ""),
             ("fusion_3d", ""),
-        ])
-        request.httpBody = Data(form.utf8)
+        ]
+        // The server treats these as strictly optional and requires session and
+        // role together — omitting them entirely must stay byte-identical to
+        // the single-camera path, so append only what is actually set.
+        if let sessionID, let cameraRole {
+            fields.append(("session_id", sessionID))
+            fields.append(("camera_role", cameraRole))
+        }
+        if let peerVideoID { fields.append(("peer_video_id", peerVideoID)) }
+        if let syncManifestJSON { fields.append(("sync_manifest_json", syncManifestJSON)) }
+        request.httpBody = Data(Multipart.formURLEncoded(fields).utf8)
         let (data, response) = try await session.data(for: request)
         try Self.checkHTTP(response, data: data)
         return try JSONDecoder().decode(JobStatus.self, from: data)

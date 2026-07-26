@@ -1,7 +1,10 @@
 import SwiftUI
 
 struct RecordView: View {
-    @StateObject private var model = RecordModel()
+    // Owned by `PlayRootView` now, not here — the live stage borrows the same
+    // instance via `LiveSessionModel.bind(record:)`, so it can no longer be a
+    // private @StateObject. Nothing else below reads anything but `model`.
+    @ObservedObject var model: RecordModel
 
     var body: some View {
         ZStack {
@@ -59,10 +62,10 @@ struct RecordView: View {
             }
         }
         #if DEBUG
-        // The plan put this beside RootTabView's peer-bench button, but the
-        // demo needs `model`, which lives here — RootTabView has no handle on
-        // RecordView's @StateObject. Same stage, same chip styling, offset so
-        // it clears the bench button above it.
+        // The plan put this beside PlayRootView's peer-bench button, but the
+        // demo cube overlays the live camera stage itself — it belongs here
+        // regardless of who owns `model` now. Same chip styling, offset so
+        // it clears where the bench button sits one screen up.
         .overlay(alignment: .topTrailing) {
             Button {
                 model.startStereoDemo(localModelJSON: StereoDemo.localModelJSON,
@@ -79,7 +82,9 @@ struct RecordView: View {
         }
         #endif
         .task { await model.startCamera() }
-        .sheet(item: $model.finishedClip) { clip in
+        // `singleCameraClip`, not the raw clip: a rally the live layer
+        // recorded on this same camera must never open the plain judge flow.
+        .sheet(item: $model.singleCameraClip) { clip in
             ResultsView(clip: clip)
         }
     }
@@ -91,23 +96,48 @@ struct RecordView: View {
                     .font(.system(.title3, design: .monospaced).weight(.semibold))
                     .foregroundStyle(Theme.text)
             }
-            Button {
-                Task { await model.toggleRecording() }
-            } label: {
-                ZStack {
-                    Circle().stroke(Theme.text, lineWidth: 4).frame(width: 76, height: 76)
-                    if model.isRecording {
-                        // Yellow, not red: DESIGN.md reserves red for OUT
-                        // verdicts ("never a red record dot", §8.16).
-                        RoundedRectangle(cornerRadius: 6)
-                            .fill(Theme.accentBg).frame(width: 32, height: 32)
-                    } else {
-                        Circle().fill(Theme.accentBg).frame(width: 62, height: 62)
-                    }
-                }
+            // The camera is shared with the live layer, so this stage can be
+            // standing in front of a rally it did not start — on the
+            // secondary phone that happens with no tap here at all, since a
+            // remote "record" starts the local recording. `canSetRecording`
+            // is the model's own rule for what this owner may do, asked here
+            // so the screen cannot offer a stop the model would refuse.
+            if model.canSetRecording(!model.isRecording, owner: .single) {
+                recordButton
+            } else {
+                // §0.3: never let appearance alone carry the meaning, and
+                // §13: say something specific and actionable. Sized to the
+                // button it replaces so nothing above it moves (§0.9).
+                Text("The live match is using this camera — end the rally there first.")
+                    .font(.footnote)
+                    .foregroundStyle(Theme.dim)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, 24)
+                    .frame(minHeight: 76)
             }
-            .accessibilityLabel(model.isRecording ? "Stop recording" : "Start recording")
         }
         .padding(.bottom, 24)
+    }
+
+    private var recordButton: some View {
+        Button {
+            // Absolute intent, read at tap time, funnelled through the model:
+            // the tap says "start" or "stop", never "flip whatever it is now".
+            let shouldRecord = !model.isRecording
+            Task { _ = await model.setRecording(shouldRecord, owner: .single) }
+        } label: {
+            ZStack {
+                Circle().stroke(Theme.text, lineWidth: 4).frame(width: 76, height: 76)
+                if model.isRecording {
+                    // Yellow, not red: DESIGN.md reserves red for OUT
+                    // verdicts ("never a red record dot", §8.16).
+                    RoundedRectangle(cornerRadius: 6)
+                        .fill(Theme.accentBg).frame(width: 32, height: 32)
+                } else {
+                    Circle().fill(Theme.accentBg).frame(width: 62, height: 62)
+                }
+            }
+        }
+        .accessibilityLabel(model.isRecording ? "Stop recording" : "Start recording")
     }
 }

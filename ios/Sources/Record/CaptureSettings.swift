@@ -55,11 +55,15 @@ enum CaptureSettings {
     /// refuses a mismatched pair rather than absorbing it, so the operator
     /// learns the mount is wrong instead of the archive inheriting it.
     ///
-    /// The capture side is not wired to it yet: every `PeerSession` the app
-    /// builds takes the `.landscapeRight` default, so `CameraController`'s
-    /// real mount never reaches the wire. Until a paired session is
-    /// constructed with the resolved mount, a genuinely mixed pair still
-    /// pairs — `ios/PEER.md` tracks this.
+    /// The capture side is wired to it on the live path:
+    /// `LiveSessionModel.beginPairing()` builds its `PeerSession` with
+    /// `record.camera.orientation`, so this phone's real mount is what goes
+    /// on the wire. One caveat, tracked in `ios/PEER.md`: that read takes
+    /// whatever `RecordModel.startCamera` last seeded, which is the mount
+    /// resolved when the pairing screen appeared (it re-seeds on every Play
+    /// appearance, so it is not stale from launch — but it is not re-read at
+    /// the tap either). A mount flipped after that is committed by
+    /// `RecordModel.applyRecording` at record start and never re-advertised.
     enum CaptureOrientation: String, Codable, Equatable, CaseIterable {
         case landscapeRight, landscapeLeft
     }

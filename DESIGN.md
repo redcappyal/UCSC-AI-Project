@@ -131,6 +131,13 @@ iOS app in Safari (add-to-home-screen capable).
 - Z-index ladder: stage overlays `5–6` · error banner `30` · nav pill `40`. New modal
   surfaces (if ever needed) start at `50`. Do not exceed without updating this table.
 
+**Native shell (iOS).** The native client substitutes `NavigationStack` and the
+system back button for the header chevron and the proxied primary (§3.4), which
+are web-shell mechanisms. The phase inventory and the §16 blueprints are shared;
+only the chrome that moves between phases differs per client. The native Play
+root shows two hero cards, not three — "Judge a clip" is a web file input with no
+native equivalent, so "Record a clip" takes the accent slot there.
+
 ### 3.3 Phases, not pages
 
 Each screen is a `<section id="p-…">` inside `<main>`, toggled with `.hidden`. The current
@@ -560,8 +567,10 @@ primaries). Two variants:
   icon/description: every other card. A working surface card ("Record a clip", opens
   `p-record`) carries no tag; a future one carries the right-aligned `SOON` tag
   12/600 uppercase `--dim` ("Live match", opens `p-pair` §16 — the `SOON` tag stays until
-  pairing and the live path are actually wired end-to-end). Tag presence is what
-  separates "works today" from "coming" — never a second accent.
+  pairing and the live path are actually wired end-to-end). The question is about one
+  surface, so the answer can differ per client: native's live path is wired and its card
+  carries no tag, web's is still a placeholder and keeps its `SOON` (§16). Tag presence
+  is what separates "works today" from "coming" — never a second accent.
 
 Cards sit under a 12/600 uppercase `--dim` "PLAY" heading, order: Judge a clip ·
 Record a clip · Live match.
@@ -652,8 +661,8 @@ floor bounce`, never a colored call.
 A row reporting the pairing/link state as words, never as color alone. A naive green
 "connected" dot would silently claim the verdict family (§0.3 reserves green/red for
 IN/OUT), so this component is built so that mistake can't happen: an 8 px `--dim` fill
-dot (decorative only, carries no meaning by itself) followed by an explicit sentence-case
-word — `Not paired` / `Looking for the other phone…` / `Codes match?` / `Syncing
+dot (decorative only, carries no meaning by itself), an 8 px gap (§4.5), then an explicit
+sentence-case word — `Not paired` / `Looking for the other phone…` / `Codes match?` / `Syncing
 clocks…` / `Paired · sync ±1.4 ms` / `Link lost — still recording` / the session's
 failure reason, verbatim. The sync-quality figure is tabular numerals (§0.8) since it is
 a number that updates.
@@ -731,6 +740,43 @@ The local template renders immediately; the LLM narration is fetched afterwards 
 **replaces the text in place** — the panel never shows a spinner and never changes
 height on arrival (§18). If the LLM is unreachable the local text simply stays and the
 source tag reports it.
+
+### 8.22 Two-way segment (`.corrSeg`)
+
+Two independent pill buttons, not one shared capsule; exactly one selected.
+Used by the call page's Bounce / Not-bounce toggle (§16, `p-track`) and
+`p-pair`'s role picker (§16, `p-pair`).
+
+- Two equal-width pills (`border-radius:999px`, the standard button radius),
+  6 px gap between them. No outer container — no shared fill, border, or
+  radius wrapping the pair.
+- Unselected: 1 px `--line` border, transparent background, inherited
+  `--text` label color, weight 600.
+- Selected: `--accent-bg` fill with `--accent-text`, border-color
+  transparent, weight 700. Never green/red — selection is not a verdict
+  (§0.3).
+- Labels uppercase with `letter-spacing:.05em` (§0.7).
+- Both halves are always present and always the same size, so selection
+  never reflows anything (§0.9).
+- No third state. A segment that needs one is a different component.
+- Exception: `p-pair`'s role picker may start with neither pill selected — no
+  role has a safe default (two phones both defaulting to primary would both
+  open a peer session and hang) — reverting to exactly one selected the
+  instant a role is picked. Not the third state above: that rule is about a
+  segment needing a third *visual mode*, not about a value nobody has chosen
+  yet.
+
+**§0.6 debt (web).** The shipping control is `min-height:38px` — below the
+44 px binding minimum. This is a pre-existing violation, not a sanctioned
+exception: it ships below the line today and is owed a fix, tracked the same
+as any other §0.6 gap would be. Do not read the 38 px figure as permission;
+new web work reusing `.corrSeg` inherits the debt until it's fixed, not a
+license to repeat it.
+
+**Native (`p-pair`'s iOS role segment).** Built to the same grammar above —
+two equal-width pills, one selected, no third state — but at the full 44 px
+minimum, so it meets §0.6 outright. New native work is not inheriting the
+web control's shortfall.
 
 ---
 
@@ -856,7 +902,7 @@ Each phase: header shows step label + proxied primary; `#instr` gives the one-li
 
 | Phase | Purpose | Body (top→bottom) | Primary (proxied) |
 |---|---|---|---|
-| `p-load` | Play section root — get a clip | "PLAY" heading · hero cards (§8.15): Judge a clip (accent, file input) / Record a clip (surface, working) / Live match (surface, SOON) · dev row | — (no chevron; section root) |
+| `p-load` | Play section root — get a clip | "PLAY" heading · hero cards (§8.15): Judge a clip (accent, file input) / Record a clip (surface, working) / Live match (surface, `SOON` on web only — see the per-client note below) · dev row (native has neither the heading nor the dev row — see §3.2's native-shell note) | — (no chevron; section root) |
 | `p-record` | Record rallies + on-site calibration | stage = live camera preview · REC readout · Calibrate court + calibration status · Recordings card (§8.16) | "Record" ↔ "Stop" |
 | `p-frame` | Pick a clean calibration frame | overview rail · editor strip w/ playhead · readout · transport+steppers | "Use this frame" |
 | `p-tap` | Tap out line, tin, then service line on frame | stage-driven; clear-selection small button | "Looks right" (disabled until the current line has a fit) |
@@ -870,15 +916,17 @@ Each phase: header shows step label + proxied primary; `#instr` gives the one-li
 | `p-player1-report` / `p-player2-report` | Per-player coaching report — the last two steps of the judge flow | Player N front-wall map (§8.10 court chart + `.targetMeta`; serves excluded) · Player N report panel (§8.21) · P1 only: a `.row` "Player 2 report" secondary | — (back chevron only) |
 | `p-matches` | Matches section root (placeholder) | placeholder hero · Planned card (§8.14) | — (no chevron; section root) |
 | `p-coach` | Coach section root (hub) | three feature cards (§8.13) — no hero, no copy | — (no chevron; section root) |
-| `p-pair` | Pair with a second phone for a live two-camera session | link-status row (§8.19) · pair-code (§8.20) once codes are exchanged, with its "Codes don't match" secondary text action · DEBUG transport picker (BLE / Wi-Fi) | "PAIR" → "CONFIRM" → "START RALLY" |
-| `p-live` | Live two-camera rally: verdict flash, honest-state banner, post-rally replay | stage = live camera preview (shared with `p-record`) · link-status row (persistent — a lost link stays visible mid-rally) · call-flash (§8.17) + call-banner (§8.18) overlaying the stage · post-rally mini-court replay (§8.10), visible once a call lands | "START RALLY" |
+| `p-pair` | Pair with a second phone for a live two-camera session | link-status row (§8.19) · role segment (§8.22), idle state only · pair-code (§8.20) once codes are exchanged, with its "Codes don't match" secondary text action · DEBUG transport picker (BLE / Wi-Fi) | "PAIR" → "CONFIRM" → "START RALLY" |
+| `p-live` | Live two-camera rally: verdict flash, honest-state banner, post-rally replay | stage = live camera preview (shared with `p-record`) · link-status row (persistent — a lost link stays visible mid-rally) · call-flash (§8.17) + call-banner (§8.18) overlaying the stage · post-rally mini-court replay (§8.10), visible once a call lands · mini-court replay is primary-only in v1 (the secondary receives relayed event JSON, which carries no 3D track) · STOP ends the rally: the primary always has it; the secondary only gains its own STOP while the link is degraded, so a dropped link cannot leave it recording indefinitely | "STOP" (primary, whenever the rally is live; secondary, only while degraded) |
 | `p-stats` | Placeholder: stats + trends | placeholder hero · Planned card (§8.14) | — (back chevron only) |
 | `p-shot-bot` | Placeholder: shot selection | placeholder hero · Planned card (§8.14) | — (back chevron only) |
 | `p-sharing` | Placeholder: your coach (coaching platform) | placeholder hero · Planned card (§8.14) | — (back chevron only) |
 
 `p-load` is the **Play section root**: hero action cards (§8.15) + dev row replace the
 old load-button stack. Sub-page back routes: `p-record` → Play; `p-pair` → Play; `p-live`
-→ `p-pair` (back chevron steps up one phase, §8.2); `p-stats` / `p-shot-bot` /
+→ `p-pair` (back chevron steps up one phase, §8.2) — with one exception: while a rally is
+actually running, `p-live` carries **no back chevron at all**, and STOP is its only exit
+(see the live-mode note below); `p-stats` / `p-shot-bot` /
 `p-sharing` → Coach. The calibration wizard (`p-tap` → … → `p-tap-floor`) serves two
 flows: entered from `p-frame` it exits to `p-clip`; entered from `p-record` ("Calibrate
 court", on a frame frozen from the live camera) it exits back to `p-record` and the
@@ -914,16 +962,48 @@ peer nearby the phone behaves exactly as today's single-camera app: pairing stri
 adds capability, never gates it — a hard requirement, not a design choice — so staying
 on `p-pair`'s idle state and backing out to Play still leaves "Record a clip" untouched.
 
+The hand-off is driven by **the rally, not by the screen that started it**: `p-live` is
+presented for exactly as long as a rally is running, whichever surface the phone is
+showing when it starts — the secondary's rally begins on a message, with no tap on that
+phone at all, and possibly with `p-pair` no longer on screen. For the same reason the
+back chevron is withdrawn while the rally runs (above): the one screen carrying STOP
+must not be dismissable while the camera is still rolling, since nothing else can end
+the rally — `p-pair`'s primary reads a disabled "RALLY LIVE", and the record stage
+refuses to touch a recording the live layer owns.
+
+**A rally ends; the pairing does not.** Ending a rally is not ending the session. When
+the rally stops, `p-live` pops and the phone is back on `p-pair` — same pairing, same
+clock sync, same session identity, no re-pairing and no second code to compare — and once
+that rally's clip has reported, the row returns to Ready (primary) above with `START
+RALLY` live again for the next one. A session runs as many rallies as the match needs;
+only "Codes don't match" and ending the session return `p-pair` to Idle. This is also
+what makes the `p-live` table's "clears again when `START RALLY` begins the next one"
+(below) something the user can actually reach: the call banner and mini-court are cleared
+by the *start* of the next rally, so no rally ever opens on the previous one's verdict.
+
+**The `SOON` tag is per client.** §8.15's rule is a question about one surface — does
+tapping *this* card lead to a working experience — and the two clients now answer
+differently: web's `p-live` is still a roadmap placeholder, so the web card keeps its
+`SOON`; native's live path is wired end to end (`p-pair` → `p-live`, STOP, paired
+upload), so the native card carries no tag. The tag comes off the web card when web's
+own live path lands, not when native's did.
+
 `p-pair` states drive `.link-status` (§8.19) and the phase's one proxied primary:
 
 | State | `.link-status` text | Primary | Notes |
 |---|---|---|---|
-| Idle / no peer | "Not paired" | PAIR | identical to today's single-camera app |
+| No role chosen | "Pick this phone's job to start." | PAIR (disabled) | §7: the primary never advertises a tap that cannot fire. There is no default role — two phones both defaulting to primary would both open a central and hang with nothing honest to say |
+| Idle / no peer | "Not paired" | PAIR | identical to today's single-camera app — entering `p-pair` fetches this phone's solved camera model; while that is in flight the row reads "Checking this phone's court calibration…" and PAIR is disabled |
+| Calibration fetch failed | the failure reason, verbatim | PAIR (retry) | this phone's own solved camera model could not be fetched or is not adoptable — "server unreachable" is the expected case on a court. The tap re-runs the fetch, and the row goes back to "Checking this phone's court calibration…" while it is in flight. Enabled with or without a role chosen: the retry concerns this phone's calibration, not which job it will do |
 | Searching | "Looking for the other phone…" | PAIR (disabled) | no peer yet to report real progress on |
 | Confirming | "Codes match?" + `.pair-code` (§8.20) | CONFIRM | operator compares the 4-digit code on both phones; a secondary text action "Codes don't match" (§7 — not a second primary) ends the session and returns to Searching — the wrong-phone / stranger's-phone case |
 | Syncing | "Syncing clocks…" | CONFIRM (disabled) | clock-sync pass; no user action needed |
-| Ready | "Paired · sync ±1.4 ms" (tabular, §0.8) | START RALLY | tapping hands off to `p-live` |
-| Degraded | "Link lost — still recording" | — (unaffected) | never a silent downgrade; recording continues |
+| Ready (primary) | "Paired · sync ±1.4 ms" (tabular, §0.8) | START RALLY | the calling phone's StereoEngine already exists; tapping hands off to `p-live` |
+| Ready, awaiting peer calibration (primary) | "Paired · waiting for the other phone's calibration" | START RALLY (disabled) | the StereoEngine does not exist until the secondary's calibration arrives; starting would record a rally nothing can call |
+| Ready (secondary) | "Paired · the other phone starts the rally" | — (no primary action) | the engine lives on the primary, so only the primary can honestly know a rally is callable |
+| Rally live, or its clip still uploading | "Paired · sync ±1.4 ms" | RALLY LIVE (disabled) | what `p-pair` reads underneath `p-live` during the rally, and again after `p-live` pops while that rally's clip uploads. Transient, not terminal: the row goes back to Ready above the moment the upload reports — or to "Rally ended badly" below if it reported a failure — and the next rally starts from there. §7 — disabled, never hidden, because there is no tap here that can fire |
+| Rally ended badly | the rally's failure reason, verbatim | START RALLY | the upload or the server-side tracking failed, or the rally produced no clip. Shown in place of the Ready text above until the next rally starts, because the alternative — a cheerful "Paired · sync ±1.4 ms" after a rally that was silently lost — is the dishonest state §16 exists to forbid. The primary stays START RALLY: §7 allows one primary per phase, and that is the tap that can fire |
+| Degraded | "Link lost — still recording" | START RALLY (disabled) | never a silent downgrade; the primary reads `START RALLY` but is disabled here — recording continues regardless of the link |
 | Failed | the session's failure reason, verbatim | PAIR (retry) | e.g. the capture-orientation frame-size guard |
 
 `p-live` states drive `.call-flash` (§8.17) and `.call-banner` (§8.18). The mini-court
@@ -934,7 +1014,7 @@ clears again when `START RALLY` begins the next one:
 
 | State | Call banner | Mini-court | Notes |
 |---|---|---|---|
-| Ready (before a rally) | `.blank` reserved space, no flash | hidden (reserved footprint, §0.9) | primary reads START RALLY |
+| Ready (before a rally) | `.blank` reserved space, no flash | hidden (reserved footprint, §0.9) | this row is the *pre-rally* state, so the primary named here is `p-pair`'s START RALLY, not this phase's own: `p-live`'s primary is STOP (blueprint row above), which exists only once there is a rally to stop. On native this row is never on screen — `p-live` is presented only while a rally runs |
 | Called (high) | `IN` / `OUT` / `DOWN` · "high confidence" | shown, once the flash clears | both cameras agree |
 | Called (one-view) | `IN` / `OUT` / `DOWN` · "one view" | shown, once the flash clears | still a verdict — one camera occluded, not a guess |
 | No-call (obstructed) | `NO CALL` · "obstructed" | shown, once the flash clears | `--mk-unknown` gray — never rendered as a verdict |

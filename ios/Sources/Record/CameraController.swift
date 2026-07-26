@@ -25,12 +25,18 @@ final class CameraController: NSObject {
     /// so there is one write path, not a direct write from the main actor
     /// racing a queued one.
     ///
-    /// `RecordModel.startCamera` calls `updateOrientation(_:)` with an
-    /// initial guess before `configure()` runs, purely so the preview and
-    /// the court-exposure meter have something sensible to work with — that
-    /// value is deliberately NOT pinned, which is what lets the Play tab
+    /// `RecordModel.startCamera` calls `updateOrientation(_:)` with a guess
+    /// resolved from the interface orientation — once before `configure()`
+    /// runs, and again on every later Play appearance. Not for the preview,
+    /// which is a separate `AVCaptureVideoPreviewLayer` connection this never
+    /// touches (`CameraPreviewView.swift`), and not for the court-exposure
+    /// meter, which never reads this property (see `lockForCourt()`) — it is
+    /// so the recorded/streamed frame's rotation, and the mount this model
+    /// advertises (`LiveSessionModel.beginPairing()` reads `orientation` for
+    /// its `Hello`), cannot go stale after the operator re-mounts the phone.
+    /// That value is deliberately NOT pinned, which is what lets the Play tab
     /// stay at both-landscape (`.landscape`) through the whole framing
-    /// window. `RecordModel.toggleRecording`'s start path is what actually
+    /// window. `RecordModel.applyRecording`'s start path is what actually
     /// commits to a mount: it re-resolves the interface orientation at
     /// record start and calls `updateOrientation(_:)` again — this has to
     /// land before `startRecording()` sizes the asset writer, so it comes
@@ -75,9 +81,28 @@ final class CameraController: NSObject {
         }
     }
 
+    /// Repeatable: every call leaves the session configured from scratch.
+    ///
+    /// That matters because most of this method's throws happen *after* the
+    /// session has already been mutated — `applyCaptureFormat` throws with the
+    /// camera input added, the video-output guard throws with the same, and
+    /// `lockForCourt()` throws with the session fully configured and running.
+    /// `RecordModel.startCamera()` clears its own `cameraStarted` flag on any
+    /// of those so the user can retry, and the model now outlives the view, so
+    /// popping and re-pushing the record stage re-runs its `.task` and really
+    /// does retry. Without the teardown below, that retry hits
+    /// `session.canAddInput(...) == false` and throws `configurationFailed`
+    /// forever — the camera would be bricked for the rest of the launch.
+    ///
+    /// Tearing down first rather than tracking "already configured": a
+    /// half-configured session is the case that actually needs handling, and
+    /// that state has to be *undone*, not skipped. One rule, no second flag to
+    /// keep in step with `RecordModel.cameraStarted`.
     private func configureSession() throws {
         session.beginConfiguration()
         defer { session.commitConfiguration() }
+        for input in session.inputs { session.removeInput(input) }
+        for output in session.outputs { session.removeOutput(output) }
         // .inputPriority hands format choice to us: any real preset would
         // stomp the activeFormat set below.
         session.sessionPreset = .inputPriority
@@ -144,19 +169,22 @@ final class CameraController: NSObject {
     /// Re-resolves `orientation`, applying the matching rotation to the live
     /// video connection when one already exists — the counterpart to
     /// `configureSession()`'s one-time `videoRotationAngle` set above, needed
-    /// now that the mount can be chosen again at record start
-    /// (`RecordModel.toggleRecording`) rather than only once, before
+    /// now that the mount can be re-resolved on every Play appearance
+    /// (`RecordModel.startCamera`) and again at record start
+    /// (`RecordModel.applyRecording`) rather than only once, before
     /// `configure()` ever runs. This is also the ONLY writer of `orientation`
-    /// (see its doc) — `RecordModel.startCamera`'s pre-configure seed goes
-    /// through here too, not a direct assignment, so every write is
-    /// `sessionQueue`-confined rather than a mix of that and the main actor.
+    /// (see its doc) — `RecordModel.startCamera`'s mount seeds go through here
+    /// too, not a direct assignment, so every write is `sessionQueue`-confined
+    /// rather than a mix of that and the main actor.
     ///
     /// Two outcomes, both deliberate:
     /// - **No live connection yet** (`configure()` hasn't run — this is
-    ///   `startCamera`'s pre-configure seed): there is nothing to apply or
-    ///   diverge from, so this simply records `newOrientation` and returns
+    ///   `startCamera`'s first, pre-configure seed): there is nothing to apply
+    ///   or diverge from, so this simply records `newOrientation` and returns
     ///   `true`. `configureSession()` reads `orientation` to set the
-    ///   connection's INITIAL rotation once it runs.
+    ///   connection's INITIAL rotation once it runs. `startCamera`'s later
+    ///   per-appearance re-seeds take the connection branch below instead,
+    ///   like `applyRecording` does.
     /// - **A connection exists:** `isVideoRotationAngleSupported` is checked
     ///   FIRST, not as a courtesy. Setting an unsupported `videoRotationAngle`
     ///   directly is a programmer error AVFoundation raises on — the opposite
@@ -176,7 +204,7 @@ final class CameraController: NSObject {
     /// `session` in this file.
     ///
     /// Callers that need the connection correct before their next step
-    /// (`toggleRecording` awaits this, checks the `Bool`, and only then calls
+    /// (`applyRecording` awaits this, checks the `Bool`, and only then calls
     /// `startRecording()`, which reads `orientation` synchronously to size
     /// the asset writer — the mask is pinned later still, only once that
     /// recording actually starts) can await it and act on the result: it only

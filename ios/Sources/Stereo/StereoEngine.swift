@@ -3,7 +3,7 @@ import Foundation
 import simd
 
 enum StereoEvent: Equatable {
-    case impact(StereoImpact)
+    case impact(StereoImpact, track: [TrackPoint3D])
 }
 
 /// Live stereo fusion on the primary phone. Owner-pumped: call
@@ -95,16 +95,16 @@ final class StereoEngine {
         let count = Int(((tHi - tLo) * Self.processHz).rounded(.down))
         guard count >= 3 else { return }
         let timeline = (0..<count).map { tLo + Double($0) / Self.processHz }
-        let impacts = StereoTrack.detectImpacts(localModel, localSamples,
-                                                remoteModel, remoteSamples,
-                                                timelineS: timeline)
-        for impact in impacts {
+        let analyzed = StereoTrack.analyze(localModel, localSamples,
+                                           remoteModel, remoteSamples,
+                                           timelineS: timeline)
+        for impact in analyzed.impacts {
             let isDuplicate = emitted.contains {
                 $0.surface == impact.surface && abs($0.tS - impact.tS) < Self.emitDedupeS
             }
             if isDuplicate { continue }
             emitted.append((impact.tS, impact.surface))
-            onEvent?(.impact(impact))
+            onEvent?(.impact(impact, track: analyzed.track))
         }
     }
 }

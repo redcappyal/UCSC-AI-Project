@@ -1,13 +1,6 @@
 import SwiftUI
 
 struct RootTabView: View {
-    #if DEBUG
-    // Play tab has no NavigationStack of its own (RecordView is a bare
-    // ZStack), so the toolbar/NavigationLink hook the brief prefers has
-    // nowhere to attach — sheet-from-overlay-button fallback per the brief.
-    @State private var showPeerBench = false
-    #endif
-    @State private var showServerSettings = false
     // Observed so the web tabs are torn down and reloaded (via .id) when
     // the server override changes; WebScreen deliberately never reloads.
     @AppStorage(Config.serverBaseKey) private var serverBase = ""
@@ -18,36 +11,16 @@ struct RootTabView: View {
 
     var body: some View {
         TabView(selection: $tab) {
-            RecordView()
-                .overlay(alignment: .topLeading) {
-                    Button { showServerSettings = true } label: {
-                        Image(systemName: "gearshape")
-                            .foregroundStyle(Theme.dim)
-                            .padding(10)
-                            .background(Theme.surface, in: Circle())
-                    }
-                    .accessibilityLabel("Server settings")
-                    .padding(.top, 8)
-                    .padding(.leading, 8)
-                }
-                .sheet(isPresented: $showServerSettings) {
-                    ServerSettingsView()
-                }
-                #if DEBUG
-                .overlay(alignment: .topTrailing) {
-                    Button { showPeerBench = true } label: {
-                        Image(systemName: "antenna.radiowaves.left.and.right")
-                            .foregroundStyle(Theme.dim)
-                            .padding(10)
-                            .background(Theme.surface, in: Circle())
-                    }
-                    .padding(.top, 8)
-                    .padding(.trailing, 8)
-                }
-                .sheet(isPresented: $showPeerBench) {
-                    NavigationStack { PeerBenchView() }
-                }
-                #endif
+            // PlayRootView is a NavigationStack of its own now, so the
+            // server-settings gear and (DEBUG) peer-bench button live on its
+            // toolbar instead of as overlays bolted onto a bare RecordView.
+            // The orientation lock moved with it: the tab is what the mask is
+            // a function of, and PlayRootView — not RecordView — is the Play
+            // tab now. RecordView is one destination inside its stack, so
+            // leaving the lock attached there would have left the Play root
+            // and `p-pair` free to rotate portrait while the operator is
+            // framing the shot in a landscape mount.
+            PlayRootView()
                 .tabItem { Label("Play", systemImage: "record.circle") }
                 .tag(RootTab.play)
             WebScreen(url: URL(string: Config.baseURL.absoluteString + "/#tab=matches&shell=1")!)
