@@ -63,8 +63,14 @@ struct LiveStageView: View {
         // camera is really configured when `p-pair` is entered, because a
         // rally can start before this screen exists — see `PlayRootView`'s
         // `.pair` destination. Not a no-op, though: like every other appearance
-        // in the Play stack this re-seeds the capture mount, and it is the one
-        // caller that can fire with a recording already running, which is what
+        // in the Play stack this re-seeds the capture mount. All three Play
+        // `.task`s re-fire on return to Play, including mid-recording
+        // (`OrientationLock.applyForTab`'s doc — that is why `capturePin`
+        // exists), so this is not unique to `LiveStageView`. What is unique
+        // to this one is that its FIRST appearance can happen mid-recording:
+        // `PlayRootView`'s `.pair` destination can start a rally before this
+        // screen has ever existed, so the `.task` below can fire for the
+        // first time with a recording already running — which is what
         // `startCamera`'s `isRecording` guard and the re-seed's own place on
         // the recording transition chain are there for.
         .task { await record.startCamera() }

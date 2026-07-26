@@ -605,9 +605,15 @@ final class RecordModel: ObservableObject {
             // rotation, so this has to have landed by then, which is what
             // awaiting the chained transition guarantees.
             //
-            // Purely so the preview and the court-exposure meter below have a
-            // sensible mount to work with. Deliberately NOT pinned, here or on
-            // any later re-seed: the Play tab stays at both-landscape
+            // Not for the preview below — a separate `AVCaptureVideoPreviewLayer`
+            // connection this never touches (`CameraPreviewView.swift`), and
+            // not for the court-exposure meter either, which never reads
+            // `orientation` (see `lockForCourt()`). This is so the
+            // recorded/streamed frame's rotation, and the mount this model
+            // advertises (`LiveSessionModel.beginPairing()` reads
+            // `camera.orientation` for its `Hello`), do not go stale.
+            // Deliberately NOT pinned, here or on any later re-seed: the Play
+            // tab stays at both-landscape
             // (`.landscape`) through the whole framing window, which is what
             // lets the operator flip the mount before recording starts.
             // `applyRecording`'s start path is where the mount actually gets
@@ -617,7 +623,7 @@ final class RecordModel: ObservableObject {
             // `.landscapeRight` is a last resort only, for the genuinely-no-
             // scene case (or a portrait interface, which is not a capture
             // mode): a fallback default, not a resolved orientation. It costs
-            // only a wrong preview/metering default, since nothing here pins;
+            // only a wrong seeded orientation, since nothing here pins;
             // `applyRecording`'s own resolution at record start is what has to
             // get the real mount right, and it refuses rather than falling
             // back at all.
@@ -670,7 +676,9 @@ final class RecordModel: ObservableObject {
     /// funnel, whose `Bool` means "did this start or stop a recording"; a
     /// re-seed never does either. Callers await it to sequence, not for the
     /// value.
-    @discardableResult
+    ///
+    /// Not `@discardableResult`: both call sites await `.value`, so the
+    /// annotation had no caller to protect.
     private func enqueueMountReseed(fallback: CaptureSettings.CaptureOrientation?) -> Task<Bool, Never> {
         let previous = recordingTransition
         let next = Task { [weak self] in
@@ -696,7 +704,6 @@ final class RecordModel: ObservableObject {
         // cannot land mid-stop either, when the writer is still finishing.
         guard !isRecording else { return }
         guard let mount = mountResolver() ?? fallback else { return }
-        captureOrientation = mount
         // Routed through `updateOrientation` rather than a direct
         // `camera.orientation = ...` assignment, so `orientation` has one
         // writer, always on `sessionQueue`, instead of a direct main-actor
@@ -704,7 +711,18 @@ final class RecordModel: ObservableObject {
         // run there is no connection yet, so it simply records the value and
         // cannot fail; afterwards it rotates the live connection — see
         // `updateOrientation(_:)`'s doc for both branches.
-        await camera.updateOrientation(mount)
+        //
+        // Checked, not just awaited — same shape as `applyRecording`'s start
+        // path below, and for the same reason: an unsupported angle leaves
+        // the connection (and `camera.orientation`) at the previous mount,
+        // and committing `captureOrientation` to the requested mount anyway
+        // would describe a mount the connection does not actually have —
+        // the divergence this whole change exists to prevent. `false` here
+        // has no caller to report to, so it is simply not committed rather
+        // than surfaced as an error: a re-seed is a background refresh, not
+        // a user-initiated transition.
+        guard await camera.updateOrientation(mount) else { return }
+        captureOrientation = mount
     }
 
     /// Whether a recording is running that `owner` started.

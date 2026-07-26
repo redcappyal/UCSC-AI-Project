@@ -106,14 +106,19 @@ Run these on a Mac, in order, before trusting any of it:
 
 1. **It builds and the suite passes.**
    `cd ios && xcodegen generate && xcodebuild test -scheme SquashLineCalling -destination 'platform=iOS Simulator,name=iPhone 15,OS=17.0.1'`
-   Three things are most likely to fail first: `RecordModel.init` assigning
+   Four things are most likely to fail first: `RecordModel.init` assigning
    `captureOrientation` before `tracker` is initialized (a review predicted
    this as an error and the fix — removing the property's declaration default —
    was applied unverified); `OrientationLockTests`/`LiveWiringTests` touching
-   the `@MainActor` `OrientationPolicy` from XCTest; and `RecordModel.init`'s
+   the `@MainActor` `OrientationPolicy` from XCTest; `RecordModel.init`'s
    `mountResolver` default argument, a `@MainActor` closure literal
    (`{ RecordModel.interfaceMount() }`) written against a `@MainActor`
-   typealias — also never compiled.
+   typealias — also never compiled; and `applyMountReseed`'s
+   `mountResolver() ?? fallback` (`RecordModel.swift:698`), where both sides
+   of `??` are optional (`mountResolver` returns
+   `CaptureSettings.CaptureOrientation?`, and so does `fallback`) — a
+   mis-resolution to the wrong overload would surface as a type error, not a
+   silent behavior change, but it has never compiled either.
 2. **Play tab stays both-landscape while framing, and narrows only once
    recording starts.** Note the Play tab's root is `PlayRootView`, a menu —
    `startCamera` does **not** fire on Play launch. It has three callers, all
@@ -122,8 +127,11 @@ Run these on a Mac, in order, before trusting any of it:
    `LiveStageView`'s own backstop. So navigate to **Record a clip** first;
    that is where the camera comes up and where the record button is.
    `startCamera` no longer pins anything — it only seeds `camera.orientation`
-   from the interface orientation so the preview and exposure meter have
-   something to work with. Launch the simulator in either landscape and confirm
+   from the interface orientation, so the recorded/streamed frame's rotation
+   and the mount `LiveSessionModel.beginPairing()` advertises do not go
+   stale (this does not touch the preview, a separate connection — see
+   `CameraController.orientation`'s doc). Launch the simulator in either
+   landscape and confirm
    Play accepts *both* landscape-left and landscape-right (portrait still
    refused) the whole time recording is off. Then flip to the landscape
    opposite whatever the simulator launched in and tap record:
@@ -134,16 +142,24 @@ Run these on a Mac, in order, before trusting any of it:
    waits on a successful `startRecording()`: pinning first and having the write
    fail to start would strand the operator locked to that mount with no running
    recording to release it from.)
-   Then, still with nothing recording, check that **the mount seed re-runs on
-   every appearance**: back out to the Play menu, flip the simulator to the
-   other landscape, and go into **Record a clip** again. `startCamera` must
-   re-seed `camera.orientation` to the flipped mount *without* reconfiguring
-   the session — `cameraStarted` guards configuration only, so the exposure
+   Then, still with nothing recording, back out to the Play menu, flip the
+   simulator to the other landscape, and go into **Record a clip** again.
+   This confirms only the half of the re-seed that is actually visible on
+   this screen: `cameraStarted` guards configuration only, so the exposure
    capsule should keep its already-metered values rather than re-metering.
-   This is what keeps `LiveSessionModel.beginPairing()` from putting a
-   launch-time mount on the wire, so confirm it before the two-phone bring-up
-   in `ios/PEER.md`. The counterpart is in step 3: while a recording *is*
-   running, the same round trip must leave the mount alone.
+   Whether `startCamera` actually re-seeded `camera.orientation` to the
+   flipped mount is **not observable here** — `updateOrientation` mutates
+   only the video output's connection, while the preview is a separate
+   `AVCaptureVideoPreviewLayer` connection (`CameraPreviewView.swift`), so
+   nothing on screen changes when the re-seed lands. The only place this is
+   actually confirmable is the two-phone bring-up in `ios/PEER.md`: flip the
+   mount here, on this screen, with nothing ever recorded, then pair —
+   `LiveSessionModel.beginPairing()` reads `camera.orientation` straight into
+   its `Hello`, so a stale seed would advertise a mount that does not match
+   the phone's actual physical mount, and the peer mount guard would judge
+   the pair against that wrong value instead of the real one. The
+   counterpart is in step 3: while a recording *is* running, the same round
+   trip must leave the mount alone.
 3. **The pin releases on stop, and holds across a tab round trip while
    recording.** While recording, switch to Matches and back to Play — the
    pinned mount must survive the round trip, which is what

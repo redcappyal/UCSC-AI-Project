@@ -27,9 +27,13 @@ final class CameraController: NSObject {
     ///
     /// `RecordModel.startCamera` calls `updateOrientation(_:)` with a guess
     /// resolved from the interface orientation — once before `configure()`
-    /// runs, and again on every later Play appearance — purely so the preview
-    /// and the court-exposure meter have something sensible to work with, and
-    /// so the mount cannot go stale after the operator re-mounts the phone.
+    /// runs, and again on every later Play appearance. Not for the preview,
+    /// which is a separate `AVCaptureVideoPreviewLayer` connection this never
+    /// touches (`CameraPreviewView.swift`), and not for the court-exposure
+    /// meter, which never reads this property (see `lockForCourt()`) — it is
+    /// so the recorded/streamed frame's rotation, and the mount this model
+    /// advertises (`LiveSessionModel.beginPairing()` reads `orientation` for
+    /// its `Hello`), cannot go stale after the operator re-mounts the phone.
     /// That value is deliberately NOT pinned, which is what lets the Play tab
     /// stay at both-landscape (`.landscape`) through the whole framing
     /// window. `RecordModel.applyRecording`'s start path is what actually
