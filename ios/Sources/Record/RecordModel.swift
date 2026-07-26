@@ -148,9 +148,12 @@ final class RecordModel: ObservableObject {
 
     /// What `p-live` should be showing, or nil for "nothing called yet".
     ///
-    /// Set from the engine's `onEvent` after a main hop. Deliberately never
-    /// derived from `stereoEvents`: that list is relayed JSON, and re-parsing
-    /// it would be a second place for the `no_call` gate to be forgotten.
+    /// Set from the engine's `onEvent` on the primary and from the relayed
+    /// `.event` mirror on the secondary, both after a main hop, and both
+    /// through `CallPresentation` so the `no_call` gate is written once.
+    /// Deliberately never derived from `stereoEvents`: mapping the wire JSON
+    /// where it arrives (`attachStereo`) keeps that gate at the one entry
+    /// point, where re-parsing a display list later could not.
     @Published private(set) var livePresentation: CallPresentation?
 
     /// The 3D track behind the most recent call, for the §8.10 post-rally
@@ -313,9 +316,32 @@ final class RecordModel: ObservableObject {
         }
         // Secondary-side mirror: relayed events land here (never fires on
         // the primary — it never receives .event, only sends it). Also
-        // fires off-main; only touches stereoEvents, already hopped.
+        // fires off-main, so every published write below is hopped.
+        //
+        // The banner and the flash are *not* primary-only. DESIGN.md §16's
+        // `p-live` states table draws no role distinction for either, and the
+        // spec's v1 narrowing is only about the mini-court — so `liveTrack`
+        // and `liveImpact` stay untouched here (the payload carries no
+        // geometry, and `MiniCourtView` would have nothing to draw), while
+        // `livePresentation`/`showFlash` get exactly what the primary gets.
+        // Without this the secondary's banner read "No call yet" for an
+        // entire rally, on both phones' account of the same call.
+        //
+        // Mapped off-main, before the hop, for the same reason the primary's
+        // own presentation is: the mapping is pure, and routing it through
+        // `CallPresentation` — rather than reading `call` here and deciding
+        // anything about it — keeps the no_call / unknown-word / floor-bounce
+        // gate in exactly one place. A payload that isn't one of those, or
+        // isn't parseable at all, yields nil and changes nothing on screen:
+        // it is never rendered as a confident verdict.
         peer?.onEvent = { [weak self] _, json in
-            DispatchQueue.main.async { self?.appendStereoEvent(json) }
+            let presentation = CallPresentation.fromRelayedEvent(json: json)
+            DispatchQueue.main.async {
+                self?.appendStereoEvent(json)
+                guard let presentation else { return }
+                self?.livePresentation = presentation
+                self?.showFlash(presentation)
+            }
         }
     }
 
@@ -436,11 +462,12 @@ final class RecordModel: ObservableObject {
         flashClearWork?.cancel()
     }
 
-    /// Guards `startCamera()`. `RecordView` is the only caller today (it calls
-    /// it from its own `.task`, which re-runs every time the stage is pushed);
-    /// the live stage will call it from its own `.task` when `p-live` lands in
-    /// Task 10. Idempotent either way, so a second caller doesn't re-configure
-    /// — and re-flash — an already-running camera.
+    /// Guards `startCamera()`. Three callers now: `RecordView`'s own `.task`,
+    /// `PlayRootView`'s `p-pair` destination (the live path configures the
+    /// camera when pairing is entered — a rally starts from a tap on `p-pair`,
+    /// before `p-live` exists), and `p-live`'s own `.task` as a backstop.
+    /// Idempotent, so the second and third callers don't re-configure — and
+    /// re-meter — an already-running camera mid-rally.
     private var cameraStarted = false
 
     func startCamera() async {

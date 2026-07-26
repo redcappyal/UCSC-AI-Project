@@ -567,8 +567,10 @@ primaries). Two variants:
   icon/description: every other card. A working surface card ("Record a clip", opens
   `p-record`) carries no tag; a future one carries the right-aligned `SOON` tag
   12/600 uppercase `--dim` ("Live match", opens `p-pair` §16 — the `SOON` tag stays until
-  pairing and the live path are actually wired end-to-end). Tag presence is what
-  separates "works today" from "coming" — never a second accent.
+  pairing and the live path are actually wired end-to-end). The question is about one
+  surface, so the answer can differ per client: native's live path is wired and its card
+  carries no tag, web's is still a placeholder and keeps its `SOON` (§16). Tag presence
+  is what separates "works today" from "coming" — never a second accent.
 
 Cards sit under a 12/600 uppercase `--dim` "PLAY" heading, order: Judge a clip ·
 Record a clip · Live match.
@@ -900,7 +902,7 @@ Each phase: header shows step label + proxied primary; `#instr` gives the one-li
 
 | Phase | Purpose | Body (top→bottom) | Primary (proxied) |
 |---|---|---|---|
-| `p-load` | Play section root — get a clip | "PLAY" heading · hero cards (§8.15): Judge a clip (accent, file input) / Record a clip (surface, working) / Live match (surface, SOON) · dev row | — (no chevron; section root) |
+| `p-load` | Play section root — get a clip | "PLAY" heading · hero cards (§8.15): Judge a clip (accent, file input) / Record a clip (surface, working) / Live match (surface, `SOON` on web only — see the per-client note below) · dev row | — (no chevron; section root) |
 | `p-record` | Record rallies + on-site calibration | stage = live camera preview · REC readout · Calibrate court + calibration status · Recordings card (§8.16) | "Record" ↔ "Stop" |
 | `p-frame` | Pick a clean calibration frame | overview rail · editor strip w/ playhead · readout · transport+steppers | "Use this frame" |
 | `p-tap` | Tap out line, tin, then service line on frame | stage-driven; clear-selection small button | "Looks right" (disabled until the current line has a fit) |
@@ -922,7 +924,9 @@ Each phase: header shows step label + proxied primary; `#instr` gives the one-li
 
 `p-load` is the **Play section root**: hero action cards (§8.15) + dev row replace the
 old load-button stack. Sub-page back routes: `p-record` → Play; `p-pair` → Play; `p-live`
-→ `p-pair` (back chevron steps up one phase, §8.2); `p-stats` / `p-shot-bot` /
+→ `p-pair` (back chevron steps up one phase, §8.2) — with one exception: while a rally is
+actually running, `p-live` carries **no back chevron at all**, and STOP is its only exit
+(see the live-mode note below); `p-stats` / `p-shot-bot` /
 `p-sharing` → Coach. The calibration wizard (`p-tap` → … → `p-tap-floor`) serves two
 flows: entered from `p-frame` it exits to `p-clip`; entered from `p-record` ("Calibrate
 court", on a frame frozen from the live camera) it exits back to `p-record` and the
@@ -958,6 +962,22 @@ peer nearby the phone behaves exactly as today's single-camera app: pairing stri
 adds capability, never gates it — a hard requirement, not a design choice — so staying
 on `p-pair`'s idle state and backing out to Play still leaves "Record a clip" untouched.
 
+The hand-off is driven by **the rally, not by the screen that started it**: `p-live` is
+presented for exactly as long as a rally is running, whichever surface the phone is
+showing when it starts — the secondary's rally begins on a message, with no tap on that
+phone at all, and possibly with `p-pair` no longer on screen. For the same reason the
+back chevron is withdrawn while the rally runs (above): the one screen carrying STOP
+must not be dismissable while the camera is still rolling, since nothing else can end
+the rally — `p-pair`'s primary reads a disabled "RALLY LIVE", and the record stage
+refuses to touch a recording the live layer owns.
+
+**The `SOON` tag is per client.** §8.15's rule is a question about one surface — does
+tapping *this* card lead to a working experience — and the two clients now answer
+differently: web's `p-live` is still a roadmap placeholder, so the web card keeps its
+`SOON`; native's live path is wired end to end (`p-pair` → `p-live`, STOP, paired
+upload), so the native card carries no tag. The tag comes off the web card when web's
+own live path lands, not when native's did.
+
 `p-pair` states drive `.link-status` (§8.19) and the phase's one proxied primary:
 
 | State | `.link-status` text | Primary | Notes |
@@ -981,7 +1001,7 @@ clears again when `START RALLY` begins the next one:
 
 | State | Call banner | Mini-court | Notes |
 |---|---|---|---|
-| Ready (before a rally) | `.blank` reserved space, no flash | hidden (reserved footprint, §0.9) | primary reads START RALLY |
+| Ready (before a rally) | `.blank` reserved space, no flash | hidden (reserved footprint, §0.9) | this row is the *pre-rally* state, so the primary named here is `p-pair`'s START RALLY, not this phase's own: `p-live`'s primary is STOP (blueprint row above), which exists only once there is a rally to stop. On native this row is never on screen — `p-live` is presented only while a rally runs |
 | Called (high) | `IN` / `OUT` / `DOWN` · "high confidence" | shown, once the flash clears | both cameras agree |
 | Called (one-view) | `IN` / `OUT` / `DOWN` · "one view" | shown, once the flash clears | still a verdict — one camera occluded, not a guess |
 | No-call (obstructed) | `NO CALL` · "obstructed" | shown, once the flash clears | `--mk-unknown` gray — never rendered as a verdict |

@@ -102,6 +102,75 @@ final class LiveCallTests: XCTestCase {
                       "illegal banner states: \(seen.subtracting(allowed))")
     }
 
+    // MARK: - The secondary's relayed-event mirror
+
+    /// Exactly the payload `RecordModel.attachStereo`'s `engine.onEvent`
+    /// puts on the wire. Built here from the same keys so a rename there
+    /// fails a test rather than silently blanking the secondary's banner for
+    /// a whole rally — which is the bug this mirror exists to fix.
+    private func relayedJSON(for impact: StereoImpact) throws -> String {
+        let payload: [String: Any] = [
+            "surface": impact.surface,
+            "call": impact.call,
+            "margin_ft": impact.marginFt,
+            "confidence": impact.confidence,
+            "t_s": impact.tS,
+        ]
+        let data = try JSONSerialization.data(withJSONObject: payload)
+        return String(decoding: data, as: UTF8.self)
+    }
+
+    /// DESIGN.md §16's `p-live` states table draws no role distinction for the
+    /// banner: for every state, both phones must say the same thing about the
+    /// same call.
+    func testRelayedEventMirrorsThePrimarysBannerExactly() throws {
+        for call in ["in", "out", "down", "bounce"] {
+            for confidence in ["high", "one_view", "no_call"] {
+                let sample = impact(call: call, confidence: confidence)
+                let json = try relayedJSON(for: sample)
+                let mirrored = CallPresentation.fromRelayedEvent(json: json)
+                XCTAssertEqual(mirrored, CallPresentation.from(sample),
+                               "secondary disagreed with the primary on \(call)/\(confidence)")
+            }
+        }
+    }
+
+    /// The `no_call` trap again, this time on the wire: the payload carries a
+    /// normal-looking `call` alongside `confidence: "no_call"`, so a mirror
+    /// that read `call` itself would render a confident IN on the second
+    /// phone from a point behind the front wall.
+    func testRelayedNoCallIsNotAVerdictOnTheSecondaryEither() throws {
+        let golden = impact(call: "in", confidence: "no_call",
+                            point: SIMD3(13.63, -1.67, 5.07))
+        let json = try relayedJSON(for: golden)
+        let mirrored = CallPresentation.fromRelayedEvent(json: json)
+        XCTAssertEqual(mirrored?.word, "NO CALL")
+        XCTAssertEqual(mirrored?.detail, "obstructed")
+        XCTAssertEqual(mirrored?.isVerdict, false)
+    }
+
+    /// An unrecognised call *word* still reaches the gate and degrades there —
+    /// it must not become a verdict, and it must not become nothing either
+    /// (the peer did report an impact).
+    func testRelayedUnknownCallWordDegradesToNoCall() throws {
+        let json = try relayedJSON(for: impact(call: "wibble", confidence: "high"))
+        XCTAssertEqual(CallPresentation.fromRelayedEvent(json: json)?.word, "NO CALL")
+        XCTAssertEqual(CallPresentation.fromRelayedEvent(json: json)?.isVerdict, false)
+    }
+
+    /// A payload that isn't a call at all shows nothing, rather than inventing
+    /// a banner state. Version skew and truncation are the realistic causes,
+    /// and neither is evidence that anything happened on court.
+    func testMalformedRelayedPayloadShowsNothing() {
+        for json in ["", "   ", "not json", "[]", "{}",
+                     #"{"call":"in"}"#, #"{"confidence":"high"}"#,
+                     #"{"call":7,"confidence":"high"}"#,
+                     #"{"call":"in","confidence":null}"#] {
+            XCTAssertNil(CallPresentation.fromRelayedEvent(json: json),
+                         "must not render a banner from \(json)")
+        }
+    }
+
     // MARK: - §8.17 colour law
 
     func testDownTakesTheOutColourNotAThirdHue() {
