@@ -191,10 +191,14 @@ final class PeerSession: ObservableObject {
 
     /// Phase 3: the payload carries the SOLVED camera-model JSON
     /// (CameraModel.fromJSON-parseable), not raw wizard taps.
-    func sendCalibration(profileID: String, payloadJSON: String) {
+    ///
+    /// Returns whether the frame actually reached the transport — see
+    /// `sendSessionManifest` below for why every gated sender reports that.
+    @discardableResult
+    func sendCalibration(profileID: String, payloadJSON: String) -> Bool {
         stateLock.lock(); defer { stateLock.unlock() }
-        guard internalPhase == .live || internalPhase == .ready else { return }
-        sendControl(.calibration(profileID: profileID, calibrationJSON: payloadJSON))
+        guard internalPhase == .live || internalPhase == .ready else { return false }
+        return sendControl(.calibration(profileID: profileID, calibrationJSON: payloadJSON))
     }
 
     func sendEvent(rallyID: UInt32, json: String) {
@@ -209,10 +213,22 @@ final class PeerSession: ObservableObject {
         sendControl(.record(action: action, ptsNs: ptsNs))
     }
 
-    func sendSessionManifest(sessionID: String, videoID: String) {
+    /// Returns whether the frame actually reached the transport.
+    ///
+    /// The gate below reads `internalPhase` — authoritative and lock-guarded —
+    /// while a caller that decides "have I sent this yet?" from the
+    /// `@Published` `phase` *mirror* is reading a value that lags whenever
+    /// `setPhase` ran off-main (it hops to main asynchronously). A caller that
+    /// latches a once-per-something flag optimistically therefore has a real
+    /// window in which the flag latches, this gate drops the frame, and
+    /// nothing ever re-arms. Reporting the outcome lets every such caller
+    /// latch on what happened rather than on what it assumed would happen;
+    /// `@discardableResult` keeps the fire-and-forget call sites unchanged.
+    @discardableResult
+    func sendSessionManifest(sessionID: String, videoID: String) -> Bool {
         stateLock.lock(); defer { stateLock.unlock() }
-        guard internalPhase == .live || internalPhase == .ready else { return }
-        sendControl(.sessionManifest(sessionID: sessionID, videoID: videoID))
+        guard internalPhase == .live || internalPhase == .ready else { return false }
+        return sendControl(.sessionManifest(sessionID: sessionID, videoID: videoID))
     }
 
     func sendClapAnchor(localOnset: TimeInterval) {
@@ -374,9 +390,16 @@ final class PeerSession: ObservableObject {
         clockSync.applyAnchor(localEventTime: mine, remoteEventTime: theirs)
     }
 
-    private func sendControl(_ message: ControlMessage) {
-        guard let data = try? ControlMessage.encode(message) else { return }
+    /// Returns whether the message was encodable and handed to the transport.
+    /// Encoding a `ControlMessage` built from valid Swift values does not
+    /// realistically fail, but the gated senders above promise their callers
+    /// "this actually went out" — so the one place that could silently swallow
+    /// it says so rather than being assumed.
+    @discardableResult
+    private func sendControl(_ message: ControlMessage) -> Bool {
+        guard let data = try? ControlMessage.encode(message) else { return false }
         transport.sendControl(data)
+        return true
     }
 
     private func setPhase(_ newPhase: Phase) {

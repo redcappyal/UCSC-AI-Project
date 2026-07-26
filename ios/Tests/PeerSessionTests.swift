@@ -200,6 +200,65 @@ final class PeerSessionTests: XCTestCase {
         XCTAssertEqual(received, [[tuple]])
     }
 
+    // MARK: - Task 10e: gated senders report whether they actually sent
+
+    /// The mechanism behind Fix 3. `phase` is a `@Published` *mirror* that
+    /// `setPhase` updates asynchronously whenever it runs off-main, while every
+    /// sender gates on the authoritative, lock-guarded `internalPhase`. So a
+    /// caller that latches a once-per-something flag by reading the mirror has a
+    /// window where the flag latches and the frame is dropped, with nothing to
+    /// re-arm it — for `LiveSessionModel.didSendCalibration` that meant
+    /// `engineReady` stayed false and START RALLY was permanently disabled.
+    ///
+    /// Returning the outcome is what lets those callers latch on what happened.
+    /// Asserted on both senders that have such a caller, from a phase inside the
+    /// gate and a phase outside it.
+    func testGatedSendersReportWhetherTheFrameWentOut() {
+        // Outside the gate: a fresh, unstarted session is `.idle`.
+        XCTAssertFalse(primary.sendCalibration(profileID: "p", payloadJSON: "{}"),
+                       "an idle session must report that it dropped the frame, not silently swallow it")
+        XCTAssertFalse(primary.sendSessionManifest(sessionID: "s-1", videoID: ""),
+                       "same for the manifest — its caller mints a rally identity on the strength of this")
+
+        // Inside the gate.
+        syncToReady()
+        XCTAssertEqual(primary.phase, .ready)
+        XCTAssertTrue(primary.sendCalibration(profileID: "p", payloadJSON: "{}"))
+        XCTAssertTrue(primary.sendSessionManifest(sessionID: "s-1", videoID: ""))
+        primary.goLive()
+        XCTAssertEqual(primary.phase, .live)
+        XCTAssertTrue(primary.sendSessionManifest(sessionID: "s-1", videoID: ""),
+                      "the arming announce is sent from .live, right after goLive()")
+    }
+
+    /// The gate really is what refuses it — not merely a phase the test failed
+    /// to reach. Degrading the link takes the session out of `.live || .ready`,
+    /// and the sender must both report `false` and put nothing on the wire.
+    func testAGatedOutSendReportsFalseAndPutsNothingOnTheWire() {
+        var t = syncToReady()
+        var framesSent = 0
+        pair.0.controlDeliveryHook = { frame, deliver in
+            framesSent += 1
+            deliver(frame)
+        }
+        // Starve the link until the primary degrades. The hook counts (and
+        // still delivers) the heartbeats this produces, so the count is reset
+        // below rather than assumed to be zero.
+        pair.1.controlDeliveryHook = { _, _ in }
+        for _ in 0..<50 { t += 0.5; primary.tick(now: t) }
+        guard case .degraded = primary.phase else {
+            return XCTFail("setup: expected degraded, got \(primary.phase)")
+        }
+
+        framesSent = 0
+        XCTAssertFalse(primary.sendSessionManifest(sessionID: "s-1", videoID: ""))
+        XCTAssertFalse(primary.sendCalibration(profileID: "p", payloadJSON: "{}"))
+        XCTAssertEqual(framesSent, 0, "a gated-out send must not reach the transport at all")
+
+        pair.0.controlDeliveryHook = nil
+        pair.1.controlDeliveryHook = nil
+    }
+
     /// A rally can end while the link is down — that is exactly what the
     /// secondary's degraded-link STOP exists for. Two things have to hold:
     /// the phase stays honest about the link (§16 never silently downgrades),

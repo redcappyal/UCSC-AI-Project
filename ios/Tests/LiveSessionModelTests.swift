@@ -73,6 +73,40 @@ private final class CalibrationCounter {
     }
 }
 
+/// Records the `.sessionManifest` frames a phone actually put on the wire,
+/// split by the protocol's own discriminator: an *arming* announce carries an
+/// empty `videoID`, a *completion* manifest carries the uploader's real run ID
+/// (`PeerSession.onSessionManifest`). Same reference-type reasoning as
+/// `CalibrationCounter` above — installed inside a helper, asserted on from the
+/// test that called it, and it must survive a second pairing.
+///
+/// No locking, for the same reason: `LoopbackTransport` delivers synchronously
+/// on the caller's own stack, and every manifest send originates from
+/// `@MainActor` code (`LiveSessionModel.armRallyIdentity()`, or
+/// `finishRecordingAndSubmit()`'s completion branch).
+private final class ManifestCounter {
+    private(set) var arming: [String] = []
+    private(set) var completions: [(sessionID: String, videoID: String)] = []
+
+    func record(sessionID: String, videoID: String) {
+        if videoID.isEmpty { arming.append(sessionID) }
+        else { completions.append((sessionID: sessionID, videoID: videoID)) }
+    }
+
+    /// Installs on a `LoopbackTransport` half, which intercepts that half's
+    /// *outgoing* frames (`sendControl` runs the hook before `deliver`).
+    /// Passes everything through — this only observes.
+    func attach(to transport: LoopbackTransport) {
+        transport.controlDeliveryHook = { [self] frame, deliver in
+            if let message = ControlMessage.decode(frame),
+               case .sessionManifest(let sessionID, let videoID) = message {
+                record(sessionID: sessionID, videoID: videoID)
+            }
+            deliver(frame)
+        }
+    }
+}
+
 @MainActor
 final class LiveSessionModelTests: XCTestCase {
     /// A model with no camera bound and a stub API — enough to assert every
@@ -410,44 +444,341 @@ final class LiveSessionModelTests: XCTestCase {
         XCTAssertEqual(rig.secondary.cameraRole, "b")
     }
 
-    func testPrimaryMintsAndBroadcastsASessionID() async {
+    // MARK: - Task 10e: the uploaded identity is per rally, not per pairing
+
+    /// Nothing is minted at pairing time any more. The old code broadcast one
+    /// id when the pairing first reached `.ready`; the server pairs runs on
+    /// `session_id` + `camera_role` and assumes one rally per id, so that made
+    /// every rally after the first either unfusable (`maybe_start_stereo_fuse`
+    /// claims `stereo-<session_id>` with `exist_ok=False`, so rallies 2..N hit
+    /// a swallowed `FileExistsError`) or fused against the *wrong* rally
+    /// (`session_runs` picks the newest complete run per role independently).
+    func testNoIdentityIsMintedOrBroadcastAtPairingTime() async {
         let rig = await makePairedRig()
-        XCTAssertNotNil(rig.primary.sessionID)
-        XCTAssertEqual(rig.secondary.sessionID, rig.primary.sessionID)
+        let manifests = ManifestCounter()
+        manifests.attach(to: rig.pair.0)
+
+        XCTAssertNil(rig.primary.rallySessionID,
+                     "a pairing with no rally running has no identity to upload under")
+        XCTAssertNil(rig.secondary.rallySessionID)
+
+        spinPump(seconds: 0.3)   // ~6 turns of the 20 Hz republish pump
+
+        XCTAssertTrue(manifests.arming.isEmpty,
+                      "reaching .ready must not put a session manifest on the wire — that broadcast " +
+                      "now belongs to startRally(), once per rally")
+        XCTAssertTrue(manifests.completions.isEmpty,
+                      "and no completion manifest either: nothing has uploaded")
+        XCTAssertNil(rig.primary.rallySessionID)
     }
 
-    // MARK: - Task 10d: sessionID must not survive a beginPairing() retry
+    /// The core of the fix: rally 2 must not upload under rally 1's id.
+    ///
+    /// Asserts on the wire as well as on the model. The model side alone would
+    /// still pass if the primary minted per rally but never told the secondary;
+    /// the wire side alone would still pass if it broadcast an id it did not
+    /// itself upload under.
+    func testEachRallyMintsAndBroadcastsADistinctIdentity() async {
+        let rig = await makePairedRig()
+        await settleCrossModelDelivery(until: { rig.primary.engineReady })
+        let manifests = ManifestCounter()
+        manifests.attach(to: rig.pair.0)
 
-    /// The showstopper this closes: `sessionID` was cleared in `endSession()`
-    /// but not in `beginPairing()`, and DESIGN.md §16's `Failed → PAIR
-    /// (retry)` row calls `beginPairing()` straight through — the exact path
-    /// `primaryTapped()`'s `.failed` branch takes, without `endSession()`
-    /// running first. Left uncleared, the retry's fresh `PeerSession` would
-    /// pair successfully while `republish()`'s mint guard (`sessionID ==
-    /// nil`) stayed shut forever, so the new pairing would run rallies that
-    /// upload under the *previous* pairing's identity (or, on the secondary,
-    /// under whatever it already had) — the server's `session_id` +
-    /// `camera_role` pairing would never match and fusion would silently
-    /// never run.
+        rig.primary.startRally()
+        let firstID = rig.primary.rallySessionID
+        XCTAssertNotNil(firstID, "rally 1 must mint an identity")
+        XCTAssertEqual(manifests.arming.count, 1, "and put exactly one arming announce on the wire")
+        XCTAssertEqual(manifests.arming.first, firstID, "carrying exactly the id it will upload under")
+        await settleCrossModelDelivery(until: { rig.secondary.rally == .recording })
+        await settleCrossModelDelivery(until: { rig.primaryRecord.isRecording })
+
+        rig.primary.stopRally()
+        await settleCrossModelDelivery(until: {
+            rig.primary.rally != .recording && rig.primary.rally != .submitting
+        })
+        await settleCrossModelDelivery(until: {
+            rig.secondary.rally != .recording && rig.secondary.rally != .submitting
+        })
+        // The rally ended, so its identity is spent: nothing may upload under
+        // it again, which is exactly what `stereo-<session_id>`'s one-shot
+        // `mkdir` claim requires.
+        XCTAssertNil(rig.primary.rallySessionID,
+                     "a finished rally's identity must be consumed, not left lying around for the next one")
+        XCTAssertNil(rig.secondary.rallySessionID)
+        await settleCrossModelDelivery(until: { rig.primary.primaryTitle == "START RALLY" })
+
+        rig.primary.startRally()
+        let secondID = rig.primary.rallySessionID
+        XCTAssertNotNil(secondID, "rally 2 must mint one of its own")
+        XCTAssertNotEqual(secondID, firstID, """
+            rally 2 must not upload under rally 1's session_id: the server claims one fuse run per \
+            id (mkdir exist_ok=False) and pairs runs per role independently, so a shared id means \
+            rally 2 is either never fused or fused against rally 1's clip
+            """)
+        XCTAssertEqual(manifests.arming.count, 2, "one arming announce per rally, no more")
+        XCTAssertEqual(manifests.arming.last, secondID)
+
+        // Teardown: rally 2 really is rolling on both phones. Wait for each
+        // rally to reach a terminal state rather than for `isRecording` alone —
+        // the latter reads `false` both before a queued start has run and after
+        // the stop behind it, so waiting on it directly can return on the wrong
+        // side of the chain and leave a writer open.
+        await settleCrossModelDelivery(until: { rig.secondary.rally == .recording })
+        await settleCrossModelDelivery(until: { rig.primaryRecord.isRecording })
+        rig.primary.stopRally()
+        await settleCrossModelDelivery(until: {
+            rig.primary.rally != .recording && rig.primary.rally != .submitting
+                && rig.secondary.rally != .recording && rig.secondary.rally != .submitting
+        })
+        XCTAssertFalse(rig.primaryRecord.isRecording,
+                       "teardown: no AVAssetWriter should be left running past this test")
+        XCTAssertFalse(rig.secondaryRecord.isRecording)
+    }
+
+    /// Distinct per rally is only half of it — the two phones must still agree,
+    /// or `session_runs` finds one role and never fuses at all.
+    ///
+    /// Also pins the *ordering* the scheme rests on: the arming manifest is
+    /// sent before the `record("start")` frame, so the secondary is holding
+    /// this rally's identity by the time it even begins recording — a margin of
+    /// the whole rally over the upload that eventually reads it.
+    func testBothPhonesAgreeOnOneRallysIdentity() async {
+        let rig = await makePairedRig()
+        await settleCrossModelDelivery(until: { rig.primary.engineReady })
+
+        var order: [String] = []
+        rig.pair.0.controlDeliveryHook = { frame, deliver in
+            if let message = ControlMessage.decode(frame) {
+                if case .sessionManifest(_, let videoID) = message, videoID.isEmpty {
+                    order.append("manifest")
+                } else if case .record("start", _) = message {
+                    order.append("start")
+                }
+            }
+            deliver(frame)
+        }
+
+        rig.primary.startRally()
+        rig.pair.0.controlDeliveryHook = nil
+        XCTAssertEqual(order, ["manifest", "start"], """
+            the arming manifest must precede the record("start") frame — transports deliver control \
+            frames in order, so this is what guarantees the secondary is never recording a rally it \
+            has no identity for
+            """)
+
+        await settleCrossModelDelivery(until: { rig.secondary.rallySessionID != nil })
+        XCTAssertNotNil(rig.primary.rallySessionID)
+        XCTAssertEqual(rig.secondary.rallySessionID, rig.primary.rallySessionID,
+                       "both clips must upload under one session_id or the server has nothing to pair")
+
+        // Through the accessor `finishRecordingAndSubmit()` itself uses, so
+        // this asserts the exact triple that reaches `RunSubmission.submit` —
+        // including the `camera_role` the server pairs on, which the published
+        // property above does not carry. Consuming, which is why it comes last:
+        // the rally is being torn down from here on.
+        let primaryUpload = rig.primary.takeRallyUploadIdentity()
+        let secondaryUpload = rig.secondary.takeRallyUploadIdentity()
+        XCTAssertNotNil(primaryUpload.sessionID)
+        XCTAssertEqual(primaryUpload.sessionID, secondaryUpload.sessionID)
+        XCTAssertEqual(primaryUpload.cameraRole, "a")
+        XCTAssertEqual(secondaryUpload.cameraRole, "b")
+
+        await settleCrossModelDelivery(until: { rig.secondary.rally == .recording })
+        await settleCrossModelDelivery(until: { rig.primaryRecord.isRecording })
+        rig.primary.stopRally()
+        await settleCrossModelDelivery(until: {
+            rig.primary.rally != .recording && rig.primary.rally != .submitting
+                && rig.secondary.rally != .recording && rig.secondary.rally != .submitting
+        })
+        XCTAssertFalse(rig.primaryRecord.isRecording,
+                       "teardown: no AVAssetWriter should be left running past this test")
+        XCTAssertFalse(rig.secondaryRecord.isRecording)
+    }
+
+    /// The failure mode that makes "consume it when the rally ends" load
+    /// bearing: rally 2's arming manifest is dropped on the wire, so the
+    /// secondary never learns rally 2's identity.
+    ///
+    /// It must upload *unpaired* — both `session_id` and `camera_role` omitted,
+    /// which `/api/track` explicitly allows ("All four are absent for a
+    /// single-camera run") — and must not fall back on rally 1's id. Falling
+    /// back is the actively harmful outcome: it hands the server a role-`b` run
+    /// for a rally the primary already fused, so `session_runs` would pair
+    /// rally 2's secondary clip with rally 1's primary clip and triangulate two
+    /// different rallies as one.
+    func testARallyWhoseManifestNeverArrivedUploadsUnpairedRatherThanReusingTheLastOne() async {
+        let rig = await makePairedRig()
+        await settleCrossModelDelivery(until: { rig.primary.engineReady })
+
+        // Rally 1, delivered normally, so the secondary really does hold an id
+        // that a broken implementation could fall back on.
+        rig.primary.startRally()
+        await settleCrossModelDelivery(until: { rig.secondary.rallySessionID != nil })
+        let firstID = rig.secondary.rallySessionID
+        XCTAssertNotNil(firstID, "setup: the secondary must have rally 1's identity to be able to leak it")
+        await settleCrossModelDelivery(until: { rig.secondary.rally == .recording })
+        await settleCrossModelDelivery(until: { rig.primaryRecord.isRecording })
+
+        rig.primary.stopRally()
+        await settleCrossModelDelivery(until: {
+            rig.secondary.rally != .recording && rig.secondary.rally != .submitting
+        })
+        await settleCrossModelDelivery(until: { rig.primary.primaryTitle == "START RALLY" })
+
+        // Rally 2: swallow the arming announce only. The record frames still
+        // get through, so the secondary records a rally it has no identity for
+        // — exactly the case the fallback would have papered over.
+        var manifestsDropped = 0
+        rig.pair.0.controlDeliveryHook = { frame, deliver in
+            if let message = ControlMessage.decode(frame),
+               case .sessionManifest(_, let videoID) = message, videoID.isEmpty {
+                manifestsDropped += 1
+                return
+            }
+            deliver(frame)
+        }
+
+        rig.primary.startRally()
+        await settleCrossModelDelivery(until: { rig.secondary.rally == .recording })
+        XCTAssertEqual(manifestsDropped, 1, "setup: rally 2's arming manifest must actually have been dropped")
+        XCTAssertEqual(rig.secondary.rally, .recording,
+                       "setup: the secondary must still be recording rally 2 — only the manifest was lost")
+
+        XCTAssertNil(rig.secondary.rallySessionID, """
+            the secondary must not reuse rally 1's identity for rally 2 — that would pair rally 2's \
+            role-b clip with rally 1's role-a run and triangulate two different rallies as one
+            """)
+        let upload = rig.secondary.takeRallyUploadIdentity()
+        XCTAssertNil(upload.sessionID)
+        XCTAssertNil(upload.cameraRole,
+                     "both or neither: the server rejects a run carrying camera_role without session_id")
+        XCTAssertNil(upload.peerVideoID)
+        // The primary is unaffected — it minted and sent; only the delivery was
+        // lost, which it cannot know. Its own upload stays paired, and lands on
+        // the server as a role-a run that simply never finds a partner.
+        XCTAssertNotNil(rig.primary.rallySessionID)
+        XCTAssertNotEqual(rig.primary.rallySessionID, firstID)
+
+        rig.pair.0.controlDeliveryHook = nil
+        await settleCrossModelDelivery(until: { rig.primaryRecord.isRecording })
+        rig.primary.stopRally()
+        await settleCrossModelDelivery(until: {
+            rig.primary.rally != .recording && rig.primary.rally != .submitting
+                && rig.secondary.rally != .recording && rig.secondary.rally != .submitting
+        })
+        XCTAssertFalse(rig.primaryRecord.isRecording,
+                       "teardown: no AVAssetWriter should be left running past this test")
+        XCTAssertFalse(rig.secondaryRecord.isRecording)
+    }
+
+    /// Fix 3, on the half of it that has a deterministic seam: the identity is
+    /// latched from the send's *outcome*, never optimistically.
+    ///
+    /// Degrading the primary's transport synchronously (no run-loop spin in
+    /// between, so `tick`'s recovery branch cannot fire) puts the session's
+    /// authoritative `internalPhase` outside `sendSessionManifest`'s
+    /// `.live || .ready` gate. The old shape — assign the id, then send —
+    /// would have kept the id anyway and uploaded a role-`a` run under an
+    /// identity the secondary was never told, which then waits forever for a
+    /// role `b`. Reading the return value instead makes it upload unpaired.
+    func testAnIdentityWhoseBroadcastWasDroppedIsNotLatched() async {
+        let rig = await makePairedRig()
+        await settleCrossModelDelivery(until: { rig.primary.engineReady })
+
+        var manifestFramesSent = 0
+        rig.pair.0.controlDeliveryHook = { frame, deliver in
+            if let message = ControlMessage.decode(frame),
+               case .sessionManifest = message {
+                manifestFramesSent += 1
+            }
+            deliver(frame)
+        }
+        // Degrade the primary's own session. `stop()` fires `.disconnected` on
+        // this half only, so the secondary stays healthy — and everything from
+        // here to the assertions is synchronous on the main actor, so the 20 Hz
+        // pump cannot tick the session back out of `.degraded` in between.
+        rig.pair.0.stop()
+
+        rig.primary.startRally()
+
+        XCTAssertEqual(manifestFramesSent, 0,
+                       "setup: the session's own gate must have refused the frame")
+        XCTAssertNil(rig.primary.rallySessionID, """
+            an id must not be latched when the broadcast that makes it agreed never went out — the \
+            secondary is not recording this rally either (the same gate refused the "start" frame), \
+            so a paired upload would leave a role-a run waiting for a partner that is never coming
+            """)
+        let upload = rig.primary.takeRallyUploadIdentity()
+        XCTAssertNil(upload.sessionID)
+        XCTAssertNil(upload.cameraRole)
+
+        rig.pair.0.controlDeliveryHook = nil
+        await settleCrossModelDelivery(until: { rig.primaryRecord.isRecording })
+        rig.primary.stopRally()
+        await settleCrossModelDelivery(until: {
+            rig.primary.rally != .recording && rig.primary.rally != .submitting
+        })
+        XCTAssertFalse(rig.primaryRecord.isRecording,
+                       "teardown: no AVAssetWriter should be left running past this test")
+    }
+
+    // MARK: - Task 10e: a beginPairing() retry must reset ALL per-pairing state
+
+    /// DESIGN.md §16's `Failed → PAIR (retry)` row calls `beginPairing()`
+    /// straight through — the exact path `primaryTapped()`'s `.failed` branch
+    /// takes, without `endSession()` running first. `beginPairing()` used to
+    /// clear a hand-picked subset of the previous pairing's state, and this
+    /// pins down the three things that subset missed:
+    ///
+    /// * `engineReady` — the worst of them. It appeared *only* in
+    ///   `endSession()`, and neither `attachPeer` nor `attachStereo` nils
+    ///   `RecordModel.stereoEngine`, so a retry after a previously successful
+    ///   pairing reached `.ready` with the gate already open. START RALLY
+    ///   enabled before the new secondary's calibration had arrived, the
+    ///   "waiting for the other phone's calibration" status stopped showing,
+    ///   and a rally started in that window ran against the *previous*
+    ///   pairing's `StereoEngine` — whose `remoteToLocal` closure holds a weak
+    ///   reference to the deallocated old `PeerSession`, so remote samples
+    ///   could not be time-mapped and the rally produced no calls at all.
+    /// * `rally` — a retry taken mid-rally kept `.recording` from the dead
+    ///   session, which `startRally()`'s own guard then refuses forever while
+    ///   `primaryEnabled` reads true: an enabled primary whose tap cannot fire
+    ///   (DESIGN.md §7 forbids it). Covered by
+    ///   `testARetryTakenMidRallyResetsTheRallyAndStopsTheCamera` below.
+    /// * the upload identity — now per rally, so this asserts the weaker but
+    ///   correct thing: the new pairing's first rally must not reuse the dead
+    ///   pairing's id.
     ///
     /// Reaches the failure the same way `testPairIsReenabledAfterAPairingFailure`
     /// does — a real `PeerSession.Phase.failed` — but *after* both sides have
-    /// already reached `.ready` and minted/shared a `sessionID`, which that
-    /// test cannot reach (its failure fires during the very first hello,
-    /// before `.ready` is possible). There is no production seam for "make an
-    /// already-paired link renegotiate hello and fail," so this drives the
-    /// same `handleControl` `.hello` guard `testMismatchedPeerFrameSizeIsRejected`
+    /// already reached `.ready` and built the engine, which that test cannot
+    /// reach (its failure fires during the very first hello, before `.ready`
+    /// is possible). There is no production seam for "make an already-paired
+    /// link renegotiate hello and fail," so this drives the same
+    /// `handleControl` `.hello` guard `testMismatchedPeerFrameSizeIsRejected`
     /// exercises, directly over the raw transport halves the rig exposes —
     /// bypassing each side's own (still-healthy) `PeerSession` object
     /// entirely, exactly as a stray/duplicated hello delivered by a
     /// misbehaving transport would. A wrong `protoVersion` is the simplest
     /// guard to trip: `PeerSession.handleControl` checks it before frame size,
     /// so there is no need to compute a correctly-mismatched orientation.
-    func testARetryAfterAPairingFailureMintsAFreshSessionIDRatherThanKeepingTheStaleOne() async {
+    func testARetryAfterAPairingFailureDoesNotCarryEngineReadyOrTheOldIdentity() async {
         let rig = await makePairedRig()
-        let mintedSessionID = rig.primary.sessionID
-        XCTAssertNotNil(mintedSessionID, "setup: the first pairing must mint a sessionID")
-        XCTAssertEqual(rig.secondary.sessionID, mintedSessionID, "setup: and broadcast it")
+        await settleCrossModelDelivery(until: { rig.primary.engineReady })
+        XCTAssertTrue(rig.primary.engineReady, "setup: the first pairing really did build an engine")
+
+        // A rally on the first pairing, so there is a real previous identity
+        // available to leak into the retry.
+        rig.primary.startRally()
+        await settleCrossModelDelivery(until: { rig.secondary.rallySessionID != nil })
+        let deadPairingRallyID = rig.primary.rallySessionID
+        XCTAssertNotNil(deadPairingRallyID, "setup: the first pairing must have run a rally")
+        await settleCrossModelDelivery(until: { rig.primaryRecord.isRecording })
+        rig.primary.stopRally()
+        await settleCrossModelDelivery(until: {
+            rig.primary.rally != .recording && rig.primary.rally != .submitting
+                && rig.secondary.rally != .recording && rig.secondary.rally != .submitting
+        })
 
         // Fail both real sessions independently, without ever calling
         // `endSession()` — the exact gap this fix closes. Delivered straight
@@ -477,28 +808,179 @@ final class LiveSessionModelTests: XCTestCase {
         XCTAssertTrue(rig.primary.primaryEnabled, "setup: §16's Failed row must still offer PAIR (retry)")
         XCTAssertEqual(rig.primary.primaryTitle, "PAIR")
         // The bug's precondition: reaching `.failed` alone — with no
-        // `beginPairing()` retry yet — must not by itself touch `sessionID`.
-        XCTAssertEqual(rig.primary.sessionID, mintedSessionID,
-                       "setup: failing must not itself clear or change the stale id")
+        // `beginPairing()` retry yet — must not by itself reset anything. The
+        // reset has to be the retry's own doing, or this test would pass for
+        // the wrong reason.
+        XCTAssertTrue(rig.primary.engineReady,
+                      "setup: failing must not itself clear the engine gate")
 
         // The retry: `primaryTapped()` on a `.failed` step calls
         // `beginPairing()` directly, exactly as `handshake(...)` reproduces
         // here by re-running the same helper `makePairedRig` used the first
         // time — this is the only thing that changed between the two calls.
+        // (Driving `primaryTapped()` by hand *before* this would consume the
+        // `.failed` step `handshake` needs, leaving its own tap on `.searching`
+        // where `primaryTapped()` is a no-op. The window inside the retry is
+        // asserted separately, in
+        // `testARetryDropsThePreviousPairingsEngineGateImmediately`.)
         let reachedReady = await handshake(primary: rig.primary, secondary: rig.secondary,
                                            pair: rig.pair, calibrations: rig.calibrations)
         XCTAssertTrue(reachedReady, """
             the retry did not reach ready in time: \
             primary.step=\(rig.primary.pairing.step), secondary.step=\(rig.secondary.pairing.step)
             """)
+        await settleCrossModelDelivery(until: { rig.primary.engineReady })
+        XCTAssertTrue(rig.primary.engineReady,
+                      "the retry's own calibration exchange must rebuild the engine detachPeer() threw away")
 
-        XCTAssertNotNil(rig.primary.sessionID)
-        XCTAssertNotEqual(rig.primary.sessionID, mintedSessionID,
-                          "a re-pair after a failure must mint a fresh sessionID rather than silently " +
-                          "keeping the previous pairing's — otherwise the manifest for this pairing's " +
-                          "rallies is never (re-)broadcast and the server can never fuse them")
-        XCTAssertEqual(rig.secondary.sessionID, rig.primary.sessionID,
-                       "and the secondary must actually receive the new broadcast, not just keep its own stale copy")
+        // And the new pairing's first rally gets a genuinely new identity —
+        // reusing the dead pairing's would hand the server a second run under
+        // an id whose `stereo-<session_id>` fuse directory already exists.
+        rig.primary.startRally()
+        XCTAssertNotNil(rig.primary.rallySessionID)
+        XCTAssertNotEqual(rig.primary.rallySessionID, deadPairingRallyID,
+                          "a rally on the new pairing must not reuse an id from the old one")
+
+        await settleCrossModelDelivery(until: { rig.primaryRecord.isRecording })
+        rig.primary.stopRally()
+        await settleCrossModelDelivery(until: {
+            rig.primary.rally != .recording && rig.primary.rally != .submitting
+                && rig.secondary.rally != .recording && rig.secondary.rally != .submitting
+        })
+        XCTAssertFalse(rig.secondaryRecord.isRecording,
+                       "teardown: no AVAssetWriter should be left running past this test")
+        XCTAssertFalse(rig.primaryRecord.isRecording,
+                       "teardown: no AVAssetWriter should be left running past this test")
+    }
+
+    /// The `engineReady` window itself, which the test above cannot see: by the
+    /// time a full re-handshake reports `.ready`, the *new* secondary's
+    /// calibration has already rebuilt the engine and set the gate back to true
+    /// legitimately. The bug was that it was never false in between — START
+    /// RALLY stayed enabled across the whole retry, on an engine belonging to a
+    /// pairing that no longer exists.
+    ///
+    /// `primaryTapped()` runs `beginPairing()` synchronously, so reading
+    /// immediately after it cannot miss the window. Only the primary is failed
+    /// and retried here; nothing needs to reach `.ready` again.
+    func testARetryDropsThePreviousPairingsEngineGateImmediately() async {
+        let rig = await makePairedRig()
+        await settleCrossModelDelivery(until: { rig.primary.engineReady })
+        XCTAssertTrue(rig.primary.engineReady, "setup: the first pairing built an engine")
+        XCTAssertTrue(rig.primary.primaryEnabled, "setup: so START RALLY is enabled")
+
+        let bogusHello = ControlMessage.hello(
+            Hello(protoVersion: peerProtoVersion + 1, appVersion: "dev",
+                  deviceModel: "test", nonce: 0, frameW: 0, frameH: 0))
+        rig.pair.1.sendControl(try! ControlMessage.encode(bogusHello))
+        await settleCrossModelDelivery(until: {
+            if case .failed = rig.primary.pairing.step { return true }
+            return false
+        })
+        guard case .failed = rig.primary.pairing.step else {
+            return XCTFail("setup: expected the primary's session to fail, got \(rig.primary.pairing.step)")
+        }
+        XCTAssertTrue(rig.primary.engineReady,
+                      "setup: failing must not itself clear the gate — the retry has to be what does it")
+
+        rig.primary.primaryTapped()   // §16's Failed → PAIR (retry)
+
+        XCTAssertFalse(rig.primary.engineReady, """
+            a retry must not inherit the previous pairing's engine gate: START RALLY would enable \
+            before the new secondary's calibration arrived, and a rally started in that window would \
+            run against the dead pairing's StereoEngine — whose remoteToLocal closure weakly \
+            references a deallocated PeerSession, so it can time-map nothing and calls nothing
+            """)
+        XCTAssertFalse(rig.primary.primaryEnabled,
+                       "so the button must be disabled again while the new pairing searches")
+        XCTAssertEqual(rig.primary.linkStatus, "Looking for the other phone…",
+                       "and the status line must go back to searching, not keep the dead pairing's")
+        XCTAssertNil(rig.primary.rallySessionID,
+                     "and no upload identity carries over from the pairing that just died")
+    }
+
+    /// The other half of Fix 2: a retry taken *mid-rally*.
+    ///
+    /// `beginPairing()` left `rally` and `rallyGeneration` alone, so the new
+    /// pairing inherited `.recording` from a session that no longer exists.
+    /// `startRally()`'s own `guard rally != .recording` then refuses every
+    /// start on the new pairing — permanently — while `computedPrimaryEnabled`
+    /// happily reads `.ready` and enables the button. DESIGN.md §7 forbids
+    /// exactly that: a primary that advertises a tap which cannot fire.
+    ///
+    /// The camera is the other half of the same omission. `endSession()` always
+    /// scheduled a stop through `RecordModel`'s funnel; `beginPairing()` did
+    /// not, so a retry mid-rally left an `AVAssetWriter` rolling with nothing
+    /// left that was allowed to stop it — which also locks the plain record
+    /// stage out of the camera it shares.
+    func testARetryTakenMidRallyResetsTheRallyAndStopsTheCamera() async {
+        let rig = await makePairedRig()
+        await settleCrossModelDelivery(until: { rig.primary.engineReady })
+
+        rig.primary.startRally()
+        await settleCrossModelDelivery(until: { rig.primaryRecord.isRecording })
+        XCTAssertEqual(rig.primary.rally, .recording, "setup: a rally really is running")
+        XCTAssertTrue(rig.primaryRecord.isRecording, "setup: and the camera really is rolling")
+
+        // Retry straight out of the running rally. `primaryTapped()` would read
+        // `.live` here and do nothing (§16 has no PAIR in `p-live`), so this
+        // reproduces the reachable route: the link fails under a rally, §16's
+        // `Failed` row offers PAIR, and the user takes it.
+        let bogusHello = ControlMessage.hello(
+            Hello(protoVersion: peerProtoVersion + 1, appVersion: "dev",
+                  deviceModel: "test", nonce: 0, frameW: 0, frameH: 0))
+        rig.pair.1.sendControl(try! ControlMessage.encode(bogusHello))
+        await settleCrossModelDelivery(until: {
+            if case .failed = rig.primary.pairing.step { return true }
+            return false
+        })
+        guard case .failed = rig.primary.pairing.step else {
+            return XCTFail("setup: expected the primary's session to fail, got \(rig.primary.pairing.step)")
+        }
+        XCTAssertEqual(rig.primary.rally, .recording,
+                       "setup: failing the link does not itself end the rally — that is the point")
+
+        rig.primary.primaryTapped()   // §16's Failed → PAIR (retry)
+
+        XCTAssertEqual(rig.primary.rally, .idle, """
+            a retry must not inherit `.recording` from the dead session: startRally() would refuse \
+            every start on the new pairing forever while primaryEnabled still reads true
+            """)
+        XCTAssertFalse(rig.primary.showsStop, "and nothing is left to stop")
+        XCTAssertFalse(rig.primary.showsLocalStop)
+
+        // The camera stop is chained through `RecordModel`'s funnel, so it
+        // lands on the next turn rather than synchronously.
+        await settleCrossModelDelivery(until: { !rig.primaryRecord.isRecording })
+        XCTAssertFalse(rig.primaryRecord.isRecording, """
+            a retry mid-rally must not leave an AVAssetWriter running: nothing on the new pairing \
+            owns it, and it locks the record stage out of the camera it shares
+            """)
+        // Deliberately not asserted: that the abandoned clip is *discarded*. A
+        // test host has no capture session, so the stop always ends in
+        // `CameraError.recordingEmpty` and no clip is ever published — the
+        // assertion would hold for a reason unrelated to the code under test.
+        // The discard is the same `Task { [record] ... liveClip = nil }`
+        // `endSession()` has always run, now shared via `teardownPairing()`.
+
+        // §16's Searching row, which is where a fresh `beginPairing()` lands:
+        // the label is back to PAIR and the control is disabled while the new
+        // session looks for a peer — not "START RALLY, enabled" on a pairing
+        // that has not even said hello yet.
+        XCTAssertEqual(rig.primary.primaryTitle, "PAIR")
+        XCTAssertFalse(rig.primary.primaryEnabled)
+        XCTAssertEqual(rig.primary.linkStatus, "Looking for the other phone…")
+
+        // Teardown: the *secondary* followed the primary into this rally and
+        // nothing on the retried pairing can end it — the primary's "stop"
+        // would have travelled over a session that no longer exists. Stop it
+        // through its own §16 safety valve so no writer outlives this test.
+        rig.secondary.stopRally()
+        await settleCrossModelDelivery(until: {
+            rig.secondary.rally != .recording && rig.secondary.rally != .submitting
+        })
+        XCTAssertFalse(rig.secondaryRecord.isRecording,
+                       "teardown: no AVAssetWriter should be left running past this test")
     }
 
     // MARK: - Task 10b: one pairing, many rallies
@@ -533,10 +1015,10 @@ final class LiveSessionModelTests: XCTestCase {
     /// asserted.
     func testASecondRallyStartsOnTheSamePairing() async {
         let rig = await makePairedRig()
-        let mintedSessionID = rig.primary.sessionID
-        XCTAssertNotNil(mintedSessionID, "setup: the primary mints one on reaching ready")
 
         rig.primary.startRally()
+        let firstRallyID = rig.primary.rallySessionID
+        XCTAssertNotNil(firstRallyID, "setup: rally 1 mints its own identity")
         await settleCrossModelDelivery(until: { rig.secondary.rally == .recording })
         await settleCrossModelDelivery(until: { rig.primaryRecord.isRecording })
         XCTAssertEqual(rig.primary.primaryTitle, "RALLY LIVE", "setup: rally 1 is live")
@@ -561,10 +1043,10 @@ final class LiveSessionModelTests: XCTestCase {
         XCTAssertFalse(rig.primary.showsLocalStop)
         await settleCrossModelDelivery(until: { rig.secondary.rally != .recording })
 
-        // The pairing's identity survives the rally: both phones' clips keep
-        // sharing one `session_id`, which is what the server fuses on.
-        XCTAssertEqual(rig.primary.sessionID, mintedSessionID, "sessionID must not be re-minted")
-        XCTAssertEqual(rig.secondary.sessionID, mintedSessionID)
+        // The *pairing* survives the rally; its upload identity does not — that
+        // is per rally, and Task 10e's own tests cover it. Asserted here only as
+        // the precondition for the second start below.
+        XCTAssertNil(rig.primary.rallySessionID, "rally 1's identity is spent")
 
         rig.primary.startRally()
         XCTAssertEqual(rig.primary.rally, .recording)
@@ -572,7 +1054,8 @@ final class LiveSessionModelTests: XCTestCase {
         await settleCrossModelDelivery(until: { rig.secondary.rally == .recording })
         XCTAssertEqual(rig.secondary.rally, .recording,
                        "the secondary must follow the primary into the second rally too")
-        XCTAssertEqual(rig.primary.sessionID, mintedSessionID)
+        XCTAssertNotEqual(rig.primary.rallySessionID, firstRallyID,
+                          "rally 2 is a different rally, so a different session_id")
 
         // Teardown: rally 2 really is recording on both phones. Stop it here
         // rather than leaving two AVAssetWriters running past this test.
@@ -893,8 +1376,7 @@ final class LiveSessionModelTests: XCTestCase {
             XCTFail("""
                 makePairedRig setup did not reach ready in time: \
                 primary.step=\(primary.pairing.step), secondary.step=\(secondary.pairing.step), \
-                primary.sessionID=\(String(describing: primary.sessionID)), \
-                secondary.sessionID=\(String(describing: secondary.sessionID))
+                calibrations=\(calibrations.count)
                 """)
         }
 
@@ -903,7 +1385,19 @@ final class LiveSessionModelTests: XCTestCase {
 
     /// The pairing handshake itself: PAIR on both models, exchange hellos,
     /// confirm, and spin the real run loop until both sides are `.ready` and
-    /// share a `sessionID`. Returns whether that happened before the deadline.
+    /// the secondary's one calibration frame has actually gone out. Returns
+    /// whether that happened before the deadline.
+    ///
+    /// The calibration is the postcondition because, since Task 10e, nothing
+    /// else is exchanged at pairing time: the session manifest used to be
+    /// minted and broadcast on first reaching `.ready`, and waiting for both
+    /// sides to agree on it was what made this loop's exit meaningful. It is
+    /// now minted per *rally* (`LiveSessionModel.armRallyIdentity()`), so
+    /// waiting on it here would wait forever. `calibrations.count` rising is
+    /// the equivalent proof that a full round of both models' 20 Hz
+    /// `republish()` has run against a real `.ready` — a `baseline` rather
+    /// than `== 1` because `testAFreshSessionAfterTeardownSendsTheCalibration\
+    /// Again` runs this a second time on an accumulating counter.
     ///
     /// Extracted from `makePairedRig` so a test can run it a *second* time
     /// against the same two models after `endSession()`. That re-pairing is
@@ -944,6 +1438,7 @@ final class LiveSessionModelTests: XCTestCase {
     private func handshake(primary: LiveSessionModel, secondary: LiveSessionModel,
                            pair: (LoopbackTransport, LoopbackTransport),
                            calibrations: CalibrationCounter) async -> Bool {
+        let calibrationBaseline = calibrations.count
         var buffered: [() -> Void] = []
         pair.0.controlDeliveryHook = { frame, deliver in buffered.append { deliver(frame) } }
         pair.1.controlDeliveryHook = { frame, deliver in buffered.append { deliver(frame) } }
@@ -981,8 +1476,7 @@ final class LiveSessionModelTests: XCTestCase {
         while true {
             let primaryReady: Bool = { if case .ready = primary.pairing.step { return true }; return false }()
             let secondaryReady: Bool = { if case .ready = secondary.pairing.step { return true }; return false }()
-            if primaryReady, secondaryReady,
-               primary.sessionID != nil, secondary.sessionID == primary.sessionID {
+            if primaryReady, secondaryReady, calibrations.count > calibrationBaseline {
                 return true
             }
             guard Date() < deadline else { return false }
