@@ -20,7 +20,22 @@ import XCTest
 final class RecordingOwnershipTests: XCTestCase {
     /// `detector: nil` — nothing here needs detections, and
     /// `SyntheticBallDetector` is `#if DEBUG`-only.
-    private func makeRecord() -> RecordModel { RecordModel(detector: nil) }
+    ///
+    /// `mountResolver` is what makes the starts below deterministic.
+    /// `applyRecording`'s start path refuses unless the interface is resolved
+    /// to a landscape mount ("Hold the phone in landscape to start
+    /// recording."), and in production that reads the live window scene — so
+    /// without this seam every start here would depend on whether the
+    /// simulator's rotation had settled by the time XCTest ran, which is a
+    /// race, not a test. `.landscapeRight` matches both `RecordModel`'s own
+    /// `captureOrientation` default and `CameraController.orientation`'s, so
+    /// nothing else about these models shifts. The refusal itself is
+    /// production behaviour and is deliberately still there — this supplies a
+    /// resolved mount, it does not remove the requirement for one.
+    private func makeRecord() -> RecordModel {
+        RecordModel(detector: nil,
+                    mountResolver: { CaptureSettings.CaptureOrientation.landscapeRight })
+    }
 
     /// A start that the test depends on succeeding. `CameraController` names
     /// its output file from a whole-second timestamp, so a start can fail if

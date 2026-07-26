@@ -353,7 +353,9 @@ final class LiveSessionModelTests: XCTestCase {
     /// whatever it started before `record` goes out of scope.
     func testAStartThatFailsToActuallyRecordDoesNotLeaveRallyBelievingItIsRecording() async {
         let (model, _) = makeModel()
-        let record = RecordModel(detector: nil)
+        // The teardown below depends on the pending start really succeeding,
+        // so this needs the deterministic mount — see `makeRecordModel()`.
+        let record = makeRecordModel()
         model.bind(record: record)
 
         model.startRally()
@@ -1279,7 +1281,9 @@ final class LiveSessionModelTests: XCTestCase {
     /// demo's own 0.05 s pump cannot slip another call in between.
     func testStartingTheNextRallyClearsThePreviousCall() async {
         let (model, _) = makeModel()
-        let record = RecordModel(detector: nil)
+        // Same as above: the teardown stops a recording that must actually
+        // have started, so the mount cannot be left to the ambient scene.
+        let record = makeRecordModel()
         model.bind(record: record)
 
         record.startStereoDemo(localModelJSON: StereoDemo.localModelJSON,
@@ -1498,6 +1502,32 @@ final class LiveSessionModelTests: XCTestCase {
 
     // MARK: - The paired rig
 
+    /// A `RecordModel` every rally in this file can actually start a recording
+    /// on.
+    ///
+    /// `detector: nil` — no detections are needed anywhere here, and
+    /// `SyntheticBallDetector` is `#if DEBUG`-only, so this file's `RecordModel`
+    /// construction must not depend on a DEBUG-only type.
+    ///
+    /// `mountResolver` is the part that matters. `RecordModel.applyRecording`'s
+    /// start path refuses to start unless the interface is resolved to a
+    /// landscape mount, and in production that comes from the live window
+    /// scene — ambient state a unit test does not control. Every test in this
+    /// file that starts a rally would otherwise be racing the simulator's
+    /// rotation, and the ones that wait on `isRecording` through
+    /// `settleCrossModelDelivery` would burn their full 2 s deadline before
+    /// failing on something that has nothing to do with what they assert.
+    /// The refusal itself is production behaviour and stays exactly as it is;
+    /// this supplies a resolved mount, it does not remove the requirement for
+    /// one. `.landscapeRight` is what
+    /// `CameraController.orientation` already defaults to, so the mount the
+    /// rig's `beginPairing()` puts on the wire is unchanged — which is what
+    /// keeps `makePairedRig()`'s two halves matching at the handshake.
+    private func makeRecordModel() -> RecordModel {
+        RecordModel(detector: nil,
+                    mountResolver: { CaptureSettings.CaptureOrientation.landscapeRight })
+    }
+
     /// Spins until `done()` is true or a short deadline elapses.
     ///
     /// The hop `onRecord`/`onSessionManifest` use in
@@ -1546,12 +1576,11 @@ final class LiveSessionModelTests: XCTestCase {
         let pair = LoopbackTransport.pair()
         let (primary, _) = makeModel(makeTransport: { _ in pair.0 })
         let (secondary, _) = makeModel(makeTransport: { _ in pair.1 })
-        // No detector needed anywhere in this rig, and `SyntheticBallDetector`
-        // is `#if DEBUG`-only — matching `testPairIsReenabledAfterAPairingFailure`'s
-        // `RecordModel(detector: nil)` above keeps this file's one unguarded
-        // construction of `RecordModel` from depending on a DEBUG-only type.
-        let primaryRecord = RecordModel(detector: nil)
-        let secondaryRecord = RecordModel(detector: nil)
+        // Both halves record: the primary from its own START RALLY, the
+        // secondary from the relayed `.record` control message. So both need
+        // the deterministic mount — see `makeRecordModel()`.
+        let primaryRecord = makeRecordModel()
+        let secondaryRecord = makeRecordModel()
         primary.bind(record: primaryRecord)
         secondary.bind(record: secondaryRecord)
 

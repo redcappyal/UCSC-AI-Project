@@ -92,8 +92,10 @@ struct PlayRootView: View {
                     // then reconfigure it (removing and re-adding every input
                     // and output) mid-rally, and meter the court exposure
                     // *during* the rally instead of before it. `startCamera()`
-                    // is idempotent (`cameraStarted`), so `p-live`'s own call
-                    // is left in place as a backstop and simply returns.
+                    // configures at most once (`cameraStarted`), so `p-live`'s
+                    // own call is left in place as a backstop and does no
+                    // reconfiguration — it only re-seeds the capture mount,
+                    // which every appearance in this stack deliberately does.
                     PairingView(model: live)
                         .task { await record.startCamera() }
                 case .live:

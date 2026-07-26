@@ -82,8 +82,51 @@ final class RecordModel: ObservableObject {
     /// when the source is synthetic.
     @Published private(set) var detectorKind: DetectorKind
 
+    /// How this model learns which way the phone is mounted: the interface
+    /// orientation mapped to a capture mount, or `nil` when the interface is
+    /// not resolved to either landscape — no window scene at all, or a
+    /// portrait transient mid-rotation. Both readers are on the recording
+    /// path: `startCamera`'s mount seed, and `applyRecording`'s start path,
+    /// which refuses to start at all on `nil`.
+    ///
+    /// A seam rather than a direct call, because the value comes from ambient
+    /// UIKit scene state that `RecordModel` would otherwise be reaching out of
+    /// itself to read. Every test that starts a recording would then depend on
+    /// whether the simulator's rotation had settled by the time XCTest ran it,
+    /// and the ones that *wait* on `isRecording` would burn their full
+    /// deadline before failing — a confusing failure for a race that has
+    /// nothing to do with what they assert. `interfaceMount` below is the
+    /// production implementation and the default, so the shipping path is
+    /// exactly what it was.
+    typealias MountResolver = @MainActor () -> CaptureSettings.CaptureOrientation?
+
+    /// The production mount resolution, and `init`'s default: `OrientationPolicy`'s
+    /// two-tier scene lookup mapped through `OrientationLock.captureOrientation(for:)`.
+    ///
+    /// Two-tier (foreground-active, else any scene) rather than a strict
+    /// foreground-active-only check: a transient system interruption (an
+    /// alert, Control Center) can leave every scene `.foregroundInactive` for
+    /// a moment, and a strict check landing on `nil` there would send
+    /// `startCamera`'s first seed straight to its `.landscapeRight` fallback —
+    /// indistinguishable from a real landscape-right resolution — and would
+    /// make `applyRecording` refuse a start the operator was entitled to.
+    ///
+    /// Passes `requiresKeyWindow: false`: only `interfaceOrientation` is read
+    /// here, and that is available on a scene with no key window yet, unlike
+    /// `OrientationPolicy.apply`'s use of the same lookup. One lookup for both
+    /// readers rather than two that could quietly diverge — a divergent second
+    /// lookup was already a review finding on this branch.
+    static func interfaceMount() -> CaptureSettings.CaptureOrientation? {
+        OrientationPolicy.activeWindowScene(requiresKeyWindow: false)
+            .flatMap { OrientationLock.captureOrientation(for: $0.interfaceOrientation) }
+    }
+
+    private let mountResolver: MountResolver
+
     init(detector: BallDetecting? = CoreMLBallDetector(),
-         captureOrientation: CaptureSettings.CaptureOrientation = .landscapeRight) {
+         captureOrientation: CaptureSettings.CaptureOrientation = .landscapeRight,
+         mountResolver: @escaping MountResolver = { RecordModel.interfaceMount() }) {
+        self.mountResolver = mountResolver
         // Production overwrites this in `startCamera` once the interface
         // orientation is known; the parameter exists so tests can pick a mount
         // without a live window scene.
@@ -131,14 +174,19 @@ final class RecordModel: ObservableObject {
     private var nextDetectionSeq: UInt32 = 0
     private var pendingTuples: [DetectionTuple] = []
     private var lastFlushAt: TimeInterval = 0
-    /// The mount this session is currently using. Before any recording,
-    /// `startCamera` freely re-seeds this with an unpinned guess every time
-    /// Play appears — there is nothing to protect yet. `applyRecording`'s
-    /// start path is what commits to a mount: it only assigns this AFTER
-    /// `camera.startRecording()` actually succeeds, and only then does
-    /// `startCamera` stop touching it — guarded on `isRecording`, since a
-    /// tab round trip mid-recording still re-runs `startCamera` and would
-    /// otherwise stomp the recording's committed mount with a fresh guess.
+    /// The mount this session is currently using. While no recording is
+    /// running, `startCamera` freely re-seeds this with an unpinned guess
+    /// every time Play appears — there is nothing to protect yet, and the
+    /// operator is entitled to re-mount the phone between rallies.
+    /// `applyRecording`'s start path is what commits to a mount: it only
+    /// assigns this AFTER `camera.startRecording()` actually succeeds, and
+    /// only then does the re-seed stop touching it — a tab round trip
+    /// mid-recording still re-runs `startCamera`, and would otherwise stomp
+    /// the recording's committed mount with a fresh guess. Two things stop
+    /// that: `startCamera` bails out whole on `isRecording`, and the re-seed
+    /// itself runs on the recording funnel's own transition chain and
+    /// re-checks `isRecording` when its turn comes — see `enqueueMountReseed`
+    /// for why the chain, not the flag, is what makes it airtight.
     /// The peer detection path reads this (`detectionFrameSize` below, and
     /// the tuples it sizes); the preview overlay and camera-model adoption
     /// still key off the `CaptureSettings` statics directly, since both
@@ -506,73 +554,74 @@ final class RecordModel: ObservableObject {
         flashClearWork?.cancel()
     }
 
-    /// Guards `startCamera()`. Three callers now: `RecordView`'s own `.task`,
-    /// `PlayRootView`'s `p-pair` destination (the live path configures the
-    /// camera when pairing is entered — a rally starts from a tap on `p-pair`,
-    /// before `p-live` exists), and `p-live`'s own `.task` as a backstop.
-    /// Idempotent, so the second and third callers don't re-configure — and
-    /// re-meter — an already-running camera mid-rally.
+    /// Guards the *configuration* half of `startCamera()`, and only that half.
+    /// Three callers now: `RecordView`'s own `.task`, `PlayRootView`'s
+    /// `p-pair` destination (the live path configures the camera when pairing
+    /// is entered — a rally starts from a tap on `p-pair`, before `p-live`
+    /// exists), and `p-live`'s own `.task` as a backstop. Configuring is
+    /// expensive, and re-metering the court mid-session would change exposure
+    /// under a rally, so the second and third callers must not re-run it.
+    ///
+    /// Deliberately does NOT guard the mount seed. Those are two different
+    /// concerns and conflating them is a real bug: the seed has to re-run on
+    /// every appearance (see `startCamera`).
     private var cameraStarted = false
 
     func startCamera() async {
-        // Two guards, for two different hazards, and neither subsumes the
-        // other.
-        //
-        // `isRecording` first: every entry point re-fires this (`RecordView`'s
-        // `.task`, `p-pair`'s and `p-live`'s), including a return from
-        // Matches/Coach while a recording that `applyRecording`'s start path
-        // already resolved and pinned is still running. Re-seeding an unpinned
-        // guess below would overwrite the mount a running recording committed
-        // to, which is exactly what `captureOrientation`'s doc says stops
-        // happening once that path commits. Bail out whole so nothing below
-        // touches `camera.orientation` or `captureOrientation` in flight.
-        // Deliberately does NOT clear `cameraStarted`: the camera is running,
-        // and this is a skipped re-entry, not a failed one.
+        // `isRecording` first, and it bails out whole: every entry point
+        // re-fires this (`RecordView`'s `.task`, `p-pair`'s and `p-live`'s),
+        // including a return from Matches/Coach while a recording that
+        // `applyRecording`'s start path already resolved and pinned is still
+        // running. Re-seeding an unpinned guess below would overwrite the
+        // mount a running recording committed to, which is exactly what
+        // `captureOrientation`'s doc says stops happening once that path
+        // commits. Deliberately does NOT clear `cameraStarted`: the camera is
+        // running, and this is a skipped re-entry, not a failed one.
         guard !isRecording else { return }
-        // `cameraStarted` second: configuring is expensive and re-metering the
-        // court mid-session would change exposure under a rally. Cleared again
-        // in the `catch` so a failure can be retried.
-        guard !cameraStarted else { return }
-        cameraStarted = true
+
+        // Every appearance after the first re-seeds the mount, and does
+        // nothing else. Session configuration is one-shot; the mount is not,
+        // and freezing it at the app's first-ever camera start is a bug in
+        // two visible places. The preview and the court-exposure meter would
+        // keep working from a mount the operator has since changed; worse,
+        // `LiveSessionModel.beginPairing()` reads `record.camera.orientation`
+        // to build the peer `Hello`, so an operator who opened the record
+        // stage before physically mounting the phone would advertise a mount
+        // they no longer have — defeating the frame-space handshake guard in
+        // precisely the case it exists for.
+        //
+        // No fallback on this path: a resolution that fails *now* must leave
+        // whatever a previous, successful resolution established rather than
+        // downgrade it to the `.landscapeRight` literal below. The first seed
+        // has no such previous value to keep; this one does.
+        guard !cameraStarted else {
+            await enqueueMountReseed(fallback: nil).value
+            return
+        }
+        cameraStarted = true      // cleared again in the `catch`, so a failure retries
         do {
-            // Resolve an initial mount from the interface orientation, which
-            // the Play tab has already constrained to landscape, purely so
-            // the preview and the court-exposure meter below have a sensible
-            // mount to work with before anything is pinned. Deliberately NOT
-            // pinned here: the Play tab stays at both-landscape (`.landscape`)
-            // through the whole framing window, which is what lets the
-            // operator flip the mount before recording starts.
+            // The first seed, before `configure()` — `configureSession()`
+            // reads `camera.orientation` to set the video connection's initial
+            // rotation, so this has to have landed by then, which is what
+            // awaiting the chained transition guarantees.
+            //
+            // Purely so the preview and the court-exposure meter below have a
+            // sensible mount to work with. Deliberately NOT pinned, here or on
+            // any later re-seed: the Play tab stays at both-landscape
+            // (`.landscape`) through the whole framing window, which is what
+            // lets the operator flip the mount before recording starts.
             // `applyRecording`'s start path is where the mount actually gets
             // committed and pinned — see there for why record start, not
             // camera start, has to be the point of no return.
             //
-            // Uses OrientationPolicy's two-tier scene lookup (foreground-active,
-            // else any scene) rather than a strict foreground-active-only
-            // check: a transient system interruption (an alert, Control
-            // Center) can leave every scene `.foregroundInactive` for a
-            // moment, and a strict check landing on `nil` there would fall
-            // straight to the `.landscapeRight` literal below —
-            // indistinguishable from a real landscape-right resolution. That
-            // only costs a wrong preview/metering default now, since nothing
-            // here pins; `applyRecording`'s own resolution at record start is
-            // what has to get the real mount right.
-            // Passes `requiresKeyWindow: false`: only `interfaceOrientation` is
-            // read below, which is available on a scene with no key window
-            // yet, unlike `apply`'s use of this same lookup.
-            let scene = OrientationPolicy.activeWindowScene(requiresKeyWindow: false)
-            let mount = scene.flatMap { OrientationLock.captureOrientation(for: $0.interfaceOrientation) }
-            // Last resort only, for the genuinely-no-scene case (or a portrait
-            // interface, which is not a capture mode): a fallback default, not
-            // a resolved orientation.
-            captureOrientation = mount ?? .landscapeRight
-            // Routed through `updateOrientation` rather than a direct
-            // `camera.orientation = ...` assignment, so `orientation` has one
-            // writer, always on `sessionQueue`, instead of this direct
-            // main-actor write racing `applyRecording`'s queued one. There is
-            // no connection yet at this point (configure() hasn't run), so
-            // this always records the value and never fails — see
-            // `updateOrientation(_:)`'s doc for that branch.
-            await camera.updateOrientation(captureOrientation)
+            // `.landscapeRight` is a last resort only, for the genuinely-no-
+            // scene case (or a portrait interface, which is not a capture
+            // mode): a fallback default, not a resolved orientation. It costs
+            // only a wrong preview/metering default, since nothing here pins;
+            // `applyRecording`'s own resolution at record start is what has to
+            // get the real mount right, and it refuses rather than falling
+            // back at all.
+            await enqueueMountReseed(fallback: .landscapeRight).value
 
             // `CameraController.configure()` is repeatable: it tears its own
             // inputs/outputs down before re-adding them, so re-entering here
@@ -593,9 +642,70 @@ final class RecordModel: ObservableObject {
 
     // MARK: - The one recording funnel
 
-    /// Serializes every start/stop against the camera, in the order they were
-    /// issued. Held here — not in any consumer — because the camera is here.
+    /// Serializes every start/stop against the camera — and every mount
+    /// re-seed — in the order they were issued. Held here, not in any
+    /// consumer, because the camera is here.
     private var recordingTransition: Task<Bool, Never>?
+
+    /// Re-resolves the mount from the interface and applies it to the camera,
+    /// serialized against every recording start and stop.
+    ///
+    /// Being *on this chain* is the whole safety argument, and a flag would
+    /// not do. `applyRecording`'s start path resolves a mount, awaits
+    /// `camera.updateOrientation(mount)`, opens an `AVAssetWriter` against
+    /// that rotation, and only then assigns `captureOrientation` and pins the
+    /// mask. `isRecording` is still `false` for all of that, and the
+    /// `updateOrientation` await is a real suspension point — so a re-seed
+    /// checking `isRecording` alone could interleave right there and leave the
+    /// video connection rotated for one mount while the recording it is
+    /// feeding was committed and pinned to the other. Chained, a re-seed runs
+    /// strictly before or strictly after a transition and never inside one.
+    ///
+    /// `fallback` is what to use when the interface cannot be resolved to a
+    /// mount: `.landscapeRight` for `startCamera`'s first seed, which has
+    /// nothing better, and `nil` for every later re-seed, which does — the
+    /// mount an earlier successful resolution already established.
+    ///
+    /// Reports `false` unconditionally. The chain is typed by the recording
+    /// funnel, whose `Bool` means "did this start or stop a recording"; a
+    /// re-seed never does either. Callers await it to sequence, not for the
+    /// value.
+    @discardableResult
+    private func enqueueMountReseed(fallback: CaptureSettings.CaptureOrientation?) -> Task<Bool, Never> {
+        let previous = recordingTransition
+        let next = Task { [weak self] in
+            await previous?.value
+            guard let self else { return false }
+            await self.applyMountReseed(fallback: fallback)
+            return false
+        }
+        recordingTransition = next
+        return next
+    }
+
+    /// Runs only from the chain above, so `isRecording` read here is the
+    /// camera's state *after* everything issued earlier landed.
+    private func applyMountReseed(fallback: CaptureSettings.CaptureOrientation?) async {
+        // Re-checked here, at execution time, never in advance — the same rule
+        // `canSetRecording` states for the recording transitions this shares a
+        // chain with. A recording running by the time this gets its turn owns
+        // the mount outright: it resolved one, rotated the connection to it,
+        // pinned the orientation mask to it, and is writing frames under it.
+        // `isRecording` also stays true across the whole stop path — it is
+        // cleared only after `camera.stopRecording()` has returned — so this
+        // cannot land mid-stop either, when the writer is still finishing.
+        guard !isRecording else { return }
+        guard let mount = mountResolver() ?? fallback else { return }
+        captureOrientation = mount
+        // Routed through `updateOrientation` rather than a direct
+        // `camera.orientation = ...` assignment, so `orientation` has one
+        // writer, always on `sessionQueue`, instead of a direct main-actor
+        // write racing `applyRecording`'s queued one. Before `configure()` has
+        // run there is no connection yet, so it simply records the value and
+        // cannot fail; afterwards it rotates the live connection — see
+        // `updateOrientation(_:)`'s doc for both branches.
+        await camera.updateOrientation(mount)
+    }
 
     /// Whether a recording is running that `owner` started.
     ///
@@ -662,18 +772,15 @@ final class RecordModel: ObservableObject {
         guard canSetRecording(shouldRecord, owner: owner) else { return false }
         if shouldRecord {
             // Re-resolve the mount from the CURRENT interface orientation
-            // here, at record start — not whatever `startCamera` guessed at
-            // launch — because the framing window between camera start and
-            // record start is exactly when the operator is meant to be able
-            // to flip the mount. Reuses `startCamera`'s own scene lookup and
-            // mount mapping (`OrientationPolicy.activeWindowScene` +
-            // `OrientationLock.captureOrientation(for:)`) rather than a
-            // second lookup — a divergent second lookup was already a review
-            // finding on this branch.
-            let scene = OrientationPolicy.activeWindowScene(requiresKeyWindow: false)
-            guard let mount = scene.flatMap({
-                OrientationLock.captureOrientation(for: $0.interfaceOrientation)
-            }) else {
+            // here, at record start — not whatever `startCamera` last seeded —
+            // because the window between camera start and record start is
+            // exactly when the operator is meant to be able to flip the mount.
+            // Reads `mountResolver`, the same seam `startCamera`'s seed reads,
+            // rather than a second lookup of its own: a divergent second
+            // lookup was already a review finding on this branch, and in a
+            // test host this is also the only way to make a start deterministic
+            // (see `MountResolver`).
+            guard let mount = mountResolver() else {
                 // The interface isn't resolved to either landscape mount
                 // right now — no scene, or a portrait transient mid-rotation.
                 // Pinning a guessed mount here is exactly the failure this

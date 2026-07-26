@@ -40,13 +40,16 @@ enum OrientationLock {
         }
     }
 
-    /// Called wherever an interface orientation needs mapping to a mount:
-    /// `RecordModel.startCamera` (an unpinned initial guess, before
-    /// `configure()`) and `RecordModel.applyRecording`'s start path (the
-    /// resolution that actually gets pinned, at record start). The mount an
-    /// interface orientation implies, or nil when the interface is portrait —
-    /// portrait is not a capture mode, so callers fall back to a default (or,
-    /// for `applyRecording`, refuse to start) rather than inventing a mount.
+    /// Called wherever an interface orientation needs mapping to a mount —
+    /// in practice from one place, `RecordModel.interfaceMount()`, the default
+    /// behind `RecordModel`'s injectable mount resolver. Both of that model's
+    /// readers go through it: `startCamera`'s unpinned seed (once before
+    /// `configure()`, and again on every later Play appearance) and
+    /// `applyRecording`'s start path, the resolution that actually gets pinned.
+    /// The mount an interface orientation implies, or nil when the interface is
+    /// portrait — portrait is not a capture mode, so callers fall back to a
+    /// default (or, for `applyRecording`, refuse to start) rather than
+    /// inventing a mount.
     static func captureOrientation(for interface: UIInterfaceOrientation) -> CaptureSettings.CaptureOrientation? {
         switch interface {
         case .landscapeRight: return .landscapeRight
@@ -90,16 +93,15 @@ final class OrientationPolicy {
     /// else happened to trigger another query. Falling back to any
     /// qualifying scene still reaches one.
     ///
-    /// Shared by `apply` (which re-asks UIKit for a rotation) and both of
-    /// `RecordModel`'s orientation resolutions — `startCamera`'s unpinned
-    /// initial guess and `applyRecording`'s start-path re-resolution, which
-    /// is the one that actually gets pinned — each of which reads the
-    /// scene's `interfaceOrientation` to resolve a mount. One lookup, one
-    /// `requiresKeyWindow` knob, rather than several call sites that could
-    /// quietly diverge and disagree about which scene is "the" active one —
-    /// `applyRecording` in particular reuses this exact function rather than
-    /// writing its own scene lookup, since a second, divergent lookup was
-    /// already a review finding on this branch.
+    /// Shared by `apply` (which re-asks UIKit for a rotation) and by
+    /// `RecordModel.interfaceMount()`, the production default behind that
+    /// model's mount resolver — which is the single reader for both of its
+    /// orientation resolutions, `startCamera`'s unpinned per-appearance seed
+    /// and `applyRecording`'s start-path re-resolution, the one that actually
+    /// gets pinned. One lookup, one `requiresKeyWindow` knob, rather than
+    /// several call sites that could quietly diverge and disagree about which
+    /// scene is "the" active one — a second, divergent lookup was already a
+    /// review finding on this branch.
     ///
     /// The callers need different guarantees from it, which is what the
     /// parameter is for. `apply` dereferences `scene.keyWindow` directly, so
@@ -131,8 +133,9 @@ final class OrientationPolicy {
     }
 
     /// Called by `RecordModel.applyRecording`'s start path once the mount is
-    /// re-resolved at record start (not by `startCamera`, which only sets an
-    /// unpinned initial value — see `CameraController.orientation`), and only
+    /// re-resolved at record start (not by `startCamera`, whose per-appearance
+    /// seeds are deliberately unpinned — see `CameraController.orientation`),
+    /// and only
     /// AFTER `camera.startRecording()` has actually succeeded — pinning first
     /// and having the recording then fail to start would strand the operator
     /// locked to this mount with no running recording to ever release it
@@ -173,11 +176,13 @@ final class OrientationPolicy {
     /// in-progress recording (`RecordModel.applyRecording`'s start path)
     /// survives a round trip through another tab. This one is load-bearing,
     /// not just a fast path: the Play stack's `.task`s (`startCamera`, from
-    /// `RecordView`, `p-pair` and `p-live`) do re-fire on return to Play, but
-    /// none of them pins anything — mount resolution and pinning both moved to
-    /// record start, precisely so Play stays at both-landscape while the
-    /// operator is only framing, and `RecordModel.cameraStarted` makes those
-    /// re-entries no-ops anyway once the camera is up. If a
+    /// `RecordView`, `p-pair` and `p-live`) do re-fire on return to Play, and
+    /// each of those re-entries deliberately re-seeds the capture mount — but
+    /// none of them pins anything. Pinning moved to record start, precisely so
+    /// Play stays at both-landscape while the operator is only framing; and
+    /// the re-seed itself refuses to run while a recording is in flight
+    /// (`RecordModel.startCamera`'s `isRecording` guard, plus the re-seed's
+    /// place on the recording transition chain). If a
     /// recording is running when the operator glances at another tab and
     /// back, this `capturePin` check is the only thing that re-narrows Play
     /// to the recording's mount; without it, returning to Play would fall

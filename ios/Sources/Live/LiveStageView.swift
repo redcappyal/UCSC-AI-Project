@@ -59,10 +59,14 @@ struct LiveStageView: View {
         // the moment the rally leaves `.recording`, which is also the moment
         // `PlayRootView` pops this screen itself.
         .navigationBarBackButtonHidden(live.rally == .recording)
-        // Idempotent backstop only (`RecordModel.cameraStarted`): the camera
-        // is really configured when `p-pair` is entered, because a rally can
-        // start before this screen exists — see `PlayRootView`'s `.pair`
-        // destination.
+        // Configuration backstop only (`RecordModel.cameraStarted`): the
+        // camera is really configured when `p-pair` is entered, because a
+        // rally can start before this screen exists — see `PlayRootView`'s
+        // `.pair` destination. Not a no-op, though: like every other appearance
+        // in the Play stack this re-seeds the capture mount, and it is the one
+        // caller that can fire with a recording already running, which is what
+        // `startCamera`'s `isRecording` guard and the re-seed's own place on
+        // the recording transition chain are there for.
         .task { await record.startCamera() }
     }
 

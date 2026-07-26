@@ -25,10 +25,12 @@ final class CameraController: NSObject {
     /// so there is one write path, not a direct write from the main actor
     /// racing a queued one.
     ///
-    /// `RecordModel.startCamera` calls `updateOrientation(_:)` with an
-    /// initial guess before `configure()` runs, purely so the preview and
-    /// the court-exposure meter have something sensible to work with — that
-    /// value is deliberately NOT pinned, which is what lets the Play tab
+    /// `RecordModel.startCamera` calls `updateOrientation(_:)` with a guess
+    /// resolved from the interface orientation — once before `configure()`
+    /// runs, and again on every later Play appearance — purely so the preview
+    /// and the court-exposure meter have something sensible to work with, and
+    /// so the mount cannot go stale after the operator re-mounts the phone.
+    /// That value is deliberately NOT pinned, which is what lets the Play tab
     /// stay at both-landscape (`.landscape`) through the whole framing
     /// window. `RecordModel.applyRecording`'s start path is what actually
     /// commits to a mount: it re-resolves the interface orientation at
@@ -163,19 +165,22 @@ final class CameraController: NSObject {
     /// Re-resolves `orientation`, applying the matching rotation to the live
     /// video connection when one already exists — the counterpart to
     /// `configureSession()`'s one-time `videoRotationAngle` set above, needed
-    /// now that the mount can be chosen again at record start
+    /// now that the mount can be re-resolved on every Play appearance
+    /// (`RecordModel.startCamera`) and again at record start
     /// (`RecordModel.applyRecording`) rather than only once, before
     /// `configure()` ever runs. This is also the ONLY writer of `orientation`
-    /// (see its doc) — `RecordModel.startCamera`'s pre-configure seed goes
-    /// through here too, not a direct assignment, so every write is
-    /// `sessionQueue`-confined rather than a mix of that and the main actor.
+    /// (see its doc) — `RecordModel.startCamera`'s mount seeds go through here
+    /// too, not a direct assignment, so every write is `sessionQueue`-confined
+    /// rather than a mix of that and the main actor.
     ///
     /// Two outcomes, both deliberate:
     /// - **No live connection yet** (`configure()` hasn't run — this is
-    ///   `startCamera`'s pre-configure seed): there is nothing to apply or
-    ///   diverge from, so this simply records `newOrientation` and returns
+    ///   `startCamera`'s first, pre-configure seed): there is nothing to apply
+    ///   or diverge from, so this simply records `newOrientation` and returns
     ///   `true`. `configureSession()` reads `orientation` to set the
-    ///   connection's INITIAL rotation once it runs.
+    ///   connection's INITIAL rotation once it runs. `startCamera`'s later
+    ///   per-appearance re-seeds take the connection branch below instead,
+    ///   like `applyRecording` does.
     /// - **A connection exists:** `isVideoRotationAngleSupported` is checked
     ///   FIRST, not as a courtesy. Setting an unsupported `videoRotationAngle`
     ///   directly is a programmer error AVFoundation raises on — the opposite

@@ -58,10 +58,12 @@ enum CaptureSettings {
     /// The capture side is wired to it on the live path:
     /// `LiveSessionModel.beginPairing()` builds its `PeerSession` with
     /// `record.camera.orientation`, so this phone's real mount is what goes
-    /// on the wire. One caveat, tracked in `ios/PEER.md`: that read happens at
-    /// pairing time, when only `startCamera`'s unpinned guess exists — a
-    /// mount flipped between pairing and the first START RALLY is committed by
-    /// `RecordModel.applyRecording` but not re-advertised.
+    /// on the wire. One caveat, tracked in `ios/PEER.md`: that read takes
+    /// whatever `RecordModel.startCamera` last seeded, which is the mount
+    /// resolved when the pairing screen appeared (it re-seeds on every Play
+    /// appearance, so it is not stale from launch — but it is not re-read at
+    /// the tap either). A mount flipped after that is committed by
+    /// `RecordModel.applyRecording` at record start and never re-advertised.
     enum CaptureOrientation: String, Codable, Equatable, CaseIterable {
         case landscapeRight, landscapeLeft
     }

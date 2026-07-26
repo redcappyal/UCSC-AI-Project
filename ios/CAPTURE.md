@@ -106,26 +106,44 @@ Run these on a Mac, in order, before trusting any of it:
 
 1. **It builds and the suite passes.**
    `cd ios && xcodegen generate && xcodebuild test -scheme SquashLineCalling -destination 'platform=iOS Simulator,name=iPhone 15,OS=17.0.1'`
-   Two things are most likely to fail first: `RecordModel.init` assigning
+   Three things are most likely to fail first: `RecordModel.init` assigning
    `captureOrientation` before `tracker` is initialized (a review predicted
    this as an error and the fix — removing the property's declaration default —
-   was applied unverified), and `OrientationLockTests`/`LiveWiringTests`
-   touching the `@MainActor` `OrientationPolicy` from XCTest.
+   was applied unverified); `OrientationLockTests`/`LiveWiringTests` touching
+   the `@MainActor` `OrientationPolicy` from XCTest; and `RecordModel.init`'s
+   `mountResolver` default argument, a `@MainActor` closure literal
+   (`{ RecordModel.interfaceMount() }`) written against a `@MainActor`
+   typealias — also never compiled.
 2. **Play tab stays both-landscape while framing, and narrows only once
-   recording starts.** `RecordModel.startCamera` (fired by `RecordView`'s
-   `.task`) no longer pins anything — it only seeds `camera.orientation` with
-   an initial guess so the preview and exposure meter have something to work
-   with. Launch the simulator in either landscape and confirm Play accepts
-   *both* landscape-left and landscape-right (portrait still refused) the
-   whole time recording is off. Then flip to the landscape opposite whatever
-   the simulator launched in and tap record: `RecordModel.applyRecording`'s
-   start path must re-resolve the mount from the device's orientation at that
-   instant, call `camera.updateOrientation(_:)`, start the recording, and only
-   once that succeeds pin the mask — confirm it narrows to the *flipped*
-   mount, not the launch one. (The pin deliberately waits on a successful
-   `startRecording()`: pinning first and having the write fail to start would
-   strand the operator locked to that mount with no running recording to
-   release it from.)
+   recording starts.** Note the Play tab's root is `PlayRootView`, a menu —
+   `startCamera` does **not** fire on Play launch. It has three callers, all
+   `.task`s one level down: `RecordView` (Play → **Record a clip**),
+   `PlayRootView`'s `p-pair` destination (Play → **Live match**), and
+   `LiveStageView`'s own backstop. So navigate to **Record a clip** first;
+   that is where the camera comes up and where the record button is.
+   `startCamera` no longer pins anything — it only seeds `camera.orientation`
+   from the interface orientation so the preview and exposure meter have
+   something to work with. Launch the simulator in either landscape and confirm
+   Play accepts *both* landscape-left and landscape-right (portrait still
+   refused) the whole time recording is off. Then flip to the landscape
+   opposite whatever the simulator launched in and tap record:
+   `RecordModel.applyRecording`'s start path must re-resolve the mount from the
+   device's orientation at that instant, call `camera.updateOrientation(_:)`,
+   start the recording, and only once that succeeds pin the mask — confirm it
+   narrows to the *flipped* mount, not the launch one. (The pin deliberately
+   waits on a successful `startRecording()`: pinning first and having the write
+   fail to start would strand the operator locked to that mount with no running
+   recording to release it from.)
+   Then, still with nothing recording, check that **the mount seed re-runs on
+   every appearance**: back out to the Play menu, flip the simulator to the
+   other landscape, and go into **Record a clip** again. `startCamera` must
+   re-seed `camera.orientation` to the flipped mount *without* reconfiguring
+   the session — `cameraStarted` guards configuration only, so the exposure
+   capsule should keep its already-metered values rather than re-metering.
+   This is what keeps `LiveSessionModel.beginPairing()` from putting a
+   launch-time mount on the wire, so confirm it before the two-phone bring-up
+   in `ios/PEER.md`. The counterpart is in step 3: while a recording *is*
+   running, the same round trip must leave the mount alone.
 3. **The pin releases on stop, and holds across a tab round trip while
    recording.** While recording, switch to Matches and back to Play — the
    pinned mount must survive the round trip, which is what
@@ -142,13 +160,23 @@ Run these on a Mac, in order, before trusting any of it:
    is inverted; swap the cases and update `CaptureOrientationTests`, which
    asserts the mapping and must change with it.
 
-Two known limits, both deliberate and neither fixed by this branch:
+Two things this section used to call known limits. The first is no longer one —
+it is a check somebody has to run:
 
-- **The peer mount guard is correct but unreachable.** `PeerSession` refuses a
-  mismatched pair, but nothing in the app constructs a `PeerSession` carrying a
-  real mount — `PeerBenchView` (DEBUG) takes the default and `attachPeer` has
-  no production caller. Two phones in opposite mounts still pair. Wiring the
-  pairing path is separate work.
+- **The peer mount guard is live, and must be exercised.** `PeerSession` refuses
+  a mismatched pair, and the live path now builds a session that can actually
+  trip it: `LiveSessionModel.beginPairing()` constructs its `PeerSession` with
+  `record.camera.orientation` and calls `record.attachPeer(session)`. Two phones
+  in opposite landscape mounts must **fail** to pair, with the reason on the
+  status row — deliberately mis-mount one phone during the two-phone bring-up
+  (`ios/PEER.md`) and confirm both ends refuse. The coverage below a real radio
+  is `CaptureOrientationTests` plus `LiveSessionModelTests` over
+  `LoopbackTransport`; two real phones have never tried it. Two residual holes,
+  both recorded in `ios/PEER.md`: `PeerBenchView`'s DEBUG session still takes
+  the `.landscapeRight` default (harmless — the bench never records), and the
+  mount is never re-advertised after pairing, so a phone flipped after the
+  pairing screen appeared captures in one mount while its `Hello` claims the
+  other.
 - **Portrait-solved calibrations no longer load.** `CameraModel.scaled` refuses
   the aspect change rather than distorting geometry, so any calibration solved
   from portrait footage must be re-solved from landscape footage.

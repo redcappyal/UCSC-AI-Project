@@ -67,12 +67,15 @@ Do not add it before approval — Automatic signing fails for everyone.
   `LiveSessionModel.beginPairing()` builds its `PeerSession` with
   `record.camera.orientation`, so each phone advertises the mount it is actually
   capturing in. Two caveats, both real:
-  - The mount is read at *pairing* time, when only `startCamera`'s unpinned initial
-    guess exists. `RecordModel.applyRecording`'s start path re-resolves and pins the
-    mount at record start, and that later value is **not** re-advertised — so a phone
-    flipped between CONFIRM and the first START RALLY captures in one mount while
-    `Hello` still claims the other. The Play tab is landscape-locked throughout, so
-    this is a flip between the two landscapes, not a portrait excursion.
+  - What `beginPairing()` reads is whatever `RecordModel.startCamera` last seeded,
+    and that is the mount resolved **when the pairing screen appeared** —
+    `startCamera` re-seeds on every appearance in the Play stack, so it is never
+    stale from launch, but it is not re-read at the moment of the PAIR tap either.
+    `RecordModel.applyRecording`'s start path re-resolves and pins the mount again at
+    record start, and *that* value is never re-advertised — so a phone flipped after
+    `p-pair` came up captures in one mount while `Hello` still claims the other. The
+    Play tab is landscape-locked throughout, so this is a flip between the two
+    landscapes, not a portrait excursion.
   - `PeerBenchView`'s DEBUG session still takes the `.landscapeRight` default. It
     never records, so nothing is mislabelled; it just means the bench cannot
     exercise the mismatch path.
@@ -112,8 +115,11 @@ tell you is whether the link, the clock sync, or a real detector work.
    locked to it (`OrientationLock`), so the only way to get this wrong is to
    mount one phone landscape-left and the other landscape-right. A mismatched
    pair fails the handshake outright (see "Known limits"), and the reason lands
-   on the status row verbatim. Set the mount **before** tapping PAIR: the mount
-   that goes on the wire is the one resolved at pairing time.
+   on the status row verbatim. Set the mount **before you open Live match**: the
+   mount that goes on the wire is the one `RecordModel.startCamera` resolved when
+   `p-pair` appeared, not the one at the instant you tap PAIR. If a phone gets
+   re-mounted while `p-pair` is already up, back out to the Play menu and go into
+   **Live match** again before pairing — that re-appearance is what re-seeds it.
 2. A 4K **landscape** calibration per phone, or an older one the adoption path
    can scale — note that adoption refuses an aspect-ratio change rather than
    distorting the model, so a portrait (9:16) profile will not load at all now
@@ -178,8 +184,8 @@ tell you is whether the link, the clock sync, or a real detector work.
   compares mounts explicitly — but the only coverage is `CaptureOrientationTests`
   and `LiveSessionModelTests` over `LoopbackTransport`. Deliberately mis-mount
   one phone during bring-up and confirm both refuse.
-- Nothing re-advertises the mount after pairing (see "Known limits"), so the
-  flip-after-CONFIRM case is untested and, today, undetected.
+- Nothing re-advertises the mount after pairing (see "Known limits"), so a phone
+  re-mounted after `p-pair` appeared is untested and, today, undetected.
 - The Swift suite itself needs a Mac: `xcodebuild`/`xcodegen` do not exist on
   the Windows dev box, so nothing in `ios/` is compiled there. See
   `docs/superpowers/plans/2026-07-25-ios-live-entry-point-MAC-CHECKLIST.md`
