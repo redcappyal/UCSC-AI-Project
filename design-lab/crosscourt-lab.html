@@ -119,8 +119,9 @@ nav button svg{width:20px;height:20px}
 .clipcard{padding:0;overflow:hidden}
 .cliptop{display:flex;align-items:center;gap:12px;padding:14px 16px;cursor:pointer}
 .thumb{width:62px;height:46px;border-radius:14px;flex:none;display:flex;align-items:center;
-  justify-content:center;color:#fff}
+  justify-content:center;color:#fff;position:relative;overflow:hidden}
 .thumb svg{width:15px;height:15px;filter:drop-shadow(0 1px 2px rgba(0,0,0,.25))}
+.thumb .court{position:absolute;inset:0;width:100%;height:100%;opacity:.55;filter:none}
 .cliptop .info{display:flex;flex-direction:column;gap:3px;min-width:0}
 .cliptop .name{font-size:14px;font-weight:600;letter-spacing:-.01em}
 .statechip{margin-left:auto;flex:none;border-radius:999px;padding:6px 11px;font-size:10px;
@@ -160,7 +161,9 @@ nav button svg{width:20px;height:20px}
 .exrow{display:flex;align-items:center;gap:12px;padding:11px 0}
 .exrow:first-of-type{padding-top:14px}
 .exrow:last-of-type{padding-bottom:2px}
-.exthumb{width:54px;height:54px;border-radius:14px;flex:none}
+.exthumb{width:54px;height:54px;border-radius:14px;flex:none;display:flex;
+  align-items:center;justify-content:center;overflow:hidden}
+.exthumb svg{width:100%;height:100%;display:block}
 .exrow .info{display:flex;flex-direction:column;gap:5px;min-width:0}
 .exrow .name{font-size:14px;font-weight:600;letter-spacing:-.01em}
 .exrow .meta{display:flex;align-items:center;gap:8px}
@@ -211,7 +214,7 @@ nav button svg{width:20px;height:20px}
     <section class="view active" id="view-dashboard">
       <div class="apphead">
         <div class="wordmark">
-          <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle cx="12" cy="12" r="9" fill="#D9F04A"/><path d="M5.5 5.5c3 2.5 3 10.5 0 13M18.5 5.5c-3 2.5-3 10.5 0 13" stroke="#141517" stroke-width="1.6" stroke-linecap="round"/></svg>
+          <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle cx="12" cy="12" r="9" fill="#141517"/><circle cx="10.2" cy="10.4" r="1.7" fill="#D9F04A"/><circle cx="14.3" cy="13.4" r="1.7" fill="#D9F04A"/></svg>
           CrossCourt
         </div>
         <button class="bellbtn" aria-label="Notifications" onclick="toast('No notifications')">
@@ -334,7 +337,7 @@ nav button svg{width:20px;height:20px}
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="12" r="8.5"/><circle cx="12" cy="12" r="4"/><circle cx="12" cy="12" r=".8" fill="currentColor"/></svg>
             </div>
             <div class="info">
-              <span class="name">Flick serve targets</span>
+              <span class="name">Lob serve targets</span>
               <span class="metaline">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
                 30 min
@@ -348,7 +351,7 @@ nav button svg{width:20px;height:20px}
         <div class="cardtitle">Exercises</div>
         <div class="listrows">
           <div class="exrow">
-            <div class="exthumb" style="background:linear-gradient(140deg, hsl(210 28% 80%), hsl(215 30% 55%))"></div>
+            <div class="exthumb" style="background:linear-gradient(140deg, hsl(210 28% 80%), hsl(215 30% 55%))" aria-hidden="true"><svg viewBox="0 0 54 54" fill="none" stroke="rgba(255,255,255,.85)" stroke-width="1.6" stroke-linecap="round"><rect x="9" y="12" width="36" height="31" rx="1.5"/><path d="M9 27h36"/><path d="M9 37h36"/></svg></div>
             <div class="info">
               <span class="name">Ghosting &#8212; six corners</span>
               <span class="meta">
@@ -362,7 +365,7 @@ nav button svg{width:20px;height:20px}
             </button>
           </div>
           <div class="exrow">
-            <div class="exthumb" style="background:linear-gradient(140deg, hsl(155 25% 76%), hsl(160 28% 48%))"></div>
+            <div class="exthumb" style="background:linear-gradient(140deg, hsl(155 25% 76%), hsl(160 28% 48%))" aria-hidden="true"><svg viewBox="0 0 54 54" fill="none" stroke="rgba(255,255,255,.85)" stroke-width="1.6" stroke-linecap="round"><rect x="9" y="12" width="36" height="31" rx="1.5"/><path d="M9 27h36"/><path d="M9 37h36"/></svg></div>
             <div class="info">
               <span class="name">Boast accuracy ladder</span>
               <span class="meta">
@@ -376,7 +379,7 @@ nav button svg{width:20px;height:20px}
             </button>
           </div>
           <div class="exrow">
-            <div class="exthumb" style="background:linear-gradient(140deg, hsl(22 32% 78%), hsl(18 30% 52%))"></div>
+            <div class="exthumb" style="background:linear-gradient(140deg, hsl(22 32% 78%), hsl(18 30% 52%))" aria-hidden="true"><svg viewBox="0 0 54 54" fill="none" stroke="rgba(255,255,255,.85)" stroke-width="1.6" stroke-linecap="round"><rect x="9" y="12" width="36" height="31" rx="1.5"/><path d="M9 27h36"/><path d="M9 37h36"/></svg></div>
             <div class="info">
               <span class="name">Tin-margin pressure drill</span>
               <span class="meta">
@@ -517,7 +520,7 @@ function renderClips(){
     return `
       <div class="card clipcard ${openClip===c.id?'open':''}" id="clip-${c.id}">
         <div class="cliptop" onclick="toggleClip(${c.id})">
-          <div class="thumb" style="background:${grad}">${PLAY_SVG}</div>
+          <div class="thumb" style="background:${grad}"><svg class="court" viewBox="0 0 62 46" fill="none" stroke="#fff" stroke-width="1.2" aria-hidden="true"><rect x="9" y="8" width="44" height="26" rx="1"/><path d="M9 21h44"/><path d="M9 28h44"/></svg>${PLAY_SVG}</div>
           <div class="info">
             <span class="name">${c.date}</span>
             <span class="metaline"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg><span class="num" style="font-weight:500">${c.dur}</span>&#183; rally clip</span>
