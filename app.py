@@ -1445,6 +1445,8 @@ def save_player_names(run_id):
         return error_response("Run was not found.", status=404)
 
     data = request.get_json(silent=True) or {}
+    if not isinstance(data, dict):
+        return error_response("Body must be a JSON object.")
     if any(key not in ("A", "B") for key in data):
         return error_response("Only tracks A and B can be named.")
 
@@ -1454,7 +1456,9 @@ def save_player_names(run_id):
         if value is None:
             names[track] = None
             continue
-        value = str(value).strip()
+        if not isinstance(value, str):
+            return error_response("Names must be strings or null.")
+        value = value.strip()
         if not value or len(value) > PLAYER_NAME_MAX_CHARS:
             return error_response(
                 f"Names must be 1-{PLAYER_NAME_MAX_CHARS} characters."

@@ -142,7 +142,31 @@ def write_track_samples(run_dir, samples_by_track, ambiguity_times):
 
 def update_job(run_id, /, **updates):
     with JOBS_LOCK:
-        job = JOBS.setdefault(run_id, {})
+        if run_id not in JOBS:
+            # This run may exist only on disk (server restarted since it last
+            # ran in memory). Rehydrate from job.json before merging, or the
+            # merge lands on a fresh empty stub that then SHADOWS the real
+            # job.json for every later get_job call, since get_job short-
+            # circuits on any in-memory hit -- even an empty one.
+            #
+            # Read raw: do not apply get_job's queued/running->failed
+            # rewrite here. That rewrite is a read-view decision about a live
+            # status, not stored state, and this path also rehydrates jobs
+            # that are already "complete" (e.g. a post-hoc players rename
+            # long after the run finished).
+            #
+            # The disk read stays inside JOBS_LOCK on purpose: reading
+            # outside the lock could race a concurrent update_job for the
+            # same run_id that persists first, so it would either duplicate
+            # a rehydrate or clobber a fresher in-memory update with a stale
+            # disk read. persist_job's own I/O still happens outside the
+            # lock, same as before -- only this rehydrate read is kept in.
+            job_path = RUNS_DIR / run_id / "job.json"
+            try:
+                JOBS[run_id] = json.loads(job_path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                JOBS[run_id] = {}
+        job = JOBS[run_id]
         job.update(updates)
         snapshot = dict(job)
 
