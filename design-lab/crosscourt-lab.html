@@ -107,6 +107,89 @@ nav button{border:0;background:none;width:46px;height:46px;border-radius:50%;
   cursor:pointer;font-family:inherit}
 nav button.active{background:var(--accent);color:var(--ink)}
 nav button svg{width:20px;height:20px}
+/* weekly report bars */
+.weekly svg{display:block;width:100%;height:auto;margin-top:8px}
+/* section head + AI recommendation rail */
+.sectionhead{display:flex;align-items:baseline;justify-content:space-between;padding:4px 2px 0}
+.airow{display:flex;gap:10px;overflow-x:auto;scrollbar-width:none;margin:-4px -16px 0;padding:4px 16px 6px}
+.airow::-webkit-scrollbar{display:none}
+.aicard{flex:none;width:212px;background:var(--card);border-radius:18px;box-shadow:var(--shadow-card);
+  padding:12px 14px;display:flex;flex-direction:column;gap:7px}
+.aicard .top{display:flex;align-items:center;gap:8px}
+.aicard .ic{width:28px;height:28px;border-radius:50%;background:var(--accent-soft);display:flex;
+  align-items:center;justify-content:center;color:var(--ink);flex:none}
+.aicard .ic svg{width:14px;height:14px}
+.aicard .t{font-size:13px;font-weight:600;letter-spacing:-.01em}
+.aicard .s{font-size:12px;color:var(--dim);line-height:1.45}
+/* report segmented control */
+.seg{display:flex;background:#E7E8EC;border-radius:999px;padding:4px;gap:2px}
+.seg button{flex:1;border:0;background:none;border-radius:999px;min-height:34px;font-size:12px;
+  font-weight:600;font-family:inherit;color:var(--dim);cursor:pointer}
+.seg button.active{background:var(--card);color:var(--ink);
+  box-shadow:0 1px 2px rgba(16,17,20,.06), 0 3px 8px rgba(16,17,20,.06)}
+/* movement analysis tiles */
+.mvgrid{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.mvtile{border:1px solid var(--hairline);border-radius:14px;padding:11px 12px;display:flex;
+  flex-direction:column;gap:6px}
+.mvtile .top{display:flex;align-items:center;justify-content:space-between}
+.mvtile .sl{font-size:11px;color:var(--dim);font-weight:500}
+.mvtile .ic{width:22px;height:22px;border-radius:50%;background:var(--accent-soft);display:flex;
+  align-items:center;justify-content:center;color:var(--ink)}
+.mvtile .ic svg{width:12px;height:12px}
+.mvtile .sv{font-size:18px;font-weight:700;font-variant-numeric:tabular-nums;line-height:1;
+  display:flex;align-items:baseline;gap:2px}
+.mvtile .ss{font-size:11px;color:var(--dim);font-weight:600}
+.mvtile .spark{display:block;margin-top:2px}
+/* rally replay thumb */
+.replay{position:relative;height:96px;border-radius:14px;overflow:hidden;display:flex;align-items:center;
+  justify-content:center;cursor:pointer;border:0;width:100%;padding:0;font-family:inherit}
+.replay .court{position:absolute;inset:0;width:100%;height:100%;opacity:.5}
+.replay .pb{position:relative;width:40px;height:40px;border-radius:50%;background:rgba(255,255,255,.92);
+  display:flex;align-items:center;justify-content:center;color:var(--ink)}
+.replay .pb svg{width:15px;height:15px;margin-left:2px}
+/* training AI dock */
+.dock{display:flex;gap:6px;background:#1B1C1F;border-radius:999px;padding:8px;overflow-x:auto;
+  scrollbar-width:none;box-shadow:var(--shadow-card)}
+.dock::-webkit-scrollbar{display:none}
+.dock button{flex:none;width:44px;height:44px;border-radius:50%;border:0;background:none;
+  color:rgba(255,255,255,.55);display:flex;align-items:center;justify-content:center;cursor:pointer}
+.dock button.active{background:var(--accent);color:var(--ink)}
+.dock button svg{width:19px;height:19px}
+/* camera overlay */
+#camview{position:absolute;inset:0;z-index:30;display:flex;flex-direction:column}
+#camview.hidden{display:none}
+.camstage{position:absolute;inset:0;
+  background:linear-gradient(180deg,#E2DDD2 0%,#D8D2C5 57%,#C09A6B 57.4%,#A9825389 100%),#C09A6B}
+.camstage svg{position:absolute;inset:0;width:100%;height:100%}
+.camstatus{position:relative;display:flex;align-items:center;justify-content:space-between;
+  padding:14px 26px 4px;font-size:14px;font-weight:600;color:var(--ink);
+  font-variant-numeric:tabular-nums}
+.camstatus .sicons{display:flex;align-items:center;gap:6px}
+.camtop{position:relative;display:flex;align-items:center;justify-content:space-between;padding:10px 16px}
+.camglass{width:42px;height:42px;border-radius:50%;border:0;background:rgba(20,21,23,.42);
+  backdrop-filter:blur(8px);color:#fff;display:flex;align-items:center;justify-content:center;
+  cursor:pointer;flex:none}
+.camglass svg{width:18px;height:18px}
+.recpill{display:flex;align-items:center;gap:7px;background:rgba(20,21,23,.42);backdrop-filter:blur(8px);
+  border-radius:999px;padding:10px 15px;color:#fff;font-size:13px;font-weight:600;
+  font-variant-numeric:tabular-nums}
+.recdot{width:8px;height:8px;border-radius:50%;background:#FF453A}
+.camside{position:absolute;right:14px;top:210px;display:flex;flex-direction:column;gap:10px}
+.camchip{position:absolute;left:50%;transform:translateX(-50%);bottom:206px;background:var(--accent);
+  color:var(--ink);font-size:12px;font-weight:700;border-radius:999px;padding:9px 14px;border:0;
+  cursor:pointer;display:flex;align-items:center;gap:6px;font-family:inherit;white-space:nowrap}
+.camchip svg{width:13px;height:13px}
+.shotpills{position:absolute;left:50%;transform:translateX(-50%);bottom:148px;display:flex;gap:4px;
+  background:rgba(20,21,23,.42);backdrop-filter:blur(8px);border-radius:999px;padding:5px}
+.shotpills button{border:0;border-radius:999px;min-height:34px;padding:0 17px;font-size:13px;
+  font-weight:600;font-family:inherit;color:#fff;background:none;cursor:pointer}
+.shotpills button.active{background:var(--accent);color:var(--ink);font-weight:700}
+.cambottom{position:absolute;left:0;right:0;bottom:36px;display:flex;align-items:center;
+  justify-content:center;gap:36px}
+.shutter{width:74px;height:74px;border-radius:50%;border:4px solid #fff;background:rgba(20,21,23,.18);
+  display:flex;align-items:center;justify-content:center;cursor:pointer;
+  box-shadow:0 4px 20px rgba(0,0,0,.25)}
+.shutter .sq{width:28px;height:28px;border-radius:8px;background:#fff}
 /* toast */
 #toast{position:absolute;left:50%;bottom:92px;transform:translateX(-50%);background:var(--ink);
   color:#fff;font-size:13px;font-weight:600;padding:10px 16px;border-radius:999px;
@@ -129,7 +212,7 @@ nav button svg{width:20px;height:20px}
 .statechip.done{background:var(--accent);color:var(--ink)}
 .statechip.todo{background:var(--canvas);color:var(--dim)}
 .clipbody{max-height:0;overflow:hidden;transition:max-height .28s ease}
-.clipcard.open .clipbody{max-height:640px}
+.clipcard.open .clipbody{max-height:1200px}
 .clipbody .inner{padding:14px 16px 16px;display:flex;flex-direction:column;gap:14px;
   border-top:1px solid var(--hairline)}
 .analyzebtn{width:100%}
@@ -246,7 +329,7 @@ nav button svg{width:20px;height:20px}
         <div class="heronote">Drives are landing <b>short of the service box</b> in 3 of your last 4 sessions.</div>
       </div>
       <div class="btnrow">
-        <button class="pill accent" onclick="toast('Recording is a lab stub')">
+        <button class="pill accent" onclick="openCam()">
           <svg viewBox="0 0 24 24" fill="currentColor"><path d="M4 6.5A2.5 2.5 0 0 1 6.5 4h6A2.5 2.5 0 0 1 15 6.5v11a2.5 2.5 0 0 1-2.5 2.5h-6A2.5 2.5 0 0 1 4 17.5z"/><path d="M16.5 10l4.2-2.8a.8.8 0 0 1 1.3.7v8.2a.8.8 0 0 1-1.3.7L16.5 14z"/></svg>
           Start Recording
         </button>
@@ -256,7 +339,7 @@ nav button svg{width:20px;height:20px}
         </button>
       </div>
       <div class="card" style="padding-top:14px;padding-bottom:12px">
-        <div class="cardtitle">Next up</div>
+        <div class="cardtitle">Today Missions</div>
         <div class="listrows">
           <div class="lrow">
             <div class="iconcircle">
@@ -284,6 +367,54 @@ nav button svg{width:20px;height:20px}
             </div>
             <button class="startchip" onclick="switchTab('training')">Start</button>
           </div>
+        </div>
+      </div>
+      <div class="card weekly" style="padding-top:14px;padding-bottom:12px">
+        <div class="cardtitle">Weekly Report</div>
+        <div class="dim" style="font-size:12px;margin-top:2px">Active minutes</div>
+        <svg viewBox="0 0 326 150" aria-label="Active minutes by day, Wednesday highlighted">
+          <text x="26" y="15" text-anchor="end" font-size="10" fill="#B4B6BC">120</text>
+          <text x="26" y="50" text-anchor="end" font-size="10" fill="#B4B6BC">80</text>
+          <text x="26" y="88" text-anchor="end" font-size="10" fill="#B4B6BC">40</text>
+          <text x="26" y="127" text-anchor="end" font-size="10" fill="#B4B6BC">0</text>
+          <rect x="42.5" y="93" width="24" height="31" rx="7" fill="#ECEDF0"/>
+          <rect x="83.5" y="71.8" width="24" height="52.2" rx="7" fill="#ECEDF0"/>
+          <rect x="124.5" y="48.6" width="24" height="75.4" rx="7" fill="#D9F04A"/>
+          <rect x="165.5" y="84.4" width="24" height="39.6" rx="7" fill="#ECEDF0"/>
+          <rect x="206.5" y="60.2" width="24" height="63.8" rx="7" fill="#ECEDF0"/>
+          <rect x="247.5" y="99.8" width="24" height="24.2" rx="7" fill="#ECEDF0"/>
+          <rect x="288.5" y="81.5" width="24" height="42.5" rx="7" fill="#ECEDF0"/>
+          <text x="54.5" y="142" text-anchor="middle" font-size="10" fill="#B4B6BC">Mon</text>
+          <text x="95.5" y="142" text-anchor="middle" font-size="10" fill="#B4B6BC">Tue</text>
+          <text x="136.5" y="142" text-anchor="middle" font-size="10" fill="#8E9199" font-weight="600">Wed</text>
+          <text x="177.5" y="142" text-anchor="middle" font-size="10" fill="#B4B6BC">Thu</text>
+          <text x="218.5" y="142" text-anchor="middle" font-size="10" fill="#B4B6BC">Fri</text>
+          <text x="259.5" y="142" text-anchor="middle" font-size="10" fill="#B4B6BC">Sat</text>
+          <text x="300.5" y="142" text-anchor="middle" font-size="10" fill="#B4B6BC">Sun</text>
+        </svg>
+      </div>
+      <div class="sectionhead"><span class="cardtitle">AI Recommendations</span></div>
+      <div class="airow">
+        <div class="aicard">
+          <div class="top">
+            <span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="8.5"/><circle cx="12" cy="12" r="4"/><circle cx="12" cy="12" r=".8" fill="currentColor"/></svg></span>
+            <span class="t">Lift serve targets</span>
+          </div>
+          <span class="s">Aim above the service line when returns come under pressure.</span>
+        </div>
+        <div class="aicard">
+          <div class="top">
+            <span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 19L19 5"/><path d="M5 19h5.5"/><path d="M5 19v-5.5"/></svg></span>
+            <span class="t">Shorten your boasts</span>
+          </div>
+          <span class="s">Two racket-lengths off the front wall keeps them dying in the nick.</span>
+        </div>
+        <div class="aicard">
+          <div class="top">
+            <span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg></span>
+            <span class="t">Hold the T</span>
+          </div>
+          <span class="s">Recover to the T before your opponent strikes the ball.</span>
         </div>
       </div>
     </section>
@@ -394,6 +525,14 @@ nav button svg{width:20px;height:20px}
           </div>
         </div>
       </div>
+      <div class="sectionhead"><span class="cardtitle">AI Recommendations</span></div>
+      <div class="dock" role="group" aria-label="Recommended quick actions">
+        <button aria-label="Recording setup" onclick="toast('Setup tips are a lab stub')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.87l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.7 1.7 0 0 0-1.87-.34 1.7 1.7 0 0 0-1 1.55V21a2 2 0 1 1-4 0v-.09a1.7 1.7 0 0 0-1-1.55 1.7 1.7 0 0 0-1.87.34l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.7 1.7 0 0 0 .34-1.87 1.7 1.7 0 0 0-1.55-1H3a2 2 0 1 1 0-4h.09a1.7 1.7 0 0 0 1.55-1 1.7 1.7 0 0 0-.34-1.87l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.7 1.7 0 0 0 1.87.34h.09a1.7 1.7 0 0 0 1-1.55V3a2 2 0 1 1 4 0v.09a1.7 1.7 0 0 0 1 1.55 1.7 1.7 0 0 0 1.87-.34l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.7 1.7 0 0 0-.34 1.87v.09a1.7 1.7 0 0 0 1.55 1H21a2 2 0 1 1 0 4h-.09a1.7 1.7 0 0 0-1.55 1z"/></svg></button>
+        <button aria-label="Solo drills" onclick="toast('Drill picks are a lab stub')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10.5l9-7.5 9 7.5V20a1 1 0 0 1-1 1h-5.5v-6h-5v6H4a1 1 0 0 1-1-1z"/></svg></button>
+        <button class="active" aria-label="Today's focus drill" onclick="toast('Focus drill is a lab stub')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="12" r="8.5"/><circle cx="12" cy="12" r="4"/><circle cx="12" cy="12" r=".8" fill="currentColor"/></svg></button>
+        <button aria-label="Session history" onclick="toast('History picks are a lab stub')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg></button>
+        <button aria-label="Coach profile" onclick="toast('Coach profile is a lab stub')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="8" r="4"/><path d="M4 21c.8-4 4-6 8-6s7.2 2 8 6"/></svg></button>
+      </div>
     </section>
 
     <section class="view" id="view-progress">
@@ -419,6 +558,86 @@ nav button svg{width:20px;height:20px}
       </div>
     </section>
   </div>
+  <div id="camview" class="hidden">
+    <div class="camstage">
+      <svg viewBox="0 0 390 780" preserveAspectRatio="xMidYMid slice" aria-label="Live court view with pose overlay">
+        <!-- front-wall + floor lines -->
+        <g stroke="rgba(205,62,50,.55)" stroke-width="3" fill="none">
+          <path d="M0 208 H390"/>
+          <path d="M0 402 H390"/>
+          <path d="M0 444 H390" stroke-width="4"/>
+        </g>
+        <g stroke="rgba(255,255,255,.5)" stroke-width="3" fill="none">
+          <path d="M195 446 V640"/>
+          <path d="M40 640 H350"/>
+          <path d="M40 640 V740 M350 640 V740"/>
+        </g>
+        <!-- pose skeleton -->
+        <g transform="translate(88,240) scale(1.05)" stroke="#D9F04A" stroke-width="3.5" fill="none" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="118" cy="38" r="13"/>
+          <path d="M114 52 L102 112"/>
+          <path d="M112 60 L140 46 L163 22"/>
+          <path d="M110 64 L84 86 L64 76"/>
+          <path d="M102 112 L130 152 L136 198 L148 202"/>
+          <path d="M102 112 L74 154 L58 198 L46 198"/>
+          <circle cx="178" cy="9" r="11"/>
+          <path d="M163 22 L170 16"/>
+          <g fill="#D9F04A" stroke="rgba(20,21,23,.55)" stroke-width="1.5">
+            <circle cx="114" cy="52" r="4"/><circle cx="112" cy="60" r="4"/>
+            <circle cx="140" cy="46" r="4"/><circle cx="163" cy="22" r="4"/>
+            <circle cx="84" cy="86" r="4"/><circle cx="64" cy="76" r="4"/>
+            <circle cx="102" cy="112" r="4.5"/>
+            <circle cx="130" cy="152" r="4"/><circle cx="136" cy="198" r="4"/>
+            <circle cx="74" cy="154" r="4"/><circle cx="58" cy="198" r="4"/>
+          </g>
+        </g>
+      </svg>
+    </div>
+    <div class="camstatus">
+      <span>9:41</span>
+      <span class="sicons">
+        <svg width="17" height="11" viewBox="0 0 17 11" fill="currentColor"><rect x="0" y="7" width="3" height="4" rx="1"/><rect x="4.5" y="5" width="3" height="6" rx="1"/><rect x="9" y="2.5" width="3" height="8.5" rx="1"/><rect x="13.5" y="0" width="3" height="11" rx="1"/></svg>
+        <svg width="25" height="12" viewBox="0 0 25 12" fill="none"><rect x="0.5" y="0.5" width="21" height="11" rx="3.5" stroke="currentColor" opacity=".5"/><rect x="2" y="2" width="18" height="8" rx="2" fill="currentColor"/></svg>
+      </span>
+    </div>
+    <div class="camtop">
+      <button class="camglass" aria-label="Close camera" onclick="closeCam()">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
+      </button>
+      <span class="recpill"><span class="recdot"></span>14:20</span>
+      <button class="camglass" aria-label="Flash" onclick="toast('Flash is a lab stub')">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 3L5 13.5h5.5L11 21l8-10.5h-5.5z"/></svg>
+      </button>
+    </div>
+    <div class="camside">
+      <button class="camglass" aria-label="Pose overlay" onclick="toast('Pose overlay is a lab stub')">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="5" r="2.5"/><path d="M12 8v5"/><path d="M12 10l-4.5 2M12 10l4.5 2"/><path d="M12 13l-3 7M12 13l3 7"/></svg>
+      </button>
+      <button class="camglass" aria-label="Mute" onclick="toast('Mute is a lab stub')">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 9v3a3 3 0 0 0 5.1 2.1M15 9.3V5a3 3 0 0 0-5.9-.7"/><path d="M17 12a5 5 0 0 1-7.6 4.3M7 12v0a5 5 0 0 0 .3 1.7"/><path d="M12 17v4"/><path d="M4 4l16 16"/></svg>
+      </button>
+      <button class="camglass" aria-label="Ball tracking" onclick="toast('Ball tracking is a lab stub')">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3.5 19.5l5.5-7 4 3.5 7.5-9.5"/></svg>
+      </button>
+    </div>
+    <button class="camchip" onclick="toast('Shot analysis is a lab stub')">
+      <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2l2.1 5.7L20 10l-5.9 2.3L12 18l-2.1-5.7L4 10l5.9-2.3z"/></svg>
+      AI analyze shot
+    </button>
+    <div class="shotpills">
+      <button class="active">Drive</button>
+      <button onclick="toast('Shot type is a lab stub')">Serve</button>
+    </div>
+    <div class="cambottom">
+      <button class="camglass" aria-label="Clip gallery" onclick="toast('Gallery is a lab stub')">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="4"/><circle cx="9" cy="9" r="2"/><path d="M21 15.5l-4.5-4.5L6 21.5"/></svg>
+      </button>
+      <button class="shutter" aria-label="Stop recording" onclick="closeCam();toast('Clip saved — find it in Analysis')"><span class="sq"></span></button>
+      <button class="camglass" aria-label="Confirm" onclick="closeCam()">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg>
+      </button>
+    </div>
+  </div>
   <nav id="nav"></nav>
   <div id="toast"></div>
 </div>
@@ -434,6 +653,8 @@ function switchTab(name){
   document.querySelectorAll('nav button').forEach(b=>b.classList.toggle('active', b.dataset.tab===name));
   document.querySelector('.screen').scrollTop = 0;
 }
+function openCam(){ document.getElementById('camview').classList.remove('hidden'); }
+function closeCam(){ document.getElementById('camview').classList.add('hidden'); }
 let toastTimer;
 function toast(msg){
   const t = document.getElementById('toast');
@@ -511,10 +732,35 @@ function renderClips(){
            <div class="info"><span class="t">${f.t}</span><span class="s">${f.s2}</span></div>
            <span class="chip ${f.s}">${f.l}</span>
          </div>`).join('');
+      const grad2 = `linear-gradient(140deg, hsl(${c.hue} 28% 74%), hsl(${c.hue} 26% 48%))`;
       body = `
+        <div class="seg">
+          <button class="active">Overview</button>
+          <button onclick="toast('Comparison is a lab stub')">Comparison</button>
+          <button onclick="toast('Detail is a lab stub')">Detail</button>
+        </div>
         <div class="gauge">${gaugeSVG(c.score)}</div>
         <div class="scorecols">${cols}</div>
         ${fb}
+        <div class="cardtitle" style="font-size:14px">Movement Analysis</div>
+        <div class="mvgrid">
+          <div class="mvtile">
+            <div class="top"><span class="sl">Swing angle</span>
+              <span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 20L16 8"/><circle cx="18.5" cy="5.5" r="3"/></svg></span></div>
+            <span class="sv num">82<span class="ss">&#176;</span></span>
+            <svg class="spark" width="92" height="20" viewBox="0 0 92 20" fill="none"><path d="M2 15 L15 11 L28 13 L41 8 L54 10 L67 5 L80 7 L90 3" stroke="#BCD437" stroke-width="2" stroke-linecap="round"/></svg>
+          </div>
+          <div class="mvtile">
+            <div class="top"><span class="sl">T recovery</span>
+              <span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg></span></div>
+            <span class="sv num">1.9<span class="ss">s</span></span>
+            <svg class="spark" width="92" height="20" viewBox="0 0 92 20" fill="none"><path d="M2 5 L15 8 L28 6 L41 11 L54 9 L67 14 L80 12 L90 16" stroke="#BCD437" stroke-width="2" stroke-linecap="round"/></svg>
+          </div>
+        </div>
+        <button class="replay" style="background:${grad2}" onclick="toast('Replay is a lab stub')" aria-label="Watch rally replay">
+          <svg class="court" viewBox="0 0 300 96" preserveAspectRatio="none" fill="none" stroke="#fff" stroke-width="1.4"><rect x="30" y="12" width="240" height="58" rx="1"/><path d="M30 42h240"/><path d="M30 58h240"/></svg>
+          <span class="pb"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg></span>
+        </button>
         <button class="ghostbtn" onclick="event.stopPropagation();toast('Re-analysis is a lab stub')">Re-analyze</button>`;
     }
     return `
