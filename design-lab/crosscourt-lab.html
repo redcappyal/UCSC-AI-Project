@@ -50,6 +50,38 @@ nav button span{display:none}
 nav button.active{background:var(--accent);color:var(--ink)}
 nav button.active span{display:inline}
 nav button svg{width:17px;height:17px}
+/* dashboard */
+.apphead{display:flex;align-items:center;justify-content:space-between;min-height:44px}
+.wordmark{font-size:20px;font-weight:800;display:flex;align-items:center;gap:8px;letter-spacing:-.02em}
+.wordmark::before{content:"";width:10px;height:10px;border-radius:50%;background:var(--accent);
+  box-shadow:0 0 0 3px rgba(217,242,79,.35)}
+.iconbtn{width:40px;height:40px;border-radius:50%;border:0;background:var(--card);
+  box-shadow:var(--shadow);display:flex;align-items:center;justify-content:center;
+  color:var(--ink);cursor:pointer}
+.iconbtn svg{width:18px;height:18px}
+.hero{background:var(--ink);border-radius:24px;color:#fff;padding:18px;display:flex;
+  flex-direction:column;gap:10px}
+.hero .toprow{display:flex;align-items:center;justify-content:space-between}
+.hero .tag{font-size:12px;font-weight:600;letter-spacing:.04em;opacity:.55}
+.hero .badge{background:var(--accent);color:var(--ink);border-radius:999px;
+  padding:4px 10px;font-size:12px;font-weight:700}
+.hero .headline{font-size:17px;font-weight:700;line-height:1.35}
+.hero .sub{font-size:13px;color:rgba(255,255,255,.6)}
+.btnrow{display:flex;gap:10px}
+.btnrow .pill{flex:1}
+.btnrow .pill.accent{flex:1.2}
+.pill svg{width:18px;height:18px}
+.cardhead{font-size:13px;font-weight:700;letter-spacing:.04em;color:var(--dim);
+  margin-bottom:4px}
+.drillrow{display:flex;align-items:center;gap:12px;min-height:56px}
+.drillrow + .drillrow{border-top:1px solid #F0F1F3}
+.drillrow .info{display:flex;flex-direction:column;gap:2px}
+.drillrow .name{font-size:15px;font-weight:600}
+.drillrow .meta{font-size:13px;color:var(--dim)}
+.startchip{border:0;background:var(--accent);border-radius:999px;min-height:34px;
+  padding:6px 14px;font-size:12px;font-weight:700;font-family:inherit;cursor:pointer;
+  margin-left:auto;color:var(--ink)}
+.startchip:active{filter:brightness(.96)}
 /* toast */
 #toast{position:absolute;left:50%;bottom:84px;transform:translateX(-50%);background:var(--ink);
   color:#fff;font-size:13px;font-weight:600;padding:10px 16px;border-radius:999px;
@@ -60,7 +92,55 @@ nav button svg{width:17px;height:17px}
 <body>
 <div class="phone">
   <div class="screen">
-    <section class="view active" id="view-dashboard"></section>
+    <section class="view active" id="view-dashboard">
+      <div class="apphead">
+        <div class="wordmark">CrossCourt</div>
+        <button class="iconbtn" aria-label="Notifications" onclick="toast('No notifications')">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 0 1-3.4 0"/></svg>
+        </button>
+      </div>
+      <div class="hero">
+        <div class="toprow">
+          <span class="tag">FOCUS</span>
+          <span class="badge num">IN% 78 ▲3</span>
+        </div>
+        <div class="headline">Straight-drive depth — drives are landing short of the service box in 3 of your last 4 sessions.</div>
+        <div class="sub">From your player report · 4 sessions analyzed</div>
+      </div>
+      <div class="btnrow">
+        <button class="pill accent" onclick="toast('Recording is a lab stub')">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="6" width="13" height="12" rx="3"/><path d="M15 10.5l7-4v11l-7-4"/></svg>
+          Start Recording
+        </button>
+        <button class="pill" onclick="toast('Upload is a lab stub')">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 16V4"/><path d="M6 10l6-6 6 6"/><path d="M4 20h16"/></svg>
+          Upload Video
+        </button>
+      </div>
+      <div class="card">
+        <div class="cardhead">NEXT UP</div>
+        <div class="drillrow">
+          <div class="icontile">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="4.5"/><circle cx="12" cy="12" r="1" fill="currentColor"/></svg>
+          </div>
+          <div class="info">
+            <span class="name">Straight-drive depth</span>
+            <span class="meta">20 min · length past the service box</span>
+          </div>
+          <button class="startchip" onclick="switchTab('training')">Start</button>
+        </div>
+        <div class="drillrow">
+          <div class="icontile">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20L20 4"/><path d="M4 20h6"/><path d="M4 20v-6"/></svg>
+          </div>
+          <div class="info">
+            <span class="name">Boast accuracy</span>
+            <span class="meta">15 min · two-wall targets</span>
+          </div>
+          <button class="startchip" onclick="switchTab('training')">Start</button>
+        </div>
+      </div>
+    </section>
     <section class="view" id="view-analysis"></section>
     <section class="view" id="view-training"></section>
     <section class="view" id="view-progress"></section>
