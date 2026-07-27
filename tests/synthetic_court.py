@@ -21,10 +21,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from synthetic3d import make_camera
 
 from court_model import (
+    BOX_BACK_CENTER_Y_FT,
     COURT_WIDTH_FT,
     HALF_COURT_X_FT,
+    LEFT_BOX_INNER_CENTER_X_FT,
     LINE_WIDTH_FT,
     OUT_LINE_HEIGHT_FT,
+    RIGHT_BOX_INNER_CENTER_X_FT,
     SERVICE_BOX_BACK_FT,
     SERVICE_BOX_FT,
     SERVICE_LINE_HEIGHT_FT,
@@ -128,8 +131,9 @@ def render_court(camera, visible_depth_ft=26.0, noise_sigma=0.0, seed=0):
           _wall_band(TIN_TOP_HEIGHT_FT - LINE_WIDTH_FT, TIN_TOP_HEIGHT_FT),
           LINE_BGR)
 
-    # Floor paint. These are stored by CENTRELINE, so each band straddles its
-    # datum (court_model.py:49-62).
+    # Floor paint. The short line and half-court line are stored by CENTRELINE,
+    # so those bands straddle their datum (court_model.py:49-62). The service
+    # box constants are NOT centrelines -- see the note below them.
     half = LINE_WIDTH_FT / 2.0
     _fill(image, camera,
           _floor_band(0.0, COURT_WIDTH_FT,
@@ -140,17 +144,24 @@ def render_court(camera, visible_depth_ft=26.0, noise_sigma=0.0, seed=0):
           _floor_band(HALF_COURT_X_FT - half, HALF_COURT_X_FT + half,
                       SHORT_LINE_FROM_FRONT_FT, visible_depth_ft),
           LINE_BGR)
-    for x_inner in (SERVICE_BOX_FT, COURT_WIDTH_FT - SERVICE_BOX_FT):
+
+    # SERVICE_BOX_FT and SERVICE_BOX_BACK_FT are WSF EDGE datums, not
+    # centrelines -- court_model.py:27-35 has the paint spanning [5.25, 5.25+w]
+    # and [23.25, 23.25+w], OUTSIDE the box interior. Straddling the raw datum
+    # would put every box band 25 mm inside where the paint really is, and
+    # Task 5 scores its self-verification against the *_CENTER_* constants
+    # below, so the two must agree.
+    for x_centre in (LEFT_BOX_INNER_CENTER_X_FT, RIGHT_BOX_INNER_CENTER_X_FT):
         _fill(image, camera,
-              _floor_band(x_inner - half, x_inner + half,
+              _floor_band(x_centre - half, x_centre + half,
                           SHORT_LINE_FROM_FRONT_FT, SERVICE_BOX_BACK_FT),
               LINE_BGR)
     for x_low, x_high in ((0.0, SERVICE_BOX_FT),
                           (COURT_WIDTH_FT - SERVICE_BOX_FT, COURT_WIDTH_FT)):
         _fill(image, camera,
               _floor_band(x_low, x_high,
-                          SERVICE_BOX_BACK_FT - half,
-                          SERVICE_BOX_BACK_FT + half),
+                          BOX_BACK_CENTER_Y_FT - half,
+                          BOX_BACK_CENTER_Y_FT + half),
               LINE_BGR)
 
     if noise_sigma > 0:
