@@ -438,6 +438,120 @@ def test_detected_line_intersect_returns_none_for_parallels():
     assert point is not None and abs(point[0] - 50.0) < 1e-6
 
 
+# --- geometry budgets for test_assign_lines_names_every_required_entity ----
+#
+# A stripe fitted by find_lines can sit up to half its paint width off the
+# datum EDGE stored in `truth` (e.g. the "out" line's fitted centre sits half
+# a line-width below the LOWER edge that datum names). At court_camera's
+# focal_px=700.0 scale, half of LINE_WIDTH_FT projects to ~1.9-1.95 px on the
+# front wall (camera.project of a LINE_WIDTH_FT-tall band at the out/
+# service/tin heights). A 30-seed sweep at this test's noise_sigma=2.0
+# (varying only the render's per-pixel noise seed, everything else held
+# fixed) measured actual assign_lines-vs-truth error up to 2.13 px worst
+# case (the service line) -- consistent with that half-width bound plus a
+# little Hough/threshold fitting jitter. 3.0 px clears the measured worst
+# case with ~40% headroom, and is still far inside the tightest gap between
+# any two of these five entities' true y-positions at this camera scale --
+# tin to front_seam, ~36.7 px apart -- so the tolerance window can never
+# reach a neighbouring line.
+NAMED_LINE_TOLERANCE_PX = 3.0
+
+# left_seam/right_seam have no truth key, so they are checked against the
+# camera model directly instead: the true angle of the world edge each seam
+# traces (x=0 or x=COURT_WIDTH_FT, from the front wall to render_court's
+# default visible_depth_ft=26.0), computed the same way `truth`'s own
+# entries are. The same 30-seed sweep found the assigned seam's angle
+# within 0.4 degrees of that true value. 5 degrees leaves over 10x that
+# margin while staying far short of the ~56-degree gap to a near-vertical
+# false read (e.g. a half-court or service-box side line near 90 degrees)
+# and clear of the 25-degree floor HORIZONTAL_MAX_DEG already guarantees --
+# so this is a real "plausible diagonal band" check, not a restatement of
+# the >25-degree filter.
+SEAM_ANGLE_TOLERANCE_DEG = 5.0
+
+# The same sweep measured up to 4.2 px of noise-driven scatter in where
+# front_seam.intersect(left_seam/right_seam) lands versus the true front
+# corner. 8 px doubles that headroom and is tiny next to the ~488 px
+# separation between the two front corners at this camera scale, so it
+# cannot mistake "near the wrong corner" for "near the right one".
+SEAM_CORNER_TOLERANCE_PX = 8.0
+
+# render_court's default -- not overridden by the test below.
+_VISIBLE_DEPTH_FT = 26.0
+
+
+def _assert_assignment_matches_truth(assigned, truth, camera, frame_shape):
+    """Score `assigned` against the camera/geometry that produced `truth`.
+
+    Factored out of the test so the "is this actually discriminating"
+    check (see test_assign_lines_assignment_check_rejects_bad_assignments
+    below) can run the exact same assertions against hand-corrupted
+    `assigned` dicts.
+    """
+    for name in ("out", "service", "tin", "front_seam",
+                 "left_seam", "right_seam", "short_line"):
+        assert assigned.get(name) is not None, f"missing {name}"
+
+    # The five horizontal entities must sit where the camera actually put
+    # them, not merely in the right relative order.
+    for name, key in (("out", "out_line_lower_edge"),
+                       ("service", "service_line_top_edge"),
+                       ("tin", "tin_top_edge"),
+                       ("front_seam", "front_seam"),
+                       ("short_line", "short_line")):
+        line = assigned[name]
+        (x1, y1), (x2, y2) = truth[key]
+        for x, true_y in ((x1, y1), (x2, y2)):
+            found_y = line.y_at(x)
+            assert found_y is not None, f"{name} is vertical at x={x}"
+            assert abs(found_y - true_y) < NAMED_LINE_TOLERANCE_PX, (
+                name, found_y, true_y)
+
+    # The seams are on the sides they are named for (guaranteed by
+    # assign_lines' own candidate filter, kept as a sanity check).
+    left, right = assigned["left_seam"], assigned["right_seam"]
+    front_seam = assigned["front_seam"]
+    assert left.midpoint[0] < frame_shape[1] / 2
+    assert right.midpoint[0] > frame_shape[1] / 2
+    assert left.angle_deg < 0
+    assert right.angle_deg > 0
+
+    # Angle magnitude: matched against the camera's own projection of the
+    # world edge each seam traces, not a guessed band.
+    def edge_angle_deg(x_ft):
+        near = camera.project((x_ft, 0.0, 0.0))
+        far = camera.project((x_ft, _VISIBLE_DEPTH_FT, 0.0))
+        return math.degrees(math.atan2(far[1] - near[1], far[0] - near[0]))
+
+    expected_mag = abs(edge_angle_deg(0.0))
+    assert abs(abs(left.angle_deg) - expected_mag) < SEAM_ANGLE_TOLERANCE_DEG, (
+        left.angle_deg, expected_mag)
+    assert abs(abs(right.angle_deg) - expected_mag) < SEAM_ANGLE_TOLERANCE_DEG, (
+        right.angle_deg, expected_mag)
+
+    # Each seam must actually cross the front seam near a real front
+    # corner, and the two seams must land near DIFFERENT corners -- "near
+    # opposite ends of the court", not "both near the same spot" or
+    # "anywhere along the line".
+    corners = [truth["wall_bottom_left"], truth["wall_bottom_right"]]
+
+    def nearest_corner(point):
+        dists = [math.hypot(point[0] - c[0], point[1] - c[1]) for c in corners]
+        index = 0 if dists[0] < dists[1] else 1
+        return index, dists[index]
+
+    left_hit = front_seam.intersect(left)
+    right_hit = front_seam.intersect(right)
+    assert left_hit is not None, "left_seam is parallel to front_seam"
+    assert right_hit is not None, "right_seam is parallel to front_seam"
+
+    left_corner, left_dist = nearest_corner(left_hit)
+    right_corner, right_dist = nearest_corner(right_hit)
+    assert left_dist < SEAM_CORNER_TOLERANCE_PX, (left_hit, corners)
+    assert right_dist < SEAM_CORNER_TOLERANCE_PX, (right_hit, corners)
+    assert left_corner != right_corner, "both seams hit the same front corner"
+
+
 def test_assign_lines_names_every_required_entity():
     # court_camera()'s default framing (focal_px=1600) puts the short line
     # (y ~= 17.9 ft) at pixel row ~1430 in a 1080-tall frame -- off-screen,
@@ -468,16 +582,4 @@ def test_assign_lines_names_every_required_entity():
         image.shape,
     )
 
-    for name in ("out", "service", "tin", "front_seam",
-                 "left_seam", "right_seam", "short_line"):
-        assert assigned.get(name) is not None, f"missing {name}"
-
-    # The out line sits above the service line, which sits above the tin,
-    # which sits above the seam, which sits above the short line.
-    order = [assigned[name].midpoint[1]
-             for name in ("out", "service", "tin", "front_seam", "short_line")]
-    assert order == sorted(order), order
-
-    # The seams are on the sides they are named for.
-    assert assigned["left_seam"].midpoint[0] < image.shape[1] / 2
-    assert assigned["right_seam"].midpoint[0] > image.shape[1] / 2
+    _assert_assignment_matches_truth(assigned, truth, camera, image.shape)
