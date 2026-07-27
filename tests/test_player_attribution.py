@@ -124,3 +124,18 @@ def test_serve_crop_target_uses_rally1_observed_server():
                            "server_source": "propagated",
                            "start_time_seconds": 10.0}]}
     assert serve_crop_target(no_obs, samples) is None
+
+
+def test_write_track_samples_round_trip(tmp_path):
+    import json
+    import job_runner
+
+    samples = {"A": [sample(1.0, 300, 500)], "B": []}
+    job_runner.write_track_samples(tmp_path, samples, [2.5])
+    payload = json.loads((tmp_path / "players" / "track_samples.json").read_text())
+    assert payload["schema"] == "player-tracks-v1"
+    assert payload["ambiguity_times"] == [2.5]
+    entry = payload["tracks"]["A"][0]
+    assert entry == {"t_s": 1.0, "frame_idx": 60, "foot_px": [300.0, 500.0],
+                     "bbox": [300.0, 450.0, 40.0, 100.0],
+                     "confidence": 0.9, "coasted": False}

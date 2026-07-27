@@ -18,6 +18,8 @@ from pathlib import Path
 import cv2
 
 import court_model
+import person_model
+import player_attribution
 from audio_events import extract_audio_candidates
 from bounce_gb_model_detector import DEFAULT_MODEL_PATH as BOUNCE_GB_MODEL_PATH
 from bounce_gb_model_detector import detect_hits_with_gb_model
@@ -34,6 +36,7 @@ from judge_call import (
     load_wall_corners,
 )
 from judge_call import wall_diagram_coordinates
+from player_tracker import PersonFramePass
 from tracking_common import (
     CONFIDENCE_THRESHOLD,
     CSV_FIELDNAMES,
@@ -90,6 +93,44 @@ def persist_job(job):
         os.replace(tmp_path, job_path)
     except OSError:
         pass
+
+
+def build_person_pass(source_fps, frame_stride):
+    """PersonFramePass when the detector backend is available, else None.
+    Detector load failures must never kill a tracking job."""
+    try:
+        detector = person_model.load_person_detector()
+    except Exception:
+        return None
+    if detector is None:
+        return None
+    return PersonFramePass(detector, source_fps, frame_stride)
+
+
+def write_track_samples(run_dir, samples_by_track, ambiguity_times):
+    payload = {
+        "schema": "player-tracks-v1",
+        "ambiguity_times": [float(t) for t in ambiguity_times],
+        "tracks": {
+            track: [
+                {
+                    "t_s": s.t_s,
+                    "frame_idx": s.frame_idx,
+                    "foot_px": [s.foot_px[0], s.foot_px[1]],
+                    "bbox": [s.bbox[0], s.bbox[1], s.bbox[2], s.bbox[3]],
+                    "confidence": s.confidence,
+                    "coasted": s.coasted,
+                }
+                for s in samples
+            ]
+            for track, samples in samples_by_track.items()
+        },
+    }
+    players_dir = Path(run_dir) / "players"
+    players_dir.mkdir(parents=True, exist_ok=True)
+    (players_dir / "track_samples.json").write_text(
+        json.dumps(payload), encoding="utf-8"
+    )
 
 
 def update_job(run_id, /, **updates):
@@ -180,10 +221,15 @@ def decode_segments_to_queue(video_path, segments, frame_queue, stop_event, deco
         enqueue(None)
 
 
-def track_segments(model, video_path, segments, inference_width, source_fps, results, on_frame):
+def track_segments(model, video_path, segments, inference_width, source_fps, results, on_frame,
+                   frame_observer=None):
     """Consumer loop: infer frames from the decode queue into `results`.
 
     Decode runs on its own thread so it overlaps inference, which dominates.
+    `frame_observer(frame_idx, frame)`, when given, is called for every
+    decoded frame in this call — callers wire it only on the coarse pass so
+    the person-detection cadence rides the coarse decode, never refine or
+    audio-rescue (spec §4.2).
     """
     frame_queue = queue.Queue(maxsize=DECODE_QUEUE_SIZE)
     stop_event = threading.Event()
@@ -203,6 +249,8 @@ def track_segments(model, video_path, segments, inference_width, source_fps, res
                 break
 
             frame_idx, frame = item
+            if frame_observer is not None:
+                frame_observer(frame_idx, frame)
             predictions = infer_frame_predictions(
                 model,
                 frame,
@@ -984,6 +1032,10 @@ def run_tracking_job(run_id):
             model = get_tracking_model()
             wall_x_range = tin_horizontal_range_from_run(run_dir)
 
+            person_pass = build_person_pass(source_fps, frame_stride)
+            if person_pass is not None:
+                update_job(run_id, message="Person detector: rfdetr")
+
             results = {}
             # A pass at stride > 1 only needs to be good enough to locate hit
             # candidates, so it can also run at a reduced inference width.
@@ -996,6 +1048,7 @@ def run_tracking_job(run_id):
                 source_fps,
                 results,
                 make_progress_callback("Coarse pass"),
+                frame_observer=person_pass.observe if person_pass is not None else None,
             )
             write_results_csv(csv_path, results)
 
@@ -1100,6 +1153,16 @@ def run_tracking_job(run_id):
                     )
                     write_results_csv(csv_path, results)
 
+            serve_resolver = None
+            samples_by_track = None
+            ambiguity_times = []
+            if person_pass is not None:
+                samples_by_track = person_pass.tracker.samples()
+                ambiguity_times = person_pass.tracker.ambiguity_times()
+                serve_resolver = player_attribution.build_serve_resolver(
+                    samples_by_track, sorted_rows(results)
+                )
+
             hits = []
             hits_error = None
             try:
@@ -1130,17 +1193,53 @@ def run_tracking_job(run_id):
                     results,
                     classified,
                     audio_available=audio_candidates is not None,
+                    serve_resolver=serve_resolver,
                 )
-                player_assignment = assign_front_wall_hit_players(hits)
+                player_assignment = assign_front_wall_hit_players(hits, serve_resolver=serve_resolver)
                 target_zones = build_target_zone_summary(hits)
                 target_zones_by_player = build_player_target_zone_summaries(hits)
                 floor_zones = floor_zones_from_run(run_dir)
             except Exception as error:
                 hits_error = str(error)
-                player_assignment = assign_front_wall_hit_players(hits)
+                player_assignment = assign_front_wall_hit_players(hits, serve_resolver=serve_resolver)
                 target_zones = build_target_zone_summary(hits)
                 target_zones_by_player = build_player_target_zone_summaries(hits)
                 floor_zones = None
+
+            players_v1 = None
+            if person_pass is not None:
+                confidences = player_attribution.rally_identity_confidences(
+                    ambiguity_times, player_assignment["rallies"]
+                )
+                for rally in player_assignment["rallies"]:
+                    rally["identity_confidence"] = confidences.get(rally["rally_number"])
+                write_track_samples(run_dir, samples_by_track, ambiguity_times)
+                serve_crop_relpath = None
+                crop_target = player_attribution.serve_crop_target(
+                    player_assignment, samples_by_track
+                )
+                if crop_target is not None:
+                    crop_frame_idx, crop_sample = crop_target
+                    crop_detection = person_model.PersonDetection(
+                        x=crop_sample.bbox[0], y=crop_sample.bbox[1],
+                        width=crop_sample.bbox[2], height=crop_sample.bbox[3],
+                        confidence=crop_sample.confidence, keypoints=(),
+                    )
+                    if person_model.save_person_crop(
+                        video_path, crop_frame_idx, crop_detection,
+                        run_dir / "players" / "serve_rally1.jpg",
+                    ):
+                        serve_crop_relpath = "players/serve_rally1.jpg"
+                players_v1 = player_attribution.build_players_v1(
+                    player_assignment,
+                    person_pass.tracker.stats(),
+                    detector_backend=person_pass.detector.backend,
+                    serve_crop_relpath=serve_crop_relpath,
+                )
+            else:
+                players_v1 = player_attribution.build_players_v1(
+                    player_assignment, None, detector_backend="none"
+                )
 
             job = get_job(run_id) or {}
             total_frames = int(job.get("total_frames", processed_frames or 1))
@@ -1158,6 +1257,7 @@ def run_tracking_job(run_id):
                 target_zones_by_player=target_zones_by_player,
                 player_assignment=player_assignment,
                 hits_error=hits_error,
+                players_v1=players_v1,
                 message="Tracking complete.",
                 **extra_fields,
             )

@@ -88,3 +88,27 @@ def test_person_frame_pass_cadence_and_wiring():
         person_pass.observe(i * 4, frame)
     assert len(calls) == 2  # observed frames 0..7 -> detected on 0 and 4
     assert len(person_pass.tracker.samples()["A"]) == 2
+
+
+def test_track_segments_frame_observer_sees_coarse_frames(tmp_path, monkeypatch):
+    import cv2
+    import job_runner
+
+    video = tmp_path / "clip.mp4"
+    writer = cv2.VideoWriter(str(video), cv2.VideoWriter_fourcc(*"mp4v"),
+                             30, (64, 48))
+    for i in range(12):
+        writer.write(np.full((48, 64, 3), i * 20, dtype=np.uint8))
+    writer.release()
+
+    monkeypatch.setattr(job_runner, "infer_frame_predictions",
+                        lambda model, frame, threshold, width: [])
+    observed = []
+    job_runner.track_segments(
+        model=None, video_path=video, segments=[(0, 11, 3)],
+        inference_width=64, source_fps=30.0, results={},
+        on_frame=lambda idx: None,
+        frame_observer=lambda idx, frame: observed.append((idx, frame.shape)),
+    )
+    assert [idx for idx, _ in observed] == [0, 3, 6, 9]
+    assert all(shape == (48, 64, 3) for _, shape in observed)
