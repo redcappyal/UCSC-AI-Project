@@ -16,18 +16,11 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from synthetic3d import make_camera
-from synthetic_court import FLOOR_BGR, LINE_BGR, WALL_BGR, render_court
+from synthetic_court import FLOOR_BGR, LINE_BGR, WALL_BGR, court_camera, render_court
 
 
 def test_render_court_paints_lines_where_the_camera_projects_them():
-    # make_camera()'s default look_at=(10.5, 0.0, 5.0) tilts the camera down
-    # just enough that the out line (z=15 ft) projects to y < 0 -- off the
-    # top of the frame -- so this test aims a bit higher to keep the whole
-    # out-line band, plus the 40px of wall above it the assertions check,
-    # inside the visible image. Per the brief: adjust look_at only here,
-    # never the renderer's court constants.
-    camera = make_camera(look_at=(10.5, 0.0, 6.5))
+    camera = court_camera()
     image, truth = render_court(camera)
 
     assert image.shape == (1080, 1920, 3)

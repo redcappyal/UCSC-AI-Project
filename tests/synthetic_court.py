@@ -18,6 +18,8 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from synthetic3d import make_camera
+
 from court_model import (
     COURT_WIDTH_FT,
     HALF_COURT_X_FT,
@@ -37,6 +39,21 @@ LINE_BGR = (90, 45, 30)       # navy court paint
 SEAM_BGR = (120, 120, 122)    # the shadowed wall/floor junction
 
 SEAM_WIDTH_FT = 0.08          # ~1 inch of shadow at the junction
+
+
+def court_camera(**overrides):
+    """The canonical camera for court-detection tests.
+
+    synthetic3d.make_camera()'s default look_at=(10.5, 0, 5) tilts far enough
+    down that the out line (15 ft up the front wall) projects above the top of
+    the frame, where negative numpy indices silently wrap to the bottom rows
+    and assertions pass against the wrong pixels. Raising the aim point puts
+    the whole court in view. Every test in this suite uses this camera, so
+    detector results stay comparable across tasks.
+    """
+    settings = {"look_at": (10.5, 0.0, 6.5)}
+    settings.update(overrides)
+    return make_camera(**settings)
 
 
 def _polygon(camera, corners_ft):
