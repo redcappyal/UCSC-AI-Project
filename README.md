@@ -1,16 +1,35 @@
-# Squash Line Calling
+# CrossCourt
 
-Point a phone at a squash court, record a rally, and get an automated IN/OUT call on
-every front-wall hit — plus a coaching report on where the ball actually went.
+**Squash training, measured.** Mount a phone on the court, play, and get statistics and
+coaching back — then compare them against your last session, so practice becomes a
+feedback loop instead of a directionless hour on court.
 
-A single-file mobile web app (`index.html`) over a Flask + OpenCV pipeline that detects
-the ball frame by frame, finds the moments it strikes a wall, and judges each front-wall
-impact against hand-calibrated out/tin lines. The first contact in each rally is also
-checked against a calibrated service line.
+## Where this is going
+
+Direction set 2026-07-27. Two stages:
+
+**1. Capture.** A recorder built for one purpose: collecting input the analysis stage can
+actually use. The phone mounts on the fin beside the back glass door, and the app
+recognizes the court lines and builds the court homography while recording. *Not built
+yet* — calibration today is a manual tap wizard.
+
+**2. Analysis.** The clip is saved on-device and uploaded by choice. The cloud run returns
+a stats dashboard with squash-specific LLM coaching, and keeps past runs so the same
+measurables can be tracked over time. *Partly built* — the pipeline and the coaching
+report exist; cross-session comparison does not.
+
+Line calling — IN/OUT on every front-wall hit against calibrated out, tin, and service
+lines — is where this project started and still works. It is now **one statistic among
+many** rather than the product itself.
 
 ---
 
-## How it works
+## How it works today
+
+A single-file mobile web app (`index.html`) and a native iOS app over a Flask + OpenCV
+pipeline that detects the ball frame by frame, finds the moments it strikes a wall, and
+judges each front-wall impact against calibrated out/tin lines. The first contact in each
+rally is also checked against a calibrated service line.
 
 ```
 video ──► ball detection ──► bounce detection ──► classification ──► judging
@@ -25,9 +44,10 @@ video ──► ball detection ──► bounce detection ──► classificati
 | Bounce detection | `detect_wall_hits.py`, `bounce_gb_model_detector.py`, `event_engine.py` | Finds impact frames from trajectory kinks. Swappable engines: `votes`, `gb_model`, `fusion`. |
 | Audio rescue | `audio_events.py` | Impact sounds recover bounces the trajectory missed. |
 | Classification | `classify_events.py` | Labels each hit wall / side wall / floor / racket. |
-| Judging | `judge_call.py`, `court_model.py` | Wall-line calibration → normal IN/OUT calls plus a service-line call for each rally’s first front-wall contact. |
+| Judging | `judge_call.py`, `court_model.py` | Wall-line calibration → IN/OUT calls plus a service-line call for each rally’s first front-wall contact. Works in raw pixels: a projection preserves which side of a coplanar line a point falls on, so no homography is needed for the call itself. |
+| Court mapping | `court_model.py` | The floor homography — image pixels to court feet. Needed for anything *positional* (zones, distances, coverage), which the analysis stage is built on. |
 | Coaching | `app.py` | Target-zone analytics over the rally, optionally narrated by an LLM. |
-| Stereo fusion | `stereo_engine.py`, `stereo_sync.py`, `job_runner.py` | Optional. Two phones recording one rally fuse into a court-frame 3D track and 3D line calls. See [docs/stereo-fusion.md](docs/stereo-fusion.md) — the fused path is built and tested, but **unevaluated** against the monocular baseline. |
+| ~~Stereo fusion~~ | `archive/stereo/` | **Archived 2026-07-27 — do not extend or import.** Two phones fusing into a court-frame 3D track: built and tested, never evaluated. Triangulation needs the ball in *both* views, which multiplies the recall bottleneck instead of fixing it. Restore point: tag `archive/stereo-v1`. Revisit gate: single-view wall-hit recall ~85%. See [archive/stereo/README.md](archive/stereo/README.md). |
 
 The UI is deliberately one file. `DESIGN.md` is the binding rulebook for anything visual —
 read it before touching HTML/CSS/JS, and update it in the same change if you must deviate.
@@ -92,9 +112,11 @@ the built-in local coaching template and displays the reason.
 .venv/bin/python -m pytest tests/ -q
 ```
 
-394 tests, about 30 seconds. They run without the model runtime — `requirements-test.txt` is
-the light dependency set CI installs, and it deliberately excludes `inference`/torch. The
-stereo detector's one real-model test is marked `requires_model` and deselected by default.
+318 tests, about 5 seconds. They run without the model runtime — `requirements-test.txt` is
+the light dependency set CI installs, and it deliberately excludes `inference`/torch.
+`ball_track_offline.py`'s one real-model test is marked `requires_model` and deselected by
+default; a green run reads "318 passed, 1 deselected". `archive/` is excluded from
+collection — its tests are preserved verbatim and import modules that have moved.
 
 ---
 
@@ -150,9 +172,15 @@ current reference, 113 cases; re-read it rather than this paragraph when they di
 - **Recall is now measured at rally scale; precision is not.** The 95 Bay Club label-CSV
   events give the missed-bounce axis real weight, but every precision axis still resolves
   to `n=2`–`n=4`, so none of them can be steered on.
-- **There is not a single OUT case in the eval set.** Calling a ball OUT is the entire
-  point of the app, and it is currently unmeasured — the two human calls on record are
-  both IN. Labeling OUT balls is the highest-value thing anyone can do for this project.
+- **There is not a single OUT case in the eval set.** Both human calls on record are IN, so
+  the OUT branch of the judge is entirely unmeasured. Line calling is no longer the whole
+  product, but an unmeasured branch is still an unmeasured branch — labeling OUT balls is
+  cheap and remains high-value.
+- **The pivot raises the bar rather than lowering it.** A missed bounce used to mean a
+  missing call, which is visible. In a statistics product it means a silently wrong number:
+  a rally-length or coverage statistic computed from 35% of the events looks perfectly
+  plausible and is simply false. Nothing on the analysis dashboard should ship before the
+  recall axis moves.
 
 ### Training
 
@@ -176,7 +204,11 @@ rows whose context windows straddle the cut.
 | `job_runner.py` | Tracking pipeline; a run is fully described by its `job.json`. |
 | `inference_engine.py` | Model loading and backend selection (torch/MPS or ONNX). |
 | `event_engine.py`, `detect_wall_hits.py` | Bounce detection engines. |
-| `judge_call.py`, `court_model.py` | Calibration geometry and the IN/OUT decision. |
+| `judge_call.py` | The IN/OUT decision, in pixel space against calibrated lines. |
+| `court_model.py` | Calibration geometry: the floor homography and the camera solve. |
+| `ios/` | Native SwiftUI app. Play records natively; Matches and Coach are webviews. |
+| `ball_track_offline.py` | Offline runner for the locally trained YOLOX ball detector. |
+| `archive/stereo/` | The archived two-phone path. Inert, uncollected, restorable. |
 | `label_hits.py` | Offline frame-by-frame labeler. |
 | `build_eval_set.py`, `eval_line_calls.py` | Label distillation and evaluation replay. |
 | `eval_set/` | The committed, versioned evaluation corpus. |

@@ -35,7 +35,7 @@ enum CaptureSettings {
     static let sensorHeight = 2160
 
     /// Landscape frame geometry — the space every consumer works in. Overlay
-    /// mapping, peer detection tuples and the asset writer all key off these.
+    /// mapping and the asset writer both key off these.
     ///
     /// Capture is always landscape: the phone sits on its side in a back-wall
     /// mount, where the sensor's readout is already the right way round.
@@ -50,20 +50,12 @@ enum CaptureSettings {
     ///
     /// The two phones in a paired session MUST agree. Both cases yield the
     /// same `frameSize(for:)`, so dimensions alone cannot tell them apart —
-    /// which is why the mount travels explicitly in `Hello.captureOrientation`.
-    /// `PeerSession` compares it against its own hello at handshake and
-    /// refuses a mismatched pair rather than absorbing it, so the operator
-    /// learns the mount is wrong instead of the archive inheriting it.
+    /// which is why the mount is tracked explicitly rather than inferred from
+    /// the frame's dimensions.
     ///
-    /// The capture side is wired to it on the live path:
-    /// `LiveSessionModel.beginPairing()` builds its `PeerSession` with
-    /// `record.camera.orientation`, so this phone's real mount is what goes
-    /// on the wire. One caveat, tracked in `ios/PEER.md`: that read takes
-    /// whatever `RecordModel.startCamera` last seeded, which is the mount
-    /// resolved when the pairing screen appeared (it re-seeds on every Play
-    /// appearance, so it is not stale from launch — but it is not re-read at
-    /// the tap either). A mount flipped after that is committed by
-    /// `RecordModel.applyRecording` at record start and never re-advertised.
+    /// `RecordModel.startCamera` re-seeds it on every Play appearance, so it
+    /// is never stale from launch, and `RecordModel.applyRecording` commits it
+    /// at record start.
     enum CaptureOrientation: String, Codable, Equatable, CaseIterable {
         case landscapeRight, landscapeLeft
     }
@@ -73,9 +65,9 @@ enum CaptureSettings {
     /// landscape-right (the sensor's native readout), 180 for landscape-left
     /// (that same readout upside down).
     ///
-    /// Normalizing here rather than downstream is what keeps solo footage —
-    /// which is also the training archive — the right way up when there is no
-    /// peer to catch a wrong mount.
+    /// Normalizing here rather than downstream is what keeps footage — which
+    /// is also the training archive — the right way up, since nothing
+    /// downstream can tell a wrong mount from a right one.
     static func rotationAngle(for orientation: CaptureOrientation) -> CGFloat {
         switch orientation {
         case .landscapeRight: return 0

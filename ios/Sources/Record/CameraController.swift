@@ -32,7 +32,7 @@ final class CameraController: NSObject {
     /// touches (`CameraPreviewView.swift`), and not for the court-exposure
     /// meter, which never reads this property (see `lockForCourt()`) — it is
     /// so the recorded/streamed frame's rotation, and the mount this model
-    /// advertises (`LiveSessionModel.beginPairing()` reads `orientation` for
+    /// advertises (`RecordModel.startCamera()` re-seeds `orientation` for
     /// its `Hello`), cannot go stale after the operator re-mounts the phone.
     /// That value is deliberately NOT pinned, which is what lets the Play tab
     /// stay at both-landscape (`.landscape`) through the whole framing
@@ -51,7 +51,7 @@ final class CameraController: NSObject {
     /// Every video frame, on the output queue. RecordView wires this to
     /// BallTracker.process.
     var onVideoSample: ((CVPixelBuffer, TimeInterval) -> Void)?
-    /// Every audio sample buffer, on the output queue. The pairing clap
+    /// Every audio sample buffer, on the output queue. The impact-sound
     /// detector subscribes here; nil costs nothing.
     var onAudioSample: ((CMSampleBuffer) -> Void)?
 

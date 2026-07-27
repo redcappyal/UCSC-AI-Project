@@ -143,8 +143,8 @@ native equivalent, so "Record a clip" takes the accent slot there.
 Each screen is a `<section id="p-…">` inside `<main>`, toggled with `.hidden`. The current
 phases: `p-load`, `p-record`, `p-frame`, `p-tap`, `p-review`, `p-tap-floor`, `p-clip`,
 `p-analyze`, `p-track`, `p-player1-report`, `p-player2-report`, `p-label`, `p-target`,
-`p-pair`, `p-live`, and the roadmap phases
-`p-matches`, `p-coach`, `p-stats`, `p-shot-bot`, `p-sharing` (blueprints in §16). To add a
+and the roadmap phases
+`p-matches`, `p-coach`, `p-live`, `p-stats`, `p-shot-bot`, `p-sharing` (blueprints in §16). To add a
 screen, add a section and follow §17 — never add a second header, tab bar, or routing
 chrome beyond the §8.3 nav pill.
 
@@ -267,9 +267,9 @@ shadows.
 | Family | Tokens | Where it may appear |
 |---|---|---|
 | **Accent / action** | `--accent-bg` + `--accent-text` | primary buttons, active nav/chip/segment states, trim handles, sliders, progress fill, active wizard mark |
-| **Verdict** | `--in` (green), `--outcall` (red) | verdict box fills, IN/OUT timeline markers, verdict text, and the live `.call-flash`/`.call-banner` (§8.17–§8.18) — `OUT` and the tin fault `DOWN` share `--outcall`, since both end the rally the same way. Nothing else is ever green/red. |
+| **Verdict** | `--in` (green), `--outcall` (red) | verdict box fills, IN/OUT timeline markers, and verdict text — `OUT` and the tin fault `DOWN` share `--outcall`, since both end the rally the same way. Nothing else is ever green/red. |
 | **Calibration edges** | `--out` (cyan), `--service` (amber), `--tin` (lime) | fitted line overlays on the frame + inline references to them (`#instr b.out/.service/.tin`) |
-| **Event markers** | `--mk-racket` cyan, `--mk-floor` amber, `--mk-side` purple, `--mk-unknown` gray | timeline bars + legend dots + label buttons. Single source of truth for both. `--mk-unknown` also renders the live `NO CALL` state (§8.17/§8.18) — a no-call is not a verdict, so it stays in this family, not the Verdict one. (`.link-status`, §8.19, is separate again: plain `--dim`, never even this family's gray, since a link state isn't an event either.) |
+| **Event markers** | `--mk-racket` cyan, `--mk-floor` amber, `--mk-side` purple, `--mk-unknown` gray | timeline bars + legend dots + label buttons. Single source of truth for both. `--mk-unknown` also renders an unclassified or no-call event — not a verdict, so it stays in this family, not the Verdict one. |
 | **Status (canvas)** | §4.3 greens/golds/reds | JS-drawn annotations only |
 
 The distinction between **calibration hues (where the lines are)** and **green/red (what
@@ -279,7 +279,7 @@ lives on the calibration frame, the other on the timeline; keep it that way.
 
 Won/lost, correct/incorrect and other **data** splits are not verdicts. Separate them with
 the solid-vs-dashed border grammar (§8.14, §13) plus an explicit label — never by
-borrowing `--in`/`--outcall` (§8.21 is the worked example).
+borrowing `--in`/`--outcall` (§8.17 is the worked example).
 
 ### 5.3 Contrast requirements
 
@@ -495,8 +495,8 @@ hairline, 18/700 title + 13 dim meta right), body content, and an optional 2-col
   roughly half the phone's width, too narrow to read either court clearly under §7's
   phone-first, no-breakpoint constraint. The trajectory itself is a `--dim` polyline; the
   impact point is a single marker colored by the verdict — `--in` / `--outcall` /
-  `--mk-unknown` gray for a no-call — the same three colors as `.call-flash` (§8.17) and
-  `.call-banner` (§8.18), so the replay always agrees with the call that was made.
+  `--mk-unknown` gray for a no-call — the same three colors the verdict box (§8.7) uses,
+  so the replay always agrees with the call that was made.
   Purpose: let a player see the shot that was just called, not just hear the word. No
   touch target: display-only, like the floor bounce map above.
 
@@ -566,11 +566,11 @@ primaries). Two variants:
 - **Surface** — `--surface` fill, `1px --line` border, `--text` title, `--dim`
   icon/description: every other card. A working surface card ("Record a clip", opens
   `p-record`) carries no tag; a future one carries the right-aligned `SOON` tag
-  12/600 uppercase `--dim` ("Live match", opens `p-pair` §16 — the `SOON` tag stays until
-  pairing and the live path are actually wired end-to-end). The question is about one
-  surface, so the answer can differ per client: native's live path is wired and its card
-  carries no tag, web's is still a placeholder and keeps its `SOON` (§16). Tag presence
-  is what separates "works today" from "coming" — never a second accent.
+  12/600 uppercase `--dim` ("Live match", opens the `p-live` placeholder §16 — the tag
+  stays until a live path is actually wired end-to-end). The native app shows only
+  "Record a clip": its Play tab is the record screen itself, with no card list in front
+  of it. Tag presence is what separates "works today" from "coming" — never a second
+  accent.
 
 Cards sit under a 12/600 uppercase `--dim` "PLAY" heading, order: Judge a clip ·
 Record a clip · Live match.
@@ -602,118 +602,7 @@ uppercase, `--dim`) + a row of `button.small` utilities — "Debug targets" and 
 - Storage is on-device only: OPFS `recordings/` folder (blob + JSON sidecar carrying
   the calibration) with an IndexedDB fallback; no server round-trip.
 
-### 8.17 Call flash (`.call-flash`)
-
-The live-mode payoff §17.3 pre-authorises: scaled-up verdict-box grammar, not a new
-visual language. A full-stage color wash occupying the stage overlay layer (§3.2's
-z-index ladder, same tier as the §8.12 analyzing scrim) with a single centered uppercase
-word — `IN` / `OUT` / `DOWN` / `NO CALL` — 28/700+, tracking `.04em` (the §6.1 verdict-word
-spec, scaled up for full-stage legibility instead of the boxed 78 px well).
-
-**Tokens:** `IN` fills `--in` (`Theme.inCall`); `OUT` and `DOWN` both fill `--outcall`
-(`Theme.outCall`) — a tin fault ends the rally the same way an out ball does, so it takes
-the same verdict color rather than a third hue; `NO CALL` fills `--mk-unknown` gray
-(`Theme.unknown`) and never borrows green/red — a no-call is explicitly not a verdict
-(§0.3).
-
-**States:** idle (hidden; stage shows the live camera feed unobscured) → flash (word +
-wash, the §10 **Flash** token — ≤ 500 ms, opacity/fill only — this is a flash, not a
-progress state) → idle again, handing
-off to the persistent `.call-banner` (§8.18) so the honest state stays legible after the
-wash clears. When `prefers-reduced-motion` is set, show the end state directly with no
-wash transition — a state change, not an animation.
-
-**Layout:** stage overlay only, never inserted into `<main>`'s flow — appearing and
-clearing it causes zero layout shift (§0.9), the same guarantee the analyzing scrim
-gives.
-
-**Touch targets:** none — display-only, like the analyzing scrim (§8.12).
-
-### 8.18 Call banner (`.call-banner`)
-
-A persistent one-line result under the stage, reserving its height at all times (the
-§8.7 `.verdict{min-height:78px}` reserved-space pattern) so a call appearing or clearing
-never shifts the layout beneath it. Format is a template, not a fixed list:
-**`<verdict word> · <confidence phrase>`**. The verdict word is `IN` / `OUT` / `DOWN` —
-the same three words `.call-flash` (§8.17) can show — each pairable with either
-confidence phrase, `high confidence` or `one view`: `IN · high confidence`,
-`IN · one view`, `OUT · high confidence`, `OUT · one view`, `DOWN · high confidence`,
-`DOWN · one view` are all valid (6 combinations, 3 words × 2 tiers). `NO CALL` is the
-exception: it never carries a confidence phrase, only one of two fixed reasons —
-`NO CALL · obstructed` or `NO CALL · floor bounce`. This is the honest-states contract:
-`called (high)` / `called (one-view)` / `no-call (obstructed)` / `no-call (floor
-bounce)` are the only states that exist — never a guess rendered as a confident call —
-and confidence is always carried by that text label, never by color alone (§0.3).
-
-**Tokens:** the word takes the same color as `.call-flash` (`--in` / `--outcall` /
-`--mk-unknown`); the confidence phrase is always `--dim` sentence case (§0.7) regardless
-of the word's color, so it stays legible and calm under a red or green fill.
-
-**States:** `.blank` (dashed `--line` border, dim — the §8.7 blank treatment) before any
-rally has been called → filled, one of the 8 combinations above (6 verdict × confidence
-+ 2 no-call reasons). A floor bounce is not a line verdict, so it renders `NO CALL ·
-floor bounce`, never a colored call.
-
-**Touch targets:** none — informational, like a `.status` line (§13).
-
-### 8.19 Link status (`.link-status`)
-
-A row reporting the pairing/link state as words, never as color alone. A naive green
-"connected" dot would silently claim the verdict family (§0.3 reserves green/red for
-IN/OUT), so this component is built so that mistake can't happen: an 8 px `--dim` fill
-dot (decorative only, carries no meaning by itself), an 8 px gap (§4.5), then an explicit
-sentence-case word — `Not paired` / `Looking for the other phone…` / `Codes match?` / `Syncing
-clocks…` / `Paired · sync ±1.4 ms` / `Link lost — still recording` / the session's
-failure reason, verbatim. The sync-quality figure is tabular numerals (§0.8) since it is
-a number that updates.
-
-**Tokens:** dot and text both `--dim`; text may step up to `--text` for emphasis (the
-`.status.ok` pattern, §13) but never to `--in` / `--outcall` — link state is never a
-verdict.
-
-**States:** not-paired → searching → confirming → syncing → paired (ready) → degraded
-(link lost, still recording — never a silent downgrade) → failed. See the `p-pair` state
-table in §16 for the full mapping.
-
-**Layout:** reserves its line height (§7's reserved-heights rule) so a state change never
-shifts the pair-code or the primary button below it.
-
-**Touch targets:** none — a status row, not a control.
-
-### 8.20 Pair code (`.pair-code`)
-
-A 4-digit confirmation code shown while pairing so both operators can visually confirm
-the phones are pairing with each other and not a stray nearby device. Set large — 36–40
-px, 700 weight, tracking `.04em`, tabular numerals (§0.8) so the digits never jitter —
-legible from across a court at arm's length, the §1 glanceability principle applied to a
-two-person distance instead of a one-handed one. Rendered on a `--surface` card, radius 8
-(the §8.9 card fill), under a sentence-case "Codes match?" caption.
-
-**Tokens:** `--text` digits on `--surface`; no accent, no verdict color — a pairing code
-is neither an action nor a call.
-
-**States:** `.blank` (dashed `--line` border, dim — the §8.7 blank treatment) before the
-`confirming` step → filled with one code, shown for exactly one pairing attempt — a new
-attempt gets a new code, never a silently reused one.
-
-**Layout:** `.pair-code` sits inside the single continuous `p-pair` section, so it
-appears and clears in place, not by navigating elsewhere — exactly the case §0.9
-targets. It reserves the same card footprint (`--surface`, radius 8, the code's own
-36–40 px line height plus the card's `12px 14px` padding, §4.5) in its blank state as in
-its filled state, so `CONFIRM`/`START RALLY` and anything below it never jump when the
-code appears or clears.
-
-**Mismatch path:** alongside the code, a secondary text action reads "Codes don't
-match" — styled as `button.small` (§8.1, 44 px, not a filled button) so it never
-competes with the phase's one proxied primary (§7). Tapping it ends the session and
-returns `p-pair` to Searching; this is the wrong-phone / stranger's-phone case, and it
-must be reachable without waiting for a timeout. See the `p-pair` state table in §16 for
-where this sits in the flow.
-
-**Touch targets:** the code itself isn't tappable (confirming is the phase's one
-proxied primary button, `CONFIRM`, 48 px, §3.4); "Codes don't match" is a real control
-at 44 px (`button.small`, §8.1).
-### 8.21 Coaching report panel (`.coachPlayerPanel`)
+### 8.17 Coaching report panel (`.coachPlayerPanel`)
 
 The per-player report body on `p-player1-report` / `p-player2-report`. A §8.9 card
 ("Player N report" + a right-aligned 13 dim source tag — `Local feedback` / `Ollama
@@ -741,11 +630,10 @@ The local template renders immediately; the LLM narration is fetched afterwards 
 height on arrival (§18). If the LLM is unreachable the local text simply stays and the
 source tag reports it.
 
-### 8.22 Two-way segment (`.corrSeg`)
+### 8.18 Two-way segment (`.corrSeg`)
 
 Two independent pill buttons, not one shared capsule; exactly one selected.
-Used by the call page's Bounce / Not-bounce toggle (§16, `p-track`) and
-`p-pair`'s role picker (§16, `p-pair`).
+Used by the call page's Bounce / Not-bounce toggle (§16, `p-track`).
 
 - Two equal-width pills (`border-radius:999px`, the standard button radius),
   6 px gap between them. No outer container — no shared fill, border, or
@@ -759,12 +647,10 @@ Used by the call page's Bounce / Not-bounce toggle (§16, `p-track`) and
 - Both halves are always present and always the same size, so selection
   never reflows anything (§0.9).
 - No third state. A segment that needs one is a different component.
-- Exception: `p-pair`'s role picker may start with neither pill selected — no
-  role has a safe default (two phones both defaulting to primary would both
-  open a peer session and hang) — reverting to exactly one selected the
-  instant a role is picked. Not the third state above: that rule is about a
-  segment needing a third *visual mode*, not about a value nobody has chosen
-  yet.
+- A segment may start with neither pill selected when no option has a safe
+  default, reverting to exactly one selected the instant the user picks. Not
+  the third state above: that rule is about a segment needing a third *visual
+  mode*, not about a value nobody has chosen yet.
 
 **§0.6 debt (web).** The shipping control is `min-height:38px` — below the
 44 px binding minimum. This is a pre-existing violation, not a sanctioned
@@ -773,9 +659,9 @@ as any other §0.6 gap would be. Do not read the 38 px figure as permission;
 new web work reusing `.corrSeg` inherits the debt until it's fixed, not a
 license to repeat it.
 
-**Native (`p-pair`'s iOS role segment).** Built to the same grammar above —
-two equal-width pills, one selected, no third state — but at the full 44 px
-minimum, so it meets §0.6 outright. New native work is not inheriting the
+**Native.** Any SwiftUI instance of this control is built to the same grammar
+above — two equal-width pills, one selected, no third state — but at the full
+44 px minimum, so it meets §0.6 outright. New native work is not inheriting the
 web control's shortfall.
 
 ---
@@ -798,7 +684,6 @@ play/pause) in weight and simplicity — HIG/SF-Symbols-like line style, two sha
 | Micro | `.18s ease` | progress width, small property changes |
 | Gentle | `.35s cubic-bezier(0,0,0,1)` | theme-icon mask slide |
 | Expressive | `.5s cubic-bezier(.25,0,.3,1)` (+ overshoot `cubic-bezier(.5,1.25,.75,1.25)` for beams) | theme sun/moon only |
-| Flash | `≤ 500 ms`, opacity/fill only, no positional motion | `.call-flash` (§8.17) full-stage verdict wash — skipped entirely (instant end-state) under reduced motion |
 | Ambient | 1.1–1.4 s ease-in-out infinite | `analyzePulse`, `slidebar`, `floorPulse` |
 
 Rules:
@@ -913,21 +798,17 @@ Each phase: header shows step label + proxied primary; `#instr` gives the one-li
 | `p-track` | Review track, judge calls | control area keeps its pre-rally-visualization height so the video stage does not shrink; the added content scrolls inside that footprint · scrub hint lives in the header `#instr` line (detection failures replace it, `.warn`) · rally segmentation card (proportional neutral ribbon, active segment in accent, text winner chip for every rally) · overview w/ marker minis · hit timeline (neon bars, center playhead) · readout · transport — **Review pane:** frame input + "Player maps" row · verdict box; **Challenge pane:** type dropdown (In/Out folded into the front-wall options) · Bounce / Not-bounce toggle (`.corrSeg`) · panes switched by a floating Review \| Challenge pill (`.callTabs`, same liquid-glass style as `#navPill`, fixed bottom-center) | "Judge frame" |
 | `p-label` | Human bounce labeling | overview · label timeline · transport+zoom · 2-col type grid (dot+label) · delete (destructive = plain secondary, disabled until selection) | — |
 | `p-target` | Stats: targets & bounces (debug) | Front-wall targets card (court chart + meta) · Floor bounces card (SVG map + meta) | — |
-| `p-player1-report` / `p-player2-report` | Per-player coaching report — the last two steps of the judge flow | Player N front-wall map (§8.10 court chart + `.targetMeta`; serves excluded) · Player N report panel (§8.21) · P1 only: a `.row` "Player 2 report" secondary | — (back chevron only) |
+| `p-player1-report` / `p-player2-report` | Per-player coaching report — the last two steps of the judge flow | Player N front-wall map (§8.10 court chart + `.targetMeta`; serves excluded) · Player N report panel (§8.17) · P1 only: a `.row` "Player 2 report" secondary | — (back chevron only) |
 | `p-matches` | Matches section root (placeholder) | placeholder hero · Planned card (§8.14) | — (no chevron; section root) |
 | `p-coach` | Coach section root (hub) | three feature cards (§8.13) — no hero, no copy | — (no chevron; section root) |
-| `p-pair` | Pair with a second phone for a live two-camera session | link-status row (§8.19) · role segment (§8.22), idle state only · pair-code (§8.20) once codes are exchanged, with its "Codes don't match" secondary text action · DEBUG transport picker (BLE / Wi-Fi) | "PAIR" → "CONFIRM" → "START RALLY" |
-| `p-live` | Live two-camera rally: verdict flash, honest-state banner, post-rally replay | stage = live camera preview (shared with `p-record`) · link-status row (persistent — a lost link stays visible mid-rally) · call-flash (§8.17) + call-banner (§8.18) overlaying the stage · post-rally mini-court replay (§8.10), visible once a call lands · mini-court replay is primary-only in v1 (the secondary receives relayed event JSON, which carries no 3D track) · STOP ends the rally: the primary always has it; the secondary only gains its own STOP while the link is degraded, so a dropped link cannot leave it recording indefinitely | "STOP" (primary, whenever the rally is live; secondary, only while degraded) |
+| `p-live` | Placeholder: live match | placeholder hero · Planned card (§8.14) | — (back chevron only) |
 | `p-stats` | Placeholder: stats + trends | placeholder hero · Planned card (§8.14) | — (back chevron only) |
 | `p-shot-bot` | Placeholder: shot selection | placeholder hero · Planned card (§8.14) | — (back chevron only) |
 | `p-sharing` | Placeholder: your coach (coaching platform) | placeholder hero · Planned card (§8.14) | — (back chevron only) |
 
 `p-load` is the **Play section root**: hero action cards (§8.15) + dev row replace the
-old load-button stack. Sub-page back routes: `p-record` → Play; `p-pair` → Play; `p-live`
-→ `p-pair` (back chevron steps up one phase, §8.2) — with one exception: while a rally is
-actually running, `p-live` carries **no back chevron at all**, and STOP is its only exit
-(see the live-mode note below); `p-stats` / `p-shot-bot` /
-`p-sharing` → Coach. The calibration wizard (`p-tap` → … → `p-tap-floor`) serves two
+old load-button stack. Sub-page back routes: `p-record` → Play; `p-live` → Play;
+`p-stats` / `p-shot-bot` / `p-sharing` → Coach. The calibration wizard (`p-tap` → … → `p-tap-floor`) serves two
 flows: entered from `p-frame` it exits to `p-clip`; entered from `p-record` ("Calibrate
 court", on a frame frozen from the live camera) it exits back to `p-record` and the
 result rides along with each recording. The nav pill is the section tab bar and appears
@@ -940,86 +821,23 @@ explanatory. The Play hint line (`#loadHint`) is empty in judge mode (reserved h
 no CLS) and speaks only for the dev-row label mode. A healthy backend is silent —
 `#loadStatus` only reports problems.
 
-`p-pair` and `p-live` split the difference deliberately rather than leaving it
-unstated: `p-pair` is a working tool flow like calibration/clip/call, so it carries one
-static `#instr` hint ("Bring both phones close together to pair.") that never changes
-across pairing states — the state itself is `.link-status`'s job (§8.19), not
-`#instr`'s, so the two channels never duplicate copy. `p-live` carries no `#instr` copy
-at all: once a rally is live, the honest-state `.call-banner` (§8.18) is the readout and
-the camera stage is the evidence (§1) — a static hint would be noise on top of that, so
-`#instr` stays empty and reserved, the same "a healthy backend is silent" precedent as
-`#loadStatus`/`#loadHint` above.
-
 Mode switch Judge ↔ Label lives in the Play dev-row toggle (§8.15). The call page's
 Review ↔ Challenge switch is a second instance of the same liquid-glass pill
 (`.callTabs` shares `#navPill`'s rules); only one pill is ever on screen at a time.
 
-**Live-mode states (`p-pair` → `p-live`).** The Play hero card's "Live match" action
-(§8.15) enters `p-pair`; once paired and synced it hands off to `p-live` automatically —
-the same auto-advance pattern as `p-analyze` — and ending the session returns to
-`p-pair`'s idle state, not all the way to Play, so re-pairing is one tap away. With no
-peer nearby the phone behaves exactly as today's single-camera app: pairing strictly
-adds capability, never gates it — a hard requirement, not a design choice — so staying
-on `p-pair`'s idle state and backing out to Play still leaves "Record a clip" untouched.
+**The `SOON` tag on "Live match".** §8.15's rule is a question about one surface — does
+tapping *this* card lead to a working experience. `p-live` is a roadmap placeholder on
+web, so the card keeps its `SOON`. The native app does not show the card at all: its
+Play tab is the record screen directly.
 
-The hand-off is driven by **the rally, not by the screen that started it**: `p-live` is
-presented for exactly as long as a rally is running, whichever surface the phone is
-showing when it starts — the secondary's rally begins on a message, with no tap on that
-phone at all, and possibly with `p-pair` no longer on screen. For the same reason the
-back chevron is withdrawn while the rally runs (above): the one screen carrying STOP
-must not be dismissable while the camera is still rolling, since nothing else can end
-the rally — `p-pair`'s primary reads a disabled "RALLY LIVE", and the record stage
-refuses to touch a recording the live layer owns.
-
-**A rally ends; the pairing does not.** Ending a rally is not ending the session. When
-the rally stops, `p-live` pops and the phone is back on `p-pair` — same pairing, same
-clock sync, same session identity, no re-pairing and no second code to compare — and once
-that rally's clip has reported, the row returns to Ready (primary) above with `START
-RALLY` live again for the next one. A session runs as many rallies as the match needs;
-only "Codes don't match" and ending the session return `p-pair` to Idle. This is also
-what makes the `p-live` table's "clears again when `START RALLY` begins the next one"
-(below) something the user can actually reach: the call banner and mini-court are cleared
-by the *start* of the next rally, so no rally ever opens on the previous one's verdict.
-
-**The `SOON` tag is per client.** §8.15's rule is a question about one surface — does
-tapping *this* card lead to a working experience — and the two clients now answer
-differently: web's `p-live` is still a roadmap placeholder, so the web card keeps its
-`SOON`; native's live path is wired end to end (`p-pair` → `p-live`, STOP, paired
-upload), so the native card carries no tag. The tag comes off the web card when web's
-own live path lands, not when native's did.
-
-`p-pair` states drive `.link-status` (§8.19) and the phase's one proxied primary:
-
-| State | `.link-status` text | Primary | Notes |
-|---|---|---|---|
-| No role chosen | "Pick this phone's job to start." | PAIR (disabled) | §7: the primary never advertises a tap that cannot fire. There is no default role — two phones both defaulting to primary would both open a central and hang with nothing honest to say |
-| Idle / no peer | "Not paired" | PAIR | identical to today's single-camera app — entering `p-pair` fetches this phone's solved camera model; while that is in flight the row reads "Checking this phone's court calibration…" and PAIR is disabled |
-| Calibration fetch failed | the failure reason, verbatim | PAIR (retry) | this phone's own solved camera model could not be fetched or is not adoptable — "server unreachable" is the expected case on a court. The tap re-runs the fetch, and the row goes back to "Checking this phone's court calibration…" while it is in flight. Enabled with or without a role chosen: the retry concerns this phone's calibration, not which job it will do |
-| Searching | "Looking for the other phone…" | PAIR (disabled) | no peer yet to report real progress on |
-| Confirming | "Codes match?" + `.pair-code` (§8.20) | CONFIRM | operator compares the 4-digit code on both phones; a secondary text action "Codes don't match" (§7 — not a second primary) ends the session and returns to Searching — the wrong-phone / stranger's-phone case |
-| Syncing | "Syncing clocks…" | CONFIRM (disabled) | clock-sync pass; no user action needed |
-| Ready (primary) | "Paired · sync ±1.4 ms" (tabular, §0.8) | START RALLY | the calling phone's StereoEngine already exists; tapping hands off to `p-live` |
-| Ready, awaiting peer calibration (primary) | "Paired · waiting for the other phone's calibration" | START RALLY (disabled) | the StereoEngine does not exist until the secondary's calibration arrives; starting would record a rally nothing can call |
-| Ready (secondary) | "Paired · the other phone starts the rally" | — (no primary action) | the engine lives on the primary, so only the primary can honestly know a rally is callable |
-| Rally live, or its clip still uploading | "Paired · sync ±1.4 ms" | RALLY LIVE (disabled) | what `p-pair` reads underneath `p-live` during the rally, and again after `p-live` pops while that rally's clip uploads. Transient, not terminal: the row goes back to Ready above the moment the upload reports — or to "Rally ended badly" below if it reported a failure — and the next rally starts from there. §7 — disabled, never hidden, because there is no tap here that can fire |
-| Rally ended badly | the rally's failure reason, verbatim | START RALLY | the upload or the server-side tracking failed, or the rally produced no clip. Shown in place of the Ready text above until the next rally starts, because the alternative — a cheerful "Paired · sync ±1.4 ms" after a rally that was silently lost — is the dishonest state §16 exists to forbid. The primary stays START RALLY: §7 allows one primary per phase, and that is the tap that can fire |
-| Degraded | "Link lost — still recording" | START RALLY (disabled) | never a silent downgrade; the primary reads `START RALLY` but is disabled here — recording continues regardless of the link |
-| Failed | the session's failure reason, verbatim | PAIR (retry) | e.g. the capture-orientation frame-size guard |
-
-`p-live` states drive `.call-flash` (§8.17) and `.call-banner` (§8.18). The mini-court
-replay (§8.10) is never visible before a call: it fills the same reserved
-control-area footprint `p-track` already uses for its post-processing content
-(§16, `p-track` row) — appearing there once a rally resolves causes no shift, and it
-clears again when `START RALLY` begins the next one:
-
-| State | Call banner | Mini-court | Notes |
-|---|---|---|---|
-| Ready (before a rally) | `.blank` reserved space, no flash | hidden (reserved footprint, §0.9) | this row is the *pre-rally* state, so the primary named here is `p-pair`'s START RALLY, not this phase's own: `p-live`'s primary is STOP (blueprint row above), which exists only once there is a rally to stop. On native this row is never on screen — `p-live` is presented only while a rally runs |
-| Called (high) | `IN` / `OUT` / `DOWN` · "high confidence" | shown, once the flash clears | both cameras agree |
-| Called (one-view) | `IN` / `OUT` / `DOWN` · "one view" | shown, once the flash clears | still a verdict — one camera occluded, not a guess |
-| No-call (obstructed) | `NO CALL` · "obstructed" | shown, once the flash clears | `--mk-unknown` gray — never rendered as a verdict |
-| No-call (floor bounce) | `NO CALL` · "floor bounce" | shown, once the flash clears | a floor bounce is not a line verdict |
-| Link lost mid-rally | `.link-status`'s "Link lost — still recording" stays visible with the banner | hidden — the rally hasn't resolved to a call yet | recording never depends on the link |
+A two-camera implementation of live match was built and then archived on 2026-07-27 —
+the blueprints for its `p-pair` screen, its live stage, and the four components they
+used (call flash, call banner, link status, pair code) are preserved in
+[archive/stereo/docs/DESIGN-live-sections.md](archive/stereo/docs/DESIGN-live-sections.md).
+Restoring that path means restoring those sections here in the same change. The one rule
+from it worth carrying forward regardless of how live match is eventually built:
+**capability is added, never gated** — whatever a live mode needs, a phone without it
+must still record exactly as it does today.
 
 ---
 
@@ -1031,9 +849,11 @@ clears again when `START RALLY` begins the next one:
    PR must state which family it joins. Hex literals outside tokens are allowed only in
    the canvas palette (§4.3) and court miniature (§8.10).
 3. **Live-mode surfaces**: verdict box and marker grammar scale up — a live call is a
-   full-stage verdict-colored flash + uppercase word, not a new visual language (built as
-   `.call-flash` / `.call-banner`, §8.17–§8.18; see `p-pair` / `p-live`, §16). Stats/coaching
-   screens are §8.9 cards + §12 rules stacked in `<main>`.
+   full-stage verdict-colored flash + uppercase word, not a new visual language. The
+   archived two-camera implementation's components are specified in
+   [archive/stereo/docs/DESIGN-live-sections.md](archive/stereo/docs/DESIGN-live-sections.md);
+   start from those rather than inventing a second grammar. Stats/coaching screens are
+   §8.9 cards + §12 rules stacked in `<main>`.
 4. **CSS lives in the `<style>` block of `index.html`**, grouped by component with the
    existing terse `/* purpose */` comments; JS constants that mirror tokens (e.g. `CFG`
    hexes) must be updated in lockstep with `:root`.
@@ -1044,7 +864,7 @@ clears again when `START RALLY` begins the next one:
 ## 18. Never do
 
 - No new fonts, weights, icon sets, or CDN/remote assets of any kind.
-- No second accent; no green/red outside verdicts (won/lost data splits included — §8.21);
+- No second accent; no green/red outside verdicts (won/lost data splits included — §8.17);
   no calibration hues (cyan/amber/lime) outside calibration.
 - No drop shadows on cards/buttons; no glass outside the nav pill; no decorative gradients
   outside the court miniature.

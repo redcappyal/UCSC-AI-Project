@@ -69,9 +69,6 @@ The two that carry the most weight:
   `ui_runs/*/calibration.json` records are deliberately kept, because
   `build_eval_set.py` embeds them into every eval case and deleting them
   would silently zero the judge axes on the next rebuild.
-- **Both phones must run the same build.** `PeerSession`'s Hello advertises
-  `CaptureSettings.frameWidth/Height`, and detections cross the wire in those
-  pixel units. A 4K phone paired with a 1080p phone skews stereo silently.
 - **Stabilisation must stay off.** OIS and EIS warp the frame per-frame, which
   would invalidate the fixed floor homography and the 15-correspondence camera
   solve. A calibrated camera has to stay geometrically rigid.
@@ -120,16 +117,13 @@ Run these on a Mac, in order, before trusting any of it:
    mis-resolution to the wrong overload would surface as a type error, not a
    silent behavior change, but it has never compiled either.
 2. **Play tab stays both-landscape while framing, and narrows only once
-   recording starts.** Note the Play tab's root is `PlayRootView`, a menu —
-   `startCamera` does **not** fire on Play launch. It has three callers, all
-   `.task`s one level down: `RecordView` (Play → **Record a clip**),
-   `PlayRootView`'s `p-pair` destination (Play → **Live match**), and
-   `LiveStageView`'s own backstop. So navigate to **Record a clip** first;
-   that is where the camera comes up and where the record button is.
-   `startCamera` no longer pins anything — it only seeds `camera.orientation`
-   from the interface orientation, so the recorded/streamed frame's rotation
-   and the mount `LiveSessionModel.beginPairing()` advertises do not go
-   stale (this does not touch the preview, a separate connection — see
+   recording starts.** The Play tab is `RecordView` itself — the
+   `PlayRootView` menu that used to sit in front of it went with the archived
+   live match (`archive/stereo/README.md`) — so `startCamera` fires from that
+   view's `.task` as soon as Play appears. `startCamera` no longer pins
+   anything: it only seeds `camera.orientation` from the interface
+   orientation, so the recorded frame's rotation does not go stale (this does
+   not touch the preview, a separate connection — see
    `CameraController.orientation`'s doc). Launch the simulator in either
    landscape and confirm
    Play accepts *both* landscape-left and landscape-right (portrait still
@@ -151,15 +145,13 @@ Run these on a Mac, in order, before trusting any of it:
    flipped mount is **not observable here** — `updateOrientation` mutates
    only the video output's connection, while the preview is a separate
    `AVCaptureVideoPreviewLayer` connection (`CameraPreviewView.swift`), so
-   nothing on screen changes when the re-seed lands. The only place this is
-   actually confirmable is the two-phone bring-up in `ios/PEER.md`: flip the
-   mount here, on this screen, with nothing ever recorded, then pair —
-   `LiveSessionModel.beginPairing()` reads `camera.orientation` straight into
-   its `Hello`, so a stale seed would advertise a mount that does not match
-   the phone's actual physical mount, and the peer mount guard would judge
-   the pair against that wrong value instead of the real one. The
-   counterpart is in step 3: while a recording *is* running, the same round
-   trip must leave the mount alone.
+   nothing on screen changes when the re-seed lands. Since the two-phone
+   bring-up that used to confirm it was archived with the peer layer
+   (`archive/stereo/README.md`), the re-seed is now observable only through
+   its effect on a recording: flip the mount on this screen, then record and
+   play back — step 5 below is that check. The counterpart is in step 3:
+   while a recording *is* running, the same round trip must leave the mount
+   alone.
 3. **The pin releases on stop, and holds across a tab round trip while
    recording.** While recording, switch to Matches and back to Play — the
    pinned mount must survive the round trip, which is what
@@ -176,26 +168,13 @@ Run these on a Mac, in order, before trusting any of it:
    is inverted; swap the cases and update `CaptureOrientationTests`, which
    asserts the mapping and must change with it.
 
-Two things this section used to call known limits. The first is no longer one —
-it is a check somebody has to run:
-
-- **The peer mount guard is live, and must be exercised.** `PeerSession` refuses
-  a mismatched pair, and the live path now builds a session that can actually
-  trip it: `LiveSessionModel.beginPairing()` constructs its `PeerSession` with
-  `record.camera.orientation` and calls `record.attachPeer(session)`. Two phones
-  in opposite landscape mounts must **fail** to pair, with the reason on the
-  status row — deliberately mis-mount one phone during the two-phone bring-up
-  (`ios/PEER.md`) and confirm both ends refuse. The coverage below a real radio
-  is `CaptureOrientationTests` plus `LiveSessionModelTests` over
-  `LoopbackTransport`; two real phones have never tried it. Two residual holes,
-  both recorded in `ios/PEER.md`: `PeerBenchView`'s DEBUG session still takes
-  the `.landscapeRight` default (harmless — the bench never records), and the
-  mount is never re-advertised after pairing, so a phone flipped after the
-  pairing screen appeared captures in one mount while its `Hello` claims the
-  other.
-- **Portrait-solved calibrations no longer load.** `CameraModel.scaled` refuses
-  the aspect change rather than distorting geometry, so any calibration solved
-  from portrait footage must be re-solved from landscape footage.
+Known limits:
+- **Portrait-solved calibrations must be re-solved from landscape footage.**
+  The Swift `CameraModel.scaled`, which refused the aspect change outright
+  rather than distorting geometry, went to the archive with the stereo layer —
+  the iOS app no longer loads a solved camera at all. The constraint itself is
+  unchanged and still enforced server-side by `court_model.py`; nothing on the
+  phone will warn you about it any more.
 
 When these are run, replace this section with what actually passed, the device
 model, and the date. A partially-run checklist recorded as complete is the

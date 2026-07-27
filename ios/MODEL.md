@@ -173,7 +173,7 @@ bring the checkpoint back to a Mac for §4, which is macOS-only.
 
 ## 2b. Export for the server
 
-The Flask stereo path (`stereo_offline.py`) needs the checkpoint as a self-contained
+The offline runner (`ball_track_offline.py`) needs the checkpoint as a self-contained
 artifact it can load without YOLOX — the whole point of the licensing constraint above is
 that YOLOX never runs at serving time. `export_ball_model.py` is the boundary: it runs
 in the **training** environment only (it imports `yolox`), traces the checkpoint to
@@ -195,9 +195,10 @@ run the traced artifact, never `yolox`. Two environment variables control it:
 
 - `BALL_MODEL_DIR` — points at the model directory (defaults to
   `models/crosscourt-ball-416-v1` beside the repo root).
-- `STEREO_DETECTOR` — selects the backend for the stereo path: `yolox` (default) loads
-  this local detector; `rfdetr` restores the hosted RF-DETR model the single-camera
-  pipeline still uses.
+- `BALL_DETECTOR` — selects the backend for `ball_track_offline.py`: `yolox` (default)
+  loads this local detector; `rfdetr` restores the hosted RF-DETR model the Flask
+  pipeline still uses. (Was `STEREO_DETECTOR`, renamed 2026-07-27 when the stereo half
+  of `stereo_offline.py` was archived — see `archive/stereo/README.md`.)
 
 ## 3. Score before shipping (acceptance gate)
 

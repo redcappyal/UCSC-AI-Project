@@ -25,24 +25,15 @@ final class RunSubmission: ObservableObject {
     ///
     /// Why a cap has to exist at all: a job whose worker died still answers
     /// `"running"` forever. The HTTP layer is perfectly healthy, so nothing
-    /// throws, and an uncapped loop never leaves `submit`. On the live path
-    /// that strands `LiveSessionModel.rally` at `.submitting` permanently —
-    /// `startRally()` refuses, `finishRally` never runs, so `endRally()` never
-    /// runs, `pairing.step` stays `.live`, and the primary reads a disabled
-    /// "RALLY LIVE" with no tap that can fire. `LiveSessionModel` is a
-    /// `@StateObject` on `PlayRootView`, so backing out to Play does not clear
-    /// it either: only killing the app recovers. That is the same dead end
-    /// `testASecondRallyStartsOnTheSamePairing` exists to forbid, reached
-    /// through a different door.
+    /// throws, and an uncapped loop never leaves `submit`, so the sheet the
+    /// caller is presenting never resolves and only killing the app recovers.
     ///
     /// Why 20 minutes, for a 4K60 rally clip:
     ///
     /// * `job_runner.TRACKING_JOB_SEMAPHORE` is `Semaphore(1)` — the server
     ///   tracks exactly one clip at a time, and `run_tracking_job` only sets
-    ///   `status="running"` after acquiring it. A paired rally therefore
-    ///   *serializes*: the second phone's run sits `queued` for the whole of
-    ///   the first phone's pass before starting its own. The honest unit is
-    ///   two passes, not one, plus whatever else is already queued.
+    ///   `status="running"` after acquiring it, so a clip can sit `queued`
+    ///   behind whatever else is already in flight.
     /// * One pass over a rally-length clip is minutes, not tens of minutes:
     ///   the coarse stage strides frames (`frame_stride`, 4 by default) at
     ///   `COARSE_INFERENCE_WIDTH` and only refines segments around candidate
@@ -52,13 +43,10 @@ final class RunSubmission: ObservableObject {
     ///   A poll bound below that would be the client contradicting itself.
     ///
     /// The asymmetry is what settles it. Tripping early is cheap and
-    /// recoverable: the run keeps going server-side, and the stereo fuse is
-    /// triggered by `run_tracking_job` completing
-    /// (`try_start_stereo_fuse`, its last statement) — never by this poll — so
-    /// a rally that outruns this bound still fuses and still lands in Matches.
-    /// The clip is kept too (see `LiveSessionModel.finishRecordingAndSubmit`).
-    /// Not tripping at all is a permanent app-level dead end. So this is set
-    /// generously and treated as a backstop, not a deadline anyone should meet.
+    /// recoverable: the run keeps going server-side and still lands in
+    /// Matches. Not tripping at all is a permanent app-level dead end. So this
+    /// is set generously and treated as a backstop, not a deadline anyone
+    /// should meet.
     init(api: APIClientProtocol = APIClient(), pollInterval: Duration = .seconds(1),
          pollTimeout: Duration = .seconds(20 * 60)) {
         self.api = api
@@ -71,9 +59,7 @@ final class RunSubmission: ObservableObject {
         return nil
     }
 
-    func submit(videoURL: URL, duration: Double,
-                sessionID: String? = nil, cameraRole: String? = nil,
-                peerVideoID: String? = nil, syncManifestJSON: String? = nil) async {
+    func submit(videoURL: URL, duration: Double) async {
         do {
             phase = .fetchingCalibration
             let calibration = try await api.latestCalibration()
@@ -88,9 +74,7 @@ final class RunSubmission: ObservableObject {
             var job = try await api.startTrack(
                 videoID: upload.videoID,
                 calibrationJSON: calibration.calibrationJSON,
-                duration: clipDuration,
-                sessionID: sessionID, cameraRole: cameraRole,
-                peerVideoID: peerVideoID, syncManifestJSON: syncManifestJSON)
+                duration: clipDuration)
 
             // Measured from the first poll, not from `submit`'s entry: the
             // upload above can legitimately take minutes on a 4K60 clip and
