@@ -47,6 +47,7 @@ from job_runner import (
     get_job,
     is_serve_hit,
     start_tracking_job,
+    update_job,
 )
 from inference_engine import DEFAULT_MODEL_ID, TRACKING_BACKEND
 
@@ -135,6 +136,7 @@ def public_job(job):
         "target_zones",
         "target_zones_by_player",
         "player_assignment",
+        "players_v1",
         "rallies",
         "floor_zones",
         "calibration_warning",
@@ -1429,6 +1431,45 @@ def save_ground_truth(run_id):
         json.dumps(payload, indent=2), encoding="utf-8"
     )
     return jsonify({"ok": True, "count": len(cleaned)})
+
+
+PLAYER_NAME_MAX_CHARS = 40
+
+
+@app.post("/api/runs/<run_id>/players")
+def save_player_names(run_id):
+    """Post-hoc naming: map anonymous tracks A/B to typed names. Pure run
+    metadata — analysis never re-runs (spec §4.5)."""
+    run_dir = RUNS_DIR / secure_filename(run_id)
+    if not run_dir.is_dir():
+        return error_response("Run was not found.", status=404)
+
+    data = request.get_json(silent=True) or {}
+    if any(key not in ("A", "B") for key in data):
+        return error_response("Only tracks A and B can be named.")
+
+    names = {}
+    for track in ("A", "B"):
+        value = data.get(track)
+        if value is None:
+            names[track] = None
+            continue
+        value = str(value).strip()
+        if not value or len(value) > PLAYER_NAME_MAX_CHARS:
+            return error_response(
+                f"Names must be 1-{PLAYER_NAME_MAX_CHARS} characters."
+            )
+        names[track] = value
+
+    (run_dir / "player_names.json").write_text(
+        json.dumps(names, indent=2), encoding="utf-8"
+    )
+    job = get_job(run_id)
+    if job and isinstance(job.get("players_v1"), dict):
+        players_v1 = dict(job["players_v1"])
+        players_v1["player_names"] = names
+        update_job(run_id, players_v1=players_v1)
+    return jsonify({"ok": True, "player_names": names})
 
 
 CORRECTION_SCHEMA_VERSION = "corrections-v2"
