@@ -356,17 +356,38 @@ def test_seq_frames_must_be_odd(tmp_path):
 
 
 def test_find_clip_videos_matches_by_ascii_slug(tmp_path):
+    # record["clip"] is the readable name load_export produces (spaces and
+    # all), never a pre-slugged value -- matching has to slug both sides.
     (tmp_path / "Bay Club Rally 1.mp4").write_bytes(b"")
-    records = [{"clip": prepare_ball_dataset.ascii_slug("Bay Club Rally 1")}]
+    records = [{"clip": "Bay Club Rally 1"}]
     found = prepare_ball_dataset.find_clip_videos(tmp_path, records)
-    assert set(found) == {records[0]["clip"]}
-    assert found[records[0]["clip"]] == tmp_path / "Bay Club Rally 1.mp4"
+    assert set(found) == {"Bay Club Rally 1"}
+    assert found["Bay Club Rally 1"] == tmp_path / "Bay Club Rally 1.mp4"
+
+
+def test_find_clip_videos_matches_non_ascii_clip_names(tmp_path):
+    # The production case ascii_slug itself documents: a YouTube title
+    # carrying a fullwidth bar. The video stem and the clip name are the
+    # same non-ASCII string; the match must survive slugging both.
+    (tmp_path / "Rally ｜ One.mp4").write_bytes(b"")
+    records = [{"clip": "Rally ｜ One"}]
+    found = prepare_ball_dataset.find_clip_videos(tmp_path, records)
+    assert found["Rally ｜ One"] == tmp_path / "Rally ｜ One.mp4"
 
 
 def test_find_clip_videos_missing_clip_is_fatal(tmp_path):
     records = [{"clip": "nonexistent-clip"}]
     with pytest.raises(SystemExit, match="nonexistent-clip"):
         prepare_ball_dataset.find_clip_videos(tmp_path, records)
+
+
+def test_find_clip_videos_missing_clips_dir_is_fatal(tmp_path):
+    # A raw FileNotFoundError from Path.iterdir() would be unreadable next
+    # to this module's other loud, path-naming SystemExits.
+    missing_dir = tmp_path / "does-not-exist"
+    with pytest.raises(SystemExit) as excinfo:
+        prepare_ball_dataset.find_clip_videos(missing_dir, [{"clip": "Bay"}])
+    assert str(missing_dir) in str(excinfo.value)
 
 
 def test_sequence_render_writes_three_aligned_crops(tmp_path, monkeypatch):
@@ -515,3 +536,48 @@ def test_alignment_failure_is_fatal(tmp_path, monkeypatch):
         render_split([record], plans_by_record, tmp_path, "train", 16, 95,
                      seq_frames=3, clip_videos={"Bay": Path("fake.mp4")},
                      clip_last_frame={"Bay": 20})
+
+
+def test_sequence_alignment_detects_and_applies_a_consistent_offset(tmp_path, monkeypatch):
+    # A clip-uniform off-by-one in the export (every label's export image
+    # actually holds the video's *next* frame) must be both detected AND
+    # propagated into which neighbour frames get decoded -- not just used to
+    # pass the alignment check and then discarded.
+    cv2 = pytest.importorskip("cv2")
+    np = pytest.importorskip("numpy")
+
+    # decoded index i holds the content of true frame (i - 1): content(t)
+    # therefore lives one index ahead of where a naive (offset=0) read would
+    # look for it.
+    def fake_decode(video_path, indices):
+        return {i: _solid_frame(np, (i - 1) * 20) for i in indices}
+    monkeypatch.setattr(prepare_ball_dataset, "decode_frames", fake_decode)
+
+    train_dir = tmp_path / "train"
+    train_dir.mkdir()
+    path = train_dir / "Bay_mov-0005_jpg.jpg"
+    # Export image for label 5 holds true frame 5's content (100) -- which
+    # decode_frames only serves back at index 6 (offset +1).
+    _imwrite_unicode(path, _solid_frame(np, 5 * 20),
+                     [int(cv2.IMWRITE_JPEG_QUALITY), 95])
+    record = {"path": path, "clip": "Bay", "frame": 5, "width": 64, "height": 64,
+              "balls": [{"bbox": [24, 24, 8, 8], "streak": None}]}
+    plans = plan_crops(record, crop=16, scale=1.0, rng=random.Random(0),
+                       positives=1, negatives=0, jitter=0.0, min_visible=0.5)
+    plans_by_record = {path: plans}
+
+    # Must not raise: a consistent offset across the clip is recoverable.
+    render_split([record], plans_by_record, tmp_path, "train", 16, 95,
+                 seq_frames=3, clip_videos={"Bay": Path("fake.mp4")},
+                 clip_last_frame={"Bay": 20})
+
+    anchor_name = crop_file_name(path.stem, 0)
+    stem = anchor_name[:-len(".jpg")]
+    tm1_name, tp1_name = f"{stem}.tm1.jpg", f"{stem}.tp1.jpg"
+
+    # true_t = 5 + 1 = 6, so the window is (5, 6, 7): tm1 = content(5) = 80,
+    # tp1 = content(7) = 120. An unshifted (offset=0) read would have used
+    # window (4, 5, 6) and written tm1 = content(3) = 60, tp1 = content(5)
+    # = 100 instead -- the corrected values below are not those.
+    assert _imread_unicode(train_dir / tm1_name).mean() == pytest.approx(80, abs=5)
+    assert _imread_unicode(train_dir / tp1_name).mean() == pytest.approx(120, abs=5)

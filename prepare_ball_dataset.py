@@ -403,25 +403,42 @@ def _imwrite_unicode(path, image, params=None):
 
 
 def find_clip_videos(clips_dir, records):
-    """{clip_slug: source video Path} for every clip a record needs.
+    """{record["clip"]: source video Path} for every clip a record needs.
 
-    Matched by `ascii_slug` on the video's stem against `record["clip"]`, the
-    same identity crop filenames already key off. Dies listing every missing
-    clip at once rather than one-by-one, so a --clips-dir pointed at the
-    wrong folder fails in a single readable message.
+    `record["clip"]` (from `clip_and_frame`) is the readable source name --
+    spaces, unicode, whatever the export carried -- not a slug. Matching it
+    against a video filename therefore has to slug *both* sides through
+    `ascii_slug` (the same transform crop filenames go through), not just
+    the video's: comparing a raw readable clip name against an already-
+    slugged video stem never matches, which would make every video look
+    missing. The returned dict is still keyed by the readable name, since
+    that's what callers already have on hand as `record["clip"]`.
+
+    Dies listing every missing clip by its readable name (so an operator can
+    act on it) at once rather than one-by-one, so a --clips-dir pointed at
+    the wrong folder fails in a single readable message. Also dies loudly if
+    --clips-dir itself doesn't exist or isn't a directory, rather than
+    leaking a raw FileNotFoundError.
     """
     clips_dir = Path(clips_dir)
+    try:
+        candidates = sorted(clips_dir.iterdir())
+    except FileNotFoundError:
+        raise SystemExit(f"--clips-dir {clips_dir} does not exist.")
+    except NotADirectoryError:
+        raise SystemExit(f"--clips-dir {clips_dir} is not a directory.")
+
     by_slug = {}
-    for path in sorted(clips_dir.iterdir()):
+    for path in candidates:
         if path.suffix in VIDEO_EXTENSIONS:
             by_slug.setdefault(ascii_slug(path.stem), path)
-    needed = {r["clip"] for r in records}
-    missing = sorted(needed - set(by_slug))
+    needed = sorted({r["clip"] for r in records})
+    missing = [clip for clip in needed if ascii_slug(clip) not in by_slug]
     if missing:
         raise SystemExit(
             f"--clips-dir {clips_dir} has no video for clip(s): {missing}. "
             f"Sequence crops need the source footage for neighbour frames.")
-    return {slug: by_slug[slug] for slug in needed}
+    return {clip: by_slug[ascii_slug(clip)] for clip in needed}
 
 
 def decode_frames(video_path, indices):
@@ -480,6 +497,14 @@ def _clamp_frame(index, last):
     `_centered_windows`, which pads a clip's edges by repeating the first/
     last frame rather than reaching outside the clip; using the same clamp
     here keeps training aligned with what the runtime model actually sees.
+
+    `last` (`clip_last_frame` in callers) is the *max labelled* frame in the
+    clip, not the video's real frame count -- the dataset side has no other
+    signal for where a clip ends. That means the highest-labelled record in
+    every clip gets a padded (repeated-last-frame) tp1 even when real footage
+    exists beyond it. Deliberate: a slightly duller tp1 for one record per
+    clip is a small, known density cost, versus needing extra video-metadata
+    plumbing just to avoid it.
     """
     index = max(index, 0)
     if last is not None:
