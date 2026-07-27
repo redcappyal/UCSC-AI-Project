@@ -252,9 +252,11 @@ def test_find_lines_recovers_the_front_wall_paint():
         start, end = truth[name]
         found = _nearest_line_to(lines, start, end)
         # The stripe is ~LINE_WIDTH_FT wide, so a line fitted to the whole
-        # stripe may sit up to half a width off the named datum. Task 5 pulls
-        # it onto the exact edge; here we only require the right stripe.
-        assert abs(found.y_at(start[0]) - start[1]) < 12, name
+        # stripe may sit up to half a width off the named datum. Half
+        # LINE_WIDTH_FT at this camera scale measures ~4.4 px, and the three
+        # named lines measure 3.1-4.1 px here -- Task 5 pulls it onto the
+        # exact edge; here we only require the right stripe.
+        assert abs(found.y_at(start[0]) - start[1]) < 6, name
 
 
 def test_edge_response_finds_the_wall_floor_seams():
@@ -267,6 +269,59 @@ def test_edge_response_finds_the_wall_floor_seams():
     start, end = truth["front_seam"]
     found = _nearest_line_to(lines, start, end)
     assert abs(found.y_at(start[0]) - start[1]) < 8
+
+
+def test_normal_form_agrees_for_a_near_vertical_line_regardless_of_traversal():
+    """Regression test for a wrap-discontinuity bug in `_normal_form`: it used
+    to wrap the ANGLE into (-90, 90] and then derive the perpendicular offset
+    from that wrapped angle via (-sin, cos) -- a direction that flips sign
+    right at the wrap. Two fragments of one near-vertical line, traversed in
+    opposite directions, land on opposite sides of it: one measures at
+    +89.97 degrees, the other at -89.97 degrees, and their offsets come out
+    negated (-499.94 vs +500.46, |diff| ~= 1000.4) even though both lie on
+    the same real line. The fix canonicalises the direction before taking
+    the normal, so both fragments share one normal and their offsets agree.
+    """
+    seg_a = (500.0, 100.0, 500.4, 800.0)  # tiny +0.4px tilt
+    seg_b = (500.4, 100.0, 500.0, 800.0)  # same real line, opposite traversal
+
+    angle_a, offset_a = court_detect._normal_form(seg_a)
+    angle_b, offset_b = court_detect._normal_form(seg_b)
+
+    assert court_detect._angle_delta(angle_a, angle_b) <= court_detect.MERGE_ANGLE_DEG
+    assert abs(offset_a - offset_b) <= court_detect.MERGE_OFFSET_PX
+
+
+def test_find_lines_merges_a_broken_near_vertical_line_into_one():
+    """find_lines-level regression test for the same wrap bug: the half-court
+    line and service-box side lines are near-vertical court features that get
+    interrupted by players and glare like any other line. Real HoughLinesP
+    output for a near-vertical line already exhibits the +90/-90 sign flip
+    between different fragments -- verified empirically here with nothing
+    more than a 4 px total tilt over a 700 px run -- so under the old
+    `_normal_form` this broken line under-merges into two DetectedLines
+    instead of one.
+    """
+    height, width = 900, 400
+    y_top, y_bottom = 100, 800
+    x_top, x_bottom = 200.0, 196.0
+    gaps = ((300, 340), (500, 540))
+
+    image = np.zeros((height, width), dtype=np.uint8)
+    for y in range(y_top, y_bottom):
+        if any(lo <= y < hi for lo, hi in gaps):
+            continue
+        fraction = (y - y_top) / (y_bottom - y_top)
+        x = int(round(x_top + (x_bottom - x_top) * fraction))
+        cv2.line(image, (x, y), (x, y), 255, thickness=1)
+
+    lines = court_detect.find_lines(image, min_length_px=width * 0.10)
+
+    assert len(lines) == 1
+    (line,) = lines
+    # Spans most of the drawn extent (measured ~678 px of the 700 px run)
+    # despite the two gaps, not just one fragment's worth (~160 px).
+    assert abs(line.y1 - line.y2) > 600
 
 
 def test_detected_line_intersect_returns_none_for_parallels():

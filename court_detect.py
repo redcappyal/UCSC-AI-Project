@@ -159,15 +159,24 @@ def _angle_delta(first, second):
 
 
 def _normal_form(segment):
-    """(orientation, signed perpendicular offset from the origin)."""
+    """(orientation, signed perpendicular offset from the origin).
+
+    The direction is canonicalised into the upper half-plane before the normal
+    is taken. Wrapping the ANGLE alone is not enough: two fragments of one
+    near-vertical line can be measured at +89.97 and -89.97 degrees, whose
+    normals point in opposite directions, so their offsets come out negated
+    (-500 vs +500) and the merge rejects them as 1000 px apart. Canonicalising
+    the direction keeps one line's fragments sharing one normal.
+    """
     x1, y1, x2, y2 = segment
-    angle = math.degrees(math.atan2(y2 - y1, x2 - x1))
-    if angle > 90:
-        angle -= 180
-    if angle <= -90:
-        angle += 180
-    radians = math.radians(angle)
-    return angle, -math.sin(radians) * x1 + math.cos(radians) * y1
+    dx, dy = x2 - x1, y2 - y1
+    length = math.hypot(dx, dy)
+    if length < 1e-9:
+        return 0.0, float(y1)
+    ux, uy = dx / length, dy / length
+    if uy < 0 or (uy == 0.0 and ux < 0):
+        ux, uy = -ux, -uy
+    return math.degrees(math.atan2(uy, ux)), -uy * x1 + ux * y1
 
 
 def _fit_group(segments):
