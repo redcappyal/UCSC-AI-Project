@@ -16,6 +16,7 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+import court_detect
 from court_model import LEFT_BOX_INNER_CENTER_X_FT, LINE_WIDTH_FT
 from synthetic_court import FLOOR_BGR, LINE_BGR, WALL_BGR, court_camera, render_court
 
@@ -84,3 +85,60 @@ def test_service_box_lines_straddle_their_centreline_not_their_edge():
     # once fixed.
     assert np.allclose(
         pixel_at(LEFT_BOX_INNER_CENTER_X_FT + quarter_width), LINE_BGR, atol=2)
+
+
+def _frames_with_moving_player(base, count=5):
+    """Static court, one dark rectangle that moves — the real occlusion case."""
+    frames = []
+    for index in range(count):
+        frame = base.copy()
+        left = 300 + index * 180
+        frame[500:900, left:left + 150] = (30, 30, 35)
+        frames.append(frame)
+    return frames
+
+
+def test_median_frame_erases_a_moving_player():
+    camera = court_camera()
+    base, _ = render_court(camera)
+    frames = _frames_with_moving_player(base)
+    median, moved = court_detect.median_frame(frames)
+
+    assert moved is False
+
+    # A bare "brightness floor" check over this crop is not specific enough:
+    # LINE_BGR = (90, 45, 30) paint sits in this region and its minimum
+    # channel (30) is identical to the player patch's minimum channel (30 in
+    # (30, 30, 35)), so `.min() > threshold` would fail on a clean render for
+    # a reason that has nothing to do with the player. Instead compare the
+    # swept crop directly to the same crop of the untouched, player-free
+    # render (deterministic: render_court has no randomness at noise_sigma=0).
+    # Each column is covered by the player in exactly one of the five
+    # non-overlapping sweeps, so the per-pixel temporal median always picks
+    # one of the four untouched samples and should reproduce the clean crop
+    # exactly.
+    crop_median = median[500:900, 300:1350]
+    crop_clean = base[500:900, 300:1350]
+    assert np.array_equal(crop_median, crop_clean)
+
+
+def test_median_frame_flags_a_panning_camera():
+    camera = court_camera()
+
+    # A bare noise-free render will not do here: it is two huge flat-colour
+    # slabs (wall, floor) plus a few thin lines, and most full-width rows of
+    # the wall slab are one uniform colour end to end. np.roll along either
+    # axis maps those uniform runs onto themselves, so no amount of shift
+    # ever moves more than ~15% of pixels past MOTION_DELTA -- the fixture
+    # would fail to prove a real pan regardless of the implementation under
+    # test. noise_sigma gives the render per-pixel texture (a stand-in for
+    # real sensor/lens noise), which a shift genuinely misaligns, so the
+    # fraction of changed pixels reflects the roll instead of the render's
+    # artificial flatness. Confirmed stable across noise seeds (~0.33 vs the
+    # 0.25 threshold, independent of which seed generates the pattern).
+    base, _ = render_court(camera, noise_sigma=40.0, seed=0)
+    frames = [np.roll(base, shift * 90, axis=1) for shift in range(5)]
+
+    _, moved = court_detect.median_frame(frames)
+
+    assert moved is True
