@@ -1,0 +1,393 @@
+# WASB fine-tune: data → adapter → train → smoke → export
+
+Runbook for fine-tuning a WASB-style (HRNet, MIMO heatmap) ball detector on
+squash footage, replacing the single-frame YOLOX detector's blind spot at
+direction reversals (wall/floor contacts) with a 3-frame temporal input. See
+`ios/MODEL.md` for the YOLOX path this supplements, not replaces yet — YOLOX
+stays the shipped detector until this clears the recall gate in
+`eval_set/RESULTS-*.md` (Task 8).
+
+**Everything in this document runs on the CUDA training box**
+(`C:\Users\alann\Code\ball-detector-train\.venv`), except §4a, which runs on
+the Mac in this repo. WASB-SBDT is cloned *inside* the training repo and never
+becomes a runtime dependency of this repo — same rule as YOLOX
+(`ios/MODEL.md` §0), for the same reason: this repo's serving code
+(`ball_model.py`, `ball_detector.py`) loads a traced TorchScript artifact and
+needs only `torch`, never the training framework.
+
+Facts below are marked verified (checked against the WASB-SBDT source at the
+pinned commit, 2026-07-27) or `TODO(verify on clone)` where the source didn't
+settle it. Nothing here is a guess presented as fact.
+
+---
+
+## 0. The one finding that changes the shape of this runbook
+
+**WASB-SBDT's own training path is disabled in the public repo.** `README`'s
+`GET_STARTED.md` says, verbatim, under "Training": `TBA`. Checked why: in
+`src/runners/__init__.py`, the `Trainer` import and its `'train'` registry
+entry are commented out —
+
+```python
+# from .train_and_test import Trainer
+...
+__runner_factory = {
+    #'train': Trainer,
+    'eval': VideosInferenceRunner,
+    'extract_frame': ExtractFrameRunner,
+}
+```
+
+The `Trainer` class itself (`src/runners/train_and_test.py`) still exists and
+is basically complete, but it hard-fails if `runner.test.run` is true
+(`assert 0, 'not yet (2023.4.23)'`) and calls `test_epoch(0, model,
+test_loader, ...)` in a code path that references `model`/`test_loader`
+without ever binding them (should be `self._model`/`self._test_loader`) — a
+live bug in code the authors never finished wiring up. There's also no
+`configs/runner/train.yaml` and no dataset config for anything but the five
+shipped sports, so getting `Trainer` running through Hydra means writing a
+runner config, fixing the bug above, and registering a `squash` dataset the
+same way `datasets/tennis.py` etc. do.
+
+**Decision: don't resurrect it.** Fighting an unmaintained, half-wired Hydra
+runner buys nothing — we don't need Hydra's multi-sport config tree, only
+three things from the clone:
+
+1. `models/hrnet.py` — the `HRNet` class (the architecture).
+2. `losses/heatmap.py` + `losses/wbce.py` (its default sub-loss) — the loss.
+3. `pretrained_weights/wasb_*.pth.tar` — the checkpoint.
+
+Everything else (§3) is a plain PyTorch training loop written against those
+three imports, fed by `wasb_crops_dataset.py` (§2). This is the same shape as
+this repo's own YOLOX integration boundary (`export_ball_model.py` imports
+`yolox` only in the training env, never at serving time) — here we go one
+step further and don't even import WASB-SBDT's own trainer, only its model
+and loss modules.
+
+---
+
+## 1. Setup
+
+**Clone at a pinned commit** (main HEAD as of 2026-07-27; re-verify this is
+still HEAD before cloning — the repo is low-traffic, 6 commits total, last
+pushed 2023-11-23, so drift is unlikely but check):
+
+```
+git clone https://github.com/nttcom/WASB-SBDT
+cd WASB-SBDT
+git checkout 923462cacdeb3353b84ddebdedb3f4b7a8553b0f
+```
+
+MIT license (`LICENSE.md`) — same posture as YOLOX's Apache-2.0, fine to
+depend on for training-only tooling.
+
+**Dependencies — do not follow the repo's `Dockerfile` pins.** It specifies
+`torch==1.11.0+cu113` (2021-era, base image `nvcr.io/nvidia/tensorrt:21.06-py3`,
+Python 3.8) and `hydra-core==1.2.0`. This is the exact problem `ios/MODEL.md`
+§2 documents for YOLOX on the RTX 5060: pre-cu128 wheels ship no sm_120
+kernels, so `torch==1.11.0+cu113` will not run on this box at all. Since §0
+means we don't use Hydra or most of the repo's own plumbing, `hydra-core`
+isn't needed either. Install into the existing `.venv`
+(`C:\Users\alann\Code\ball-detector-train\.venv`, already has a working
+cu128 torch per `ios/MODEL.md`) — no new environment needed. `TODO(verify on
+clone)`: confirm `models/hrnet.py` and `losses/*.py` import cleanly with only
+`torch` + `torch.nn` (a skim of `hrnet.py` shows no Hydra/OmegaConf
+dependency at the class level — the `cfg` argument is a plain dict-like — but
+confirm no stray top-level `import hydra` in files you actually touch).
+
+**Pretrained checkpoints.** Tennis and badminton are the closest regimes to
+squash: both are small-fast-ball racquet sports shot at broadcast-ish scale,
+versus soccer/volleyball/basketball's larger, slower balls. From
+`MODEL_ZOO.md` / `setup_scripts/setup_weights.sh` (verified — these are the
+repo's actual Google Drive file IDs, not invented):
+
+```
+pip install gdown   # the repo's own `wget https://drive.google.com/uc?id=...`
+                     # trips Google Drive's virus-scan interstitial on files
+                     # this size; gdown handles it. TODO(verify on clone):
+                     # confirm gdown still pulls the real file, not the
+                     # warning page, for these two IDs.
+mkdir pretrained_weights
+gdown 14AeyIOCQ2UaQmbZLNQJa1H_eSwxUXk7z -O pretrained_weights/wasb_tennis_best.pth.tar
+gdown 17Ac0pO5oryh1JwgwTFQTjOKHY3umbDQu -O pretrained_weights/wasb_badminton_best.pth.tar
+```
+
+Despite the `.tar` extension these are plain `torch.save` objects, not literal
+tar archives (verified: `utils/utils.py:save_checkpoint` is `torch.save(state,
+model_path)`). The state dict is under the key `'model_state_dict'`, and the
+same key is what `detectors/detector.py` reads back
+(`checkpoint['model_state_dict']`) — this is the load key to use in §3, and
+it's consistent between how the repo trains and how the repo itself loads a
+checkpoint, which is the best evidence available that the released
+`wasb_tennis_best.pth.tar` follows this format too. `TODO(verify on clone)`:
+confirm by actually loading one and checking
+`set(checkpoint.keys())`.
+
+---
+
+## 2. Dataset adapter contract (`wasb_crops_dataset.py`, lives in the training repo)
+
+This script does not exist yet — this section is its contract, to be
+implemented against `ball-crops-v2` output from `prepare_ball_dataset.py`
+(this repo, already merged). It is *not* one of the five dataset classes in
+WASB-SBDT's own `src/datasets/` (those are wired to Hydra configs we're not
+using per §0) — it's a plain `torch.utils.data.Dataset` written from scratch
+against the COCO layout `prepare_ball_dataset.py` already emits.
+
+### 2.1 What one sample is
+
+Each sample is one anchor annotation's 3-frame sequence, oldest-first:
+
+- **Files**: for anchor image `<stem>.jpg` with a `"sequence"` field on its
+  COCO image entry, load `<stem>.tm1.jpg`, `<stem>.jpg`, `<stem>.tp1.jpg` —
+  in that order (`sequence: [tm1, anchor, tp1]`, verified in
+  `prepare_ball_dataset.py` around `render_split`/`sequence_names`).
+- **Pixel format**: BGR (`cv2.imread` default), raw `0–255` float32, **no
+  mean/std normalization, no channel swap** — matches the convention
+  `HeatmapRunner` in this repo's `ball_model.py` documents for serving
+  (`"No mean/std, consistent with TorchScriptRunner's BGR-raw convention"`).
+  Training and serving must agree on this or the fine-tune learns a
+  distribution the traced model never sees.
+- **Concatenation**: stack the 3 frames along the channel axis, oldest first
+  → 9 channels total (`[tm1_B, tm1_G, tm1_R, t_B, t_G, t_R, tp1_B, tp1_G,
+  tp1_R]`). This is the same ordering `detect_frame_stack` in
+  `ball_detector.py` builds at serving time
+  (`np.concatenate([...frames], axis=2)` over an oldest-first `frames`
+  list) and the ordering `HRNet.__init__` expects
+  (`conv1 = nn.Conv2d(3*frames_in, ...)`, verified in `models/hrnet.py` — with
+  `frames_in=3` this is already a 9-channel stem, so **no conv-surgery is
+  needed to adapt the pretrained stem** — confirms the brief's claim).
+
+### 2.2 Targets
+
+One Gaussian heatmap per input frame (3 target channels, matching the MIMO
+output `[frames_out=3, Hh, Wh]`), at `heatmap_stride` resolution, σ = 2.0
+heatmap px. (WASB's own default is σ = 2.5, from
+`configs/dataloader/default.yaml: heatmap.sigmas: [2.5]` — 2.0 is this
+project's deliberate choice for a ~7–24 px ball, tighter than WASB's broadcast
+targets; if you change `heatmap_stride` from whatever the exported config
+ends up at, re-derive whether 2.0 heatmap-px is still an appropriate fraction
+of the ball's size.)
+
+**Only the middle frame `t` has a real label.** The three target channels are
+built as:
+
+| frame | has a real label? | target |
+|---|---|---|
+| `t` (middle) | always | Gaussian at the true center |
+| `t-1`, `t+1`, from an **edge-padded** sequence (repeated first/last frame — `prepare_ball_dataset.py` pads clip edges by repeating) | no (it's a duplicate of the anchor frame) | Gaussian at the **anchor's** center — the neighbor pixels are literally the anchor frame, so its ball is really there too |
+| `t-1`, `t+1`, from **real, distinct** footage | no (never labeled) | **masked out of the loss**, not an empty heatmap |
+| any frame of a **negative** crop (no ball anywhere near this window) | — | empty heatmap on **all three** channels |
+
+The mask distinction matters: an *unlabeled* neighbor is not evidence the ball
+is absent there — for a real (non-padded) `t-1`/`t+1` we genuinely don't know,
+because `prepare_ball_dataset.py` only carries annotations for the labeled
+frame. Training against an empty target for those frames would actively
+teach "no ball, even when there might be one" — the exact failure mode
+`ios/MODEL.md` §1 documents for the old motion-blur augmentation ("erased the
+ball ... while leaving the label attached"). Implement the mask as a per-frame
+boolean fed into the loss (zero out that frame's contribution), not as an
+empty target.
+
+### 2.3 Hard negatives are mandatory, not a stretch goal
+
+Wall and floor scuff marks are YOLOX's dominant false-positive class today
+(`ios/MODEL.md` §1: "Squash walls are covered in ball marks"). The whole
+reason to spend a temporal channel is to teach the network that a *static*
+mark, present identically in all 3 frames, is not the ball — but that lesson
+only transfers if training actually shows static ball-lookalikes labeled
+empty. `prepare_ball_dataset.py`'s existing `--negatives-per-frame` only
+samples random ball-free windows near labeled frames; it has no concept of
+"this window is where the current detector false-fires" or "this window is a
+wall mark a player is about to walk away from." `wasb_crops_dataset.py` (or a
+preprocessing pass ahead of it) needs to mine two specific negative sources,
+both windows with **empty heatmap targets on all 3 channels**:
+
+- **(a) RF-DETR false-fire locations on eval clips.** Run `local_model_eval.py`
+  (this repo) over the eval clips, diff its predictions against the labeled
+  ground truth, and keep detections with no matching annotation nearby — those
+  pixel locations are exactly the marks the current detector already
+  mistakes for a ball. There is no packaged script that does this diff today;
+  it's new work for whoever builds `wasb_crops_dataset.py`. `TODO(verify on
+  clone)`: confirm `local_model_eval.py`'s CSV output carries enough
+  per-frame (x, y, confidence) detail to do this diff directly, or whether it
+  needs a small companion script.
+- **(b) Player-adjacent wall regions**, specifically the revealed-background
+  ghosting case: a wall mark that looks like it "appears" as the player
+  walks off it, because the region was occluded in the previous frame(s) and
+  isn't in this one — that's real motion energy at the mark's location, which
+  is exactly the pattern that could fool a temporal-difference-sensitive
+  network if it's never shown as a negative. Mine crop windows centered on
+  wall regions adjacent to player bounding boxes/silhouettes across a few
+  consecutive frames of eval footage.
+
+Both sources need to appear in training with empty heatmap targets on all
+three channels (they are not "no ball in the middle frame" cases with a
+label elsewhere — there's no ball in the window at all).
+
+---
+
+## 3. Fine-tune recipe
+
+- **Init from the tennis checkpoint** (`wasb_tennis_best.pth.tar`, §1) via
+  `model.load_state_dict(torch.load(ckpt_path)['model_state_dict'])`. If the
+  key errors, fall back to inspecting the raw dict — see the `TODO` in §1.
+- **Input size 416×416**, not WASB's native `288×512` (`configs/model/wasb.yaml`,
+  verified — a 16:9-ish broadcast frame size, non-square). Change this to
+  match the crop tile `prepare_ball_dataset.py --crop 416` (default) produces.
+  This is a pure size change, not a code change: `HRNet.forward` is fully
+  convolutional (stem → 4 parallel-branch HRNet stages → final 1×1 conv per
+  scale, no `Linear`/flatten anywhere — verified by reading the forward
+  method) so the pretrained weights transfer to any input H×W; only the
+  stem's `Conv2d` stride and the config's `inp_height`/`inp_width`/
+  `out_height`/`out_width` need updating.
+- **Output stride**: WASB's shipped config has `STEM.STRIDES: [1,1]` and
+  `DECONV.NUM_DECONVS: 0`, which — verified by reading `HRNet.forward`, which
+  emits `y_list[scale]` straight from the last HRNet stage with no
+  downsampling or upsampling op in between — means the *default* config's
+  heatmap output is **stride 1** (same resolution as the input: `out_height
+  == inp_height`, `out_width == inp_width` in `configs/model/wasb.yaml`,
+  consistent with stride 1). If you keep this config as-is, `heatmap_stride`
+  for the exported manifest (Task 7) is `1`, not the `4` a typical heatmap
+  detector uses — don't assume the conventional value. Whatever the actual
+  trained config ends up being, derive `heatmap_stride` from the real output
+  tensor shape at export time (`input_H / output_H`), never hardcode it.
+- **Loss**: `losses/heatmap.py`'s `HeatmapLoss` wrapping `losses/wbce.py`'s
+  `WBCELoss` (`sub_name: wbce`) — this is the loss WASB's own model config
+  pairs with in the shipped `hm_wbce.yaml`, i.e. the setup its released
+  weights were actually optimized under. It's weighted BCE over
+  `sigmoid(logits)` against the Gaussian targets from §2.2; masked frames
+  (§2.2's `t±1` unlabeled case) must be excluded from the loss sum, not just
+  zeroed in the target, or the network is still penalized for the wrong
+  answer on channels we don't have ground truth for.
+- **Freeze nothing.** The training set is small (per `ios/MODEL.md` §1's
+  experience with a similarly-scoped squash dataset: 66 independent moments
+  informed the ~1k-annotation YOLOX set) but the domain gap between broadcast
+  tennis/badminton and a fin-mounted squash court is real enough that a
+  frozen backbone likely can't close it. Fine-tune the whole network.
+- **Early stop on val heatmap F1** (peak-detection precision/recall against
+  the val split's labeled centers, at the same `conf_threshold` the export
+  will use), not on the loss curve. `ios/MODEL.md`'s YOLOX run is the cautionary
+  precedent: val AP peaked at epoch 100 of 300 and 200 more epochs bought
+  nothing measurable — expect the same shape here given a comparably small
+  dataset, and don't burn box time past the point val stops improving.
+
+---
+
+## 4. Commands
+
+### 4a. Mac: regenerate crops with sequences
+
+Real flags, checked against `prepare_ball_dataset.py`'s `parse_args()` (all
+five below exist verbatim; `--seq-frames` and `--clips-dir` are the ones this
+branch added — `--seq-frames` must be odd and requires `--clips-dir` or the
+script exits with `SystemExit`):
+
+```bash
+.venv/bin/python prepare_ball_dataset.py \
+    --source "~/Desktop/Annotated Data/SquashAI.coco" \
+    --clips-dir <dir-with-source-clips> \
+    --seq-frames 3 \
+    --out ball-crops-seq-v1 \
+    --val-clips "ModelTrainTest3" \
+    --test-clips "Bay Club Clip Compilation 1"
+```
+
+Use the **same val/test clip split** as the last single-frame crop build
+(`ios/MODEL.md` §1's `ModelTrainTest3` / `Bay Club Clip Compilation 1` shown
+above as the precedent) — a different split makes any F1 comparison between
+this model and the YOLOX baseline meaningless. Output `manifest.json` will
+carry `"schema_version": "ball-crops-v2"` once any image has a `"sequence"`
+field (verified: `SCHEMA_VERSION_SEQ` is set exactly when `seq_frames > 1`).
+
+### 4b. Box: environment + checkpoint (see §1 for the reasoning)
+
+```
+git clone https://github.com/nttcom/WASB-SBDT
+cd WASB-SBDT && git checkout 923462cacdeb3353b84ddebdedb3f4b7a8553b0f
+pip install gdown
+mkdir pretrained_weights
+gdown 14AeyIOCQ2UaQmbZLNQJa1H_eSwxUXk7z -O pretrained_weights/wasb_tennis_best.pth.tar
+```
+
+### 4c. Box: training
+
+There is no ready-made training entry point (§0) — `train_wasb.py` is new
+code to write in `C:\Users\alann\Code\ball-detector-train`, alongside
+`wasb_crops_dataset.py` (§2), importing only `WASB-SBDT/src/models/hrnet.py`
+and `WASB-SBDT/src/losses/`. Shape it around this contract:
+
+```
+.venv\Scripts\python train_wasb.py ^
+    --data ball-crops-seq-v1 ^
+    --init-checkpoint WASB-SBDT\pretrained_weights\wasb_tennis_best.pth.tar ^
+    --input-size 416 ^
+    --sigma 2.0 ^
+    --out wasb_runs\crosscourt-ball-wasb-v1
+```
+
+Flag names above are illustrative, not a fixed CLI this doc mandates — match
+whatever `wasb_crops_dataset.py` and `train_wasb.py` actually expose, but
+keep the recipe in §3 (init checkpoint, input size, loss, no freezing, F1
+early stop) as the acceptance contract regardless of exact flag spelling.
+
+---
+
+## 5. Smoke gates before a full run
+
+Run these in order; each is cheap and each catches a different class of
+silent failure. Don't start a multi-hour run past a failing gate.
+
+**(a) One-batch overfit.** Take a single batch (a handful of positive samples
+is enough), train on only that batch, and confirm loss drops to near-zero in
+under 200 steps. If it doesn't, the model/loss/optimizer wiring is broken
+before data quality is even a variable.
+
+**(b) 16-sample val contact sheet.** Run the model over 16 val samples,
+render predicted heatmaps as an image grid, and eyeball that the peak sits on
+the ball in each. This is the same "looks locked-on" bar `ios/MODEL.md` §3
+uses for the YOLOX acceptance gate — a visual check, not a substitute for the
+numeric eval in Task 8.
+
+**(c) Channel-order round-trip.** Construct (or find) a sequence where the
+ball is visible only in the middle frame `t` — absent or clearly at a
+different position in `t-1`/`t+1`. Run it through the model and confirm the
+**middle** output channel (`output[..., 1, :, :]` for a 3-channel MIMO
+output) responds and the outer two do not. If an outer channel fires instead,
+the oldest-first concatenation order is inconsistent between training and
+this check (or between training and serving — cross-check against
+`detect_frame_stack`'s ordering in `ball_detector.py`), and every downstream
+result is silently mislabeled.
+
+**(d) Static-clutter check.** Build a sequence of 3 *identical* frames (a
+literal repeat, simulating a static wall mark under zero motion) containing a
+ball-sized dark mark and nothing else. Run it through the model and confirm
+the **middle** heatmap is near-empty — this is the exact case the temporal
+input exists to suppress, and if the network still fires on it, the hard-negative
+mining in §2.3 hasn't taught it anything yet (check that those negatives
+actually made it into this training run's data, not just into the crop
+directory).
+
+---
+
+## 6. Export (Task 7, not this document)
+
+Once a checkpoint passes §5 and clears whatever val F1 bar Task 8's baseline
+sets, `export_wasb_model.py` (new script, not yet written) traces it to
+TorchScript and writes a `ball-model-v2` manifest beside it — mirroring
+`export_ball_model.py` for YOLOX (`ios/MODEL.md` §2b). Fields this manifest
+must carry, per `ball_model.py`'s `ModelManifest` (already merged, already
+enforces these at load time):
+
+- `schema_version`: `"ball-model-v2"`
+- `input_size`: `[416, 416]`
+- `frames_per_input`: `3` (must be odd — `ball_model.py` raises otherwise)
+- `decode`: `"heatmap_peak"`
+- `heatmap_stride`: derived from the trained model's actual output shape
+  (§3 — do not assume 1 or 4, measure it)
+- `nominal_ball_px`: sizes the reported detection box (see
+  `ball_model.py:HeatmapRunner._decode_output`)
+- `conf_threshold`: `0.1`
+
+`BALL_MODEL_DIR` (env var, `ball_model.py`) then points the Flask pipeline at
+the exported directory the same way it does for the YOLOX artifact today.
