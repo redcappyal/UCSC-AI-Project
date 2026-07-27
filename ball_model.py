@@ -14,6 +14,8 @@ from dataclasses import dataclass
 from pathlib import Path
 
 SCHEMA_VERSION = "ball-model-v1"
+SCHEMA_VERSION_V2 = "ball-model-v2"
+SCHEMA_VERSIONS = (SCHEMA_VERSION, SCHEMA_VERSION_V2)
 DEFAULT_MODEL_DIR = Path(__file__).resolve().parent / "models" / "crosscourt-ball-416-v1"
 _EXPORT_HINT = (
     "Produce it in the training environment with export_ball_model.py "
@@ -42,6 +44,9 @@ class ModelManifest:
     val_ap50_95: float
     notes: str
     model_dir: Path
+    frames_per_input: int = 1
+    heatmap_stride: int = 0
+    nominal_ball_px: float = 0.0
 
     @property
     def artifact_path(self):
@@ -70,10 +75,10 @@ def load_manifest(model_dir=None):
         raise ValueError(f"Malformed manifest at {manifest_path}: {exc}") from exc
 
     schema = raw.get("schema_version")
-    if schema != SCHEMA_VERSION:
+    if schema not in SCHEMA_VERSIONS:
         raise ValueError(
             f"Unsupported manifest schema_version {schema!r} at {manifest_path}; "
-            f"this build understands {SCHEMA_VERSION!r}. Fields are not guessed.")
+            f"this build understands {SCHEMA_VERSIONS!r}. Fields are not guessed.")
 
     artifact = model_dir / "model.torchscript"
     if not artifact.is_file():
@@ -95,6 +100,27 @@ def load_manifest(model_dir=None):
         raise ValueError(
             f"tile_overlap_px must be in [0, {min(input_size)}), got {overlap}")
 
+    if schema == SCHEMA_VERSION_V2:
+        frames_per_input = int(raw["frames_per_input"])   # KeyError on absence is the contract
+        heatmap_stride = int(raw["heatmap_stride"])
+        nominal_ball_px = float(raw["nominal_ball_px"])
+        if frames_per_input < 1:
+            raise ValueError(f"frames_per_input must be >= 1, got {frames_per_input}")
+        if frames_per_input % 2 == 0:
+            raise ValueError(
+                f"frames_per_input must be odd for heatmap_peak decode (the "
+                f"detected frame sits in the middle of a centered window), "
+                f"got {frames_per_input}")
+        if heatmap_stride < 1:
+            raise ValueError(f"heatmap_stride must be >= 1, got {heatmap_stride}")
+        if nominal_ball_px <= 0:
+            raise ValueError(f"nominal_ball_px must be > 0, got {nominal_ball_px}")
+        if str(raw["decode"]) != "heatmap_peak":
+            raise ValueError(
+                f"ball-model-v2 only supports decode='heatmap_peak', got {raw['decode']!r}")
+    else:
+        frames_per_input, heatmap_stride, nominal_ball_px = 1, 0, 0.0
+
     manifest = ModelManifest(
         schema_version=schema,
         name=str(raw["name"]),
@@ -112,6 +138,9 @@ def load_manifest(model_dir=None):
         val_ap50_95=float(raw.get("val_ap50_95", 0.0)),
         notes=str(raw.get("notes", "")),
         model_dir=model_dir,
+        frames_per_input=frames_per_input,
+        heatmap_stride=heatmap_stride,
+        nominal_ball_px=nominal_ball_px,
     )
     _MANIFEST_CACHE[model_dir] = manifest
     return manifest

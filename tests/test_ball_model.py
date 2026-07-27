@@ -112,6 +112,107 @@ def test_load_manifest_raises_on_top_level_json_list(tmp_path):
         ball_model.load_manifest(tmp_path)
 
 
+def test_v2_manifest_loads_temporal_fields(tmp_path):
+    model_dir = _write_model(
+        tmp_path,
+        schema_version="ball-model-v2",
+        decode="heatmap_peak",
+        frames_per_input=3,
+        heatmap_stride=2,
+        nominal_ball_px=12.0,
+    )
+    manifest = ball_model.load_manifest(model_dir)
+    assert manifest.frames_per_input == 3
+    assert manifest.decode == "heatmap_peak"
+    assert manifest.heatmap_stride == 2
+    assert manifest.nominal_ball_px == 12.0
+
+
+def test_v1_manifest_reports_single_frame_defaults(tmp_path):
+    manifest = ball_model.load_manifest(_write_model(tmp_path))
+    assert manifest.frames_per_input == 1
+    assert manifest.decode == "in_graph"
+    assert manifest.heatmap_stride == 0
+    assert manifest.nominal_ball_px == 0.0
+
+
+def test_v2_manifest_rejects_missing_frames_per_input(tmp_path):
+    model_dir = _write_model(
+        tmp_path,
+        schema_version="ball-model-v2",
+        decode="heatmap_peak",
+        heatmap_stride=2,
+        nominal_ball_px=12.0,
+    )
+    with pytest.raises(KeyError):
+        ball_model.load_manifest(model_dir)
+
+
+def test_v2_manifest_rejects_nonpositive_heatmap_stride(tmp_path):
+    model_dir = _write_model(
+        tmp_path,
+        schema_version="ball-model-v2",
+        decode="heatmap_peak",
+        frames_per_input=3,
+        heatmap_stride=0,
+        nominal_ball_px=12.0,
+    )
+    with pytest.raises(ValueError, match="heatmap_stride"):
+        ball_model.load_manifest(model_dir)
+
+
+def test_v2_manifest_rejects_zero_frames_per_input(tmp_path):
+    model_dir = _write_model(
+        tmp_path,
+        schema_version="ball-model-v2",
+        decode="heatmap_peak",
+        frames_per_input=0,
+        heatmap_stride=2,
+        nominal_ball_px=12.0,
+    )
+    with pytest.raises(ValueError, match="frames_per_input"):
+        ball_model.load_manifest(model_dir)
+
+
+def test_v2_manifest_rejects_even_frames_per_input(tmp_path):
+    model_dir = _write_model(
+        tmp_path,
+        schema_version="ball-model-v2",
+        decode="heatmap_peak",
+        frames_per_input=2,
+        heatmap_stride=2,
+        nominal_ball_px=12.0,
+    )
+    with pytest.raises(ValueError, match="odd"):
+        ball_model.load_manifest(model_dir)
+
+
+def test_v2_manifest_rejects_nonpositive_nominal_ball_px(tmp_path):
+    model_dir = _write_model(
+        tmp_path,
+        schema_version="ball-model-v2",
+        decode="heatmap_peak",
+        frames_per_input=3,
+        heatmap_stride=2,
+        nominal_ball_px=0.0,
+    )
+    with pytest.raises(ValueError, match="nominal_ball_px"):
+        ball_model.load_manifest(model_dir)
+
+
+def test_v2_manifest_rejects_non_heatmap_peak_decode(tmp_path):
+    model_dir = _write_model(
+        tmp_path,
+        schema_version="ball-model-v2",
+        decode="in_graph",
+        frames_per_input=3,
+        heatmap_stride=2,
+        nominal_ball_px=12.0,
+    )
+    with pytest.raises(ValueError, match="heatmap_peak"):
+        ball_model.load_manifest(model_dir)
+
+
 def test_model_manifest_artifact_path(tmp_path):
     """ModelManifest.artifact_path must resolve to model.torchscript inside model_dir."""
     model_dir = _write_model(tmp_path)
