@@ -483,7 +483,7 @@ def test_camera_model_endpoint_reports_frame_size():
     }).get_json()
     assert body["ok"] is True and body["status"] == "ok"
     # Both on the response (clients reason about it without decoding the
-    # model) and inside the model itself (it travels peer-to-peer).
+    # model) and inside the model itself (it travels with the model).
     assert (body["frame_width"], body["frame_height"]) == (1080.0, 1920.0)
     assert body["camera_model"]["frame_width"] == 1080.0
     assert body["camera_model"]["frame_height"] == 1920.0

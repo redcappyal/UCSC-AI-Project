@@ -62,18 +62,16 @@ iosWeb --> flask : loads index.html
 iosNative --> flask : POST /api/upload, /api/track\n<size:10>(APIClient.swift)</size>
 
 note right of iosNative #FFFDF0
-  <b>The live call loop never touches the server.</b>
-  Two phones running this same app pair over
-  BLE / Wi-Fi P2P, share a timebase via ClockSync,
-  and call the ball on device during the rally —
-  RecordModel, StereoEngine and PairingModel hold
-  zero references to APIClient.
+  <b>The native app is a recorder, not a second pipeline.</b>
+  On-device Core ML drives the preview overlay only.
+  Every call the user sees comes back from the same
+  Flask pipeline the web app uses: APIClient calls
+  api/calibration/latest, api/upload, api/track and
+  api/track/status. See diagram 6.
 
-  The server is still involved <i>around</i> the rally:
-  APIClient calls api/calibration/latest,
-  <b>api/camera-model</b> (the camera pose solve is
-  server-side even for the native app), api/upload,
-  api/track and api/track/status. See diagram 6.
+  The on-device <i>calling</i> loop (two phones, stereo
+  triangulation mid-rally) was archived 2026-07-27 —
+  see archive/stereo/README.md.
 end note
 
 flask --> jobs : start_tracking_job()\nspawns a daemon thread
@@ -134,7 +132,6 @@ package "3 · Perception layer" #FFF6EC {
 package "4 · Geometry layer" #F6EEFF {
   component "**judge_call.py**\n<size:10>Point · Line · WallCorners</size>\n<size:10>judge_ball() → IN / OUT</size>" as judge
   component "**court_model.py**\n<size:10>court in feet, floor homography,</size>\n<size:10>full camera solve (CameraModel)</size>" as court
-  component "**stereo_engine.py**\n<size:10>two-camera triangulation</size>" as stereo
 }
 
 package "Assets" #F4F4F4 {
@@ -164,7 +161,6 @@ gb --> classify
 votes --> classify
 runner --> judge
 runner --> court
-app --> stereo
 ballistic --> court
 judge <.. court : shares the tapped\ncorner geometry
 
@@ -485,58 +481,48 @@ end note
 
 
 ' ===========================================================================
-'  6 of 7 — THE iOS LIVE PATH
-'  On-device inference, two paired phones, calls during the rally.
+'  6 of 7 — THE NATIVE iOS APP
+'  A landscape-locked 4K60 recorder plus two webviews. One pipeline.
 ' ===========================================================================
-@startuml ios_live_path
-title The live path — native iOS (ios/Sources/)\n<size:11>//On-device inference across two paired phones. Calls during the rally, not after.//</size>
+@startuml ios_native_app
+title The native app — iOS (ios/Sources/)\n<size:11>//A recorder, not a second pipeline. On-device detection draws the overlay; the server makes the calls.//</size>
 
 skinparam componentStyle rectangle
 skinparam shadowing false
 skinparam roundCorner 8
 skinparam ArrowFontSize 11
 
-package "Phone A — primary" {
-  package "Capture — Record/" {
-    component "CameraController\n<size:10>4K60, exposure/WB/focus</size>\n<size:10>locked once via lockForCourt()</size>" as cam
-    component "**RecordModel**\n<size:10>the live orchestrator</size>" as model
-  }
-
-  package "Detection — Tracking/" {
-    component "CoreMLBallDetector\n<size:10>Vision + Core ML on the ANE</size>\n<size:10>(computeUnits = .all)</size>" as detector
-    component "BallTracker\n+ RingBuffer" as tracker
-    component "SyntheticBallDetector\n<size:10>DEBUG — drives the whole path</size>\n<size:10>with no model file</size>" as synth
-  }
-
-  package "Geometry — Stereo/" {
-    component "**StereoEngine**\n<size:10>triangulate → snap to plane</size>\n<size:10>→ impact → call</size>" as engine
-    component "CameraModel\nStereoMath / StereoTrack" as stereomath
-  }
-
-  package "Live UI — Live/" {
-    component "**CallFlashView**\n<size:10>full-stage verdict wash,</size>\n<size:10>150 ms in + 350 ms hold</size>" as flash
-    component "**CallBannerView**\n<size:10>persistent honest state,</size>\n<size:10>reserved height = no layout shift</size>" as banner
-    component "CallPresentation\n<size:10>gates on CONFIDENCE before call:</size>\n<size:10>no_call → “NO CALL · obstructed”</size>" as presentation
-    component "MiniCourtView\n<size:10>post-rally replay</size>" as minicourt <<not yet wired>>
-    component "PairingModel + PairingView\n<size:10>idle→searching→confirm→syncing→ready</size>" as pairing <<not yet wired>>
-    component "CallAnnouncer\n<size:10>AVSpeechSynthesizer,</size>\n<size:10>isEnabled = false by default</size>" as announcer <<not yet wired>>
-  }
+package "Shell" {
+  component "**RootTabView**\n<size:10>three tabs; the per-tab</size>\n<size:10>OrientationPolicy mask lives here</size>" as root
 }
 
-package "Phone B — secondary" {
-  component "same app,\nstreams detections only" as phoneB
+package "Play — Record/" {
+  component "CameraController\n<size:10>4K60 ultrawide, 1/1000 shutter,</size>\n<size:10>exposure/WB/focus locked once</size>\n<size:10>via lockForCourt()</size>" as cam
+  component "**RecordModel**\n<size:10>one serialized recording funnel</size>\n<size:10>(setRecording → applyRecording);</size>\n<size:10>owns the capture mount</size>" as model
+  component "**RecordView**\n<size:10>preview + overlay + record button</size>\n<size:10>+ server-settings gear</size>" as recordview
+  component "OrientationLock\n<size:10>landscape-only capture,</size>\n<size:10>pinned for the recording's duration</size>" as orient
 }
 
-package "Peer link — Peer/" {
-  component "PeerSession\n<size:10>BLETransport / WiFiP2PTransport /</size>\n<size:10>LoopbackTransport</size>" as peer
-  component "**ClockSync**\n<size:10>NTP-style min-RTT + clap anchor.</size>\n<size:10>Budget: ≤ 2 ms.</size>" as clock
+package "Detection — Tracking/" {
+  component "CoreMLBallDetector\n<size:10>Vision + Core ML on the ANE</size>\n<size:10>(computeUnits = .all)</size>" as detector
+  component "BallTracker\n+ RingBuffer" as tracker
+  component "SyntheticBallDetector\n<size:10>DEBUG — drives the overlay</size>\n<size:10>with no model file</size>" as synth
 }
 
-package "Server-dependent, outside the live loop — API/" {
-  component "APIClient\n<size:10>api/calibration/latest</size>\n<size:10>**api/camera-model**  ← the camera pose</size>\n<size:10>solve is server-side even here</size>\n<size:10>api/upload · api/track · api/track/status</size>" as apiclient
+package "Results — Results/" {
+  component "**RunSubmission**\n<size:10>upload → startTrack → poll,</size>\n<size:10>capped at 20 min</size>" as submission
+  component "ResultsView" as resultsview
+}
+
+package "Server — API/ and Web/" {
+  component "APIClient\n<size:10>api/calibration/latest · api/upload</size>\n<size:10>api/track · api/track/status</size>" as apiclient
   component "WebScreen (WKWebView)\n<size:10>Matches + Coach tabs load</size>\n<size:10>index.html with #shell=1</size>" as webscreen
 }
 
+root --> recordview : Play tab
+root --> webscreen : Matches, Coach
+recordview --> model
+model --> orient : pin on start,\nrelease on stop
 cam --> model : sample buffers
 model --> detector : dedicated queue +\nDispatchSemaphore
 note right of model
@@ -547,48 +533,42 @@ note right of model
 end note
 synth ..> model : DEBUG substitute
 detector --> tracker
-tracker --> engine
-phoneB --> peer : DetectionTuple stream
-peer --> engine
-clock --> peer : shared timebase
-stereomath --> engine
-apiclient --> stereomath : solved CameraModel\n<size:10>fetched once, then scaled into</size>\n<size:10>the capture pixel space</size>
-engine --> presentation
-presentation --> flash
-presentation --> banner
-engine ..> minicourt
-engine ..> announcer
-pairing ..> peer
+tracker --> model : BallObservation trail\n<size:10>(preview overlay only)</size>
+model --> resultsview : finishedClip
+resultsview --> submission
+submission --> apiclient
 
 webscreen --> webscreen : deep link #run={id}&frame={n}\n<size:10>seeds the slc-restore stash so the web app</size>\n<size:10>rehydrates a finished run</size>
 
-note as nwired #FFF0F0
-  <b>"not yet wired" = the logic is unit-tested,</b>
-  <b>the view has no production call site yet.</b>
+note as narchived #FFF0F0
+  <b>What used to be here.</b>
 
-  Mounted today: RecordView shows CallFlashView
-  and CallBannerView. That is the whole live UI.
+  This diagram was "the live path": two phones
+  paired over BLE / Wi-Fi P2P, sharing a timebase
+  via ClockSync, triangulating through StereoEngine
+  and calling the ball mid-rally without the server.
 
-  Built, tested, never instantiated in Sources/:
-    MiniCourtView   <size:10>logic tested as CourtProjection</size>
-                    <size:10>in MiniCourtTests.swift</size>
-    PairingView     <size:10>logic tested as PairingModel</size>
-                    <size:10>in PairingModelTests.swift</size>
-    CallAnnouncer   <size:10>tested in LiveCallTests.swift</size>
+  Archived 2026-07-27 — Sources/Peer/, Sources/Stereo/
+  and the Live/ pairing stack now live under
+  archive/stereo/ios/. Restore point: tag
+  archive/stereo-v1.
 
-  Do not hunt for the code path that shows these.
-  It has not been written yet.
+  Why: triangulation needs the ball found in <i>both</i>
+  views, and single-view wall-hit recall is ~35%, so
+  stereo multiplied the bottleneck instead of fixing it.
+  Revisit gate: single-view wall-hit recall ~85%.
 end note
-nwired .. minicourt
 
 note as ndiff #FFFDF0
-  <b>Live path (here)  ..versus..  upload path (diagrams 3 & 4)</b>
+  <b>Native (here)  ..versus..  web (diagrams 3 & 4)</b>
 
-  detection : on-device Core ML   / server RF-DETR
-  geometry  : two phones, stereo  / one camera + homography
-  latency   : per-frame           / async job + 500 ms polling
-  timing    : ClockSync pair      / video timestamps
-  result    : a call mid-rally    / a run dir you review later
+  capture   : in-app 4K60, locked   / file upload
+  detection : on-device, overlay only / server RF-DETR, authoritative
+  judging   : server, after upload  / server, after upload
+  result    : a run dir you review  / a run dir you review
+
+  Both surfaces end in the same place. The native app
+  buys capture control, not a different pipeline.
 end note
 
 @enduml

@@ -100,15 +100,15 @@ def selected_detector():
 
 
 def _build_infer(model, confidence):
-    """Build the stereo path's per-frame callable.
+    """Build the per-frame detection callable.
 
     Defaults to the locally trained YOLOX detector (BALL_DETECTOR=yolox);
-    BALL_DETECTOR=rfdetr restores the hosted RF-DETR the single-camera
-    pipeline still uses. Imported lazily so a clip with zero decoded frames
-    never loads a model -- the CLI smoke test depends on that.
+    BALL_DETECTOR=rfdetr restores the hosted RF-DETR the Flask pipeline still
+    uses. Imported lazily so a clip with zero decoded frames never loads a
+    model at all.
 
     Never falls back between detectors: a missing model raises, because a
-    silent swap would make the stereo/single-camera split invisible.
+    silent swap would make the yolox/rfdetr split invisible.
     """
     backend = selected_detector()
 
@@ -157,13 +157,13 @@ def _build_infer(model, confidence):
 
 def detections_to_track_samples(video_path, model=None, *, confidence=0.4,
                                 stride=1, offset_s=0.0, infer=None):
-    """Run the ball detector over a clip -> [stereo_engine.TrackSample].
+    """Run the ball detector over a clip -> [TrackSample].
 
     t_s = frame_index / fps + offset_s (fps from cv2 metadata; raises
     ValueError unless fps is finite and positive, and unless stride >= 1).
     Bad fps is fatal here on purpose: unlike app.py's `or 30.0` fallback for
     playback metadata, inventing a frame rate would silently shift every
-    timestamp and hence every triangulated 3D position. `infer` is an
+    timestamp, and every downstream position with it. `infer` is an
     injection seam for tests:
     callable(frame_bgr) -> list of prediction dicts in
     inference_engine.infer_frame_predictions' normalized shape

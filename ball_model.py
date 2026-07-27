@@ -207,7 +207,7 @@ def load_detector(model_dir=None):
         import torch
     except ImportError as exc:
         raise ImportError(
-            "The stereo ball detector needs torch. The default test env is "
+            "The local ball detector needs torch. The default test env is "
             "deliberately torch-free; install the full requirements.txt."
         ) from exc
 

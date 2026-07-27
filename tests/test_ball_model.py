@@ -121,8 +121,8 @@ def test_model_manifest_artifact_path(tmp_path):
 
 
 def test_load_detector_missing_model_raises_and_does_not_fall_back(tmp_path):
-    # Silent fallback to RF-DETR would make the stereo/single-camera detector
-    # split invisible; the spec requires this to be loud.
+    # Silent fallback to RF-DETR would make the local/hosted detector split
+    # invisible; the spec requires this to be loud.
     with pytest.raises(FileNotFoundError, match="export_ball_model.py"):
         ball_model.load_detector(tmp_path / "nope")
 

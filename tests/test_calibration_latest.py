@@ -13,7 +13,7 @@ def make_run_with_calibration(app_module, run_id, calibration, age_seconds):
     """A run carrying a calibration of a given age.
 
     Reads RUNS_DIR off the module at call time, so it follows the `runs_dir`
-    fixture's redirect. test_stereo_endpoints.py imports this too.
+    fixture's redirect. test_camera_endpoints.py imports this too.
     """
     run_dir = app_module.RUNS_DIR / run_id
     run_dir.mkdir(parents=True, exist_ok=True)

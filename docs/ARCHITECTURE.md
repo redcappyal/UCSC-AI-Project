@@ -101,10 +101,10 @@ time you run the app. Note the 500 ms polling loop — there are no websockets a
 twenty `<section>` elements and un-hides one. That function *is* the navigation model; the
 diagram is its state machine.
 
-**6. `ios_live_path`** — The native app: on-device Core ML detection across two paired
-phones, calling the ball during the rally instead of after it. Components marked
-*not yet wired* have unit-tested logic but no production call site — the view is never
-instantiated in `ios/Sources/`. Don't go looking for the code path that shows them.
+**6. `ios_native_app`** — The native app: a landscape-locked 4K60 recorder (Play) plus two
+webviews (Matches, Coach), all talking to the same Flask pipeline as `index.html`. The
+on-device Core ML detector drives the preview overlay only; judging still happens
+server-side after the upload.
 
 **7. `data_shapes`** — The records that flow between stages. They are plain dicts and CSV
 rows; nothing in the code declares them, so this is the map you would otherwise build by
@@ -121,10 +121,10 @@ each is someone's call to make.
    defaulting to `ai-squash-line-tracker/4`. `inference_engine.py` sets
    `DEFAULT_MODEL_ID = "squashai/1"`. The code wins; the diagrams follow the code.
 
-2. **`DESIGN.md §16` documents two screens the web app does not have.** It gives full
-   blueprints for `p-pair` and `p-live` as current screens. `index.html` has no `p-pair` at
-   all, and its `#p-live` is a "Coming soon" placeholder. Those blueprints describe the
-   **native** implementation in `ios/`. `DESIGN.md` is a shared spec for both surfaces —
+2. **`index.html`'s `#p-live` is a placeholder, and always was.** It is a "Coming soon"
+   card for live match generally — not a stub of the archived two-camera implementation,
+   which was native-only (`archive/stereo/README.md`). `DESIGN.md §16` no longer documents
+   `p-pair` at all. `DESIGN.md` remains a shared spec for both surfaces —
    `ios/Sources/Theme.swift` mirrors its tokens, and the Swift files cite its section
    numbers in their doc comments.
 
@@ -165,7 +165,7 @@ Related reading, in the order it becomes useful:
 | [`annotation-guide.md`](annotation-guide.md) | Before labeling footage for the detector. |
 | [`../ios/MODEL.md`](../ios/MODEL.md) | The on-device model pipeline, and why YOLOX and not Ultralytics (AGPL). |
 | [`../ios/CAPTURE.md`](../ios/CAPTURE.md) | Why the camera settings are locked. |
-| [`../ios/PEER.md`](../ios/PEER.md) | Two-phone bench and ops runbook. |
+| [`../archive/stereo/README.md`](../archive/stereo/README.md) | The archived two-camera stereo/peer feature: why, and how to restore it. |
 | [`superpowers/specs/`](superpowers/specs/) | The approved design docs behind each phase. |
 | [`superpowers/plans/`](superpowers/plans/) | The implementation plans, checkbox by checkbox. |
 
@@ -176,6 +176,6 @@ Related reading, in the order it becomes useful:
 They name **files and functions, never line numbers** — line numbers rot within days and a
 diagram that cites stale ones is worse than no diagram.
 
-If you move a module, rename a route, add a phase to `setPhase()`, or wire up one of the
-*not yet wired* iOS components, update `architecture.puml` in the same change. A wrong map
+If you move a module, rename a route, add a phase to `setPhase()`, or change what the
+native app does with a clip, update `architecture.puml` in the same change. A wrong map
 costs more than a missing one.

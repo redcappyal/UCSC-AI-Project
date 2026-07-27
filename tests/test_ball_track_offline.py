@@ -98,7 +98,7 @@ def test_detections_to_track_samples_raises_on_bad_fps(monkeypatch):
 def test_detections_to_track_samples_raises_on_nonfinite_fps(monkeypatch, bad_fps):
     """NaN is truthy and every NaN comparison is False, so a `not fps or
     fps <= 0` guard alone lets it through and every t_s silently becomes
-    NaN -- which only blows up later, deep inside stereo_engine."""
+    NaN -- which only blows up later, far from the cause."""
     monkeypatch.setattr(ball_track_offline, "_video_fps", lambda video_path: bad_fps)
     monkeypatch.setattr(
         ball_track_offline, "_iter_frames", lambda video_path: iter(_fake_frames(1)))
