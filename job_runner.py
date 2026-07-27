@@ -871,7 +871,7 @@ def judge_hits(run_dir, results, detected, audio_available=None, serve_resolver=
                     entry["floor_zone"] = court_model.floor_zone_for_point(x_ft, y_ft)
         hits.append(entry)
 
-    player_assignment = assign_front_wall_hit_players(hits)
+    player_assignment = assign_front_wall_hit_players(hits, serve_resolver=serve_resolver)
     if top_line is not None and service_line is not None:
         for entry in hits:
             if int(entry.get("rally_hit_sequence") or 0) != 1:

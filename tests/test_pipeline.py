@@ -655,3 +655,57 @@ def test_assign_with_partial_resolver_falls_back_to_propagation():
     # (player 1), so B -> player 1 there.
     assert rallies[1]["server_player_number"] == 1
     assert assignment["observed_serve_count"] == 1
+
+
+def test_judge_hits_threads_resolver_through_unconditional_assign_without_service_line(tmp_path):
+    # Regression: judge_hits calls assign_front_wall_hit_players twice — an
+    # unconditional call whose result seeds player_assignment, and a second
+    # call inside `if top_line is not None and service_line is not None`
+    # that overwrites it once serve-line judging has run. A run with no
+    # service_line calibration line never enters that second branch, so the
+    # unconditional call is the ONLY one that determines the final
+    # player_assignment. It must receive serve_resolver too, or observed
+    # attribution silently vanishes for every un-service-line-calibrated run.
+    (tmp_path / "calibration.json").write_text(json.dumps({
+        "lines": [
+            {"name": "out_line_lower_edge", "endpoints": [[0, 100], [2000, 100]]},
+            {"name": "tin_top_edge", "endpoints": [[0, 700], [2000, 700]]},
+        ]
+        # No service_line_top_edge -> service_line stays None in judge_hits.
+    }))
+    results = {
+        60: {
+            "source_frame": 60,
+            "timestamp_seconds": "2.000000",
+            "detected": "True",
+            "x_center": "900.000",
+            "y_center": "180.000",
+        }
+    }
+    hit = {
+        "hit_frame": 60,
+        "timestamp_seconds": 2.0,
+        "dv_magnitude": 400.0,
+        "speed_before": 400.0,
+        "speed_after": 380.0,
+        "after_gap": False,
+        "event_type": "wall",
+        "wall_score": 0.9,
+        "signals": {"audio_score": 24.0},
+    }
+
+    def resolver(rally_hits):
+        return "A"
+
+    judged = job_runner.judge_hits(tmp_path, results, [hit], serve_resolver=resolver)
+
+    entry = judged[0]
+    assert entry["call"] == "IN"
+    assert entry["rally_number"] == 1
+    assert entry["server_player_number"] in (1, 2)
+
+    payload = json.loads((tmp_path / "detected_hits.json").read_text())
+    assert payload["player_assignment"]["method"] == "rally_gap_observed_serves"
+    assert payload["player_assignment"]["observed_serve_count"] == 1
+    assert payload["rallies"][0]["server_track"] == "A"
+    assert payload["rallies"][0]["server_source"] == "observed"
