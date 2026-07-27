@@ -159,7 +159,7 @@ final class OrientationPolicy {
     /// which was correct only while the single production caller was the
     /// record button — an control that exists solely on Play, so Play was
     /// necessarily showing. That is no longer true: the live layer stops a
-    /// rally from a peer's `.record` control message
+    /// a recording started while the tab was away
     /// (`LiveSessionModel.handleRemoteRecord`), with no tap on this phone at
     /// all, and a pin survives a mid-recording excursion to Matches or Coach.
     /// Widening to `.landscape` there would leave a portrait web tab locked
@@ -176,7 +176,7 @@ final class OrientationPolicy {
     /// in-progress recording (`RecordModel.applyRecording`'s start path)
     /// survives a round trip through another tab. This one is load-bearing,
     /// not just a fast path: the Play stack's `.task`s (`startCamera`, from
-    /// `RecordView`, `p-pair` and `p-live`) do re-fire on return to Play, and
+    /// `RecordView`'s `.task`) does re-fire on return to Play, and
     /// each of those re-entries deliberately re-seeds the capture mount — but
     /// none of them pins anything. Pinning moved to record start, precisely so
     /// Play stays at both-landscape while the operator is only framing; and

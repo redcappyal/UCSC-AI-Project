@@ -3,7 +3,7 @@ import CoreVideo
 import Foundation
 
 /// A deterministic ballistic arc in Vision-normalized space (origin
-/// bottom-left). Ignores the pixel buffer: it exists so the pairing, live-call
+/// bottom-left). Ignores the pixel buffer: it exists so the capture, overlay
 /// and replay surfaces can be exercised before the Core ML model exists.
 /// Never compiled into a release build.
 final class SyntheticBallDetector: BallDetecting {

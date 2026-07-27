@@ -1,3 +1,10 @@
+// ARCHIVED 2026-07-27 -- two-camera stereo/peer feature.
+// Excluded from ios/project.yml sources: this file is not compiled.
+// Restore point: git tag archive/stereo-v1. See archive/stereo/README.md.
+//
+// Covers the Swift `CameraModel` (Sources/Stereo/CameraModel.swift), which was
+// archived with the rest of the stereo layer -- it existed to put a solved
+// camera into the capture pixel space for triangulation.
 // ios/Tests/CameraFrameSpaceTests.swift
 //
 // Mirrors tests/test_camera_model.py's frame-space section. A solved model

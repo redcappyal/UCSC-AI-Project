@@ -13,7 +13,6 @@ from flask import Flask, jsonify, request, send_file, send_from_directory
 from werkzeug.utils import secure_filename
 
 import court_model
-import stereo_engine
 from judge_call import (
     Point,
     judge_ball,
@@ -143,12 +142,6 @@ def public_job(job):
         "annotated_video_url",
         "csv_url",
         "error",
-        # Phase 5: paired-session identity. sync_manifest_path is deliberately
-        # NOT here — it is a server filesystem path, not client business.
-        "session_id",
-        "camera_role",
-        "peer_video_id",
-        "stereo_fuse_run_id",
     ):
         if key in job:
             response[key] = job[key]
@@ -1061,48 +1054,6 @@ def camera_model():
     return jsonify(response)
 
 
-@app.post("/api/camera-pair-check")
-def camera_pair_check():
-    """Cross-camera agreement gate: do two independently solved cameras agree
-    on where the court is?
-
-    Same input contract and always-200 convention as /api/camera-check, but
-    takes a "calibration_a"/"calibration_b" pair. Each side solves
-    independently and reports its own status under "status_a"/"status_b".
-    When both solve, also extracts each side's own calibration observations
-    (court_model._camera_correspondences -- the same raw taps the solve was
-    fit against) and feeds them to stereo_engine.pair_agreement, which
-    triangulates through the OBSERVED pixels rather than re-projecting
-    through the solved models themselves -- a same-model round trip cannot
-    expose a biased solve (see stereo_engine.pair_agreement's docstring).
-    Adds that report (median/max error, baseline, point count, envelope_ok,
-    ok_pair) under status "ok"; otherwise "solve_failed".
-    """
-    payload = request.get_json(silent=True) or {}
-    models = {}
-    observations = {}
-    statuses = {}
-    for key in ("a", "b"):
-        calibration = payload.get(f"calibration_{key}")
-        if calibration is None:
-            try:
-                calibration = json.loads(payload.get(f"calibration_{key}_json") or "")
-            except (json.JSONDecodeError, TypeError):
-                statuses[f"status_{key}"] = "invalid_json"
-                continue
-        model, info = court_model.solve_camera_model(calibration)
-        statuses[f"status_{key}"] = info.get("status")
-        if model is not None and info.get("status") == "ok":
-            models[key] = model
-            image_px, court_xyz, _labels = court_model._camera_correspondences(calibration)
-            observations[key] = list(zip(court_xyz, image_px))
-    if len(models) < 2:
-        return jsonify({"ok": True, "status": "solve_failed", **statuses})
-    report = stereo_engine.pair_agreement(
-        models["a"], observations["a"], models["b"], observations["b"])
-    return jsonify({"ok": True, "status": "ok", **statuses, **report})
-
-
 def validate_floor_calibration(calibration):
     """Return a warning string (and strip the floor plane) if it cannot be used.
 
@@ -1169,33 +1120,6 @@ def track_clip():
     if fusion_3d not in {"", "1"}:
         return error_response("fusion_3d must be empty or 1.")
 
-    # Phase 5 (cloud fusion): optional paired-session metadata. All four are
-    # absent for a single-camera run, and absent must mean byte-identical
-    # behavior — so they only ever reach the job through extra_job_fields
-    # below, never as an explicit None.
-    session_id = request.form.get("session_id", "").strip()
-    camera_role = request.form.get("camera_role", "").strip()
-    if camera_role not in {"", "a", "b"}:
-        return error_response("Camera role must be a or b.")
-    # Either both or neither: a role with no session can never be paired, and a
-    # session whose two runs share a role can't be told apart at fuse time.
-    if bool(session_id) != bool(camera_role):
-        return error_response("A paired run needs both session_id and camera_role.")
-    peer_video_id = request.form.get("peer_video_id", "").strip()
-
-    # Deliberately NOT the calibration_json idiom: json.loads("") raises, which
-    # is precisely why a calibration is effectively required today. An absent
-    # manifest has to short-circuit before the parse.
-    sync_manifest_text = request.form.get("sync_manifest_json", "").strip()
-    sync_manifest = None
-    if sync_manifest_text:
-        try:
-            sync_manifest = json.loads(sync_manifest_text)
-        except json.JSONDecodeError:
-            return error_response("Sync manifest JSON was invalid.")
-        if not isinstance(sync_manifest, dict):
-            return error_response("Sync manifest JSON must be an object.")
-
     run_id = str(int(time.time() * 1000))
     run_dir = RUNS_DIR / run_id
 
@@ -1236,15 +1160,6 @@ def track_clip():
     extra_job_fields = {}
     if calibration_warning:
         extra_job_fields["calibration_warning"] = calibration_warning
-    if session_id:
-        extra_job_fields["session_id"] = session_id
-        extra_job_fields["camera_role"] = camera_role
-    if peer_video_id:
-        extra_job_fields["peer_video_id"] = peer_video_id
-    if sync_manifest is not None:
-        manifest_path = run_dir / "sync_manifest.json"
-        manifest_path.write_text(json.dumps(sync_manifest, indent=2), encoding="utf-8")
-        extra_job_fields["sync_manifest_path"] = str(manifest_path)
     create_job(
         run_id,
         run_dir,

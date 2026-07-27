@@ -17,6 +17,10 @@ targets:
   SquashLineCalling:
     type: application
     platform: iOS
+    # `archive/` is never listed here. The archived stereo/peer sources live at
+    # <repo>/archive/stereo/ios/Sources/, outside this `ios/` directory
+    # entirely, so they are structurally unreachable from these paths rather
+    # than merely excluded — see archive/stereo/README.md.
     sources:
       - path: Sources
       - path: Resources
@@ -35,9 +39,11 @@ targets:
         UILaunchScreen: {}
         NSCameraUsageDescription: Records rallies and runs the live ball tracker.
         NSMicrophoneUsageDescription: Impact sounds help the analyzer find wall hits.
-        NSBluetoothAlwaysUsageDescription: Pairs with the second court camera to sync line calls.
-        NSLocalNetworkUsageDescription: Finds and pairs with the second court camera on this court.
-        NSBonjourServices: [_crosscourt._tcp]
+        # NSBluetoothAlways / NSLocalNetwork / NSBonjourServices were declared
+        # for the archived two-phone peer link. Removed with it: an unused
+        # permission string is an App Review question with no answer, and
+        # NSBonjourServices advertising _crosscourt._tcp with nothing listening
+        # is worse than absent.
         # Superset of every orientation the app can present. OrientationLock
         # narrows per tab at runtime and the web tabs pass `.all`; UIKit
         # intersects it with this list, so upside-down is excluded here

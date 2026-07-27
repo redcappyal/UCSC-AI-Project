@@ -11,16 +11,18 @@ struct RootTabView: View {
 
     var body: some View {
         TabView(selection: $tab) {
-            // PlayRootView is a NavigationStack of its own now, so the
-            // server-settings gear and (DEBUG) peer-bench button live on its
-            // toolbar instead of as overlays bolted onto a bare RecordView.
-            // The orientation lock moved with it: the tab is what the mask is
-            // a function of, and PlayRootView — not RecordView — is the Play
-            // tab now. RecordView is one destination inside its stack, so
-            // leaving the lock attached there would have left the Play root
-            // and `p-pair` free to rotate portrait while the operator is
-            // framing the shot in a landscape mount.
-            PlayRootView()
+            // Play is `RecordView` directly again. It was wrapped in
+            // `PlayRootView`'s NavigationStack only to offer a second hero
+            // card — the two-camera live match — which is archived
+            // (archive/stereo/README.md). With one destination there is no
+            // stack to push onto, so the stack went with it and the
+            // server-settings gear went back to being an overlay on
+            // `RecordView` (where it lived before the live entry point).
+            //
+            // The per-tab orientation mask below stays exactly as it is: it
+            // came from the landscape-only capture work, not the live work,
+            // and the tab is still what the mask is a function of.
+            RecordView()
                 .tabItem { Label("Play", systemImage: "record.circle") }
                 .tag(RootTab.play)
             WebScreen(url: URL(string: Config.baseURL.absoluteString + "/#tab=matches&shell=1")!)

@@ -16,21 +16,6 @@ private struct MockAPIClient: APIClientProtocol {
     final class Cursor: @unchecked Sendable { var index = 0 }
     let cursor = Cursor()
 
-    // Records what the most recent startTrack call carried, so tests can
-    // assert on paired-session fields without inspecting network traffic.
-    final class RecordedStartTrack: @unchecked Sendable {
-        var sessionID: String?
-        var cameraRole: String?
-        var peerVideoID: String?
-        var syncManifestJSON: String?
-    }
-    let recorded = RecordedStartTrack()
-
-    var lastSessionID: String? { recorded.sessionID }
-    var lastCameraRole: String? { recorded.cameraRole }
-    var lastPeerVideoID: String? { recorded.peerVideoID }
-    var lastSyncManifestJSON: String? { recorded.syncManifestJSON }
-
     func latestCalibration() async throws -> LatestCalibration {
         try calibration.get()
     }
@@ -39,23 +24,14 @@ private struct MockAPIClient: APIClientProtocol {
         UploadResponse(ok: true, videoID: "vid-1", fps: 30, frameCount: 900, duration: 30)
     }
 
-    func startTrack(videoID: String, calibrationJSON: String, duration: Double,
-                    sessionID: String?, cameraRole: String?,
-                    peerVideoID: String?, syncManifestJSON: String?) async throws -> JobStatus {
-        recorded.sessionID = sessionID
-        recorded.cameraRole = cameraRole
-        recorded.peerVideoID = peerVideoID
-        recorded.syncManifestJSON = syncManifestJSON
-        return statuses[0]
+    func startTrack(videoID: String, calibrationJSON: String,
+                    duration: Double) async throws -> JobStatus {
+        statuses[0]
     }
 
     func trackStatus(runID: String) async throws -> JobStatus {
         cursor.index = min(cursor.index + 1, statuses.count - 1)
         return statuses[cursor.index]
-    }
-
-    func fetchSolvedCameraModel(calibrationJSON: String) async throws -> String {
-        "{}"
     }
 }
 
@@ -114,14 +90,8 @@ final class RunSubmissionTests: XCTestCase {
     /// the HTTP layer is perfectly healthy, so nothing throws and `submit`
     /// never returns.
     ///
-    /// On the live path that is not a hang, it is a permanent dead end:
-    /// `LiveSessionModel.rally` strands at `.submitting`, so `startRally()`
-    /// refuses, `finishRally` never runs, `endRally()` never runs,
-    /// `pairing.step` stays `.live`, and the primary reads a disabled "RALLY
-    /// LIVE" — with `LiveSessionModel` a `@StateObject`, backing out to Play
-    /// does not clear it and only killing the app recovers. That is verbatim
-    /// the state `testASecondRallyStartsOnTheSamePairing` was written to prove
-    /// impossible, reached through a different door.
+    /// That is not a hang the user can back out of: the sheet presenting this
+    /// submission never resolves, so only killing the app recovers.
     ///
     /// A short `pollTimeout` here rather than the 20-minute production default:
     /// the bound under test is that one exists and is honoured, not its value.
@@ -139,13 +109,12 @@ final class RunSubmissionTests: XCTestCase {
             return XCTFail("expected the poll to give up and fail, got \(submission.phase)")
         }
         // Routed through the same `catch` every other failure uses, so the
-        // caller sees one shape of outcome — which is what lets
-        // `LiveSessionModel` take its `.failed` branch and release the session.
+        // caller sees one shape of outcome.
         XCTAssertTrue(message.contains("stopped reporting"),
                       "the message must say the server went quiet, not invent a server error: \(message)")
         XCTAssertTrue(message.contains("Matches"), """
-            and it must stay honest that the run may still finish server-side — the stereo fuse is \
-            triggered by run_tracking_job completing, never by this poll: \(message)
+            and it must stay honest that the run may still finish server-side — giving up on the \
+            poll does not cancel the job: \(message)
             """)
 
         // The *production* bound's rendering, asserted directly: the 200 ms
@@ -171,27 +140,5 @@ final class RunSubmissionTests: XCTestCase {
         guard case .complete = submission.phase else {
             return XCTFail("expected complete, got \(submission.phase)")
         }
-    }
-
-    func testUnpairedSubmissionSendsNoPairedFields() async {
-        let api = MockAPIClient()
-        let submission = RunSubmission(api: api, pollInterval: .milliseconds(1))
-        await submission.submit(videoURL: URL(fileURLWithPath: "/tmp/a.mp4"), duration: 3)
-        XCTAssertNil(api.lastSessionID)
-        XCTAssertNil(api.lastCameraRole)
-        XCTAssertNil(api.lastPeerVideoID)
-        XCTAssertNil(api.lastSyncManifestJSON)
-    }
-
-    func testPairedSubmissionCarriesSessionAndRole() async {
-        let api = MockAPIClient()
-        let submission = RunSubmission(api: api, pollInterval: .milliseconds(1))
-        await submission.submit(videoURL: URL(fileURLWithPath: "/tmp/a.mp4"), duration: 3,
-                                sessionID: "S-1", cameraRole: "b",
-                                peerVideoID: "V-7", syncManifestJSON: "{\"clap_anchor_s\":0.01}")
-        XCTAssertEqual(api.lastSessionID, "S-1")
-        XCTAssertEqual(api.lastCameraRole, "b")
-        XCTAssertEqual(api.lastPeerVideoID, "V-7")
-        XCTAssertEqual(api.lastSyncManifestJSON, "{\"clap_anchor_s\":0.01}")
     }
 }

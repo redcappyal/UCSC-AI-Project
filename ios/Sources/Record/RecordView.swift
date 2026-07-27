@@ -1,22 +1,17 @@
 import SwiftUI
 
 struct RecordView: View {
-    // Owned by `PlayRootView` now, not here — the live stage borrows the same
-    // instance via `LiveSessionModel.bind(record:)`, so it can no longer be a
-    // private @StateObject. Nothing else below reads anything but `model`.
-    @ObservedObject var model: RecordModel
+    // Owned here again: `PlayRootView` held it only so the archived live stage
+    // could borrow the same camera (archive/stereo/README.md). One consumer,
+    // one owner.
+    @StateObject private var model = RecordModel()
+    @State private var showServerSettings = false
 
     var body: some View {
         ZStack {
             Theme.bg.ignoresSafeArea()
             CameraPreviewView(session: model.camera.session).ignoresSafeArea()
             OverlayView(trail: model.trail).ignoresSafeArea()
-
-            // §8.17: the flash is a stage overlay, never in the layout flow,
-            // so a call appearing or clearing shifts nothing below it.
-            CallFlashView(presentation: model.flashPresentation)
-                .allowsHitTesting(false)
-                .ignoresSafeArea()
 
             VStack {
                 if model.detectorKind == RecordModel.DetectorKind.synthetic {
@@ -53,37 +48,26 @@ struct RecordView: View {
                         .padding(.top, 8)
                 }
                 Spacer()
-                // §8.18: persistent, beneath the stage, height always
-                // reserved — it renders its blank state before any call.
-                CallBannerView(presentation: model.livePresentation)
-                    .padding(.horizontal, 14)
-                    .padding(.bottom, 8)
                 recordControls
             }
         }
-        #if DEBUG
-        // The plan put this beside PlayRootView's peer-bench button, but the
-        // demo cube overlays the live camera stage itself — it belongs here
-        // regardless of who owns `model` now. Same chip styling, offset so
-        // it clears where the bench button sits one screen up.
-        .overlay(alignment: .topTrailing) {
-            Button {
-                model.startStereoDemo(localModelJSON: StereoDemo.localModelJSON,
-                                      remoteModelJSON: StereoDemo.remoteModelJSON)
-            } label: {
-                Image(systemName: "cube.transparent")
+        // The server-settings gear rode on `PlayRootView`'s toolbar while the
+        // Play tab was a NavigationStack. This screen is the Play tab again,
+        // and it is a bare ZStack, so the gear is an overlay button — exactly
+        // where it lived before the live entry point existed.
+        .overlay(alignment: .topLeading) {
+            Button { showServerSettings = true } label: {
+                Image(systemName: "gearshape")
                     .foregroundStyle(Theme.dim)
                     .padding(10)
                     .background(Theme.surface, in: Circle())
             }
-            .accessibilityLabel("Run stereo demo")
-            .padding(.top, 60)
-            .padding(.trailing, 8)
+            .accessibilityLabel("Server settings")
+            .padding(.top, 8)
+            .padding(.leading, 8)
         }
-        #endif
+        .sheet(isPresented: $showServerSettings) { ServerSettingsView() }
         .task { await model.startCamera() }
-        // `singleCameraClip`, not the raw clip: a rally the live layer
-        // recorded on this same camera must never open the plain judge flow.
         .sheet(item: $model.singleCameraClip) { clip in
             ResultsView(clip: clip)
         }
@@ -96,25 +80,7 @@ struct RecordView: View {
                     .font(.system(.title3, design: .monospaced).weight(.semibold))
                     .foregroundStyle(Theme.text)
             }
-            // The camera is shared with the live layer, so this stage can be
-            // standing in front of a rally it did not start — on the
-            // secondary phone that happens with no tap here at all, since a
-            // remote "record" starts the local recording. `canSetRecording`
-            // is the model's own rule for what this owner may do, asked here
-            // so the screen cannot offer a stop the model would refuse.
-            if model.canSetRecording(!model.isRecording, owner: .single) {
-                recordButton
-            } else {
-                // §0.3: never let appearance alone carry the meaning, and
-                // §13: say something specific and actionable. Sized to the
-                // button it replaces so nothing above it moves (§0.9).
-                Text("The live match is using this camera — end the rally there first.")
-                    .font(.footnote)
-                    .foregroundStyle(Theme.dim)
-                    .multilineTextAlignment(.center)
-                    .padding(.horizontal, 24)
-                    .frame(minHeight: 76)
-            }
+            recordButton
         }
         .padding(.bottom, 24)
     }
@@ -124,7 +90,7 @@ struct RecordView: View {
             // Absolute intent, read at tap time, funnelled through the model:
             // the tap says "start" or "stop", never "flip whatever it is now".
             let shouldRecord = !model.isRecording
-            Task { _ = await model.setRecording(shouldRecord, owner: .single) }
+            Task { _ = await model.setRecording(shouldRecord) }
         } label: {
             ZStack {
                 Circle().stroke(Theme.text, lineWidth: 4).frame(width: 76, height: 76)
