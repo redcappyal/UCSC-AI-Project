@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CrossCourt — Design Lab</title>
+<style>
+:root{
+  --canvas:#F2F3F5; --card:#FFFFFF; --ink:#17181A; --dim:#8A8F98;
+  --accent:#D9F24F;
+  --tint-good-bg:#E4F5E9; --tint-good-fg:#1E7A3C;
+  --tint-avg-bg:#FBF3DD;  --tint-avg-fg:#9A6B00;
+  --tint-poor-bg:#FBE4E1; --tint-poor-fg:#B3362A;
+  --radius:20px; --shadow:0 1px 3px rgba(20,22,25,.06);
+}
+*{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+body{background:#E4E5E9;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+  color:var(--ink);display:flex;justify-content:center;min-height:100vh;padding:24px 0}
+.phone{width:390px;background:var(--canvas);border-radius:34px;overflow:hidden;
+  box-shadow:0 8px 40px rgba(20,22,25,.18);display:flex;flex-direction:column;
+  height:844px;position:relative}
+.screen{flex:1;overflow-y:auto;padding:18px 16px 96px}
+.view{display:none;flex-direction:column;gap:12px}
+.view.active{display:flex}
+.card{background:var(--card);border-radius:var(--radius);box-shadow:var(--shadow);padding:16px}
+.pill{border:0;border-radius:999px;min-height:48px;padding:0 18px;font-size:15px;font-weight:600;
+  font-family:inherit;display:flex;align-items:center;justify-content:center;gap:8px;
+  cursor:pointer;color:var(--ink);background:var(--card);box-shadow:var(--shadow)}
+.pill.accent{background:var(--accent);font-weight:700}
+.pill:active{filter:brightness(.96)}
+.icontile{width:36px;height:36px;border-radius:12px;background:#EEEFF2;display:flex;
+  align-items:center;justify-content:center;flex:none;color:var(--ink)}
+.icontile svg{width:18px;height:18px}
+.chip{display:inline-flex;align-items:center;gap:4px;border-radius:999px;padding:4px 10px;
+  font-size:12px;font-weight:600}
+.chip.good{background:var(--tint-good-bg);color:var(--tint-good-fg)}
+.chip.avg{background:var(--tint-avg-bg);color:var(--tint-avg-fg)}
+.chip.poor{background:var(--tint-poor-bg);color:var(--tint-poor-fg)}
+.num{font-variant-numeric:tabular-nums;font-weight:700}
+h2{font-size:22px;font-weight:700}
+.dim{color:var(--dim)}
+/* nav */
+nav{position:absolute;left:50%;bottom:16px;transform:translateX(-50%);display:flex;gap:4px;
+  padding:6px;border-radius:999px;background:rgba(255,255,255,.85);
+  backdrop-filter:blur(16px);box-shadow:0 6px 24px rgba(20,22,25,.14)}
+nav button{border:0;background:none;border-radius:999px;min-height:44px;min-width:44px;
+  padding:0 12px;display:flex;align-items:center;justify-content:center;gap:6px;
+  font-size:12px;font-weight:600;font-family:inherit;color:var(--dim);cursor:pointer}
+nav button span{display:none}
+nav button.active{background:var(--accent);color:var(--ink)}
+nav button.active span{display:inline}
+nav button svg{width:17px;height:17px}
+/* toast */
+#toast{position:absolute;left:50%;bottom:84px;transform:translateX(-50%);background:var(--ink);
+  color:#fff;font-size:13px;font-weight:600;padding:10px 16px;border-radius:999px;
+  opacity:0;transition:opacity .18s ease;pointer-events:none;white-space:nowrap;z-index:5}
+#toast.show{opacity:1}
+</style>
+</head>
+<body>
+<div class="phone">
+  <div class="screen">
+    <section class="view active" id="view-dashboard"></section>
+    <section class="view" id="view-analysis"></section>
+    <section class="view" id="view-training"></section>
+    <section class="view" id="view-progress"></section>
+  </div>
+  <nav id="nav"></nav>
+  <div id="toast"></div>
+</div>
+<script>
+const TABS = [
+  {id:'dashboard', label:'Dashboard', icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 11l9-7 9 7v9a1 1 0 0 1-1 1h-5v-6h-6v6H4a1 1 0 0 1-1-1z"/></svg>'},
+  {id:'analysis',  label:'Analysis',  icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="14" rx="3"/><path d="M10 9l4 2.5L10 14z"/></svg>'},
+  {id:'training',  label:'Training',  icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="3"/></svg>'},
+  {id:'progress',  label:'Progress',  icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19l5-6 4 3 7-9"/></svg>'}
+];
+function switchTab(name){
+  document.querySelectorAll('.view').forEach(v=>v.classList.toggle('active', v.id==='view-'+name));
+  document.querySelectorAll('nav button').forEach(b=>b.classList.toggle('active', b.dataset.tab===name));
+  document.querySelector('.screen').scrollTop = 0;
+}
+let toastTimer;
+function toast(msg){
+  const t = document.getElementById('toast');
+  t.textContent = msg; t.classList.add('show');
+  clearTimeout(toastTimer); toastTimer = setTimeout(()=>t.classList.remove('show'), 1600);
+}
+document.getElementById('nav').innerHTML = TABS.map(t=>
+  `<button data-tab="${t.id}" onclick="switchTab('${t.id}')">${t.icon}<span>${t.label}</span></button>`).join('');
+switchTab('dashboard');
+</script>
+</body>
+</html>
