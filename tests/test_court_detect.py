@@ -436,3 +436,48 @@ def test_detected_line_intersect_returns_none_for_parallels():
     crossing = court_detect.DetectedLine(50.0, -50.0, 50.0, 50.0, support=1)
     point = first.intersect(crossing)
     assert point is not None and abs(point[0] - 50.0) < 1e-6
+
+
+def test_assign_lines_names_every_required_entity():
+    # court_camera()'s default framing (focal_px=1600) puts the short line
+    # (y ~= 17.9 ft) at pixel row ~1430 in a 1080-tall frame -- off-screen,
+    # per the same framing limit the service-box test above documents for
+    # y >= ~10.5 ft. No short-line paint is rendered at all at the default
+    # focal length, so assign_lines could never find it regardless of the
+    # heuristic. A wider FOV is required, but 500.0 (what the service-box
+    # test uses) is too wide here: it also brings the service box BACK line
+    # into frame, and that line's two halves (either side of the boxes) sit
+    # on the same infinite line, so find_lines' collinear merge -- which by
+    # design ignores gaps, so a line can survive real occlusion -- fuses
+    # them into one line spanning nearly the full frame width. That merged
+    # line is longer than the true short line, so assign_lines' "widest
+    # below-seam horizontal" heuristic would pick it instead. (It happens to
+    # sit even lower in the image than the real short line, so the ordering
+    # assertion below would still pass with the wrong line selected -- a
+    # "right for the wrong reason" trap worth avoiding rather than shipping
+    # unnoticed.) 700.0 clears the short line (measured row ~930) with
+    # margin while keeping the box-back line's row (~1250) safely below the
+    # visible frame, so only the real short line is a candidate.
+    camera = court_camera(focal_px=700.0)
+    image, truth = render_court(camera, noise_sigma=2.0)
+    minimum = image.shape[1] * 0.10
+
+    assigned = court_detect.assign_lines(
+        court_detect.find_lines(court_detect.line_response(image), minimum),
+        court_detect.find_lines(court_detect.edge_response(image), minimum),
+        image.shape,
+    )
+
+    for name in ("out", "service", "tin", "front_seam",
+                 "left_seam", "right_seam", "short_line"):
+        assert assigned.get(name) is not None, f"missing {name}"
+
+    # The out line sits above the service line, which sits above the tin,
+    # which sits above the seam, which sits above the short line.
+    order = [assigned[name].midpoint[1]
+             for name in ("out", "service", "tin", "front_seam", "short_line")]
+    assert order == sorted(order), order
+
+    # The seams are on the sides they are named for.
+    assert assigned["left_seam"].midpoint[0] < image.shape[1] / 2
+    assert assigned["right_seam"].midpoint[0] > image.shape[1] / 2

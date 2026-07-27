@@ -251,3 +251,93 @@ def find_lines(response, min_length_px):
 
     lines = [_fit_group(group["segments"]) for group in groups]
     return sorted(lines, key=lambda line: line.length_px, reverse=True)
+
+
+# --- entity assignment -----------------------------------------------------
+HORIZONTAL_MAX_DEG = 25.0   # steeper than this and a line is not a court-x line
+
+
+def _horizontals(lines):
+    return [line for line in lines if abs(line.angle_deg) <= HORIZONTAL_MAX_DEG]
+
+
+def _diagonals(lines):
+    return [line for line in lines if abs(line.angle_deg) > HORIZONTAL_MAX_DEG]
+
+
+def _upper_end(line):
+    """The endpoint nearer the top of the image."""
+    return (line.x1, line.y1) if line.y1 <= line.y2 else (line.x2, line.y2)
+
+
+def assign_lines(paint_lines, edge_lines, frame_shape):
+    """Name detected lines as court entities (spec §7.4).
+
+    From a back-wall mount the court presents a fixed vertical ordering — out
+    line, service line, tin, wall/floor seam, then floor lines — and two long
+    diagonals running away from the front corners. That ordering plus the side
+    a diagonal falls on is enough to name everything, with no hue and no pose.
+
+    Returns a dict whose values are DetectedLine or None. A None means that
+    entity was not found; the caller decides whether that is fatal.
+    """
+    height, width = frame_shape[:2]
+    centre_x = width / 2.0
+    assigned = {name: None for name in
+                ("out", "service", "tin", "front_seam",
+                 "left_seam", "right_seam", "short_line")}
+
+    # Side-wall floor seams: the longest steep line on each half of the frame,
+    # sloping the way that half's seam must slope. Looking down-court, the
+    # left seam runs down-and-left (negative angle) and the right seam runs
+    # down-and-right (positive angle).
+    diagonals = _diagonals(edge_lines) + _diagonals(paint_lines)
+    left = [line for line in diagonals
+            if line.midpoint[0] < centre_x and line.angle_deg < 0]
+    right = [line for line in diagonals
+             if line.midpoint[0] > centre_x and line.angle_deg > 0]
+    if left:
+        assigned["left_seam"] = max(left, key=lambda line: line.length_px)
+    if right:
+        assigned["right_seam"] = max(right, key=lambda line: line.length_px)
+
+    # Front wall/floor seam: the horizontal nearest to where both diagonals
+    # begin. It is a junction, so look in the boundary map first.
+    anchors = [_upper_end(assigned[name]) for name in ("left_seam", "right_seam")
+               if assigned[name] is not None]
+    horizontals = _horizontals(edge_lines) + _horizontals(paint_lines)
+    if anchors and horizontals:
+        def seam_error(line):
+            errors = []
+            for anchor_x, anchor_y in anchors:
+                at = line.y_at(anchor_x)
+                errors.append(abs(at - anchor_y) if at is not None else 1e9)
+            return sum(errors) / len(errors)
+        best = min(horizontals, key=seam_error)
+        if seam_error(best) < height * 0.05:
+            assigned["front_seam"] = best
+
+    seam_y = (assigned["front_seam"].midpoint[1]
+              if assigned["front_seam"] is not None else height * 0.65)
+
+    # Front-wall paint: horizontals above the seam, widest span wins the out
+    # line, then the remaining two are service (upper) and tin (lower).
+    above = sorted((line for line in _horizontals(paint_lines)
+                    if line.midpoint[1] < seam_y - 2),
+                   key=lambda line: line.midpoint[1])
+    if above:
+        assigned["out"] = max(above, key=lambda line: line.length_px)
+        rest = [line for line in above if line is not assigned["out"]
+                and line.midpoint[1] > assigned["out"].midpoint[1]]
+        if len(rest) >= 2:
+            assigned["service"], assigned["tin"] = rest[0], rest[-1]
+        elif len(rest) == 1:
+            assigned["service"] = rest[0]
+
+    # Short line: the widest horizontal paint line below the seam.
+    below = [line for line in _horizontals(paint_lines)
+             if line.midpoint[1] > seam_y + 2]
+    if below:
+        assigned["short_line"] = max(below, key=lambda line: line.length_px)
+
+    return assigned
