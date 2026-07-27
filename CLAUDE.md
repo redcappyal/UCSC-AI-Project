@@ -23,6 +23,10 @@ The venv is `.venv`; everything runs through it. System `python3` has no flask o
 .venv/bin/python -m pytest tests/ -q     # 394 tests, ~30s
 ```
 
+`pytest.ini` deselects `requires_model` by default — one test that needs the exported
+TorchScript ball model (see the `stereo_offline.py` note below). A green run reads
+"394 passed, 1 deselected"; that deselection is expected, not a skip to chase.
+
 Editing a `*.py` that has a paired `tests/test_*.py` auto-runs that file (PostToolUse
 hook). Failures come back as a *blocked edit*, not a warning.
 
