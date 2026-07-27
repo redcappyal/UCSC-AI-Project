@@ -627,14 +627,26 @@ def test_assign_with_resolver_observed_servers_and_next_serve_winners():
     assert rallies[0]["winner_source"] == "next_serve"
     # est winner of rally 1 was player 1 (last IN hit) -> crosscheck disagrees.
     assert rallies[0]["winner_crosscheck_agrees"] is False
+    # Back-filled winner_reason must explain the *actual* winner (next-serve
+    # observation), not stay frozen on the est explanation for the player who
+    # was overridden -- otherwise the payload self-contradicts (winner=2 but
+    # reason talks about player 1's last hit).
+    assert rallies[0]["winner_reason"] == "next_rally_serve_observed"
     # Rally 3 also served by B: winner of rally 2 = player 2 via next_serve.
     # Rally 2's LAST hit (t=31.0, IN) was by the receiver (player 1), so the
     # est winner is 1 and the cross-check disagrees.
     assert rallies[1]["winner_player_number"] == 2
     assert rallies[1]["winner_source"] == "next_serve"
     assert rallies[1]["winner_crosscheck_agrees"] is False
-    # Last rally: est only.
+    assert rallies[1]["winner_reason"] == "next_rally_serve_observed"
+    # Last rally: est only, never back-filled -> keeps its est winner_reason.
     assert rallies[2]["winner_source"] in ("est", None)
+    assert rallies[2]["winner_reason"] in (
+        "last_front_wall_hit_in_winner",
+        "last_front_wall_hit_out",
+        "serve_out",
+        "last_front_wall_hit_unjudged",
+    )
     # Per-hit alternation from the observed servers.
     rally2_hits = [h for h in hits if h.get("rally_number") == 2]
     assert [h["player_number"] for h in rally2_hits] == [2, 1]

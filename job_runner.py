@@ -680,6 +680,7 @@ def assign_front_wall_hit_players(hits, serve_resolver=None):
         observed_winner = next_summary["server_player_number"]
         summary["winner_player_number"] = observed_winner
         summary["winner_source"] = "next_serve"
+        summary["winner_reason"] = "next_rally_serve_observed"
         summary["winner_crosscheck_agrees"] = (
             (est_winner == observed_winner) if est_winner is not None else None
         )
