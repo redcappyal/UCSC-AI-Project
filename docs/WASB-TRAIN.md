@@ -192,7 +192,9 @@ empty target.
 ### 2.3 Hard negatives are mandatory, not a stretch goal
 
 Wall and floor scuff marks are YOLOX's dominant false-positive class today
-(`ios/MODEL.md` §1: "Squash walls are covered in ball marks"). The whole
+(`docs/annotation-guide.md`: "Squash walls are covered in ball marks - dark
+smudges the exact size and colour of the ball ... This is the single biggest
+false-positive source in this domain"). The whole
 reason to spend a temporal channel is to teach the network that a *static*
 mark, present identically in all 3 frames, is not the ball — but that lesson
 only transfers if training actually shows static ball-lookalikes labeled
@@ -238,9 +240,13 @@ label elsewhere — there's no ball in the window at all).
   This is a pure size change, not a code change: `HRNet.forward` is fully
   convolutional (stem → 4 parallel-branch HRNet stages → final 1×1 conv per
   scale, no `Linear`/flatten anywhere — verified by reading the forward
-  method) so the pretrained weights transfer to any input H×W; only the
-  stem's `Conv2d` stride and the config's `inp_height`/`inp_width`/
-  `out_height`/`out_width` need updating.
+  method), so a change in input H×W requires **no change to any operator's
+  stride or shape** — every conv in the network is defined independent of
+  spatial size. The only thing that changes is the config's declared
+  bookkeeping: `inp_height`/`inp_width`/`out_height`/`out_width` in
+  `configs/model/wasb.yaml` go from `288`/`512` to `416`/`416`. Pretrained
+  weights transfer unchanged — there is nothing in the checkpoint that is
+  shaped by the old input size.
 - **Output stride**: WASB's shipped config has `STEM.STRIDES: [1,1]` and
   `DECONV.NUM_DECONVS: 0`, which — verified by reading `HRNet.forward`, which
   emits `y_list[scale]` straight from the last HRNet stage with no
@@ -375,9 +381,13 @@ directory).
 Once a checkpoint passes §5 and clears whatever val F1 bar Task 8's baseline
 sets, `export_wasb_model.py` (new script, not yet written) traces it to
 TorchScript and writes a `ball-model-v2` manifest beside it — mirroring
-`export_ball_model.py` for YOLOX (`ios/MODEL.md` §2b). Fields this manifest
-must carry, per `ball_model.py`'s `ModelManifest` (already merged, already
-enforces these at load time):
+`export_ball_model.py` for YOLOX (`ios/MODEL.md` §2b). The fields below are
+the **delta** this v2 schema adds on top of what a manifest already carries
+today (`name`, `version`, `nms_iou`, `class_names`, `tile_overlap_px`,
+`max_batch_tiles`, `artifact_sha256`, ... — all still required; `ball_model.py`'s
+`ModelManifest` loader raises `KeyError` on any missing field, v1 or v2, so
+`export_wasb_model.py` must populate the full set, not just the new ones
+listed here):
 
 - `schema_version`: `"ball-model-v2"`
 - `input_size`: `[416, 416]`
@@ -387,7 +397,20 @@ enforces these at load time):
   (§3 — do not assume 1 or 4, measure it)
 - `nominal_ball_px`: sizes the reported detection box (see
   `ball_model.py:HeatmapRunner._decode_output`)
-- `conf_threshold`: `0.1`
+- `conf_threshold`: `0.1` — deliberately low, not a placeholder. Per the
+  implementation plan
+  (`docs/superpowers/plans/2026-07-27-wasb-temporal-ball-detector.md`, Task 7),
+  this is a BYTE-style low-confidence rescue adapted to a single fast, tiny
+  object: weak-but-real heatmap peaks are allowed through the manifest gate
+  so they reach `tracking_common`'s motion-consistency scorer, which promotes
+  moving candidates (+0.30) and suppresses stationary ones (−0.40) — the
+  caller's actual selection bar stays at confidence 0.4
+  (`detections_to_track_samples`), so a low manifest floor doesn't mean a low
+  final acceptance bar. This deliberately differs from the YOLOX export's
+  `--conf-threshold` default of `0.25` (`export_ball_model.py`), because YOLOX
+  has no equivalent downstream motion rescue to lean on — its manifest
+  threshold has to do the precision work alone. Still tunable per export via
+  `export_wasb_model.py --conf-threshold`.
 
 `BALL_MODEL_DIR` (env var, `ball_model.py`) then points the Flask pipeline at
 the exported directory the same way it does for the YOLOX artifact today.
