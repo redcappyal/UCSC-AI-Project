@@ -223,6 +223,91 @@ class TorchScriptRunner:
         return results
 
 
+def decode_heatmap(heatmap, threshold, stride, nominal_px):
+    """Sub-pixel peaks of one heatmap, in input-pixel coordinates.
+
+    Local maxima (8-neighbourhood, strict against later-scanned equals so a
+    flat 2-px plateau fires once) above `threshold`, refined by a 3x3
+    centre-of-mass. Returns [(cx, cy, score)] sorted by score descending.
+    `nominal_px` is not used here (it sizes the reported box in the runner);
+    it is in the signature so callers hold the full decode contract in one
+    place.
+    """
+    import numpy as np
+
+    hm = np.asarray(heatmap, dtype=np.float32)
+    if hm.ndim != 2:
+        raise ValueError(f"decode_heatmap expects a 2D heatmap, got shape {hm.shape}")
+    padded = np.pad(hm, 1, mode="constant", constant_values=-np.inf)
+    neighbourhoods = np.stack([
+        padded[dy:dy + hm.shape[0], dx:dx + hm.shape[1]]
+        for dy in range(3) for dx in range(3) if not (dy == 1 and dx == 1)
+    ])
+    is_peak = (hm >= neighbourhoods.max(axis=0)) & (hm >= threshold)
+    # break plateau ties: keep only the first occurrence in scan order
+    ys, xs = np.nonzero(is_peak)
+    peaks, taken = [], np.zeros_like(hm, dtype=bool)
+    for y, x in zip(ys, xs):
+        if taken[max(y - 1, 0):y + 2, max(x - 1, 0):x + 2].any():
+            continue
+        taken[y, x] = True
+        window = hm[max(y - 1, 0):y + 2, max(x - 1, 0):x + 2]
+        wy, wx = np.mgrid[max(y - 1, 0):min(y + 2, hm.shape[0]),
+                          max(x - 1, 0):min(x + 2, hm.shape[1])]
+        weight = np.clip(window, 0, None)
+        total = float(weight.sum())
+        cy = float((weight * wy).sum() / total) if total > 0 else float(y)
+        cx = float((weight * wx).sum() / total) if total > 0 else float(x)
+        peaks.append((cx * stride, cy * stride, float(hm[y, x])))
+    peaks.sort(key=lambda p: p[2], reverse=True)
+    return peaks
+
+
+class HeatmapRunner:
+    """Runs the traced WASB-style model over co-located multi-frame tile stacks.
+
+    The graph emits [batch, frames_per_input, Hh, Wh] MIMO heatmaps; only the
+    MIDDLE (centre-frame) channel is decoded -- analysis is offline, so every
+    frame is detected with both its past and future neighbour in view, which
+    is what carries the model through direction reversals at wall and floor
+    contacts. Training supervises all frames; serving answers "where is the
+    ball in the CENTRE frame".
+
+    Input stacks are BGR frames concatenated oldest-first along the channel
+    axis, raw 0-255, matching the training adapter in docs/WASB-TRAIN.md. No
+    mean/std, consistent with TorchScriptRunner's BGR-raw convention.
+    """
+
+    def __init__(self, module, manifest, torch_module):
+        self._module = module
+        self._torch = torch_module
+        self.manifest = manifest
+
+    def _decode_output(self, output):
+        results = []
+        size = float(self.manifest.nominal_ball_px)
+        middle = int(self.manifest.frames_per_input) // 2
+        for heatmaps in output:                      # [frames, Hh, Wh]
+            peaks = decode_heatmap(
+                heatmaps[middle], self.manifest.conf_threshold,
+                self.manifest.heatmap_stride, size)
+            results.append([(cx, cy, size, size, score, 0)
+                            for cx, cy, score in peaks])
+        return results
+
+    def run_batch(self, stacks):
+        import numpy as np
+
+        torch = self._torch
+        stacked = np.stack(stacks).astype("float32")           # [B, H, W, 3*F]
+        tensor = torch.from_numpy(stacked).permute(0, 3, 1, 2).contiguous()
+        with torch.no_grad():
+            raw = self._module(tensor)
+        if isinstance(raw, (list, tuple)):
+            raw = raw[0]
+        return self._decode_output(raw.detach().cpu().numpy())
+
+
 def load_detector(model_dir=None):
     """Load the traced model. Raises loudly; never falls back to another detector."""
     model_dir = Path(model_dir) if model_dir is not None else model_dir_from_env()
@@ -242,6 +327,9 @@ def load_detector(model_dir=None):
 
     module = torch.jit.load(str(manifest.artifact_path), map_location="cpu")
     module.eval()
-    runner = TorchScriptRunner(module, manifest, torch)
+    if manifest.decode == "heatmap_peak":
+        runner = HeatmapRunner(module, manifest, torch)
+    else:
+        runner = TorchScriptRunner(module, manifest, torch)
     _DETECTOR_CACHE[model_dir] = runner
     return runner

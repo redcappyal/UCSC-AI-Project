@@ -1,8 +1,17 @@
 import json
 import hashlib
+from types import SimpleNamespace
+
+import numpy as np
 import pytest
 
 import ball_model
+
+
+def _runner_with_manifest(**fields):
+    """A HeatmapRunner with no real module/torch -- only _decode_output is under test."""
+    manifest = SimpleNamespace(**fields)
+    return ball_model.HeatmapRunner(module=None, manifest=manifest, torch_module=None)
 
 
 def _write_model(tmp_path, **overrides):
@@ -247,3 +256,74 @@ def test_torchscript_runner_returns_boxes_for_real_model():
     result = runner.run_batch(crops)
     assert len(result) == 1
     assert isinstance(result[0], list)
+
+
+def test_decode_heatmap_finds_subpixel_peak():
+    hm = np.zeros((208, 208), dtype=np.float32)
+    hm[50, 100] = 0.9
+    hm[50, 101] = 0.6          # pulls the sub-pixel x positively
+    peaks = ball_model.decode_heatmap(hm, threshold=0.1, stride=2, nominal_px=12.0)
+    assert len(peaks) == 1
+    cx, cy, score = peaks[0]
+    assert score == pytest.approx(0.9)
+    assert cy == pytest.approx(100.0, abs=1.0)          # 50 * stride
+    assert 200.0 < cx < 204.0                           # 100 * stride, nudged right
+
+
+def test_decode_heatmap_below_threshold_is_empty():
+    hm = np.full((208, 208), 0.05, dtype=np.float32)
+    assert ball_model.decode_heatmap(hm, 0.1, 2, 12.0) == []
+
+
+def test_decode_heatmap_two_separated_peaks_both_found():
+    hm = np.zeros((208, 208), dtype=np.float32)
+    hm[20, 20] = 0.8
+    hm[150, 150] = 0.5
+    peaks = ball_model.decode_heatmap(hm, 0.1, 2, 12.0)
+    assert len(peaks) == 2
+
+
+def test_decode_heatmap_plateau_emits_single_peak():
+    hm = np.zeros((208, 208), dtype=np.float32)
+    hm[30, 30] = hm[30, 31] = 0.7    # two equal neighbours must not double-fire
+    peaks = ball_model.decode_heatmap(hm, 0.1, 2, 12.0)
+    assert len(peaks) == 1
+
+
+def test_heatmap_runner_decodes_only_the_middle_channel():
+    # Output [B, frames, Hh, Wh]; runner must decode ONLY the middle
+    # (centre-frame) channel and emit TorchScriptRunner-shaped tuples.
+    out = np.zeros((1, 3, 208, 208), dtype=np.float32)
+    out[:, 1, 50, 100] = 0.9   # middle frame -- the one being detected
+    out[:, 0, 10, 10] = 0.9    # past-frame channel -- must be ignored
+    out[:, 2, 90, 90] = 0.9    # future-frame channel -- must be ignored
+    runner = _runner_with_manifest(frames_per_input=3, conf_threshold=0.1,
+                                   heatmap_stride=2, nominal_ball_px=12.0)
+    results = runner._decode_output(out)
+    assert len(results) == 1 and len(results[0]) == 1
+    cx, cy, w, h, score, class_index = results[0][0]
+    assert (cy, score, class_index) == (pytest.approx(100.0, abs=1.0), pytest.approx(0.9), 0)
+    assert w == h == 12.0
+
+
+def test_load_detector_dispatches_to_heatmap_runner_for_v2_manifest(tmp_path, monkeypatch):
+    """load_detector must route decode == 'heatmap_peak' to HeatmapRunner, not TorchScriptRunner."""
+    import sys
+    import types
+
+    model_dir = _write_model(
+        tmp_path,
+        schema_version="ball-model-v2",
+        decode="heatmap_peak",
+        frames_per_input=3,
+        heatmap_stride=2,
+        nominal_ball_px=12.0,
+    )
+
+    fake_module = SimpleNamespace(eval=lambda: None)
+    fake_torch = types.SimpleNamespace(
+        jit=types.SimpleNamespace(load=lambda *a, **k: fake_module))
+    monkeypatch.setitem(sys.modules, "torch", fake_torch)
+
+    runner = ball_model.load_detector(model_dir)
+    assert isinstance(runner, ball_model.HeatmapRunner)
