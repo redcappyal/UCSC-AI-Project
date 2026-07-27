@@ -6,321 +6,412 @@
 <title>CrossCourt — Design Lab</title>
 <style>
 :root{
-  --canvas:#F2F3F5; --card:#FFFFFF; --ink:#17181A; --dim:#8A8F98;
-  --accent:#D9F24F;
-  --tint-good-bg:#E4F5E9; --tint-good-fg:#1E7A3C;
-  --tint-avg-bg:#FBF3DD;  --tint-avg-fg:#9A6B00;
-  --tint-poor-bg:#FBE4E1; --tint-poor-fg:#B3362A;
-  --radius:20px; --shadow:0 1px 3px rgba(20,22,25,.06);
+  --canvas:#F1F2F4; --card:#FFFFFF; --ink:#141517; --dim:#8E9199;
+  --accent:#D9F04A; --accent-soft:#ECF3C6;
+  --tile:#26272B; --hairline:#EFF0F3;
+  --tint-good-bg:#E7F4E9; --tint-good-fg:#2E7D3E;
+  --tint-avg-bg:#FCF3DC;  --tint-avg-fg:#A06E00;
+  --tint-poor-bg:#FBE7E4; --tint-poor-fg:#B3402F;
+  --shadow-card:0 1px 2px rgba(16,17,20,.03), 0 10px 30px rgba(16,17,20,.05);
+  --shadow-btn:0 1px 2px rgba(16,17,20,.04), 0 4px 14px rgba(16,17,20,.06);
 }
 *{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent}
-body{background:#E4E5E9;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
-  color:var(--ink);display:flex;justify-content:center;min-height:100vh;padding:24px 0}
-.phone{width:390px;background:var(--canvas);border-radius:34px;overflow:hidden;
-  box-shadow:0 8px 40px rgba(20,22,25,.18);display:flex;flex-direction:column;
+body{background:#E3E4E8;font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",Roboto,sans-serif;
+  color:var(--ink);display:flex;justify-content:center;min-height:100vh;padding:24px 0;
+  -webkit-font-smoothing:antialiased}
+.phone{width:390px;background:var(--canvas);border-radius:44px;overflow:hidden;
+  box-shadow:0 12px 48px rgba(16,17,20,.2);display:flex;flex-direction:column;
   height:844px;position:relative}
-.screen{flex:1;overflow-y:auto;padding:18px 16px 96px}
-.view{display:none;flex-direction:column;gap:12px}
+/* status bar */
+.statusbar{flex:none;display:flex;align-items:center;justify-content:space-between;
+  padding:14px 26px 4px;font-size:14px;font-weight:600;
+  font-variant-numeric:tabular-nums;letter-spacing:.01em}
+.statusbar .sicons{display:flex;align-items:center;gap:6px}
+.statusbar svg{display:block}
+.screen{flex:1;overflow-y:auto;padding:8px 16px 110px;scrollbar-width:none}
+.screen::-webkit-scrollbar{display:none}
+.view{display:none;flex-direction:column;gap:14px}
 .view.active{display:flex}
-.card{background:var(--card);border-radius:var(--radius);box-shadow:var(--shadow);padding:16px}
-.pill{border:0;border-radius:999px;min-height:48px;padding:0 18px;font-size:15px;font-weight:600;
-  font-family:inherit;display:flex;align-items:center;justify-content:center;gap:8px;
-  cursor:pointer;color:var(--ink);background:var(--card);box-shadow:var(--shadow)}
-.pill.accent{background:var(--accent);font-weight:700}
-.pill:active{filter:brightness(.96)}
-.icontile{width:36px;height:36px;border-radius:12px;background:#EEEFF2;display:flex;
+/* primitives */
+.card{background:var(--card);border-radius:24px;box-shadow:var(--shadow-card);padding:16px}
+.cardtitle{font-size:15px;font-weight:600;letter-spacing:-.01em}
+.pill{border:0;border-radius:999px;min-height:46px;padding:0 16px;font-size:14px;font-weight:600;
+  font-family:inherit;letter-spacing:-.01em;display:flex;align-items:center;justify-content:center;gap:8px;
+  cursor:pointer;color:var(--ink);background:var(--card);box-shadow:var(--shadow-btn)}
+.pill.accent{background:var(--accent);box-shadow:none;font-weight:600}
+.pill:active{filter:brightness(.97)}
+.pill svg{width:18px;height:18px}
+.iconcircle{width:40px;height:40px;border-radius:50%;background:var(--canvas);display:flex;
   align-items:center;justify-content:center;flex:none;color:var(--ink)}
-.icontile svg{width:18px;height:18px}
-.chip{display:inline-flex;align-items:center;gap:4px;border-radius:999px;padding:4px 10px;
-  font-size:12px;font-weight:600}
+.iconcircle svg{width:18px;height:18px}
+.chip{display:inline-flex;align-items:center;border-radius:999px;padding:4px 10px;
+  font-size:11px;font-weight:600}
 .chip.good{background:var(--tint-good-bg);color:var(--tint-good-fg)}
 .chip.avg{background:var(--tint-avg-bg);color:var(--tint-avg-fg)}
 .chip.poor{background:var(--tint-poor-bg);color:var(--tint-poor-fg)}
 .num{font-variant-numeric:tabular-nums;font-weight:700}
-h2{font-size:22px;font-weight:700}
+h2{font-size:20px;font-weight:700;letter-spacing:-.02em}
 .dim{color:var(--dim)}
-/* nav */
-nav{position:absolute;left:50%;bottom:16px;transform:translateX(-50%);display:flex;gap:4px;
-  padding:6px;border-radius:999px;background:rgba(255,255,255,.85);
-  backdrop-filter:blur(16px);box-shadow:0 6px 24px rgba(20,22,25,.14)}
-nav button{border:0;background:none;border-radius:999px;min-height:44px;min-width:44px;
-  padding:0 12px;display:flex;align-items:center;justify-content:center;gap:6px;
-  font-size:12px;font-weight:600;font-family:inherit;color:var(--dim);cursor:pointer}
-nav button span{display:none}
-nav button.active{background:var(--accent);color:var(--ink)}
-nav button.active span{display:inline}
-nav button svg{width:17px;height:17px}
-/* dashboard */
-.apphead{display:flex;align-items:center;justify-content:space-between;min-height:44px}
-.wordmark{font-size:20px;font-weight:800;display:flex;align-items:center;gap:8px;letter-spacing:-.02em}
-.wordmark::before{content:"";width:10px;height:10px;border-radius:50%;background:var(--accent);
-  box-shadow:0 0 0 3px rgba(217,242,79,.35)}
-.iconbtn{width:40px;height:40px;border-radius:50%;border:0;background:var(--card);
-  box-shadow:var(--shadow);display:flex;align-items:center;justify-content:center;
-  color:var(--ink);cursor:pointer}
-.iconbtn svg{width:18px;height:18px}
-.hero{background:var(--ink);border-radius:24px;color:#fff;padding:18px;display:flex;
-  flex-direction:column;gap:10px}
-.hero .toprow{display:flex;align-items:center;justify-content:space-between}
-.hero .tag{font-size:12px;font-weight:600;letter-spacing:.04em;opacity:.55}
-.hero .badge{background:var(--accent);color:var(--ink);border-radius:999px;
-  padding:4px 10px;font-size:12px;font-weight:700}
-.hero .headline{font-size:17px;font-weight:700;line-height:1.35}
-.hero .sub{font-size:13px;color:rgba(255,255,255,.6)}
+.metaline{display:flex;align-items:center;gap:5px;font-size:12px;color:var(--dim)}
+.metaline svg{width:12px;height:12px;flex:none}
+/* app header */
+.apphead{display:flex;align-items:center;justify-content:space-between;min-height:40px;padding:2px 2px 0}
+.wordmark{font-size:17px;font-weight:700;letter-spacing:-.02em;display:flex;align-items:center;gap:7px}
+.wordmark svg{width:20px;height:20px}
+.bellbtn{width:40px;height:40px;border:0;background:none;display:flex;align-items:center;
+  justify-content:center;color:var(--ink);cursor:pointer;margin-right:-8px}
+.bellbtn svg{width:21px;height:21px}
+/* hero (dark card) */
+.hero{background:var(--ink);border-radius:24px;color:#fff;padding:16px;display:flex;
+  flex-direction:column;gap:14px}
+.herotop{display:flex;align-items:center;gap:11px}
+.heroicon{width:38px;height:38px;border-radius:50%;background:rgba(255,255,255,.09);
+  display:flex;align-items:center;justify-content:center;flex:none;color:var(--accent)}
+.heroicon svg{width:18px;height:18px}
+.herotitles{display:flex;flex-direction:column;gap:1px;min-width:0}
+.herotitles .ht{font-size:15px;font-weight:600;letter-spacing:-.01em}
+.herotitles .hs{font-size:12px;color:rgba(255,255,255,.55)}
+.ringbadge{position:relative;width:40px;height:40px;flex:none;margin-left:auto}
+.ringbadge svg{width:40px;height:40px;transform:rotate(-90deg);display:block}
+.ringbadge .rv{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
+  font-size:11px;font-weight:700;color:#fff;font-variant-numeric:tabular-nums}
+.statgrid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px}
+.stattile{background:var(--tile);border-radius:14px;padding:10px 12px 12px;display:flex;
+  flex-direction:column;gap:4px}
+.stattile .sl{font-size:11px;color:rgba(255,255,255,.5);font-weight:500}
+.stattile .sv{font-size:22px;font-weight:700;font-variant-numeric:tabular-nums;line-height:1;
+  display:flex;align-items:baseline;gap:1px}
+.stattile .ss{font-size:11px;font-weight:600;color:rgba(255,255,255,.45)}
+.heronote{font-size:12px;line-height:1.5;color:rgba(255,255,255,.55)}
+.heronote b{color:#fff;font-weight:600}
+/* button row */
 .btnrow{display:flex;gap:10px}
 .btnrow .pill{flex:1}
-.btnrow .pill.accent{flex:1.2}
-.pill svg{width:18px;height:18px}
-.cardhead{font-size:13px;font-weight:700;letter-spacing:.04em;color:var(--dim);
-  margin-bottom:4px}
-.drillrow{display:flex;align-items:center;gap:12px;min-height:56px}
-.drillrow + .drillrow{border-top:1px solid #F0F1F3}
-.drillrow .info{display:flex;flex-direction:column;gap:2px}
-.drillrow .name{font-size:15px;font-weight:600}
-.drillrow .meta{font-size:13px;color:var(--dim)}
-.startchip{border:0;background:var(--accent);border-radius:999px;min-height:34px;
-  padding:6px 14px;font-size:12px;font-weight:700;font-family:inherit;cursor:pointer;
-  margin-left:auto;color:var(--ink)}
-.startchip:active{filter:brightness(.96)}
+/* list rows */
+.listrows{display:flex;flex-direction:column}
+.lrow{display:flex;align-items:center;gap:12px;padding:11px 0}
+.lrow:first-of-type{padding-top:14px}
+.lrow:last-of-type{padding-bottom:2px}
+.lrow .info{display:flex;flex-direction:column;gap:3px;min-width:0}
+.lrow .name{font-size:14px;font-weight:600;letter-spacing:-.01em}
+.startchip{border:0;background:var(--accent);border-radius:999px;min-height:32px;
+  padding:6px 16px;font-size:12px;font-weight:600;font-family:inherit;cursor:pointer;
+  margin-left:auto;color:var(--ink);flex:none}
+.startchip:active{filter:brightness(.97)}
+/* nav (dark, icon-only) */
+nav{position:absolute;left:50%;bottom:18px;transform:translateX(-50%);display:flex;gap:2px;
+  padding:7px;border-radius:999px;background:#1B1C1F;
+  box-shadow:0 18px 36px rgba(16,17,20,.28)}
+nav button{border:0;background:none;width:46px;height:46px;border-radius:50%;
+  display:flex;align-items:center;justify-content:center;color:rgba(255,255,255,.5);
+  cursor:pointer;font-family:inherit}
+nav button.active{background:var(--accent);color:var(--ink)}
+nav button svg{width:20px;height:20px}
+/* toast */
+#toast{position:absolute;left:50%;bottom:92px;transform:translateX(-50%);background:var(--ink);
+  color:#fff;font-size:13px;font-weight:600;padding:10px 16px;border-radius:999px;
+  opacity:0;transition:opacity .18s ease;pointer-events:none;white-space:nowrap;z-index:5}
+#toast.show{opacity:1}
+/* view header */
+.viewhead{display:flex;align-items:baseline;justify-content:space-between;min-height:32px;padding:2px 2px 0}
+.viewhead .dim{font-size:12px}
 /* analysis */
-.viewhead{display:flex;align-items:baseline;justify-content:space-between;min-height:36px}
 .clipcard{padding:0;overflow:hidden}
 .cliptop{display:flex;align-items:center;gap:12px;padding:14px 16px;cursor:pointer}
-.thumb{width:64px;height:44px;border-radius:12px;flex:none;display:flex;align-items:center;
+.thumb{width:62px;height:46px;border-radius:14px;flex:none;display:flex;align-items:center;
   justify-content:center;color:#fff}
-.thumb svg{width:16px;height:16px;filter:drop-shadow(0 1px 2px rgba(0,0,0,.3))}
-.cliptop .info{display:flex;flex-direction:column;gap:2px;min-width:0}
-.cliptop .name{font-size:15px;font-weight:600}
-.cliptop .meta{font-size:13px;color:var(--dim)}
-.statechip{margin-left:auto;flex:none;border-radius:999px;padding:5px 10px;font-size:11px;
-  font-weight:700;letter-spacing:.03em;display:inline-flex;gap:6px;align-items:center}
+.thumb svg{width:15px;height:15px;filter:drop-shadow(0 1px 2px rgba(0,0,0,.25))}
+.cliptop .info{display:flex;flex-direction:column;gap:3px;min-width:0}
+.cliptop .name{font-size:14px;font-weight:600;letter-spacing:-.01em}
+.statechip{margin-left:auto;flex:none;border-radius:999px;padding:6px 11px;font-size:10px;
+  font-weight:700;letter-spacing:.04em;display:inline-flex;gap:5px;align-items:center}
 .statechip.done{background:var(--accent);color:var(--ink)}
-.statechip.todo{background:#EEEFF2;color:var(--dim)}
-.clipbody{max-height:0;overflow:hidden;transition:max-height .25s ease}
-.clipcard.open .clipbody{max-height:520px}
-.clipbody .inner{padding:2px 16px 16px;display:flex;flex-direction:column;gap:12px;
-  border-top:1px solid #F0F1F3;padding-top:12px;margin:0 0}
-.metarow{font-size:13px;color:var(--dim);display:flex;gap:8px;align-items:center}
-.metarow svg{width:14px;height:14px;flex:none}
+.statechip.todo{background:var(--canvas);color:var(--dim)}
+.clipbody{max-height:0;overflow:hidden;transition:max-height .28s ease}
+.clipcard.open .clipbody{max-height:640px}
+.clipbody .inner{padding:14px 16px 16px;display:flex;flex-direction:column;gap:14px;
+  border-top:1px solid var(--hairline)}
 .analyzebtn{width:100%}
 .analyzebtn:disabled{opacity:.75;cursor:default}
-.scorerow{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
-.overall{display:flex;align-items:baseline;gap:2px}
-.overall .big{font-size:28px}
-.overall .suffix{font-size:13px;color:var(--dim);font-weight:600}
-.scorechip{background:#EEEFF2;border-radius:999px;padding:5px 10px;font-size:12px;
-  font-weight:600;color:var(--ink)}
-.fbrow{display:flex;gap:10px;align-items:flex-start}
-.fbrow .chip{flex:none;margin-top:1px}
-.fbrow .txt{font-size:13.5px;line-height:1.45}
-.ghostbtn{border:1px solid #E2E3E7;background:transparent;border-radius:999px;
-  min-height:38px;padding:0 16px;font-size:13px;font-weight:600;font-family:inherit;
+/* gauge */
+.gauge{display:flex;justify-content:center;padding:2px 0 0}
+.gauge svg{display:block}
+/* score columns */
+.scorecols{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px}
+.scol{border:1px solid var(--hairline);border-radius:14px;padding:10px 12px;display:flex;
+  flex-direction:column;gap:3px;align-items:flex-start}
+.scol .sl{font-size:11px;color:var(--dim);font-weight:500}
+.scol .sv{font-size:20px;font-weight:700;font-variant-numeric:tabular-nums;line-height:1.1;
+  display:flex;align-items:baseline;gap:1px}
+.scol .ss{font-size:11px;font-weight:600;color:var(--dim)}
+/* feedback rows */
+.fbrow{display:flex;align-items:center;gap:12px}
+.fbrow .iconcircle{width:36px;height:36px}
+.fbrow .iconcircle svg{width:16px;height:16px}
+.fbrow .info{display:flex;flex-direction:column;gap:2px;min-width:0}
+.fbrow .t{font-size:13px;font-weight:600;letter-spacing:-.01em}
+.fbrow .s{font-size:12px;color:var(--dim);line-height:1.4}
+.fbrow .chip{margin-left:auto;flex:none}
+.ghostbtn{border:1px solid #E4E5E9;background:transparent;border-radius:999px;
+  min-height:36px;padding:0 16px;font-size:12px;font-weight:600;font-family:inherit;
   color:var(--ink);cursor:pointer;align-self:flex-start}
 /* training */
-.program{flex-direction:row;align-items:center;justify-content:space-between;gap:12px}
-.program .info{display:flex;flex-direction:column;gap:4px}
-.program .pname{font-size:15px;font-weight:700}
-.program .pmeta{font-size:13px;color:rgba(255,255,255,.6)}
-.ring{position:relative;width:48px;height:48px;flex:none}
-.ring svg{width:48px;height:48px;transform:rotate(-90deg)}
-.ring .pct{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
-  font-size:11px;font-weight:700;color:#fff}
-.exrow{display:flex;align-items:center;gap:12px;min-height:64px}
-.exrow + .exrow{border-top:1px solid #F0F1F3}
-.exthumb{width:48px;height:48px;border-radius:12px;flex:none}
-.exrow .info{display:flex;flex-direction:column;gap:4px;min-width:0}
-.exrow .name{font-size:15px;font-weight:600}
-.exrow .meta{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--dim)}
-.playbtn{width:40px;height:40px;border-radius:50%;border:0;background:var(--accent);
+.ringbadge.lime svg circle.arc{stroke:var(--accent)}
+.exrow{display:flex;align-items:center;gap:12px;padding:11px 0}
+.exrow:first-of-type{padding-top:14px}
+.exrow:last-of-type{padding-bottom:2px}
+.exthumb{width:54px;height:54px;border-radius:14px;flex:none}
+.exrow .info{display:flex;flex-direction:column;gap:5px;min-width:0}
+.exrow .name{font-size:14px;font-weight:600;letter-spacing:-.01em}
+.exrow .meta{display:flex;align-items:center;gap:8px}
+.playbtn{width:38px;height:38px;border-radius:50%;border:0;background:var(--accent);
   color:var(--ink);display:flex;align-items:center;justify-content:center;cursor:pointer;
   margin-left:auto;flex:none}
-.playbtn svg{width:16px;height:16px}
-.playbtn:active{filter:brightness(.96)}
+.playbtn svg{width:14px;height:14px}
+.playbtn:active{filter:brightness(.97)}
 /* progress */
-#rangeseg{display:flex;background:var(--card);border-radius:999px;box-shadow:var(--shadow);
-  padding:4px;gap:2px}
-#rangeseg button{flex:1;border:0;background:none;border-radius:999px;min-height:38px;
-  font-size:13px;font-weight:700;font-family:inherit;color:var(--dim);cursor:pointer}
-#rangeseg button.active{background:var(--accent);color:var(--ink)}
+#rangeseg{display:flex;background:#E7E8EC;border-radius:999px;padding:4px;gap:2px}
+#rangeseg button{flex:1;border:0;background:none;border-radius:999px;min-height:36px;
+  font-size:13px;font-weight:600;font-family:inherit;color:var(--dim);cursor:pointer}
+#rangeseg button.active{background:var(--card);color:var(--ink);
+  box-shadow:0 1px 2px rgba(16,17,20,.06), 0 3px 8px rgba(16,17,20,.06)}
 #deltastrip{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px}
-.delta{background:var(--card);border-radius:16px;box-shadow:var(--shadow);padding:12px;
+.delta{background:var(--card);border-radius:18px;box-shadow:var(--shadow-card);padding:12px 13px;
   display:flex;flex-direction:column;gap:6px}
-.delta .lbl{font-size:12px;color:var(--dim);font-weight:600}
+.delta .lbl{font-size:11px;color:var(--dim);font-weight:500}
 .delta .valrow{display:flex;align-items:center;gap:6px}
-.delta .val{font-size:20px}
-.delta .chip{padding:2px 8px;font-size:11px}
-.delta .chip.flat{background:#EEEFF2;color:var(--dim)}
-.trend .toprow{display:flex;align-items:baseline;justify-content:space-between;margin-bottom:2px}
-.trend .lbl{font-size:13px;color:var(--dim);font-weight:600}
-.trend .valrow{display:flex;align-items:baseline;gap:8px;margin-bottom:6px}
-.trend .val{font-size:28px}
-.trend .unit{font-size:14px;color:var(--dim);font-weight:600}
-.trend .vsbase{font-size:12px;font-weight:700}
+.delta .val{font-size:20px;line-height:1}
+.delta .chip{padding:3px 7px;font-size:10px}
+.delta .chip.flat{background:var(--canvas);color:var(--dim)}
+.trend .lbl{font-size:15px;font-weight:600;letter-spacing:-.01em}
+.trend .valrow{display:flex;align-items:baseline;gap:8px;margin:6px 0 8px}
+.trend .val{font-size:26px;line-height:1}
+.trend .unit{font-size:13px;color:var(--dim);font-weight:600}
+.trend .vsbase{font-size:12px;font-weight:600}
 .trend .vsbase.up{color:var(--tint-good-fg)}
 .trend .vsbase.down{color:var(--tint-poor-fg)}
 .trend svg{display:block;width:100%;height:auto}
 .bestrow{display:flex;align-items:center;gap:12px}
 .bestrow .info{display:flex;flex-direction:column;gap:2px}
-.bestrow .name{font-size:14px;font-weight:600}
-.bestrow .meta{font-size:13px;color:var(--dim)}
-/* toast */
-#toast{position:absolute;left:50%;bottom:84px;transform:translateX(-50%);background:var(--ink);
-  color:#fff;font-size:13px;font-weight:600;padding:10px 16px;border-radius:999px;
-  opacity:0;transition:opacity .18s ease;pointer-events:none;white-space:nowrap;z-index:5}
-#toast.show{opacity:1}
+.bestrow .name{font-size:14px;font-weight:600;letter-spacing:-.01em}
+.bestrow .meta{font-size:12px;color:var(--dim)}
 </style>
 </head>
 <body>
 <div class="phone">
+  <div class="statusbar">
+    <span>9:41</span>
+    <span class="sicons">
+      <svg width="17" height="11" viewBox="0 0 17 11" fill="currentColor"><rect x="0" y="7" width="3" height="4" rx="1"/><rect x="4.5" y="5" width="3" height="6" rx="1"/><rect x="9" y="2.5" width="3" height="8.5" rx="1"/><rect x="13.5" y="0" width="3" height="11" rx="1"/></svg>
+      <svg width="15" height="11" viewBox="0 0 15 11" fill="currentColor"><path d="M7.5 9.2a1.4 1.4 0 1 0 0 2.8 1.4 1.4 0 0 0 0-2.8zM7.5 5.4c1.5 0 2.9.6 3.9 1.6l-1.4 1.4a3.6 3.6 0 0 0-5 0L3.6 7a5.5 5.5 0 0 1 3.9-1.6zM7.5 1.3c2.6 0 5 1 6.8 2.8l-1.4 1.4a7.7 7.7 0 0 0-10.8 0L.7 4.1A9.6 9.6 0 0 1 7.5 1.3z" transform="translate(0 -1.3)"/></svg>
+      <svg width="25" height="12" viewBox="0 0 25 12" fill="none"><rect x="0.5" y="0.5" width="21" height="11" rx="3.5" stroke="currentColor" opacity=".4"/><rect x="2" y="2" width="18" height="8" rx="2" fill="currentColor"/><path d="M23 4v4c1-.2 1.6-1 1.6-2S24 4.2 23 4z" fill="currentColor" opacity=".4"/></svg>
+    </span>
+  </div>
   <div class="screen">
     <section class="view active" id="view-dashboard">
       <div class="apphead">
-        <div class="wordmark">CrossCourt</div>
-        <button class="iconbtn" aria-label="Notifications" onclick="toast('No notifications')">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 0 1-3.4 0"/></svg>
+        <div class="wordmark">
+          <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle cx="12" cy="12" r="9" fill="#D9F04A"/><path d="M5.5 5.5c3 2.5 3 10.5 0 13M18.5 5.5c-3 2.5-3 10.5 0 13" stroke="#141517" stroke-width="1.6" stroke-linecap="round"/></svg>
+          CrossCourt
+        </div>
+        <button class="bellbtn" aria-label="Notifications" onclick="toast('No notifications')">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 0 1-3.4 0"/></svg>
         </button>
       </div>
       <div class="hero">
-        <div class="toprow">
-          <span class="tag">FOCUS</span>
-          <span class="badge num">IN% 78 ▲3</span>
+        <div class="herotop">
+          <div class="heroicon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="8.5"/><circle cx="12" cy="12" r="4"/><circle cx="12" cy="12" r=".8" fill="currentColor"/></svg>
+          </div>
+          <div class="herotitles">
+            <span class="ht">Today&#8217;s Focus</span>
+            <span class="hs">Straight-drive depth</span>
+          </div>
+          <div class="ringbadge" role="img" aria-label="4 of 5 sessions this week">
+            <svg viewBox="0 0 40 40" fill="none">
+              <circle cx="20" cy="20" r="16.5" stroke="rgba(255,255,255,.14)" stroke-width="3.5"/>
+              <circle class="arc" cx="20" cy="20" r="16.5" stroke="#D9F04A" stroke-width="3.5" stroke-linecap="round" stroke-dasharray="82.9 103.7"/>
+            </svg>
+            <span class="rv">4/5</span>
+          </div>
         </div>
-        <div class="headline">Straight-drive depth — drives are landing short of the service box in 3 of your last 4 sessions.</div>
-        <div class="sub">From your player report · 4 sessions analyzed</div>
+        <div class="statgrid">
+          <div class="stattile"><span class="sl">Sessions</span><span class="sv">4<span class="ss">/5</span></span></div>
+          <div class="stattile"><span class="sl">Front-wall IN</span><span class="sv">78<span class="ss">%</span></span></div>
+          <div class="stattile"><span class="sl">Avg. Score</span><span class="sv">84<span class="ss">/100</span></span></div>
+        </div>
+        <div class="heronote">Drives are landing <b>short of the service box</b> in 3 of your last 4 sessions.</div>
       </div>
       <div class="btnrow">
         <button class="pill accent" onclick="toast('Recording is a lab stub')">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="6" width="13" height="12" rx="3"/><path d="M15 10.5l7-4v11l-7-4"/></svg>
+          <svg viewBox="0 0 24 24" fill="currentColor"><path d="M4 6.5A2.5 2.5 0 0 1 6.5 4h6A2.5 2.5 0 0 1 15 6.5v11a2.5 2.5 0 0 1-2.5 2.5h-6A2.5 2.5 0 0 1 4 17.5z"/><path d="M16.5 10l4.2-2.8a.8.8 0 0 1 1.3.7v8.2a.8.8 0 0 1-1.3.7L16.5 14z"/></svg>
           Start Recording
         </button>
         <button class="pill" onclick="toast('Upload is a lab stub')">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 16V4"/><path d="M6 10l6-6 6 6"/><path d="M4 20h16"/></svg>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 15V4"/><path d="M7 8l5-5 5 5"/><path d="M4 16v2.5A1.5 1.5 0 0 0 5.5 20h13a1.5 1.5 0 0 0 1.5-1.5V16"/></svg>
           Upload Video
         </button>
       </div>
-      <div class="card">
-        <div class="cardhead">NEXT UP</div>
-        <div class="drillrow">
-          <div class="icontile">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="4.5"/><circle cx="12" cy="12" r="1" fill="currentColor"/></svg>
+      <div class="card" style="padding-top:14px;padding-bottom:12px">
+        <div class="cardtitle">Next up</div>
+        <div class="listrows">
+          <div class="lrow">
+            <div class="iconcircle">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="12" r="8.5"/><circle cx="12" cy="12" r="4"/><circle cx="12" cy="12" r=".8" fill="currentColor"/></svg>
+            </div>
+            <div class="info">
+              <span class="name">Straight-drive depth</span>
+              <span class="metaline">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
+                20 min
+              </span>
+            </div>
+            <button class="startchip" onclick="switchTab('training')">Start</button>
           </div>
-          <div class="info">
-            <span class="name">Straight-drive depth</span>
-            <span class="meta">20 min · length past the service box</span>
+          <div class="lrow">
+            <div class="iconcircle">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 19L19 5"/><path d="M5 19h5.5"/><path d="M5 19v-5.5"/></svg>
+            </div>
+            <div class="info">
+              <span class="name">Boast accuracy</span>
+              <span class="metaline">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
+                15 min
+              </span>
+            </div>
+            <button class="startchip" onclick="switchTab('training')">Start</button>
           </div>
-          <button class="startchip" onclick="switchTab('training')">Start</button>
-        </div>
-        <div class="drillrow">
-          <div class="icontile">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20L20 4"/><path d="M4 20h6"/><path d="M4 20v-6"/></svg>
-          </div>
-          <div class="info">
-            <span class="name">Boast accuracy</span>
-            <span class="meta">15 min · two-wall targets</span>
-          </div>
-          <button class="startchip" onclick="switchTab('training')">Start</button>
         </div>
       </div>
     </section>
+
     <section class="view" id="view-analysis">
       <div class="viewhead">
         <h2>Analysis</h2>
-        <span class="dim" style="font-size:13px" id="clipmeta"></span>
+        <span class="dim" id="clipmeta"></span>
       </div>
       <div id="cliplist" style="display:flex;flex-direction:column;gap:12px"></div>
     </section>
+
     <section class="view" id="view-training">
-      <h2>Training</h2>
-      <div class="hero program">
-        <div class="info">
-          <span class="pname">Intermediate Program</span>
-          <span class="pmeta">Level 4 · Week 3 of 8</span>
-        </div>
-        <div class="ring" role="img" aria-label="Program 75% complete">
-          <svg viewBox="0 0 48 48" fill="none">
-            <circle cx="24" cy="24" r="20" stroke="rgba(255,255,255,.18)" stroke-width="5"/>
-            <circle cx="24" cy="24" r="20" stroke="#D9F24F" stroke-width="5" stroke-linecap="round"
-              stroke-dasharray="94.25 125.66"/>
-          </svg>
-          <span class="pct num">75%</span>
-        </div>
-      </div>
-      <div class="card">
-        <div class="cardhead">TODAY MISSIONS</div>
-        <div class="drillrow">
-          <div class="icontile">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2L4 14h6l-1 8 9-12h-6z"/></svg>
+      <div class="viewhead"><h2>Training</h2></div>
+      <div class="hero">
+        <div class="herotop">
+          <div class="heroicon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 3L5 13.5h5.5L11 21l8-10.5h-5.5z"/></svg>
           </div>
-          <div class="info">
-            <span class="name">Power drives</span>
-            <span class="meta">60 min · pace without losing length</span>
+          <div class="herotitles">
+            <span class="ht">Intermediate Program</span>
+            <span class="hs">Level 4 &#183; Week 3 of 8</span>
           </div>
-          <button class="startchip" onclick="toast('Mission start is a lab stub')">Start</button>
-        </div>
-        <div class="drillrow">
-          <div class="icontile">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="4.5"/><circle cx="12" cy="12" r="1" fill="currentColor"/></svg>
+          <div class="ringbadge" role="img" aria-label="Program 75% complete">
+            <svg viewBox="0 0 40 40" fill="none">
+              <circle cx="20" cy="20" r="16.5" stroke="rgba(255,255,255,.14)" stroke-width="3.5"/>
+              <circle cx="20" cy="20" r="16.5" stroke="#D9F04A" stroke-width="3.5" stroke-linecap="round" stroke-dasharray="77.8 103.7"/>
+            </svg>
+            <span class="rv">75%</span>
           </div>
-          <div class="info">
-            <span class="name">Flick serve targets</span>
-            <span class="meta">30 min · high sidewall contact</span>
-          </div>
-          <button class="startchip" onclick="toast('Mission start is a lab stub')">Start</button>
         </div>
       </div>
-      <div class="card">
-        <div class="cardhead">EXERCISES</div>
-        <div class="exrow">
-          <div class="exthumb" style="background:linear-gradient(135deg, hsl(210 30% 82%), hsl(210 25% 62%))"></div>
-          <div class="info">
-            <span class="name">Ghosting — six corners</span>
-            <span class="meta"><span class="chip good">Easy</span><span class="num">2 min · 3 sets</span></span>
+      <div class="card" style="padding-top:14px;padding-bottom:12px">
+        <div class="cardtitle">Today Missions</div>
+        <div class="listrows">
+          <div class="lrow">
+            <div class="iconcircle">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M13 3L5 13.5h5.5L11 21l8-10.5h-5.5z"/></svg>
+            </div>
+            <div class="info">
+              <span class="name">Power drives</span>
+              <span class="metaline">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
+                60 min
+              </span>
+            </div>
+            <button class="startchip" onclick="toast('Mission start is a lab stub')">Start</button>
           </div>
-          <button class="playbtn" aria-label="Play ghosting exercise" onclick="toast('Player is a lab stub')">
-            <svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
-          </button>
+          <div class="lrow">
+            <div class="iconcircle">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="12" r="8.5"/><circle cx="12" cy="12" r="4"/><circle cx="12" cy="12" r=".8" fill="currentColor"/></svg>
+            </div>
+            <div class="info">
+              <span class="name">Flick serve targets</span>
+              <span class="metaline">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
+                30 min
+              </span>
+            </div>
+            <button class="startchip" onclick="toast('Mission start is a lab stub')">Start</button>
+          </div>
         </div>
-        <div class="exrow">
-          <div class="exthumb" style="background:linear-gradient(135deg, hsl(160 30% 80%), hsl(160 25% 60%))"></div>
-          <div class="info">
-            <span class="name">Boast accuracy ladder</span>
-            <span class="meta"><span class="chip avg">Medium</span><span class="num">5 min · 4 sets</span></span>
+      </div>
+      <div class="card" style="padding-top:14px;padding-bottom:12px">
+        <div class="cardtitle">Exercises</div>
+        <div class="listrows">
+          <div class="exrow">
+            <div class="exthumb" style="background:linear-gradient(140deg, hsl(210 28% 80%), hsl(215 30% 55%))"></div>
+            <div class="info">
+              <span class="name">Ghosting &#8212; six corners</span>
+              <span class="meta">
+                <span class="chip good">Easy</span>
+                <span class="metaline"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg><span class="num" style="font-weight:500">2 min</span></span>
+                <span class="metaline"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 2l4 4-4 4"/><path d="M3 11v-1a4 4 0 0 1 4-4h14"/><path d="M7 22l-4-4 4-4"/><path d="M21 13v1a4 4 0 0 1-4 4H3"/></svg><span class="num" style="font-weight:500">3 sets</span></span>
+              </span>
+            </div>
+            <button class="playbtn" aria-label="Play ghosting exercise" onclick="toast('Player is a lab stub')">
+              <svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
+            </button>
           </div>
-          <button class="playbtn" aria-label="Play boast ladder exercise" onclick="toast('Player is a lab stub')">
-            <svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
-          </button>
-        </div>
-        <div class="exrow">
-          <div class="exthumb" style="background:linear-gradient(135deg, hsl(20 35% 80%), hsl(20 30% 60%))"></div>
-          <div class="info">
-            <span class="name">Tin-margin pressure drill</span>
-            <span class="meta"><span class="chip poor">Hard</span><span class="num">10 min · 4 sets</span></span>
+          <div class="exrow">
+            <div class="exthumb" style="background:linear-gradient(140deg, hsl(155 25% 76%), hsl(160 28% 48%))"></div>
+            <div class="info">
+              <span class="name">Boast accuracy ladder</span>
+              <span class="meta">
+                <span class="chip avg">Medium</span>
+                <span class="metaline"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg><span class="num" style="font-weight:500">5 min</span></span>
+                <span class="metaline"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 2l4 4-4 4"/><path d="M3 11v-1a4 4 0 0 1 4-4h14"/><path d="M7 22l-4-4 4-4"/><path d="M21 13v1a4 4 0 0 1-4 4H3"/></svg><span class="num" style="font-weight:500">4 sets</span></span>
+              </span>
+            </div>
+            <button class="playbtn" aria-label="Play boast ladder exercise" onclick="toast('Player is a lab stub')">
+              <svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
+            </button>
           </div>
-          <button class="playbtn" aria-label="Play tin-margin drill" onclick="toast('Player is a lab stub')">
-            <svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
-          </button>
+          <div class="exrow">
+            <div class="exthumb" style="background:linear-gradient(140deg, hsl(22 32% 78%), hsl(18 30% 52%))"></div>
+            <div class="info">
+              <span class="name">Tin-margin pressure drill</span>
+              <span class="meta">
+                <span class="chip poor">Hard</span>
+                <span class="metaline"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg><span class="num" style="font-weight:500">10 min</span></span>
+                <span class="metaline"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 2l4 4-4 4"/><path d="M3 11v-1a4 4 0 0 1 4-4h14"/><path d="M7 22l-4-4 4-4"/><path d="M21 13v1a4 4 0 0 1-4 4H3"/></svg><span class="num" style="font-weight:500">4 sets</span></span>
+              </span>
+            </div>
+            <button class="playbtn" aria-label="Play tin-margin drill" onclick="toast('Player is a lab stub')">
+              <svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
+            </button>
+          </div>
         </div>
       </div>
     </section>
+
     <section class="view" id="view-progress">
-      <h2>Progress</h2>
+      <div class="viewhead"><h2>Progress</h2></div>
       <div id="rangeseg"></div>
       <div id="deltastrip">
-        <div class="delta"><span class="lbl">IN%</span>
-          <span class="valrow"><span class="val num">78</span><span class="chip good">▲3</span></span></div>
-        <div class="delta"><span class="lbl">Score</span>
-          <span class="valrow"><span class="val num">84</span><span class="chip good">▲5</span></span></div>
+        <div class="delta"><span class="lbl">Front-wall IN</span>
+          <span class="valrow"><span class="val num">78%</span><span class="chip good">&#9650;3</span></span></div>
+        <div class="delta"><span class="lbl">Session score</span>
+          <span class="valrow"><span class="val num">84</span><span class="chip good">&#9650;5</span></span></div>
         <div class="delta"><span class="lbl">Rallies</span>
-          <span class="valrow"><span class="val num">42</span><span class="chip flat">—</span></span></div>
+          <span class="valrow"><span class="val num">42</span><span class="chip flat">&#8212;</span></span></div>
       </div>
       <div id="trendcards" style="display:flex;flex-direction:column;gap:12px"></div>
       <div class="card bestrow">
-        <div class="icontile">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 21h8"/><path d="M12 17v4"/><path d="M7 4h10v6a5 5 0 0 1-10 0z"/><path d="M7 6H4a1 1 0 0 0-1 1c0 2.2 1.8 4 4 4"/><path d="M17 6h3a1 1 0 0 1 1 1c0 2.2-1.8 4-4 4"/></svg>
+        <div class="iconcircle">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M8 21h8"/><path d="M12 17v4"/><path d="M7 4h10v6a5 5 0 0 1-10 0z"/><path d="M7 6H4a1 1 0 0 0-1 1c0 2.2 1.8 4 4 4"/><path d="M17 6h3a1 1 0 0 1 1 1c0 2.2-1.8 4-4 4"/></svg>
         </div>
         <div class="info">
-          <span class="name">Best IN% to date — <span class="num">84%</span></span>
-          <span class="meta">Jul 22 · beat it to set a new mark</span>
+          <span class="name">Best IN% to date &#8212; <span class="num">84%</span></span>
+          <span class="meta">Jul 22 &#183; beat it to set a new mark</span>
         </div>
       </div>
     </section>
@@ -330,10 +421,10 @@ nav button svg{width:17px;height:17px}
 </div>
 <script>
 const TABS = [
-  {id:'dashboard', label:'Dashboard', icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 11l9-7 9 7v9a1 1 0 0 1-1 1h-5v-6h-6v6H4a1 1 0 0 1-1-1z"/></svg>'},
-  {id:'analysis',  label:'Analysis',  icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="14" rx="3"/><path d="M10 9l4 2.5L10 14z"/></svg>'},
-  {id:'training',  label:'Training',  icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="3"/></svg>'},
-  {id:'progress',  label:'Progress',  icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19l5-6 4 3 7-9"/></svg>'}
+  {id:'dashboard', label:'Dashboard', icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10.5l9-7.5 9 7.5V20a1 1 0 0 1-1 1h-5.5v-6h-5v6H4a1 1 0 0 1-1-1z"/></svg>'},
+  {id:'analysis',  label:'Analysis',  icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="4.5" width="19" height="15" rx="4"/><path d="M10 9.2l4.5 2.8L10 14.8z" fill="currentColor" stroke="none"/></svg>'},
+  {id:'training',  label:'Training',  icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="12" r="8.5"/><circle cx="12" cy="12" r="4"/><circle cx="12" cy="12" r=".8" fill="currentColor"/></svg>'},
+  {id:'progress',  label:'Progress',  icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 19.5l5.5-7 4 3.5 7.5-9.5"/><path d="M16 6.5h4.5V11"/></svg>'}
 ];
 function switchTab(name){
   document.querySelectorAll('.view').forEach(v=>v.classList.toggle('active', v.id==='view-'+name));
@@ -347,52 +438,79 @@ function toast(msg){
   clearTimeout(toastTimer); toastTimer = setTimeout(()=>t.classList.remove('show'), 1600);
 }
 document.getElementById('nav').innerHTML = TABS.map(t=>
-  `<button data-tab="${t.id}" onclick="switchTab('${t.id}')">${t.icon}<span>${t.label}</span></button>`).join('');
+  `<button data-tab="${t.id}" aria-label="${t.label}" onclick="switchTab('${t.id}')">${t.icon}</button>`).join('');
 
 /* ---------- analysis ---------- */
 const CLIPS = [
   {id:1, date:'Today, 9:41', dur:'12:24', analyzed:true,  score:84,
    scores:{Accuracy:82, Placement:71, Consistency:68},
    feedback:[
-     {t:'Good length on straight drives — 74% past the service box.', s:'good', l:'Good'},
-     {t:'Boasts landing mid-court. Aim shorter, two racket-lengths off the front wall.', s:'avg', l:'Average'},
-     {t:'Serve returns catching the tin under pressure — lift your target above the service line.', s:'poor', l:'Poor'}],
-   hue:200},
+     {t:'Great length!', s2:'74% of straight drives past the service box.', s:'good', l:'Good'},
+     {t:'Boasts sitting mid-court', s2:'Aim shorter — two racket-lengths off the front wall.', s:'avg', l:'Average'},
+     {t:'Returns catching the tin', s2:'Lift your target above the service line under pressure.', s:'poor', l:'Poor'}],
+   hue:205},
   {id:2, date:'Jul 25, 18:02', dur:'08:51', analyzed:true, score:79,
    scores:{Accuracy:77, Placement:69, Consistency:64},
    feedback:[
-     {t:'Rally length up — averaging 9 shots, your best this month.', s:'good', l:'Good'},
-     {t:'Cross-court drives drifting to the middle third.', s:'avg', l:'Average'}],
+     {t:'Rally length up', s2:'Averaging 9 shots — your best this month.', s:'good', l:'Good'},
+     {t:'Cross-courts drifting middle', s2:'Width first: hit the side wall behind the service box.', s:'avg', l:'Average'}],
    hue:150},
   {id:3, date:'Jul 22, 17:30', dur:'15:07', analyzed:false, hue:30},
   {id:4, date:'Jul 19, 19:12', dur:'06:40', analyzed:false, hue:280}
 ];
 let openClip = null;
 const PLAY_SVG = '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>';
+const FB_ICONS = {
+  good:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg>',
+  avg:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 8v5"/><circle cx="12" cy="16.5" r=".5" fill="currentColor"/><circle cx="12" cy="12" r="9"/></svg>',
+  poor:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 7v6"/><circle cx="12" cy="16.8" r=".6" fill="currentColor"/><path d="M10.3 3.6L2.6 17a2 2 0 0 0 1.7 3h15.4a2 2 0 0 0 1.7-3L13.7 3.6a2 2 0 0 0-3.4 0z"/></svg>'
+};
+function gaugeSVG(score){
+  const N = 13, cx = 105, cy = 84, r = 64, tick = 19, w = 9;
+  const start = 205, sweep = 230;
+  const filled = Math.round(score/100*N);
+  let ticks = '';
+  for(let i=0;i<N;i++){
+    const a = (start - i*(sweep/(N-1))) * Math.PI/180;
+    const x1 = cx + Math.cos(a)*(r-tick/2), y1 = cy - Math.sin(a)*(r-tick/2);
+    const x2 = cx + Math.cos(a)*(r+tick/2), y2 = cy - Math.sin(a)*(r+tick/2);
+    const on = i < filled;
+    const op = on ? (0.45 + 0.55*((i+1)/filled)) : 1;
+    const col = on ? '#D9F04A' : '#ECEDE3';
+    ticks += `<line x1="${x1.toFixed(1)}" y1="${y1.toFixed(1)}" x2="${x2.toFixed(1)}" y2="${y2.toFixed(1)}" stroke="${col}" stroke-opacity="${op.toFixed(2)}" stroke-width="${w}" stroke-linecap="round"/>`;
+  }
+  return `<svg width="210" height="126" viewBox="0 0 210 126" aria-label="Overall score ${score} out of 100">
+    ${ticks}
+    <text x="${cx}" y="${cy-8}" text-anchor="middle" font-size="11" fill="#8E9199" font-weight="500">Overall</text>
+    <text x="${cx}" y="${cy+22}" text-anchor="middle" font-size="30" font-weight="800" fill="#141517">${score}%</text>
+  </svg>`;
+}
 function renderClips(){
   const n = CLIPS.filter(c=>c.analyzed).length;
   document.getElementById('clipmeta').textContent = `${CLIPS.length} clips · ${n} analyzed`;
   document.getElementById('cliplist').innerHTML = CLIPS.map(c=>{
-    const grad = `linear-gradient(135deg, hsl(${c.hue} 30% 82%), hsl(${c.hue} 25% 62%))`;
+    const grad = `linear-gradient(140deg, hsl(${c.hue} 28% 80%), hsl(${c.hue} 26% 56%))`;
     const state = c.analyzed
       ? `<span class="statechip done">ANALYZED <span class="num">${c.score}</span></span>`
       : `<span class="statechip todo">NOT ANALYZED</span>`;
     let body;
     if(!c.analyzed){
       body = `
-        <div class="metarow"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="2" y="6" width="13" height="12" rx="3"/><path d="M15 10.5l7-4v11l-7-4"/></svg>Recorded on court · phone on fin</div>
-        <div class="metarow"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg>Calibration attached</div>
+        <div class="metaline"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="2" y="6" width="13" height="12" rx="3"/><path d="M15 10.5l7-4v11l-7-4"/></svg>Recorded on court &#183; phone on fin</div>
+        <div class="metaline"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg>Calibration attached</div>
         <button class="pill accent analyzebtn" onclick="event.stopPropagation();analyzeClip(${c.id})">Analyze</button>`;
     } else {
-      const chips = Object.entries(c.scores).map(([k,v])=>
-        `<span class="scorechip">${k} <span class="num">${v}</span></span>`).join('');
+      const cols = Object.entries(c.scores).map(([k,v])=>
+        `<div class="scol"><span class="sl">${k}</span><span class="sv">${v}<span class="ss">/100</span></span></div>`).join('');
       const fb = c.feedback.map(f=>
-        `<div class="fbrow"><span class="chip ${f.s}">${f.l}</span><span class="txt">${f.t}</span></div>`).join('');
+        `<div class="fbrow">
+           <div class="iconcircle">${FB_ICONS[f.s]}</div>
+           <div class="info"><span class="t">${f.t}</span><span class="s">${f.s2}</span></div>
+           <span class="chip ${f.s}">${f.l}</span>
+         </div>`).join('');
       body = `
-        <div class="scorerow">
-          <span class="overall"><span class="big num">${c.score}</span><span class="suffix">/100</span></span>
-          ${chips}
-        </div>
+        <div class="gauge">${gaugeSVG(c.score)}</div>
+        <div class="scorecols">${cols}</div>
         ${fb}
         <button class="ghostbtn" onclick="event.stopPropagation();toast('Re-analysis is a lab stub')">Re-analyze</button>`;
     }
@@ -402,7 +520,7 @@ function renderClips(){
           <div class="thumb" style="background:${grad}">${PLAY_SVG}</div>
           <div class="info">
             <span class="name">${c.date}</span>
-            <span class="meta num">${c.dur} · rally clip</span>
+            <span class="metaline"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg><span class="num" style="font-weight:500">${c.dur}</span>&#183; rally clip</span>
           </div>
           ${state}
         </div>
@@ -426,8 +544,8 @@ function analyzeClip(id){
       c.analyzed = true; c.score = 76;
       c.scores = {Accuracy:74, Placement:70, Consistency:65};
       c.feedback = [
-        {t:'Drives holding good width along the side wall.', s:'good', l:'Good'},
-        {t:'Short of length in the final third of the rally — fatigue pattern.', s:'avg', l:'Average'}];
+        {t:'Good width on drives', s2:'Holding the side wall well down the backhand.', s:'good', l:'Good'},
+        {t:'Length fading late', s2:'Short of length in the final third — fatigue pattern.', s:'avg', l:'Average'}];
       renderClips();
       toast('Analysis complete — in the app this runs the real pipeline');
     } else {
@@ -475,13 +593,13 @@ function setRange(r){
 function renderProgress(){
   document.getElementById('rangeseg').innerHTML = TRENDS.ranges.map(r=>
     `<button class="${r===currentRange?'active':''}" onclick="setRange('${r}')">${r}</button>`).join('');
-  const W = 358, H = 120, PAD = 8;
+  const W = 326, H = 118, PADL = 30, PADR = 12, PADY = 10;
   document.getElementById('trendcards').innerHTML = TRENDS.metrics.map(m=>{
     const vals = m.data[currentRange];
     const lo = Math.min(...vals, m.baseline[0]), hi = Math.max(...vals, m.baseline[1]);
-    const span = (hi - lo) || 1, pad = span * 0.1;
-    const y = v => H - PAD - ((v - (lo - pad)) / (span + 2*pad)) * (H - 2*PAD);
-    const x = i => PAD + i * ((W - 2*PAD) / (vals.length - 1));
+    const span = (hi - lo) || 1, pad = span * 0.12;
+    const y = v => H - PADY - ((v - (lo - pad)) / (span + 2*pad)) * (H - 2*PADY);
+    const x = i => PADL + i * ((W - PADL - PADR) / (vals.length - 1));
     const pts = vals.map((v,i)=>({x:x(i), y:y(v)}));
     const line = splinePath(pts);
     const area = `${line} L ${pts[pts.length-1].x.toFixed(2)} ${H-2} L ${pts[0].x} ${H-2} Z`;
@@ -491,7 +609,8 @@ function renderProgress(){
     const baseMid = (m.baseline[0]+m.baseline[1])/2;
     const diff = lastVal - baseMid;
     const vs = diff >= 0 ? `+${Math.round(diff)} vs typical` : `${Math.round(diff)} vs typical`;
-    const lblX = Math.min(last.x, W - 16);
+    const yLabels = [hi, Math.round((hi+lo)/2), lo].map(v=>
+      `<text x="${PADL-8}" y="${(y(v)+3).toFixed(1)}" text-anchor="end" font-size="10" fill="#B4B6BC" font-variant-numeric="tabular-nums">${v}</text>`).join('');
     return `
       <div class="card trend">
         <div class="lbl">${m.label}</div>
@@ -500,12 +619,13 @@ function renderProgress(){
           <span class="vsbase ${diff>=0?'up':'down'}">${vs}</span>
         </div>
         <svg viewBox="0 0 ${W} ${H}" aria-label="${m.label} trend">
-          <rect x="${PAD}" y="${bandTop.toFixed(2)}" width="${W-2*PAD}" height="${(bandBot-bandTop).toFixed(2)}" rx="6" fill="#EEEFF2"/>
-          <line x1="${PAD}" x2="${W-PAD}" y1="${mid.toFixed(2)}" y2="${mid.toFixed(2)}" stroke="#D5D7DC" stroke-dasharray="2 4"/>
-          <path d="${area}" fill="rgba(217,242,79,.25)"/>
-          <path d="${line}" fill="none" stroke="#B7CC3F" stroke-width="2.5" stroke-linecap="round"/>
-          <circle cx="${last.x.toFixed(2)}" cy="${last.y.toFixed(2)}" r="5" fill="var(--accent)" stroke="var(--ink)" stroke-width="2"/>
-          <text x="${lblX.toFixed(2)}" y="${Math.max(last.y-12, 12).toFixed(2)}" text-anchor="end" font-size="12" font-weight="700" fill="var(--ink)">${lastVal}${m.unit}</text>
+          ${yLabels}
+          <rect x="${PADL}" y="${bandTop.toFixed(2)}" width="${W-PADL-PADR}" height="${(bandBot-bandTop).toFixed(2)}" rx="6" fill="#F0F1F4"/>
+          <line x1="${PADL}" x2="${W-PADR}" y1="${mid.toFixed(2)}" y2="${mid.toFixed(2)}" stroke="#DADCE1" stroke-dasharray="2 4"/>
+          <path d="${area}" fill="rgba(217,240,74,.22)"/>
+          <path d="${line}" fill="none" stroke="#BCD437" stroke-width="2.5" stroke-linecap="round"/>
+          <circle cx="${last.x.toFixed(2)}" cy="${last.y.toFixed(2)}" r="4.5" fill="#D9F04A" stroke="#141517" stroke-width="2"/>
+          <text x="${Math.min(last.x, W-14).toFixed(2)}" y="${Math.max(last.y-11, 11).toFixed(2)}" text-anchor="end" font-size="11" font-weight="700" fill="#141517">${lastVal}${m.unit}</text>
         </svg>
       </div>`;
   }).join('');
