@@ -228,3 +228,52 @@ def test_median_frame_does_not_flag_the_bay_club_fixed_mount():
     _, moved = court_detect.median_frame(frames)
 
     assert moved is False
+
+
+def _nearest_line_to(lines, point_a, point_b):
+    """The detected line whose ends best match a truth segment's ends."""
+    def error(line):
+        forward = (np.hypot(line.x1 - point_a[0], line.y1 - point_a[1])
+                   + np.hypot(line.x2 - point_b[0], line.y2 - point_b[1]))
+        backward = (np.hypot(line.x1 - point_b[0], line.y1 - point_b[1])
+                    + np.hypot(line.x2 - point_a[0], line.y2 - point_a[1]))
+        return min(forward, backward)
+    return min(lines, key=error)
+
+
+def test_find_lines_recovers_the_front_wall_paint():
+    camera = court_camera()
+    image, truth = render_court(camera, noise_sigma=2.0)
+
+    lines = court_detect.find_lines(court_detect.line_response(image),
+                                    min_length_px=image.shape[1] * 0.10)
+
+    for name in ("out_line_lower_edge", "service_line_top_edge", "tin_top_edge"):
+        start, end = truth[name]
+        found = _nearest_line_to(lines, start, end)
+        # The stripe is ~LINE_WIDTH_FT wide, so a line fitted to the whole
+        # stripe may sit up to half a width off the named datum. Task 5 pulls
+        # it onto the exact edge; here we only require the right stripe.
+        assert abs(found.y_at(start[0]) - start[1]) < 12, name
+
+
+def test_edge_response_finds_the_wall_floor_seams():
+    camera = court_camera()
+    image, truth = render_court(camera, noise_sigma=2.0)
+
+    lines = court_detect.find_lines(court_detect.edge_response(image),
+                                    min_length_px=image.shape[1] * 0.10)
+
+    start, end = truth["front_seam"]
+    found = _nearest_line_to(lines, start, end)
+    assert abs(found.y_at(start[0]) - start[1]) < 8
+
+
+def test_detected_line_intersect_returns_none_for_parallels():
+    first = court_detect.DetectedLine(0.0, 0.0, 100.0, 0.0, support=1)
+    second = court_detect.DetectedLine(0.0, 50.0, 100.0, 50.0, support=1)
+    assert first.intersect(second) is None
+
+    crossing = court_detect.DetectedLine(50.0, -50.0, 50.0, 50.0, support=1)
+    point = first.intersect(crossing)
+    assert point is not None and abs(point[0] - 50.0) < 1e-6
