@@ -1241,6 +1241,7 @@ const S = {
   rec:{stream:null, recorder:null, chunks:[], startedAt:0, timer:null,
     calibration:null, calibrating:false, mime:''},   // record phase: camera + capture state
   pendingRecCal:null,         // a recording's on-site calibration riding into the judge flow
+  pendingRunId:null,          // in-flight tracking run, so backing out can cancel it
 };
 
 /* ---------- phase / UI ---------- */
@@ -1922,7 +1923,8 @@ $('hdrBack').onclick = () => {
   } else if(S.phase === 'clip'){
     setPhase(COURT ? 'tap_floor' : 'tap_wall');
   } else if(S.phase === 'analyze'){
-    setPhase('clip');   // abandon the in-flight run and return to the clip editor
+    cancelPendingTrack();   // stop the job, not just its screen
+    setPhase('clip');
   } else if(S.phase === 'track'){
     if(S.restoredSession){
       // A restored session has no calibration/clip state behind it — exit to
@@ -4346,6 +4348,23 @@ function ensureVideoUploaded(progressLabel = 'Uploading video'){
   return S.uploadPromise;
 }
 
+/* Thrown when the user backs out of a run: an expected exit, not an error, so
+   it must not raise the error banner. */
+class TrackingCancelled extends Error {
+  constructor(){ super('Tracking cancelled.'); this.name = 'TrackingCancelled'; }
+}
+
+/* Backing out of the analyze screen has to stop the job server-side. Only one
+   job holds the tracking semaphore, so an abandoned run would otherwise block
+   every later track until it finished on its own. */
+function cancelPendingTrack(){
+  const runId = S.pendingRunId;
+  if(!runId) return;
+  S.pendingRunId = null;
+  fetch(`/api/track/cancel/${encodeURIComponent(runId)}`, {method:'POST'})
+    .catch(() => { /* best effort: the run is abandoned either way */ });
+}
+
 async function waitForTracking(runId){
   while(true){
     const response = await fetch(`/api/track/status/${encodeURIComponent(runId)}`, {cache:'no-store'});
@@ -4364,6 +4383,7 @@ async function waitForTracking(runId){
     if(data.status === 'running') analyzeSeekTo(analyzeFrameTime(data.processed_frames));
 
     if(data.status === 'complete') return data;
+    if(data.status === 'cancelled') throw new TrackingCancelled();
     if(data.status === 'failed') throw new Error(data.error || 'Tracking failed.');
     await new Promise(resolve => setTimeout(resolve, 500));
   }
@@ -4402,7 +4422,8 @@ $('runTrackBtn').onclick = async () => {
     form.append('inference_width', S.clip.inferenceWidth.toString());
 
     const started = await postFormRequest('/api/track', form);
-    if(S.phase !== 'analyze') return;
+    S.pendingRunId = started.run_id;
+    if(S.phase !== 'analyze'){ cancelPendingTrack(); return; }   // backed out during upload
     setTrackProgress('Analyzing frame 0/' + started.total_frames, 0);
     $('trackStatus').textContent = 'Running local model on the selected clip…';
     const data = await waitForTracking(started.run_id);
@@ -4417,10 +4438,12 @@ $('runTrackBtn').onclick = async () => {
     setPhase('track');
   } catch(error){
     if(S.phase === 'analyze') setPhase('clip');   // return to the clip editor to show the error
-    showError(error.message);
+    // Cancelling is a deliberate exit, not a failure — no error banner.
+    if(!(error instanceof TrackingCancelled)) showError(error.message);
     $('trackStatus').textContent = '';
     $('trackStatus').className = 'status';
   } finally {
+    S.pendingRunId = null;
     $('runTrackBtn').disabled = false;
     setTimeout(hideTrackProgress, 700);
   }

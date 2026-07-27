@@ -47,6 +47,7 @@ from job_runner import (
     create_job,
     get_job,
     is_serve_hit,
+    request_cancel,
     start_tracking_job,
 )
 from inference_engine import DEFAULT_MODEL_ID, TRACKING_BACKEND
@@ -1188,6 +1189,20 @@ def track_status(run_id):
         return error_response("Tracking job was not found.", status=404)
 
     return jsonify(public_job(job))
+
+
+@app.post("/api/track/cancel/<run_id>")
+def track_cancel(run_id):
+    """Abandon a run. Only one job holds the tracking semaphore, so a run the
+    user backed out of has to be stopped for real or it blocks the next one."""
+    safe_id = secure_filename(run_id)
+    job = get_job(safe_id)
+    if job is None:
+        return error_response("Tracking job was not found.", status=404)
+
+    if job.get("status") in {"queued", "running"}:
+        request_cancel(safe_id)
+    return jsonify({"ok": True, "run_id": safe_id, "status": job.get("status")})
 
 
 @app.post("/api/judge")

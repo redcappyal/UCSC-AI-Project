@@ -52,6 +52,40 @@ JOBS_LOCK = threading.Lock()
 # per-frame lock would only block preprocessing for no benefit.
 TRACKING_JOB_SEMAPHORE = threading.Semaphore(1)
 
+# Abandoned runs. Because only one job holds the semaphore at a time, a run the
+# user walked away from would otherwise block every later track until it
+# finished on its own — so a cancel has to actually stop the work, not just
+# hide its UI. Flags are set here and observed by the running job.
+JOB_CANCELS = {}
+JOB_CANCELS_LOCK = threading.Lock()
+
+
+class JobCancelled(Exception):
+    """Raised inside a tracking job once its run has been cancelled."""
+
+
+def request_cancel(run_id):
+    """Flag a run as cancelled. Safe to call before the job starts: a queued
+    job checks the flag as soon as it takes the semaphore."""
+    with JOB_CANCELS_LOCK:
+        JOB_CANCELS.setdefault(run_id, threading.Event()).set()
+
+
+def cancel_requested(run_id):
+    with JOB_CANCELS_LOCK:
+        event = JOB_CANCELS.get(run_id)
+    return event is not None and event.is_set()
+
+
+def clear_cancel(run_id):
+    with JOB_CANCELS_LOCK:
+        JOB_CANCELS.pop(run_id, None)
+
+
+def raise_if_cancelled(run_id):
+    if cancel_requested(run_id):
+        raise JobCancelled(run_id)
+
 DECODE_QUEUE_SIZE = 8
 PROGRESS_UPDATE_FRAMES = 10
 PROGRESS_UPDATE_SECONDS = 0.5
@@ -923,6 +957,13 @@ def run_tracking_job(run_id):
     frame_stride = int(job["frame_stride"])
     inference_width = int(job["inference_width"])
     source_fps = float(job["fps"]) or 30.0
+    # Cancelled while queued behind another job: never start the work.
+    if cancel_requested(run_id):
+        clear_cancel(run_id)
+        update_job(run_id, status="cancelled", stage="cancelled",
+                   message="Tracking cancelled.")
+        return
+
     with TRACKING_JOB_SEMAPHORE:
         processed_frames = 0
         last_update = time.monotonic()
@@ -930,6 +971,9 @@ def run_tracking_job(run_id):
         def make_progress_callback(label):
             def on_frame(frame_idx):
                 nonlocal processed_frames, last_update
+                # Checked per frame so an abandoned run releases the semaphore
+                # promptly instead of holding up the next track.
+                raise_if_cancelled(run_id)
                 processed_frames += 1
                 now = time.monotonic()
                 if (
@@ -1127,6 +1171,13 @@ def run_tracking_job(run_id):
                 message="Tracking complete.",
                 **extra_fields,
             )
+        except JobCancelled:
+            update_job(
+                run_id,
+                status="cancelled",
+                stage="cancelled",
+                message="Tracking cancelled.",
+            )
         except Exception as error:
             update_job(
                 run_id,
@@ -1134,6 +1185,8 @@ def run_tracking_job(run_id):
                 error=f"Tracking failed.\n\n{error}",
                 message="Tracking failed.",
             )
+        finally:
+            clear_cancel(run_id)
 
 
 def main():
