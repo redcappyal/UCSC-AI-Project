@@ -116,6 +116,26 @@ nav button svg{width:17px;height:17px}
 .ghostbtn{border:1px solid #E2E3E7;background:transparent;border-radius:999px;
   min-height:38px;padding:0 16px;font-size:13px;font-weight:600;font-family:inherit;
   color:var(--ink);cursor:pointer;align-self:flex-start}
+/* training */
+.program{flex-direction:row;align-items:center;justify-content:space-between;gap:12px}
+.program .info{display:flex;flex-direction:column;gap:4px}
+.program .pname{font-size:15px;font-weight:700}
+.program .pmeta{font-size:13px;color:rgba(255,255,255,.6)}
+.ring{position:relative;width:48px;height:48px;flex:none}
+.ring svg{width:48px;height:48px;transform:rotate(-90deg)}
+.ring .pct{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
+  font-size:11px;font-weight:700;color:#fff}
+.exrow{display:flex;align-items:center;gap:12px;min-height:64px}
+.exrow + .exrow{border-top:1px solid #F0F1F3}
+.exthumb{width:48px;height:48px;border-radius:12px;flex:none}
+.exrow .info{display:flex;flex-direction:column;gap:4px;min-width:0}
+.exrow .name{font-size:15px;font-weight:600}
+.exrow .meta{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--dim)}
+.playbtn{width:40px;height:40px;border-radius:50%;border:0;background:var(--accent);
+  color:var(--ink);display:flex;align-items:center;justify-content:center;cursor:pointer;
+  margin-left:auto;flex:none}
+.playbtn svg{width:16px;height:16px}
+.playbtn:active{filter:brightness(.96)}
 /* toast */
 #toast{position:absolute;left:50%;bottom:84px;transform:translateX(-50%);background:var(--ink);
   color:#fff;font-size:13px;font-weight:600;padding:10px 16px;border-radius:999px;
@@ -182,7 +202,79 @@ nav button svg{width:17px;height:17px}
       </div>
       <div id="cliplist" style="display:flex;flex-direction:column;gap:12px"></div>
     </section>
-    <section class="view" id="view-training"></section>
+    <section class="view" id="view-training">
+      <h2>Training</h2>
+      <div class="hero program">
+        <div class="info">
+          <span class="pname">Intermediate Program</span>
+          <span class="pmeta">Level 4 · Week 3 of 8</span>
+        </div>
+        <div class="ring" role="img" aria-label="Program 75% complete">
+          <svg viewBox="0 0 48 48" fill="none">
+            <circle cx="24" cy="24" r="20" stroke="rgba(255,255,255,.18)" stroke-width="5"/>
+            <circle cx="24" cy="24" r="20" stroke="#D9F24F" stroke-width="5" stroke-linecap="round"
+              stroke-dasharray="94.25 125.66"/>
+          </svg>
+          <span class="pct num">75%</span>
+        </div>
+      </div>
+      <div class="card">
+        <div class="cardhead">TODAY MISSIONS</div>
+        <div class="drillrow">
+          <div class="icontile">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2L4 14h6l-1 8 9-12h-6z"/></svg>
+          </div>
+          <div class="info">
+            <span class="name">Power drives</span>
+            <span class="meta">60 min · pace without losing length</span>
+          </div>
+          <button class="startchip" onclick="toast('Mission start is a lab stub')">Start</button>
+        </div>
+        <div class="drillrow">
+          <div class="icontile">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="4.5"/><circle cx="12" cy="12" r="1" fill="currentColor"/></svg>
+          </div>
+          <div class="info">
+            <span class="name">Flick serve targets</span>
+            <span class="meta">30 min · high sidewall contact</span>
+          </div>
+          <button class="startchip" onclick="toast('Mission start is a lab stub')">Start</button>
+        </div>
+      </div>
+      <div class="card">
+        <div class="cardhead">EXERCISES</div>
+        <div class="exrow">
+          <div class="exthumb" style="background:linear-gradient(135deg, hsl(210 30% 82%), hsl(210 25% 62%))"></div>
+          <div class="info">
+            <span class="name">Ghosting — six corners</span>
+            <span class="meta"><span class="chip good">Easy</span><span class="num">2 min · 3 sets</span></span>
+          </div>
+          <button class="playbtn" aria-label="Play ghosting exercise" onclick="toast('Player is a lab stub')">
+            <svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
+          </button>
+        </div>
+        <div class="exrow">
+          <div class="exthumb" style="background:linear-gradient(135deg, hsl(160 30% 80%), hsl(160 25% 60%))"></div>
+          <div class="info">
+            <span class="name">Boast accuracy ladder</span>
+            <span class="meta"><span class="chip avg">Medium</span><span class="num">5 min · 4 sets</span></span>
+          </div>
+          <button class="playbtn" aria-label="Play boast ladder exercise" onclick="toast('Player is a lab stub')">
+            <svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
+          </button>
+        </div>
+        <div class="exrow">
+          <div class="exthumb" style="background:linear-gradient(135deg, hsl(20 35% 80%), hsl(20 30% 60%))"></div>
+          <div class="info">
+            <span class="name">Tin-margin pressure drill</span>
+            <span class="meta"><span class="chip poor">Hard</span><span class="num">10 min · 4 sets</span></span>
+          </div>
+          <button class="playbtn" aria-label="Play tin-margin drill" onclick="toast('Player is a lab stub')">
+            <svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
+          </button>
+        </div>
+      </div>
+    </section>
     <section class="view" id="view-progress"></section>
   </div>
   <nav id="nav"></nav>
