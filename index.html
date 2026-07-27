@@ -597,13 +597,17 @@
       <span class="fcBody"><strong>Judge a clip</strong><span>Call a rally from a clip on this phone</span></span>
       <input type="file" id="fileIn" accept="video/*">
     </label>
-    <button class="heroCard" type="button" data-phase="record">
+    <!-- ARCHIVED: in-app recording and live match are shelved. The phases,
+         handlers, and camera/MediaRecorder code all remain intact and working —
+         only these entry points are hidden, so restoring the feature means
+         un-hiding these two cards. -->
+    <button class="heroCard hidden" type="button" data-phase="record">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
         <rect x="2.5" y="6.5" width="13" height="11" rx="2.5"/><path d="M15.5 10.5l6-3.5v10l-6-3.5"/>
       </svg>
       <span class="fcBody"><strong>Record a clip</strong><span>Film a rally with this phone's camera</span></span>
     </button>
-    <button class="heroCard" type="button" data-phase="live">
+    <button class="heroCard hidden" type="button" data-phase="live">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
         <circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="3.5" fill="currentColor" stroke="none"/>
       </svg>
