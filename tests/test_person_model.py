@@ -70,3 +70,24 @@ def test_save_person_crop(tmp_path):
     crop = cv2.imread(str(out_path))
     assert crop is not None
     assert crop.shape[0] > 100  # padded beyond the raw bbox height
+
+
+def test_save_person_crop_unwritable_out_path_returns_false(tmp_path):
+    import cv2
+    video = tmp_path / "clip.mp4"
+    writer = cv2.VideoWriter(str(video), cv2.VideoWriter_fourcc(*"mp4v"),
+                             30, (320, 240))
+    for i in range(10):
+        writer.write(np.full((240, 320, 3), i * 10, dtype=np.uint8))
+    writer.release()
+
+    det = PersonDetection(x=160.0, y=150.0, width=40.0, height=100.0,
+                          confidence=0.9, keypoints=())
+    # out_path's parent is a plain file, so mkdir(parents=True) raises
+    # NotADirectoryError (an OSError subclass) -- must return False, not
+    # propagate. This is the pipeline's final person-layer step, running
+    # after a tracking job is otherwise complete; it must never fail it.
+    blocker = tmp_path / "not_a_directory"
+    blocker.write_text("i am a file")
+    out_path = blocker / "crop.jpg"
+    assert person_model.save_person_crop(video, 5, det, out_path) is False

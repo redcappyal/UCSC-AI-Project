@@ -122,25 +122,33 @@ def load_person_detector():
 def save_person_crop(video_path, frame_idx, detection, out_path,
                      pad_ratio=CROP_PAD_RATIO):
     """Seek one frame and write the padded bbox crop. ASCII out_path only
-    (CLAUDE.md: cv2.imwrite must never see a non-ASCII path)."""
-    cap = cv2.VideoCapture(str(video_path))
+    (CLAUDE.md: cv2.imwrite must never see a non-ASCII path).
+
+    Any failure -- unreadable video, an out_path whose parent can't be
+    created, a cv2 error -- returns False rather than raising. This is
+    best-effort work off the back of a completed tracking job; it must
+    never fail the job."""
     try:
-        cap.set(cv2.CAP_PROP_POS_FRAMES, int(frame_idx))
-        ok, frame = cap.read()
-    finally:
-        cap.release()
-    if not ok or frame is None:
-        return False
+        cap = cv2.VideoCapture(str(video_path))
+        try:
+            cap.set(cv2.CAP_PROP_POS_FRAMES, int(frame_idx))
+            ok, frame = cap.read()
+        finally:
+            cap.release()
+        if not ok or frame is None:
+            return False
 
-    height, width = frame.shape[:2]
-    pad_x = detection.width * pad_ratio
-    pad_y = detection.height * pad_ratio
-    x_min = max(0, int(detection.x - detection.width / 2 - pad_x))
-    x_max = min(width, int(detection.x + detection.width / 2 + pad_x))
-    y_min = max(0, int(detection.y - detection.height / 2 - pad_y))
-    y_max = min(height, int(detection.y + detection.height / 2 + pad_y))
-    if x_max <= x_min or y_max <= y_min:
-        return False
+        height, width = frame.shape[:2]
+        pad_x = detection.width * pad_ratio
+        pad_y = detection.height * pad_ratio
+        x_min = max(0, int(detection.x - detection.width / 2 - pad_x))
+        x_max = min(width, int(detection.x + detection.width / 2 + pad_x))
+        y_min = max(0, int(detection.y - detection.height / 2 - pad_y))
+        y_max = min(height, int(detection.y + detection.height / 2 + pad_y))
+        if x_max <= x_min or y_max <= y_min:
+            return False
 
-    Path(out_path).parent.mkdir(parents=True, exist_ok=True)
-    return bool(cv2.imwrite(str(out_path), frame[y_min:y_max, x_min:x_max]))
+        Path(out_path).parent.mkdir(parents=True, exist_ok=True)
+        return bool(cv2.imwrite(str(out_path), frame[y_min:y_max, x_min:x_max]))
+    except Exception:
+        return False

@@ -108,6 +108,9 @@ def build_person_pass(source_fps, frame_stride):
 
 
 def write_track_samples(run_dir, samples_by_track, ambiguity_times):
+    """Best-effort persistence: a write failure (e.g. an unwritable run dir)
+    must not fail the tracking job, so this returns True/False instead of
+    raising -- same pattern as persist_job's OSError guard."""
     payload = {
         "schema": "player-tracks-v1",
         "ambiguity_times": [float(t) for t in ambiguity_times],
@@ -126,11 +129,15 @@ def write_track_samples(run_dir, samples_by_track, ambiguity_times):
             for track, samples in samples_by_track.items()
         },
     }
-    players_dir = Path(run_dir) / "players"
-    players_dir.mkdir(parents=True, exist_ok=True)
-    (players_dir / "track_samples.json").write_text(
-        json.dumps(payload), encoding="utf-8"
-    )
+    try:
+        players_dir = Path(run_dir) / "players"
+        players_dir.mkdir(parents=True, exist_ok=True)
+        (players_dir / "track_samples.json").write_text(
+            json.dumps(payload), encoding="utf-8"
+        )
+    except OSError:
+        return False
+    return True
 
 
 def update_job(run_id, /, **updates):
@@ -1232,10 +1239,12 @@ def run_tracking_job(run_id):
                         serve_crop_relpath = "players/serve_rally1.jpg"
                 players_v1 = player_attribution.build_players_v1(
                     player_assignment,
-                    person_pass.tracker.stats(),
+                    person_pass.stats(),
                     detector_backend=person_pass.detector.backend,
                     serve_crop_relpath=serve_crop_relpath,
                 )
+                if person_pass.detect_failures:
+                    players_v1["detector_error"] = person_pass.detect_error
             else:
                 players_v1 = player_attribution.build_players_v1(
                     player_assignment, None, detector_backend="none"

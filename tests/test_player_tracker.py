@@ -90,6 +90,60 @@ def test_person_frame_pass_cadence_and_wiring():
     assert len(person_pass.tracker.samples()["A"]) == 2
 
 
+def test_person_frame_pass_disables_after_detect_failure():
+    calls = []
+
+    class RaisingDetector:
+        backend = "stub"
+
+        def detect(self, frame_bgr):
+            calls.append(1)
+            raise RuntimeError("boom")
+
+    # source_fps=4, stride=1 -> coarse_hz=4 -> detect_every=1, so every
+    # observe() call attempts detection.
+    person_pass = PersonFramePass(RaisingDetector(), source_fps=4.0, frame_stride=1)
+    assert person_pass.detect_every == 1
+    frame = np.zeros((10, 10, 3), dtype=np.uint8)
+    for i in range(5):
+        person_pass.observe(i, frame)  # must never propagate
+    assert len(calls) == 1  # disabled after the first failure
+    samples = person_pass.tracker.samples()
+    assert samples["A"] == [] and samples["B"] == []
+    stats = person_pass.stats()
+    assert stats["detect_failures"] == 1
+    assert person_pass.detect_error is not None
+
+
+def test_person_frame_pass_keeps_samples_collected_before_failure():
+    responses = [
+        [det(100, 300), det(900, 300)],
+        [det(110, 300), det(890, 300)],
+    ]
+
+    class FlakyDetector:
+        backend = "stub"
+
+        def __init__(self):
+            self.calls = 0
+
+        def detect(self, frame_bgr):
+            self.calls += 1
+            if self.calls <= 2:
+                return responses[self.calls - 1]
+            raise RuntimeError("boom")
+
+    detector = FlakyDetector()
+    person_pass = PersonFramePass(detector, source_fps=4.0, frame_stride=1)
+    frame = np.zeros((10, 10, 3), dtype=np.uint8)
+    for i in range(5):
+        person_pass.observe(i, frame)  # must never propagate
+    assert detector.calls == 3  # two successes, then the failure disables it
+    samples = person_pass.tracker.samples()
+    assert len(samples["A"]) == 2 and len(samples["B"]) == 2
+    assert person_pass.stats()["detect_failures"] == 1
+
+
 def test_track_segments_frame_observer_sees_coarse_frames(tmp_path, monkeypatch):
     import cv2
     import job_runner

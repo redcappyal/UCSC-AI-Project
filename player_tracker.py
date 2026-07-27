@@ -129,7 +129,11 @@ class TwoPlayerTracker:
 
 class PersonFramePass:
     """Coarse-pass frame observer: detect every Nth coarse frame, feed the
-    tracker. job_runner passes .observe as track_segments' frame_observer."""
+    tracker. job_runner passes .observe as track_segments' frame_observer.
+
+    A detector failure at runtime (not just at load time) must not kill the
+    tracking job: one bad frame permanently disables further detection for
+    this pass, keeping whatever samples were already collected."""
 
     def __init__(self, detector, source_fps, frame_stride):
         self.detector = detector
@@ -138,11 +142,31 @@ class PersonFramePass:
         self.detect_every = max(1, round(coarse_hz / PERSON_DETECT_HZ))
         self.tracker = TwoPlayerTracker()
         self._seen = 0
+        self._disabled = False
+        self.detect_failures = 0
+        self.detect_error = None
 
     def observe(self, frame_idx, frame_bgr):
+        if self._disabled:
+            return
         index = self._seen
         self._seen += 1
         if index % self.detect_every != 0:
             return
-        detections = self.detector.detect(frame_bgr)
-        self.tracker.update(frame_idx / self.source_fps, frame_idx, detections)
+        try:
+            detections = self.detector.detect(frame_bgr)
+            self.tracker.update(frame_idx / self.source_fps, frame_idx, detections)
+        except Exception as error:
+            self.detect_failures += 1
+            if self.detect_error is None:
+                self.detect_error = repr(error)
+            self._disabled = True
+
+    def stats(self):
+        """Tracker stats plus this pass's own detect_failures count, for the
+        job_runner payload (job_runner reads person_pass.stats(), not
+        person_pass.tracker.stats(), so a runtime detector failure is always
+        visible in players_v1)."""
+        stats = dict(self.tracker.stats())
+        stats["detect_failures"] = self.detect_failures
+        return stats

@@ -131,7 +131,7 @@ def test_write_track_samples_round_trip(tmp_path):
     import job_runner
 
     samples = {"A": [sample(1.0, 300, 500)], "B": []}
-    job_runner.write_track_samples(tmp_path, samples, [2.5])
+    assert job_runner.write_track_samples(tmp_path, samples, [2.5]) is True
     payload = json.loads((tmp_path / "players" / "track_samples.json").read_text())
     assert payload["schema"] == "player-tracks-v1"
     assert payload["ambiguity_times"] == [2.5]
@@ -139,3 +139,15 @@ def test_write_track_samples_round_trip(tmp_path):
     assert entry == {"t_s": 1.0, "frame_idx": 60, "foot_px": [300.0, 500.0],
                      "bbox": [300.0, 450.0, 40.0, 100.0],
                      "confidence": 0.9, "coasted": False}
+
+
+def test_write_track_samples_unwritable_target_returns_false(tmp_path):
+    import job_runner
+
+    # run_dir itself is a plain file, so `Path(run_dir) / "players"` can
+    # never be created -- mkdir(parents=True) raises NotADirectoryError (an
+    # OSError subclass). Must return False, not raise.
+    run_dir = tmp_path / "not_a_directory"
+    run_dir.write_text("i am a file, not a run dir")
+    samples = {"A": [sample(1.0, 300, 500)], "B": []}
+    assert job_runner.write_track_samples(run_dir, samples, [2.5]) is False
