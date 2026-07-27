@@ -54,8 +54,6 @@ struct APIClient: APIClientProtocol {
             ("end_time", String(duration)),
             ("frame_stride", "4"),
             ("inference_width", "960"),
-            ("event_engine", ""),
-            ("fusion_3d", ""),
         ]
         request.httpBody = Data(Multipart.formURLEncoded(fields).utf8)
         let (data, response) = try await session.data(for: request)

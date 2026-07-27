@@ -185,16 +185,6 @@
   .stepUnit{flex:0 1 auto; text-align:center; padding:0 2px;
     font-size:13px; color:var(--dim); white-space:nowrap; user-select:none; pointer-events:none}
 
-  /* Debug-only bounce-engine toggle on the clip page. */
-  .debugEngineRow{display:flex; align-items:center; justify-content:flex-end; gap:8px; padding:0 0 6px}
-  .debugEngineRow .nudgeLabel{flex:0 0 auto; font-size:11px; color:var(--dim);
-    text-transform:uppercase; letter-spacing:.06em}
-  .engineSeg{flex:0 0 auto; display:flex; border:1px solid var(--line); border-radius:999px; overflow:hidden}
-  .engineSeg button{flex:0 0 auto; width:auto; min-height:34px; padding:0 12px; border:none;
-    border-radius:0; background:transparent; color:var(--dim); font-size:11px}
-  .engineSeg button + button{border-left:1px solid var(--line)}
-  .engineSeg button.on{background:var(--line); color:var(--text); font-weight:600}
-
   .hitTimeline{position:relative; height:88px; border-radius:8px; overflow:hidden;
     background:var(--strip-bg); border:1px solid var(--line); touch-action:none; cursor:grab}
   #hitBars, #trackOverviewBars{position:absolute; inset:0}
@@ -715,18 +705,6 @@
 
   <!-- PHASE: clip -->
   <section class="hidden" id="p-clip">
-    <div class="debugEngineRow">
-      <span class="nudgeLabel">Engine</span>
-      <div class="engineSeg" id="engineSeg">
-        <button type="button" data-engine="fusion">Geometry</button>
-        <button type="button" data-engine="gb_model" class="on">Model</button>
-      </div>
-      <span class="nudgeLabel">3D</span>
-      <div class="engineSeg" id="fusion3dSeg">
-        <button type="button" data-fusion3d="" class="on">Off</button>
-        <button type="button" data-fusion3d="1">On</button>
-      </div>
-    </div>
     <div class="clipOverview" id="clipOverview">
       <canvas id="overviewStrip"></canvas>
       <div id="overviewSelection"></div>
@@ -1233,8 +1211,6 @@ const S = {
   trackView:{startF:0, endF:0, cursor:0, key:'', ovDone:false, timer:null}, // fine-window state for the call page's coarse-fine timeline
   videoFps:null,              // probed by the server at upload; null until known
   clip:{start:0, end:0, cursor:0, dragging:null, frameStride:1, inferenceWidth:960,
-    eventEngine:'gb_model',   // debug-only wall-hit engine override: votes | gb_model | fusion
-    fusion3d:false,           // experimental 3D contact detection (fusion engine + camera solve)
     viewStart:0, viewEnd:1, viewSpan:0,   // detail window derived from cursor ± viewSpan/2
     dragX:0, dragT:0,
     overviewThumbs:false, overviewDragging:false,
@@ -4375,20 +4351,6 @@ async function waitForTracking(runId){
   }
 }
 
-for(const btn of $('engineSeg').querySelectorAll('button')){
-  btn.onclick = () => {
-    S.clip.eventEngine = btn.dataset.engine;
-    for(const b of $('engineSeg').querySelectorAll('button')) b.classList.toggle('on', b === btn);
-  };
-}
-
-for(const btn of $('fusion3dSeg').querySelectorAll('button')){
-  btn.onclick = () => {
-    S.clip.fusion3d = btn.dataset.fusion3d === '1';
-    for(const b of $('fusion3dSeg').querySelectorAll('button')) b.classList.toggle('on', b === btn);
-  };
-}
-
 $('runTrackBtn').onclick = async () => {
   if(!S.videoFile){
     $('trackStatus').textContent = 'Load the source video again before tracking.';
@@ -4420,8 +4382,6 @@ $('runTrackBtn').onclick = async () => {
     form.append('end_time', end.toString());
     form.append('frame_stride', S.clip.frameStride.toString());
     form.append('inference_width', S.clip.inferenceWidth.toString());
-    form.append('event_engine', S.clip.eventEngine);
-    form.append('fusion_3d', S.clip.fusion3d ? '1' : '');
 
     const started = await postFormRequest('/api/track', form);
     if(S.phase !== 'analyze') return;

@@ -41,13 +41,14 @@ video ──► ball detection ──► bounce detection ──► classificati
 | Stage | Where | What it does |
 |---|---|---|
 | Ball detection | `inference_engine.py`, `job_runner.py` | Per-frame ball boxes. Coarse strided pass, then a dense refine pass only around hit candidates. |
-| Bounce detection | `detect_wall_hits.py`, `bounce_gb_model_detector.py`, `event_engine.py` | Finds impact frames from trajectory kinks. Swappable engines: `votes`, `gb_model`, `fusion`. |
+| Bounce detection | `detect_wall_hits.py`, `bounce_gb_model_detector.py` | Finds impact frames from trajectory kinks. `detect_wall_hits` locates candidates for the refine pass; `bounce_gb_model_detector` labels the events. One path, not a choice — the selectable engines were removed 2026-07-27. |
 | Audio rescue | `audio_events.py` | Impact sounds recover bounces the trajectory missed. |
 | Classification | `classify_events.py` | Labels each hit wall / side wall / floor / racket. |
 | Judging | `judge_call.py`, `court_model.py` | Wall-line calibration → IN/OUT calls plus a service-line call for each rally’s first front-wall contact. Works in raw pixels: a projection preserves which side of a coplanar line a point falls on, so no homography is needed for the call itself. |
 | Court mapping | `court_model.py` | The floor homography — image pixels to court feet. Needed for anything *positional* (zones, distances, coverage), which the analysis stage is built on. |
 | Coaching | `app.py` | Target-zone analytics over the rally, optionally narrated by an LLM. |
 | ~~Stereo fusion~~ | `archive/stereo/` | **Archived 2026-07-27 — do not extend or import.** Two phones fusing into a court-frame 3D track: built and tested, never evaluated. Triangulation needs the ball in *both* views, which multiplies the recall bottleneck instead of fixing it. Restore point: tag `archive/stereo-v1`. Revisit gate: single-view wall-hit recall ~85%. See [archive/stereo/README.md](archive/stereo/README.md). |
+| ~~Fusion engine + 3D contacts~~ | `archive/fusion-engine/` | **Archived 2026-07-27 — do not extend or import.** A second selectable bounce engine (audio × derivatives × arcs + a squash sequence grammar) and the `fusion_3d` flag that fitted gravity-constrained 3D arcs in court feet. It was evaluated and failed its gate: the corpus could not measure the 3D delta, and where 3D engaged it placed front-wall contacts 26 ft from the wall. Restore point: tag `archive/fusion-engine-v1`. See [archive/fusion-engine/README.md](archive/fusion-engine/README.md). |
 
 The UI is deliberately one file. `DESIGN.md` is the binding rulebook for anything visual —
 read it before touching HTML/CSS/JS, and update it in the same change if you must deviate.
@@ -112,10 +113,10 @@ the built-in local coaching template and displays the reason.
 .venv/bin/python -m pytest tests/ -q
 ```
 
-318 tests, about 5 seconds. They run without the model runtime — `requirements-test.txt` is
+283 tests, about 9 seconds. They run without the model runtime — `requirements-test.txt` is
 the light dependency set CI installs, and it deliberately excludes `inference`/torch.
 `ball_track_offline.py`'s one real-model test is marked `requires_model` and deselected by
-default; a green run reads "318 passed, 1 deselected". `archive/` is excluded from
+default; a green run reads "283 passed, 1 deselected". `archive/` is excluded from
 collection — its tests are preserved verbatim and import modules that have moved.
 
 ---
@@ -203,7 +204,7 @@ rows whose context windows straddle the cut.
 | `app.py` | Flask routes: upload, track, judge, corrections, coaching. |
 | `job_runner.py` | Tracking pipeline; a run is fully described by its `job.json`. |
 | `inference_engine.py` | Model loading and backend selection (torch/MPS or ONNX). |
-| `event_engine.py`, `detect_wall_hits.py` | Bounce detection engines. |
+| `detect_wall_hits.py`, `bounce_gb_model_detector.py` | Bounce detection. |
 | `judge_call.py` | The IN/OUT decision, in pixel space against calibrated lines. |
 | `court_model.py` | Calibration geometry: the floor homography and the camera solve. |
 | `ios/` | Native SwiftUI app. Play records natively; Matches and Coach are webviews. |

@@ -319,37 +319,12 @@ def test_judge_labels_floor_bounce(tmp_path):
     assert entries[0]["reason"] == "classified_as_floor"
 
 
-def test_judge_hits_prefers_engine_court_position_ft(tmp_path):
-    """No calibration.json at all (no floor_map, no homography possible) —
-    the engine-supplied court_position_ft must still populate the entry."""
-    results = {
-        54: {
-            "source_frame": 54,
-            "timestamp_seconds": "1.800000",
-            "detected": "True",
-            "x_center": "238.000",
-            "y_center": "642.000",
-        }
-    }
-    hit = {
-        "hit_frame": 54,
-        "timestamp_seconds": 1.8,
-        "event_type": "floor",
-        "score": 1.5,
-        "dv_magnitude": 1200.0,
-        "after_gap": False,
-        "court_position_ft": {"x": 6.0, "y": 20.0},
-    }
-    entries = judge_hits(tmp_path, results, [hit])
-    entry = entries[0]
-    assert entry["court_position_ft"] == {"x": 6.0, "y": 20.0}
-    assert entry["floor_zone"] == court_model.floor_zone_for_point(6.0, 20.0)
-
-
-def test_judge_hits_floor_falls_back_to_homography_without_engine_value(tmp_path):
-    """A floor hit with no engine-supplied court_position_ft still goes
-    through the existing floor_map homography path when a calibration with
-    a floor plane is present."""
+def test_judge_hits_floor_uses_the_homography(tmp_path):
+    """A floor hit gets its court position from the floor_map homography
+    when a calibration with a floor plane is present. This is now the only
+    way an entry gets one: judge_hits no longer accepts a detector-supplied
+    court_position_ft, which was the fusion_3d path's output (removed with
+    the engine wiring)."""
     from test_court_model import SyntheticCamera, make_v2_calibration
 
     camera = SyntheticCamera()

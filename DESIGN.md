@@ -81,7 +81,7 @@ editors) translates into these concrete motifs — all already in the codebase:
 | Giant stat numerals (`121 PTS`, `41.1`) | Verdict 28 px, zone percentages 26 px, 700 weight, tabular |
 | Play-by-play event feed with OUT chips | Hit timeline markers + verdict states |
 | Video-editor trim UI (yellow handles, filmstrip, white playhead) | `.clipEditor`, `.clipHandle`, center-fixed `#clipCursor` |
-| Segmented duration controls (`15/30/60 sec`, `7D/30D/3M`) | `.engineSeg` segmented control pattern |
+| Segmented duration controls (`15/30/60 sec`, `7D/30D/3M`) | `.corrSeg` two-way segment (§8.18) |
 | Bottom toolbar of icon+label actions | `#navPill` liquid-glass section tab bar |
 | Zone/heat charts on a literal court | `.targetCourt` front-wall chart, `#floorMapSvg` bounce map |
 | Squared "telemetry" typeface | Chakra Petch |
@@ -316,7 +316,7 @@ family or weight; never fetch fonts remotely.
 | Meta / status / readout | 14 / 400 dim; values 600 `--text`, tabular | `.status`, `.stat`, `.tlReadout`, `.sliderlabel` |
 | Caption / small control | 13 / 600 | `button.small`, `.nudgeLabel`, `.targetMeta strong` |
 | Chip / tag | 12 / 600 | correction chips, `.courtText` |
-| Micro / debug | 11 / 600, uppercase, tracking `.06em` | `.debugEngineRow`, `.engineSeg` |
+| Micro / debug | 11 / 600, uppercase, tracking `.06em` | `.devHead` |
 
 ### 6.2 Rules
 
@@ -362,7 +362,7 @@ content, `cursor:pointer`, `:disabled{opacity:.4}` (never a different disabled c
 | **Small** (`button.small`) | width:auto, `min-height:44px`, 13/600, padding `8px 14px` | inline utilities (`Skip landmark`, `Dismiss`) |
 | **Header pill** (`.pill`) | yellow, width:auto, `min-height:40px`, padding `0 18px`, 15/700, `:disabled{opacity:.35}` | header action only |
 | **Chip** (`.correctionRow button`) | width:auto, `min-height:34px`, 12/600, `1px --line` border, transparent; `.active` = yellow fill + 700 | dense multi-choice rows (corrections) |
-| **Segmented** (`.engineSeg`) | pill container `1px --line`, transparent segments 11/600 dim, dividers `--line`; `.on` = `--line` fill, `--text` | small mode toggles (debug engine) |
+| **Two-way segment** (`.corrSeg`) | two separate equal-width pills, 6 px gap, no shared container; unselected `1px --line` transparent, selected `--accent-bg`/`--accent-text` 700 — full rules in §8.18 | binary choices (Bounce / Not bounce) |
 | **Stepper** (`.stepper button`) | 44×44 transparent circle, 26/400 glyph (−/+), `:active{background:var(--line)}`; groups divided by `1px --line`; center `.stepUnit` 13 dim label (`1 s`, `1 fr`) | frame/second nudging |
 | **Play** (`.playBtn`) | stepper-style circle with 22×22 stroke SVG | transport |
 | **Icon-only** (`#hdrBack`, `#themeBtn`, zoom) | 44×44 transparent; stage-floating ones get `text-shadow:0 1px 3px rgba(0,0,0,.9)` instead of a fill | chrome |
@@ -793,7 +793,7 @@ Each phase: header shows step label + proxied primary; `#instr` gives the one-li
 | `p-tap` | Tap out line, tin, then service line on frame | stage-driven; clear-selection small button | "Looks right" (disabled until the current line has a fit) |
 | `p-review` | Approve fitted lines (cyan/amber/lime on stage) | minimal; evidence is the stage | "Use these lines" |
 | `p-tap-floor` | Floor calibration wizard | `.floorRow`: diagram (progress marks) + prompt/side actions · skip-all / save-profile | "Use floor map" |
-| `p-clip` | Trim rally clip | debug engine seg (right-aligned) · overview · trim editor (yellow handles) · transport+readout row · start/end nudge steppers · frame summary | "Track ball" |
+| `p-clip` | Trim rally clip | overview · trim editor (yellow handles) · transport+readout row · start/end nudge steppers · frame summary | "Track ball" |
 | `p-analyze` | Honest processing | `.progressbox` stats + bar (+ stage ANALYZING pulse) | — (auto-advances) |
 | `p-track` | Review track, judge calls | control area keeps its pre-rally-visualization height so the video stage does not shrink; the added content scrolls inside that footprint · scrub hint lives in the header `#instr` line (detection failures replace it, `.warn`) · rally segmentation card (proportional neutral ribbon, active segment in accent, text winner chip for every rally) · overview w/ marker minis · hit timeline (neon bars, center playhead) · readout · transport — **Review pane:** frame input + "Player maps" row · verdict box; **Challenge pane:** type dropdown (In/Out folded into the front-wall options) · Bounce / Not-bounce toggle (`.corrSeg`) · panes switched by a floating Review \| Challenge pill (`.callTabs`, same liquid-glass style as `#navPill`, fixed bottom-center) | "Judge frame" |
 | `p-label` | Human bounce labeling | overview · label timeline · transport+zoom · 2-col type grid (dot+label) · delete (destructive = plain secondary, disabled until selection) | — |
