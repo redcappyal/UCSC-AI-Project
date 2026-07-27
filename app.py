@@ -250,11 +250,17 @@ def coaching_analytics_for_hits(hits, target_summary):
         if hit.get("velocity")
     ]
 
+    # 3x3 target grid: columns 1-3 left, 4-6 center, 7-9 right; within each
+    # column the rows run lob -> normal (driving) -> low (attacking).
+    def zone_total(*zones):
+        return sum(int(target_zones.get(zone, {}).get("count", 0)) for zone in zones)
+
     total_wall_hits = int(target_summary.get("total_wall_hits") or len(hits))
-    center_hits = sum(int(target_zones.get(zone, {}).get("count", 0)) for zone in (4, 5))
-    side_hits = sum(int(target_zones.get(zone, {}).get("count", 0)) for zone in (1, 2, 3, 6, 7, 8))
-    low_hits = sum(int(target_zones.get(zone, {}).get("count", 0)) for zone in (3, 5, 8))
-    high_hits = sum(int(target_zones.get(zone, {}).get("count", 0)) for zone in (1, 4, 6))
+    center_hits = zone_total(4, 5, 6)
+    side_hits = zone_total(1, 2, 3, 7, 8, 9)
+    high_hits = zone_total(1, 4, 7)     # lob band, above ~10.6 ft
+    mid_hits = zone_total(2, 5, 8)      # driving height, ~10.6 ft to the service line
+    low_hits = zone_total(3, 6, 9)      # service line down to the tin
     calls = [hit.get("call") for hit in hits]
 
     return {
@@ -277,6 +283,7 @@ def coaching_analytics_for_hits(hits, target_summary):
         "center_target_rate": rounded(center_hits / total_wall_hits * 100, 1) if total_wall_hits else None,
         "side_target_rate": rounded(side_hits / total_wall_hits * 100, 1) if total_wall_hits else None,
         "low_target_rate": rounded(low_hits / total_wall_hits * 100, 1) if total_wall_hits else None,
+        "mid_target_rate": rounded(mid_hits / total_wall_hits * 100, 1) if total_wall_hits else None,
         "high_target_rate": rounded(high_hits / total_wall_hits * 100, 1) if total_wall_hits else None,
         "in_count": sum(1 for call in calls if call == "IN"),
         "out_count": sum(1 for call in calls if call == "OUT"),

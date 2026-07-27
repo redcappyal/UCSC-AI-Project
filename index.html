@@ -4421,23 +4421,6 @@ function targetZoneFill(percentage){
   return `rgba(245,197,24,${alpha.toFixed(3)})`;
 }
 
-function makeDebugTargetZones(){
-  const counts = Array.from({length: 8}, () => 3 + Math.floor(Math.random() * 24));
-  const total = counts.reduce((sum, n) => sum + n, 0);
-  const zones = counts.map((count, idx) => ({
-    zone: idx + 1,
-    count,
-    percentage: total ? count / total * 100 : 0,
-  }));
-  const used = zones.filter(zone => zone.count > 0).sort((a, b) => b.count - a.count);
-  return {
-    layout: 'front_wall_8_target_debug',
-    total_wall_hits: total,
-    zones,
-    common_zones: used.slice(0, 3),
-    missing_zones: zones.filter(zone => zone.count === 0),
-  };
-}
 
 const TARGET_LAYOUT = {
   sideW: 21,
@@ -4445,25 +4428,27 @@ const TARGET_LAYOUT = {
   centerW: 58,
   serviceY: 61.1,
   tinY: 89.5,
-  sideBands: [
-    {leftZone:1, rightZone:6, top:0, height:29},
-    {leftZone:2, rightZone:7, top:29, height:32.1},
-    {leftZone:3, rightZone:8, top:61.1, height:28.4},
+  // Every column uses the same three height bands (lob / normal / low), so a
+  // given contact height reads the same wherever it landed across the wall.
+  bands: [
+    {top:0, height:29},        // lob: out line down to ~10.6 ft
+    {top:29, height:32.1},     // normal driving height, down to the service line
+    {top:61.1, height:28.4},   // low: service line down to the tin
   ],
 };
 
+/* 3x3 grid: zone = column*3 + row + 1, columns left/center/right, rows
+   lob/normal/low. */
 function targetCellPlacements(zone){
   const z = Number(zone.zone);
-  if(z === 4){
-    return [{left:TARGET_LAYOUT.centerLeft, top:0, width:TARGET_LAYOUT.centerW, height:TARGET_LAYOUT.serviceY}];
-  }
-  if(z === 5){
-    return [{left:TARGET_LAYOUT.centerLeft, top:TARGET_LAYOUT.serviceY, width:TARGET_LAYOUT.centerW, height:TARGET_LAYOUT.tinY - TARGET_LAYOUT.serviceY}];
-  }
-  const band = TARGET_LAYOUT.sideBands.find(item => item.leftZone === z || item.rightZone === z);
-  if(!band) return [];
-  const left = band.leftZone === z ? 0 : TARGET_LAYOUT.centerLeft + TARGET_LAYOUT.centerW;
-  return [{left, top:band.top, width:TARGET_LAYOUT.sideW, height:band.height}];
+  if(!Number.isInteger(z) || z < 1 || z > 9) return [];
+  const column = Math.floor((z - 1) / 3);
+  const band = TARGET_LAYOUT.bands[(z - 1) % 3];
+  const left = column === 0 ? 0
+    : column === 1 ? TARGET_LAYOUT.centerLeft
+    : TARGET_LAYOUT.centerLeft + TARGET_LAYOUT.centerW;
+  const width = column === 1 ? TARGET_LAYOUT.centerW : TARGET_LAYOUT.sideW;
+  return [{left, top:band.top, width, height:band.height}];
 }
 
 function placeTargetCell(cell, placement){
@@ -4509,7 +4494,7 @@ function renderTargetZones(summary, ids = TARGET_MAP_IDS.aggregate){
   panel.classList.remove('hidden');
   $(ids.total).textContent = `${summary.total_wall_hits} wall hit${summary.total_wall_hits === 1 ? '' : 's'}`;
   $(ids.common).textContent = formatZoneList(summary.common_zones, 3);
-  $(ids.missing).textContent = formatZoneList(summary.missing_zones, 8);
+  $(ids.missing).textContent = formatZoneList(summary.missing_zones, 9);
 
   const grid = $(ids.grid);
   grid.innerHTML = '';
@@ -4557,7 +4542,7 @@ function summaryFromPlayerAnalytics(player){
     percentage: Number(zone.percentage || 0),
   }));
   return {
-    layout: 'front_wall_8_target_player',
+    layout: 'front_wall_9_target_player',
     total_wall_hits: Number(player.total_wall_hits || 0),
     zones,
     common_zones: player.common_target_zones || zones.filter(zone => zone.count > 0),
