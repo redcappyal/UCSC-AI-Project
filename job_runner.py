@@ -557,7 +557,7 @@ def segment_front_wall_hits_into_rallies(front_wall_hits, rally_gap_seconds=None
     return rallies, rally_gap_seconds, gap_method
 
 
-def assign_front_wall_hit_players(hits):
+def assign_front_wall_hit_players(hits, serve_resolver=None):
     for hit in hits:
         for key in (
             "front_wall_sequence",
@@ -583,11 +583,31 @@ def assign_front_wall_hit_players(hits):
     if first_server not in (1, 2):
         first_server = DEFAULT_FIRST_SERVER_PLAYER
 
+    resolved_tracks = [
+        serve_resolver(rally_hits) if serve_resolver is not None else None
+        for rally_hits in rallies
+    ]
+
     sequence = 0
     server = first_server
+    track_player_map = None
     rally_summaries = []
     for rally_index, rally_hits in enumerate(rallies, start=1):
-        rally_server = server
+        resolved = resolved_tracks[rally_index - 1]
+        if resolved in ("A", "B") and track_player_map is None:
+            # Anchor: the first observed rally binds its track to the
+            # propagated server at this point in the chain (spec §4.4).
+            track_player_map = {
+                resolved: server,
+                ("B" if resolved == "A" else "A"): other_player(server),
+            }
+        if resolved in ("A", "B") and track_player_map is not None:
+            rally_server = track_player_map[resolved]
+            server_source = "observed"
+        else:
+            rally_server = server
+            server_source = "propagated"
+
         for rally_sequence, hit in enumerate(rally_hits, start=1):
             sequence += 1
             player_number = (
@@ -630,8 +650,12 @@ def assign_front_wall_hit_players(hits):
             "duration_seconds": round(max(0.0, rally_end_time - rally_start_time), 3),
             "front_wall_hit_count": len(rally_hits),
             "server_player_number": rally_server,
+            "server_track": resolved if resolved in ("A", "B") else None,
+            "server_source": server_source,
             "winner_player_number": winner,
             "winner_reason": winner_reason,
+            "winner_source": "est" if winner is not None else None,
+            "winner_crosscheck_agrees": None,
             "last_call": last_call,
             "last_player_number": last_player,
             "serve_frame": (
@@ -644,13 +668,37 @@ def assign_front_wall_hit_players(hits):
         if winner in (1, 2):
             server = winner
 
+    # Winner back-fill: winner of rally N := observed server of rally N+1
+    # (squash rule — the winner serves next). The est winner stays as a
+    # silent cross-check (spec §4.4). Last rally keeps est.
+    for index in range(len(rally_summaries) - 1):
+        next_summary = rally_summaries[index + 1]
+        if next_summary["server_source"] != "observed":
+            continue
+        summary = rally_summaries[index]
+        est_winner = summary["winner_player_number"]
+        observed_winner = next_summary["server_player_number"]
+        summary["winner_player_number"] = observed_winner
+        summary["winner_source"] = "next_serve"
+        summary["winner_crosscheck_agrees"] = (
+            (est_winner == observed_winner) if est_winner is not None else None
+        )
+
+    observed_serve_count = sum(
+        1 for summary in rally_summaries if summary["server_source"] == "observed"
+    )
     return {
-        "method": "rally_gap_server_alternation",
+        "method": (
+            "rally_gap_observed_serves"
+            if observed_serve_count
+            else "rally_gap_server_alternation"
+        ),
         "rally_gap_seconds": rally_gap_seconds,
         "rally_gap_method": rally_gap_method,
         "first_server_player_number": first_server,
         "rally_count": len(rally_summaries),
         "assigned_front_wall_hit_count": len(assignable_hits),
+        "observed_serve_count": observed_serve_count,
         "rallies": rally_summaries,
     }
 
@@ -670,7 +718,7 @@ def build_player_target_zone_summaries(hits):
     return summaries
 
 
-def judge_hits(run_dir, results, detected, audio_available=None):
+def judge_hits(run_dir, results, detected, audio_available=None, serve_resolver=None):
     top_line = bottom_line = None
     service_line = None
     wall_corners = None
@@ -864,7 +912,7 @@ def judge_hits(run_dir, results, detected, audio_available=None):
         # Serve OUT can change the rally winner and therefore the next rally's
         # inferred server. Re-run the deterministic assignment after applying
         # the first-contact serve rule.
-        player_assignment = assign_front_wall_hit_players(hits)
+        player_assignment = assign_front_wall_hit_players(hits, serve_resolver=serve_resolver)
     payload = {
         "hits": hits,
         "target_zones": build_target_zone_summary(hits),
