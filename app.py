@@ -9,9 +9,11 @@ import urllib.request
 from pathlib import Path
 
 import cv2
+import numpy as np
 from flask import Flask, jsonify, request, send_file, send_from_directory
 from werkzeug.utils import secure_filename
 
+import court_detect
 import court_model
 from judge_call import (
     Point,
@@ -1052,6 +1054,40 @@ def camera_model():
         response["frame_width"] = model.frame_width
         response["frame_height"] = model.frame_height
     return jsonify(response)
+
+
+MAX_DETECT_FRAMES = 8
+
+
+@app.post("/api/detect-court")
+def detect_court_endpoint():
+    """Detect the court from a few frames of one fixed viewpoint.
+
+    Read-only wizard feedback like /api/camera-check: nothing is stored, and
+    the reply is always 200 with a status field so the client can fall back to
+    the manual tap wizard on any failure.
+
+    Frames arrive as JPEG bytes and are decoded with cv2.imdecode, which reads
+    from memory -- so the CLAUDE.md warning about cv2.imread and non-ASCII
+    paths does not apply here.
+    """
+    uploads = request.files.getlist("frames")
+    if not uploads:
+        return jsonify({"ok": True, "status": "no_frames",
+                        "warnings": ["No frames were supplied."]})
+
+    frames = []
+    for upload in uploads[:MAX_DETECT_FRAMES]:
+        buffer = np.frombuffer(upload.read(), dtype=np.uint8)
+        image = cv2.imdecode(buffer, cv2.IMREAD_COLOR)
+        if image is not None and (not frames or image.shape == frames[0].shape):
+            frames.append(image)
+
+    if not frames:
+        return jsonify({"ok": True, "status": "no_frames",
+                        "warnings": ["No frame could be decoded."]})
+
+    return jsonify(court_detect.detect_court(frames))
 
 
 def validate_floor_calibration(calibration):
