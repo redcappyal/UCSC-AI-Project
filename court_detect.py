@@ -23,6 +23,8 @@ from dataclasses import dataclass
 import cv2
 import numpy as np
 
+import court_model
+
 # --- temporal median -------------------------------------------------------
 MOTION_DELTA = 18        # grey levels; below this a pixel counts as unchanged
 MOTION_FRACTION = 0.25   # fraction of changed pixels that means "the camera moved"
@@ -341,3 +343,326 @@ def assign_lines(paint_lines, edge_lines, frame_shape):
         assigned["short_line"] = max(below, key=lambda line: line.length_px)
 
     return assigned
+
+
+# --- datum refit -------------------------------------------------------------
+DATUM_BAND_PX = 6          # how far either side of the fitted line to look
+MIN_DATUM_COLUMNS = 40     # mirrors index.html's MIN_COLS
+CHECK_OK_PX = 4.0          # a self-verification prediction this close is "ok"
+HOMOGRAPHY_RMS_OK_PX = 3.0
+
+
+@dataclass(frozen=True)
+class LineFit:
+    """A line in the calibration's stored form: y = slope * x + intercept."""
+
+    slope: float
+    intercept: float
+    rms_px: float
+    x_span: tuple
+    pixel_count: int
+
+
+def _robust_line_fit(xs, ys):
+    """Least squares, then one pass dropping points beyond 2.5 sigma."""
+    xs_array = np.asarray(xs, dtype=float)
+    ys_array = np.asarray(ys, dtype=float)
+    for _ in range(2):
+        slope, intercept = np.polyfit(xs_array, ys_array, 1)
+        residuals = ys_array - (slope * xs_array + intercept)
+        spread = float(np.std(residuals))
+        if spread < 1e-6:
+            break
+        keep = np.abs(residuals) <= 2.5 * spread
+        if keep.sum() < MIN_DATUM_COLUMNS or keep.all():
+            break
+        xs_array, ys_array = xs_array[keep], ys_array[keep]
+    residuals = ys_array - (slope * xs_array + intercept)
+    return (float(slope), float(intercept),
+            float(np.sqrt(np.mean(residuals ** 2))),
+            (float(xs_array.min()), float(xs_array.max())),
+            int(len(xs_array)))
+
+
+def refit_to_datum(mask, line, mode):
+    """Refit `line` onto the named boundary of the painted stripe under it.
+
+    `mode` is 'min' (topmost mask row per column) or 'max' (lowest) — the same
+    contract as index.html's extractEdge, because front-wall lines are stored
+    by EDGE, not centreline (spec §5). Returning the stripe's middle instead
+    would put a systematic half-line-width bias into the out-line call.
+    """
+    return _refit(mask, line, mode)
+
+
+def refit_to_centreline(mask, line):
+    """Refit `line` onto the middle of the stripe under it.
+
+    Floor landmarks are stored by paint CENTRELINE (court_model.py:49-62), the
+    opposite convention to the front-wall lines above.
+    """
+    return _refit(mask, line, "mid")
+
+
+def _refit(mask, line, mode):
+    height, width = mask.shape[:2]
+    first = int(max(0, math.floor(min(line.x1, line.x2))))
+    last = int(min(width - 1, math.ceil(max(line.x1, line.x2))))
+    xs, ys = [], []
+    for x in range(first, last + 1):
+        centre = line.y_at(x)
+        if centre is None:
+            continue
+        low = int(max(0, round(centre - DATUM_BAND_PX)))
+        high = int(min(height - 1, round(centre + DATUM_BAND_PX)))
+        rows = [y for y in range(low, high + 1) if mask[y, x]]
+        if not rows:
+            continue
+        if mode == "max":
+            chosen = max(rows)
+        elif mode == "min":
+            chosen = min(rows)
+        else:
+            chosen = (min(rows) + max(rows)) / 2.0
+        xs.append(float(x))
+        ys.append(float(chosen))
+    if len(xs) < MIN_DATUM_COLUMNS:
+        return None
+    slope, intercept, rms, span, count = _robust_line_fit(xs, ys)
+    return LineFit(slope, intercept, rms, span, count)
+
+
+def _line_payload(name, fit, source):
+    """A LineFit in the exact shape buildJson() writes (index.html:2593)."""
+    x0, x1 = fit.x_span
+    return {
+        "name": name,
+        "endpoints": [[round(x0, 2), round(fit.slope * x0 + fit.intercept, 2)],
+                      [round(x1, 2), round(fit.slope * x1 + fit.intercept, 2)]],
+        "slope": fit.slope,
+        "intercept": fit.intercept,
+        "fit_rms_px": round(fit.rms_px, 2),
+        "x_span_px": [round(x0, 2), round(x1, 2)],
+        "x_span_source": "fit",
+        "edge_pixels_used": fit.pixel_count,
+        "source": source,
+    }
+
+
+def _fit_as_line(fit):
+    """A LineFit back as a DetectedLine, so it can be intersected."""
+    x0, x1 = fit.x_span
+    return DetectedLine(x0, fit.slope * x0 + fit.intercept,
+                        x1, fit.slope * x1 + fit.intercept, support=1)
+
+
+# --- the whole detection -----------------------------------------------------
+_WALL_CORNER_COURT_FT = {
+    "top_left": (0.0, court_model.OUT_LINE_HEIGHT_FT),
+    "top_right": (court_model.COURT_WIDTH_FT, court_model.OUT_LINE_HEIGHT_FT),
+    "bottom_left": (0.0, 0.0),
+    "bottom_right": (court_model.COURT_WIDTH_FT, 0.0),
+}
+
+_FLOOR_ANCHORS = (
+    ("front_seam_left", (0.0, 0.0)),
+    ("front_seam_right", (court_model.COURT_WIDTH_FT, 0.0)),
+    ("short_line_left", (0.0, court_model.SHORT_LINE_CENTER_Y_FT)),
+    ("short_line_right", (court_model.COURT_WIDTH_FT,
+                          court_model.SHORT_LINE_CENTER_Y_FT)),
+)
+
+# Court points that no anchor was fitted to. Their distance from real paint is
+# free evidence the two homographies are right, at zero human cost.
+_FLOOR_CHECKS = (
+    ("t_point", (court_model.HALF_COURT_X_FT,
+                 court_model.SHORT_LINE_CENTER_Y_FT)),
+    ("left_box_inner_back", (court_model.LEFT_BOX_INNER_CENTER_X_FT,
+                             court_model.BOX_BACK_CENTER_Y_FT)),
+    ("right_box_inner_back", (court_model.RIGHT_BOX_INNER_CENTER_X_FT,
+                              court_model.BOX_BACK_CENTER_Y_FT)),
+)
+
+
+def _failure(status, frame_shape, warnings):
+    height, width = (frame_shape[:2] if frame_shape is not None else (0, 0))
+    return {"ok": True, "status": status,
+            "frame_width": int(width), "frame_height": int(height),
+            "lines": [], "planes": {}, "checks": [],
+            "confidence": "low", "warnings": warnings}
+
+
+def detect_court(frames):
+    """Detect the court from one or more frames of the same fixed viewpoint.
+
+    Returns squash-calibration-v2 structures (spec §6) and never raises: the
+    wizard falls back to manual taps on any non-'ok' status.
+    """
+    if not len(frames):
+        return _failure("no_frames", None, ["No frames were supplied."])
+
+    warnings = []
+    image, moved = median_frame(frames)
+    if moved:
+        image = np.asarray(frames[len(frames) // 2])
+        warnings.append("Camera appears to be moving; used a single frame.")
+
+    height, width = image.shape[:2]
+    minimum = width * 0.10
+    mask = paint_mask(image)
+    assigned = assign_lines(find_lines(line_response(image), minimum),
+                            find_lines(edge_response(image), minimum),
+                            image.shape)
+
+    required = ("out", "front_seam", "left_seam", "right_seam", "short_line")
+    missing = [name for name in required if assigned.get(name) is None]
+    if missing:
+        return _failure("insufficient_lines", image.shape,
+                        warnings + [f"Could not find: {', '.join(missing)}."])
+
+    # Front-wall lines, each pulled onto its own stored datum (spec §5).
+    lines = []
+    for name, key, mode in (
+            ("out_line_lower_edge", "out", "max"),
+            ("service_line_top_edge", "service", "min"),
+            ("tin_top_edge", "tin", "min")):
+        if assigned.get(key) is None:
+            warnings.append(f"{name} was not detected.")
+            continue
+        fit = refit_to_datum(mask, assigned[key], mode)
+        if fit is None:
+            warnings.append(f"{name} had too little clean paint to fit.")
+            continue
+        lines.append(_line_payload(name, fit, "detected"))
+
+    out_fit = next((line for line in lines
+                    if line["name"] == "out_line_lower_edge"), None)
+    if out_fit is None:
+        return _failure("insufficient_lines", image.shape,
+                        warnings + ["The out line could not be fitted."])
+
+    # Anchors as intersections of long lines.
+    out_line = DetectedLine(*out_fit["endpoints"][0], *out_fit["endpoints"][1],
+                            support=1)
+    seam = assigned["front_seam"]
+    short_fit = refit_to_centreline(mask, assigned["short_line"])
+    short_line = (_fit_as_line(short_fit) if short_fit is not None
+                  else assigned["short_line"])
+
+    # The wall-top corners are NOT out_line.intersect(seam): out_line sits on
+    # the 3-D line {y=0, z=OUT_LINE_HEIGHT_FT}, the seam lines sit on
+    # {x=0 or COURT_WIDTH_FT, z=0} -- two lines at different heights that
+    # never actually meet in 3-D, so their projections only cross at some
+    # arbitrary point far from the true corner (measured 35-500+ px off,
+    # growing *worse* at longer focal lengths, at court_camera(700)/(1600)/
+    # (3000)/(9000) respectively -- not a noise artifact). The corner IS,
+    # however, exactly where out_line's own fitted extent ends, because
+    # render_court draws the out-line band across the FULL front-wall width
+    # (x in [0, COURT_WIDTH_FT]), so a clean detection's x_span already
+    # reaches both corners (measured ~0.13 px off truth). x1 < x2 always
+    # (DetectedLine built from fit.x_span's (min, max)), so x1 is the
+    # screen-left end -- the same side `assigned["left_seam"]` was chosen
+    # from (assign_lines: midpoint[0] < centre_x) -- matching bottom_left's
+    # convention below.
+    anchors = {
+        "top_left": (out_line.x1, out_line.y1),
+        "top_right": (out_line.x2, out_line.y2),
+        "bottom_left": seam.intersect(assigned["left_seam"]),
+        "bottom_right": seam.intersect(assigned["right_seam"]),
+        "short_line_left": short_line.intersect(assigned["left_seam"]),
+        "short_line_right": short_line.intersect(assigned["right_seam"]),
+    }
+    if any(point is None for point in anchors.values()):
+        return _failure("insufficient_lines", image.shape,
+                        warnings + ["Court lines did not intersect."])
+
+    floor_pixels = {
+        "front_seam_left": anchors["bottom_left"],
+        "front_seam_right": anchors["bottom_right"],
+        "short_line_left": anchors["short_line_left"],
+        "short_line_right": anchors["short_line_right"],
+    }
+    court_points = [court_ft for _, court_ft in _FLOOR_ANCHORS]
+    image_points = [floor_pixels[name] for name, _ in _FLOOR_ANCHORS]
+    try:
+        homography, residuals = court_model.fit_homography(court_points,
+                                                           image_points)
+    except (ValueError, np.linalg.LinAlgError):
+        return _failure("insufficient_lines", image.shape,
+                        warnings + ["The floor homography was degenerate."])
+
+    # Self-verification: how far predictions of UNUSED court points fall from
+    # real paint. distanceTransform turns that into a lookup.
+    distance = cv2.distanceTransform(255 - mask, cv2.DIST_L2, 3)
+    checks = []
+    for check_id, court_ft in _FLOOR_CHECKS:
+        px, py = court_model.apply_homography(homography, court_ft)
+        inside = 0 <= int(py) < height and 0 <= int(px) < width
+        residual = float(distance[int(py), int(px)]) if inside else None
+        checks.append({
+            "id": check_id,
+            "predicted_px": [round(px, 2), round(py, 2)],
+            "residual_px": None if residual is None else round(residual, 2),
+            "status": ("unverified" if residual is None
+                       else "ok" if residual <= CHECK_OK_PX else "off"),
+        })
+
+    floor_rms = float(np.sqrt(np.mean(residuals ** 2)))
+    worst_check = max((check["residual_px"] for check in checks
+                       if check["residual_px"] is not None), default=None)
+    confidence = "high"
+    if len(lines) < 3:
+        confidence = "low"
+    elif floor_rms > HOMOGRAPHY_RMS_OK_PX:
+        confidence = "low"
+        warnings.append(f"Floor fit RMS {floor_rms:.1f} px.")
+    elif worst_check is None or worst_check > CHECK_OK_PX:
+        confidence = "low"
+        warnings.append("Predicted court markings did not land on real paint.")
+
+    return {
+        "ok": True,
+        "status": "ok",
+        "frame_width": int(width),
+        "frame_height": int(height),
+        "lines": lines,
+        "planes": {
+            "wall": {
+                "corners": [
+                    {"id": corner_id,
+                     "tap_px": [round(anchors[corner_id][0], 2),
+                                round(anchors[corner_id][1], 2)],
+                     # top_left/top_right come from out_line's own fitted
+                     # extent (see the comment above `anchors`), not a line
+                     # intersection like the other two.
+                     "source": ("line_extent" if corner_id.startswith("top_")
+                                else "intersection")}
+                    for corner_id in _WALL_CORNER_COURT_FT
+                ],
+                "fitted_by": "auto_detect",
+            },
+            "floor": {
+                "landmarks": [
+                    {"id": name,
+                     "court_ft": list(court_ft),
+                     "tap_px": [round(floor_pixels[name][0], 2),
+                                round(floor_pixels[name][1], 2)],
+                     "refined_px": [round(floor_pixels[name][0], 2),
+                                    round(floor_pixels[name][1], 2)],
+                     "method": "intersection",
+                     "residual_px": round(float(residuals[index]), 2),
+                     "skipped": False,
+                     "source": "intersection"}
+                    for index, (name, court_ft) in enumerate(_FLOOR_ANCHORS)
+                ],
+                "homography_image_from_court": [
+                    [float(value) for value in row] for row in homography],
+                "fit_rms_px": round(floor_rms, 2),
+                "max_residual_px": round(float(residuals.max()), 2),
+                "fitted_by": "auto_detect",
+            },
+        },
+        "checks": checks,
+        "confidence": confidence,
+        "warnings": warnings,
+    }

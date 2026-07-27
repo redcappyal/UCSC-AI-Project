@@ -20,7 +20,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import court_detect
+import court_model
 from court_model import LEFT_BOX_INNER_CENTER_X_FT, LINE_WIDTH_FT
+from judge_call import load_calibration_lines
 from synthetic_court import FLOOR_BGR, LINE_BGR, WALL_BGR, court_camera, render_court
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -583,3 +585,106 @@ def test_assign_lines_names_every_required_entity():
     )
 
     _assert_assignment_matches_truth(assigned, truth, camera, image.shape)
+
+
+def test_refit_to_datum_lands_on_the_named_edge_not_the_centre():
+    camera = court_camera(focal_px=700.0)
+    image, truth = render_court(camera)
+    mask = court_detect.paint_mask(image)
+    lines = court_detect.find_lines(court_detect.line_response(image),
+                                    image.shape[1] * 0.10)
+
+    start, end = truth["out_line_lower_edge"]
+    stripe = _nearest_line_to(lines, start, end)
+    fit = court_detect.refit_to_datum(mask, stripe, "max")
+
+    assert fit is not None
+    for point in (start, end):
+        assert abs(fit.slope * point[0] + fit.intercept - point[1]) < 2.0
+
+    # And the 'min' datum is a genuinely different answer — proof the mode is
+    # doing work rather than both modes landing on the stripe's centre.
+    top = court_detect.refit_to_datum(mask, stripe, "min")
+    assert abs(top.intercept - fit.intercept) > 1.0
+
+
+def test_detect_court_recovers_the_camera_that_drew_the_court():
+    # Bare court_camera() (focal_px=1600) never brings the short line into
+    # frame (see test_assign_lines_names_every_required_entity above), so
+    # detect_court's required-lines check would always fail before any of the
+    # geometry below could be exercised. focal_px=700.0 is this suite's
+    # standard wider framing.
+    camera = court_camera(focal_px=700.0)
+    image, truth = render_court(camera, noise_sigma=2.0)
+
+    result = court_detect.detect_court([image])
+
+    assert result["status"] == "ok"
+    assert result["confidence"] == "high", result["warnings"]
+
+    # Front-wall lines land on their true datums.
+    by_name = {line["name"]: line for line in result["lines"]}
+    for name in ("out_line_lower_edge", "service_line_top_edge", "tin_top_edge"):
+        start, end = truth[name]
+        fitted = by_name[name]
+        for point in (start, end):
+            predicted = fitted["slope"] * point[0] + fitted["intercept"]
+            assert abs(predicted - point[1]) < 3.0, name
+
+    # Wall corners land on their true intersections.
+    #
+    # court_camera()'s (x, y, z) -> (right, forward, up) basis, via
+    # synthetic3d.make_camera's standard lookAt (right = forward x world_up),
+    # renders world x=0 on the RIGHT half of the frame and x=COURT_WIDTH_FT
+    # on the LEFT (verified directly: camera.project((LEFT_BOX_INNER_CENTER_X
+    # _FT, 20, 0)) -- named "left" for being the low-x box -- lands at pixel
+    # x=1215.5 of 1920, the right half; the "right" box lands at x=704.5, the
+    # left half). detect_court has no way to know this and does not need to:
+    # assign_lines' "left_seam"/"right_seam" are themselves just a SCREEN-
+    # position label (midpoint x below/above the frame's centre column), so
+    # detect_court's "top_left"/"bottom_left" mean "the corner nearer the
+    # screen-left seam" -- which is this fixture's COURT_WIDTH_FT corner, not
+    # its x=0 one. That is a property of this test camera's pose (irrelevant
+    # to judge_call's IN/OUT geometry, which never assigns a side a world
+    # identity), not a defect in detect_court, so the pairing below is
+    # intentionally crossed rather than identity-matched.
+    corners = {corner["id"]: corner["tap_px"]
+               for corner in result["planes"]["wall"]["corners"]}
+    for corner_id, truth_key in (("top_left", "wall_top_right"),
+                                 ("top_right", "wall_top_left"),
+                                 ("bottom_left", "wall_bottom_right"),
+                                 ("bottom_right", "wall_bottom_left")):
+        assert np.linalg.norm(
+            np.asarray(corners[corner_id]) - np.asarray(truth[truth_key])) < 4.0
+
+
+def test_detect_court_output_parses_with_the_existing_consumers():
+    # Same focal_px=700.0 reasoning as the test above: the bare default never
+    # renders the short line, so detect_court would never reach "ok".
+    camera = court_camera(focal_px=700.0)
+    image, _ = render_court(camera, noise_sigma=2.0)
+
+    result = court_detect.detect_court([image])
+    calibration = {
+        "schema": "squash-calibration-v2",
+        "frame_width": result["frame_width"],
+        "frame_height": result["frame_height"],
+        "lines": result["lines"],
+        "planes": result["planes"],
+        "distortion": None,
+    }
+
+    top, bottom = load_calibration_lines(calibration)
+    assert top.left.x < top.right.x
+
+    floor_map = court_model.load_floor_calibration(calibration)
+    assert floor_map is not None
+    x_ft, y_ft = floor_map.image_to_court(*result["checks"][0]["predicted_px"])
+    assert -2.0 < x_ft < court_model.COURT_WIDTH_FT + 2.0
+
+
+def test_detect_court_reports_failure_rather_than_guessing():
+    blank = np.full((1080, 1920, 3), 220, dtype=np.uint8)
+    result = court_detect.detect_court([blank])
+    assert result["status"] == "insufficient_lines"
+    assert result["confidence"] == "low"
