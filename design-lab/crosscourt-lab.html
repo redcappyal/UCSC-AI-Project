@@ -82,6 +82,40 @@ nav button svg{width:17px;height:17px}
   padding:6px 14px;font-size:12px;font-weight:700;font-family:inherit;cursor:pointer;
   margin-left:auto;color:var(--ink)}
 .startchip:active{filter:brightness(.96)}
+/* analysis */
+.viewhead{display:flex;align-items:baseline;justify-content:space-between;min-height:36px}
+.clipcard{padding:0;overflow:hidden}
+.cliptop{display:flex;align-items:center;gap:12px;padding:14px 16px;cursor:pointer}
+.thumb{width:64px;height:44px;border-radius:12px;flex:none;display:flex;align-items:center;
+  justify-content:center;color:#fff}
+.thumb svg{width:16px;height:16px;filter:drop-shadow(0 1px 2px rgba(0,0,0,.3))}
+.cliptop .info{display:flex;flex-direction:column;gap:2px;min-width:0}
+.cliptop .name{font-size:15px;font-weight:600}
+.cliptop .meta{font-size:13px;color:var(--dim)}
+.statechip{margin-left:auto;flex:none;border-radius:999px;padding:5px 10px;font-size:11px;
+  font-weight:700;letter-spacing:.03em;display:inline-flex;gap:6px;align-items:center}
+.statechip.done{background:var(--accent);color:var(--ink)}
+.statechip.todo{background:#EEEFF2;color:var(--dim)}
+.clipbody{max-height:0;overflow:hidden;transition:max-height .25s ease}
+.clipcard.open .clipbody{max-height:520px}
+.clipbody .inner{padding:2px 16px 16px;display:flex;flex-direction:column;gap:12px;
+  border-top:1px solid #F0F1F3;padding-top:12px;margin:0 0}
+.metarow{font-size:13px;color:var(--dim);display:flex;gap:8px;align-items:center}
+.metarow svg{width:14px;height:14px;flex:none}
+.analyzebtn{width:100%}
+.analyzebtn:disabled{opacity:.75;cursor:default}
+.scorerow{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.overall{display:flex;align-items:baseline;gap:2px}
+.overall .big{font-size:28px}
+.overall .suffix{font-size:13px;color:var(--dim);font-weight:600}
+.scorechip{background:#EEEFF2;border-radius:999px;padding:5px 10px;font-size:12px;
+  font-weight:600;color:var(--ink)}
+.fbrow{display:flex;gap:10px;align-items:flex-start}
+.fbrow .chip{flex:none;margin-top:1px}
+.fbrow .txt{font-size:13.5px;line-height:1.45}
+.ghostbtn{border:1px solid #E2E3E7;background:transparent;border-radius:999px;
+  min-height:38px;padding:0 16px;font-size:13px;font-weight:600;font-family:inherit;
+  color:var(--ink);cursor:pointer;align-self:flex-start}
 /* toast */
 #toast{position:absolute;left:50%;bottom:84px;transform:translateX(-50%);background:var(--ink);
   color:#fff;font-size:13px;font-weight:600;padding:10px 16px;border-radius:999px;
@@ -141,7 +175,13 @@ nav button svg{width:17px;height:17px}
         </div>
       </div>
     </section>
-    <section class="view" id="view-analysis"></section>
+    <section class="view" id="view-analysis">
+      <div class="viewhead">
+        <h2>Analysis</h2>
+        <span class="dim" style="font-size:13px" id="clipmeta"></span>
+      </div>
+      <div id="cliplist" style="display:flex;flex-direction:column;gap:12px"></div>
+    </section>
     <section class="view" id="view-training"></section>
     <section class="view" id="view-progress"></section>
   </div>
@@ -168,6 +208,94 @@ function toast(msg){
 }
 document.getElementById('nav').innerHTML = TABS.map(t=>
   `<button data-tab="${t.id}" onclick="switchTab('${t.id}')">${t.icon}<span>${t.label}</span></button>`).join('');
+
+/* ---------- analysis ---------- */
+const CLIPS = [
+  {id:1, date:'Today, 9:41', dur:'12:24', analyzed:true,  score:84,
+   scores:{Accuracy:82, Placement:71, Consistency:68},
+   feedback:[
+     {t:'Good length on straight drives — 74% past the service box.', s:'good', l:'Good'},
+     {t:'Boasts landing mid-court. Aim shorter, two racket-lengths off the front wall.', s:'avg', l:'Average'},
+     {t:'Serve returns catching the tin under pressure — lift your target above the service line.', s:'poor', l:'Poor'}],
+   hue:200},
+  {id:2, date:'Jul 25, 18:02', dur:'08:51', analyzed:true, score:79,
+   scores:{Accuracy:77, Placement:69, Consistency:64},
+   feedback:[
+     {t:'Rally length up — averaging 9 shots, your best this month.', s:'good', l:'Good'},
+     {t:'Cross-court drives drifting to the middle third.', s:'avg', l:'Average'}],
+   hue:150},
+  {id:3, date:'Jul 22, 17:30', dur:'15:07', analyzed:false, hue:30},
+  {id:4, date:'Jul 19, 19:12', dur:'06:40', analyzed:false, hue:280}
+];
+let openClip = null;
+const PLAY_SVG = '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>';
+function renderClips(){
+  const n = CLIPS.filter(c=>c.analyzed).length;
+  document.getElementById('clipmeta').textContent = `${CLIPS.length} clips · ${n} analyzed`;
+  document.getElementById('cliplist').innerHTML = CLIPS.map(c=>{
+    const grad = `linear-gradient(135deg, hsl(${c.hue} 30% 82%), hsl(${c.hue} 25% 62%))`;
+    const state = c.analyzed
+      ? `<span class="statechip done">ANALYZED <span class="num">${c.score}</span></span>`
+      : `<span class="statechip todo">NOT ANALYZED</span>`;
+    let body;
+    if(!c.analyzed){
+      body = `
+        <div class="metarow"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="2" y="6" width="13" height="12" rx="3"/><path d="M15 10.5l7-4v11l-7-4"/></svg>Recorded on court · phone on fin</div>
+        <div class="metarow"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg>Calibration attached</div>
+        <button class="pill accent analyzebtn" onclick="event.stopPropagation();analyzeClip(${c.id})">Analyze</button>`;
+    } else {
+      const chips = Object.entries(c.scores).map(([k,v])=>
+        `<span class="scorechip">${k} <span class="num">${v}</span></span>`).join('');
+      const fb = c.feedback.map(f=>
+        `<div class="fbrow"><span class="chip ${f.s}">${f.l}</span><span class="txt">${f.t}</span></div>`).join('');
+      body = `
+        <div class="scorerow">
+          <span class="overall"><span class="big num">${c.score}</span><span class="suffix">/100</span></span>
+          ${chips}
+        </div>
+        ${fb}
+        <button class="ghostbtn" onclick="event.stopPropagation();toast('Re-analysis is a lab stub')">Re-analyze</button>`;
+    }
+    return `
+      <div class="card clipcard ${openClip===c.id?'open':''}" id="clip-${c.id}">
+        <div class="cliptop" onclick="toggleClip(${c.id})">
+          <div class="thumb" style="background:${grad}">${PLAY_SVG}</div>
+          <div class="info">
+            <span class="name">${c.date}</span>
+            <span class="meta num">${c.dur} · rally clip</span>
+          </div>
+          ${state}
+        </div>
+        <div class="clipbody"><div class="inner">${body}</div></div>
+      </div>`;
+  }).join('');
+}
+function toggleClip(id){
+  openClip = (openClip === id) ? null : id;
+  renderClips();
+}
+function analyzeClip(id){
+  const btn = document.querySelector(`#clip-${id} .analyzebtn`);
+  btn.disabled = true;
+  let pct = 0;
+  const iv = setInterval(()=>{
+    pct += 4 + Math.floor(Math.random()*7);
+    if(pct >= 100){
+      clearInterval(iv);
+      const c = CLIPS.find(c=>c.id===id);
+      c.analyzed = true; c.score = 76;
+      c.scores = {Accuracy:74, Placement:70, Consistency:65};
+      c.feedback = [
+        {t:'Drives holding good width along the side wall.', s:'good', l:'Good'},
+        {t:'Short of length in the final third of the rally — fatigue pattern.', s:'avg', l:'Average'}];
+      renderClips();
+      toast('Analysis complete — in the app this runs the real pipeline');
+    } else {
+      btn.textContent = `Analyzing… ${pct}%`;
+    }
+  }, 120);
+}
+renderClips();
 switchTab('dashboard');
 </script>
 </body>
