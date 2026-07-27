@@ -244,13 +244,18 @@ def decode_heatmap(heatmap, threshold, stride, nominal_px):
         for dy in range(3) for dx in range(3) if not (dy == 1 and dx == 1)
     ])
     is_peak = (hm >= neighbourhoods.max(axis=0)) & (hm >= threshold)
-    # break plateau ties: keep only the first occurrence in scan order
+    # break plateau ties: keep only the first occurrence in scan order. A
+    # skipped pixel is marked taken too (not just the winner), so suppression
+    # propagates along an arbitrarily wide flat run instead of only reaching
+    # one 3x3 window past the winner -- otherwise a plateau >=3px wide would
+    # let its far end re-fire as a second "peak".
     ys, xs = np.nonzero(is_peak)
     peaks, taken = [], np.zeros_like(hm, dtype=bool)
     for y, x in zip(ys, xs):
-        if taken[max(y - 1, 0):y + 2, max(x - 1, 0):x + 2].any():
-            continue
+        already_taken = taken[max(y - 1, 0):y + 2, max(x - 1, 0):x + 2].any()
         taken[y, x] = True
+        if already_taken:
+            continue
         window = hm[max(y - 1, 0):y + 2, max(x - 1, 0):x + 2]
         wy, wx = np.mgrid[max(y - 1, 0):min(y + 2, hm.shape[0]),
                           max(x - 1, 0):min(x + 2, hm.shape[1])]

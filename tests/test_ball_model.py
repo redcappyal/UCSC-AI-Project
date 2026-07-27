@@ -251,7 +251,6 @@ def test_ball_model_imports_without_torch():
 @pytest.mark.requires_model
 def test_torchscript_runner_returns_boxes_for_real_model():
     runner = ball_model.load_detector()
-    import numpy as np
     crops = [np.zeros((416, 416, 3), dtype=np.uint8)]
     result = runner.run_batch(crops)
     assert len(result) == 1
@@ -286,6 +285,23 @@ def test_decode_heatmap_two_separated_peaks_both_found():
 def test_decode_heatmap_plateau_emits_single_peak():
     hm = np.zeros((208, 208), dtype=np.float32)
     hm[30, 30] = hm[30, 31] = 0.7    # two equal neighbours must not double-fire
+    peaks = ball_model.decode_heatmap(hm, 0.1, 2, 12.0)
+    assert len(peaks) == 1
+
+
+def test_decode_heatmap_wide_plateau_emits_single_peak():
+    # A 3px-wide flat run: the 3rd pixel's 3x3 window no longer overlaps the
+    # winner's window directly, so suppression must chain through the
+    # already-skipped 2nd pixel rather than only reaching one step.
+    hm = np.zeros((208, 208), dtype=np.float32)
+    hm[30, 30] = hm[30, 31] = hm[30, 32] = 0.7
+    peaks = ball_model.decode_heatmap(hm, 0.1, 2, 12.0)
+    assert len(peaks) == 1
+
+
+def test_decode_heatmap_long_plateau_emits_single_peak():
+    hm = np.zeros((208, 208), dtype=np.float32)
+    hm[30, 30:35] = 0.7    # 5px-wide flat run
     peaks = ball_model.decode_heatmap(hm, 0.1, 2, 12.0)
     assert len(peaks) == 1
 
