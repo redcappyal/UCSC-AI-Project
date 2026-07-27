@@ -437,6 +437,22 @@
   .coachOutcomeSection .coachMetrics{grid-template-columns:1fr; padding:10px}
   .coachOutcomeEmpty{padding:14px 12px; color:var(--dim); font-size:13px; line-height:1.4}
   .coachFeedback{padding:12px 14px; border-top:1px solid var(--line); font-size:16px; line-height:1.45; white-space:pre-wrap}
+  /* Drill progressions: one card per weakness, four ordered stages inside. */
+  .coachDrills{padding:0 14px 14px}
+  .coachDrills:empty{display:none}
+  .drillNote{color:var(--dim); font-size:13px; line-height:1.4; margin:0 0 10px}
+  .drillCard{border:1px solid var(--line); border-radius:8px;
+    background:color-mix(in srgb, var(--surface) 86%, var(--bg));
+    padding:10px 12px; margin-bottom:10px}
+  .drillCard:last-child{margin-bottom:0}
+  .drillIssue{margin:0 0 8px; font-size:14px; font-weight:700; line-height:1.35}
+  .drillSteps{list-style:none; margin:0; padding:0; display:grid; gap:9px}
+  .drillSteps li{font-size:13px; line-height:1.4; color:var(--dim)}
+  /* Stage label stacked above its text: the labels vary in width
+     ("Solo" vs "Conditioned games"), so a side column would leave the copy
+     ragged. Same label-over-value shape as .coachMetric. */
+  .drillStage{display:block; font-style:normal; font-size:11px; font-weight:700;
+    letter-spacing:.05em; text-transform:uppercase; color:var(--text); margin-bottom:2px}
 
   /* The verdict box always occupies the same space: empty (blank), event
      classification (neutral), and IN/OUT states share one reserved height so
@@ -975,6 +991,7 @@
       <div class="coachMetrics" id="coachMetricsP1"></div>
       <div class="coachOutcomeComparison" id="coachOutcomesP1"></div>
       <div class="coachFeedback" id="coachFeedbackP1"></div>
+      <div class="coachDrills" id="coachDrillsP1"></div>
     </div>
     <div class="row">
       <button id="player2NextBtn" type="button">Player 2 report</button>
@@ -1016,6 +1033,7 @@
       <div class="coachMetrics" id="coachMetricsP2"></div>
       <div class="coachOutcomeComparison" id="coachOutcomesP2"></div>
       <div class="coachFeedback" id="coachFeedbackP2"></div>
+      <div class="coachDrills" id="coachDrillsP2"></div>
     </div>
   </section>
 
@@ -4616,6 +4634,7 @@ function hidePlayerCoachPanels(){
     $(`coachMetricsP${num}`).innerHTML = '';
     $(`coachOutcomesP${num}`).innerHTML = '';
     $(`coachFeedbackP${num}`).textContent = '';
+    $(`coachDrillsP${num}`).innerHTML = '';
   }
 }
 
@@ -4793,7 +4812,17 @@ function renderPlayerCoachPanel(data, playerNumber, sourceText){
     coachMetric(
       'Low attacking rate',
       metricValue(player.low_target_rate, '%'),
-      `How often ${player.label} hit lower front-wall targets.`
+      `How often ${player.label} hit the bottom band, between the service line and the tin.`
+    ),
+    coachMetric(
+      'Driving height',
+      metricValue(player.mid_target_rate, '%'),
+      `How often ${player.label} struck the middle band, from the service line up to about 10.6 ft — the height that builds length.`
+    ),
+    coachMetric(
+      'Lob height',
+      metricValue(player.high_target_rate, '%'),
+      `How often ${player.label} lifted above about 10.6 ft, to escape pressure or move the opponent back.`
     ),
   ].join('');
   $(`coachOutcomesP${playerNumber}`).innerHTML =
@@ -4802,6 +4831,47 @@ function renderPlayerCoachPanel(data, playerNumber, sourceText){
   const feedback = data.player_feedback && data.player_feedback[String(playerNumber)];
   $(`coachFeedbackP${playerNumber}`).textContent =
     feedback || `${player.label}: no player-specific coaching feedback is available yet.`;
+  renderCoachDrills(data.player_drills && data.player_drills[String(playerNumber)], playerNumber);
+}
+
+/* Drill progressions under the metrics: one card per weakness, each walking
+   solo -> drills -> conditioned games -> matchplay. Built as DOM nodes so
+   the coaching text is never parsed as markup. */
+function renderCoachDrills(advice, playerNumber){
+  const host = $(`coachDrillsP${playerNumber}`);
+  host.innerHTML = '';
+  if(!advice) return;
+
+  if(advice.note){
+    const note = document.createElement('p');
+    note.className = 'drillNote';
+    note.textContent = advice.note;
+    host.appendChild(note);
+  }
+  for(const item of advice.items || []){
+    const card = document.createElement('div');
+    card.className = 'drillCard';
+
+    const issue = document.createElement('p');
+    issue.className = 'drillIssue';
+    issue.textContent = item.issue;
+    card.appendChild(issue);
+
+    const steps = document.createElement('ol');
+    steps.className = 'drillSteps';
+    for(const step of item.progression || []){
+      const li = document.createElement('li');
+      const stage = document.createElement('i');
+      stage.className = 'drillStage';
+      stage.textContent = step.stage;
+      const text = document.createElement('span');
+      text.textContent = step.text;
+      li.append(stage, text);
+      steps.appendChild(li);
+    }
+    card.appendChild(steps);
+    host.appendChild(card);
+  }
 }
 
 function renderCoachReport(data, playerNumber){

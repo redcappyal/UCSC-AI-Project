@@ -13,6 +13,7 @@ from flask import Flask, jsonify, request, send_file, send_from_directory
 from werkzeug.utils import secure_filename
 
 import court_model
+from coaching_advice import player_advice
 from judge_call import (
     Point,
     judge_ball,
@@ -1321,6 +1322,15 @@ def coaching_response_payload(analytics, llm_provider, llm_report=None, llm_stat
             if player.get("player_number") is not None
         }
 
+    # Drill progressions (solo -> drills -> conditioned games -> matchplay)
+    # for whatever weaknesses each player's metrics expose. Derived from the
+    # metrics, so they stand on their own whether or not an LLM answered.
+    player_drills = {
+        str(player.get("player_number")): player_advice(player)
+        for player in analytics.get("players", [])
+        if player.get("player_number") is not None
+    }
+
     return {
         "ok": True,
         "analytics": analytics,
@@ -1328,6 +1338,7 @@ def coaching_response_payload(analytics, llm_provider, llm_report=None, llm_stat
         "feedback_source": source,
         "player_feedback": player_feedback,
         "player_feedback_source": source,
+        "player_drills": player_drills,
         "llm_provider": llm_provider,
         "llm_status": llm_status,
     }
