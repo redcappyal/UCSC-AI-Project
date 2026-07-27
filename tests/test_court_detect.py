@@ -11,7 +11,9 @@ bias, and it must fail here rather than in a match.
 import sys
 from pathlib import Path
 
+import cv2
 import numpy as np
+import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -19,6 +21,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import court_detect
 from court_model import LEFT_BOX_INNER_CENTER_X_FT, LINE_WIDTH_FT
 from synthetic_court import FLOOR_BGR, LINE_BGR, WALL_BGR, court_camera, render_court
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+SQUASH_ANALYTICS_MP4 = REPO_ROOT / "SquashAnalytics.mp4"
+BAY_CLUB_MOV = Path("/Users/Ian2/Desktop/Training Data/Bay Club Squash 1 Rally+audio.mov")
 
 
 def test_render_court_paints_lines_where_the_camera_projects_them():
@@ -131,14 +137,94 @@ def test_median_frame_flags_a_panning_camera():
     # axis maps those uniform runs onto themselves, so no amount of shift
     # ever moves more than ~15% of pixels past MOTION_DELTA -- the fixture
     # would fail to prove a real pan regardless of the implementation under
-    # test. noise_sigma gives the render per-pixel texture (a stand-in for
-    # real sensor/lens noise), which a shift genuinely misaligns, so the
-    # fraction of changed pixels reflects the roll instead of the render's
-    # artificial flatness. Confirmed stable across noise seeds (~0.33 vs the
-    # 0.25 threshold, independent of which seed generates the pattern).
+    # test. noise_sigma is NOT a stand-in for real sensor/lens noise -- it is
+    # fixed per-pixel texture painted onto the render, which np.roll then
+    # displaces, so the fraction of changed pixels reflects the roll instead
+    # of the render's artificial flatness. This only proves the fixture can
+    # cross MOTION_FRACTION at a noise level (40.0) 20x this suite's normal
+    # 2.0; it says nothing about whether 0.25 is the right threshold for real
+    # footage. That validation lives in
+    # test_median_frame_flags_a_real_pan_on_squashanalytics and
+    # test_median_frame_does_not_flag_the_bay_club_fixed_mount below, which
+    # measure actual video and bracket 0.25 with wide margins on both sides.
     base, _ = render_court(camera, noise_sigma=40.0, seed=0)
     frames = [np.roll(base, shift * 90, axis=1) for shift in range(5)]
 
     _, moved = court_detect.median_frame(frames)
 
     assert moved is True
+
+
+def _sample_frames(path, count=5):
+    """Seek `count` frames spread evenly across a video, cv2.VideoCapture-only.
+
+    Mirrors the real caller (design spec §7: "the client posts 5 JPEG
+    frames, sampled across the clip using the seek machinery"). Only the
+    `count` target frames are decoded -- never the whole video.
+    """
+    cap = cv2.VideoCapture(str(path))
+    if not cap.isOpened():
+        raise RuntimeError(f"could not open {path}")
+    try:
+        total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        fracs = [i / (count - 1) for i in range(count)]
+        frames = []
+        for frac in fracs:
+            target = min(int(round(frac * (total - 1))), total - 1)
+            # Some containers (.mov) fail to decode the exact last frame via
+            # POS_FRAMES seeking; step back a few frames until one decodes.
+            ok = False
+            for backoff in range(10):
+                probe = max(target - backoff, 0)
+                cap.set(cv2.CAP_PROP_POS_FRAMES, probe)
+                ok, frame = cap.read()
+                if ok:
+                    break
+            if not ok:
+                raise RuntimeError(f"failed to read a frame near {target} in {path}")
+            frames.append(frame)
+        return frames
+    finally:
+        cap.release()
+
+
+def test_median_frame_flags_a_real_pan_on_squashanalytics():
+    """SquashAnalytics.mp4 (in repo) genuinely pans -- this is the real-frame
+    smoke test promised by the auto-court-detection design spec §11.
+
+    Measured 2026-07-27 with `.venv/bin/python`, sampling 5 frames spread
+    evenly across the clip's 18713 frames (indices 0, 4678, 9356, 14034,
+    18712): mean changed-pixel fraction 0.63, comfortably above
+    MOTION_FRACTION (0.25). A second sampling at fractions
+    [0.1, 0.3, 0.5, 0.7, 0.9] measured 0.31 -- still clear of the threshold,
+    so the result isn't an artifact of which frames get picked.
+    """
+    frames = _sample_frames(SQUASH_ANALYTICS_MP4)
+
+    _, moved = court_detect.median_frame(frames)
+
+    assert moved is True
+
+
+@pytest.mark.skipif(
+    not BAY_CLUB_MOV.exists(),
+    reason="Bay Club footage lives outside the repo (real fixed-mount test asset)",
+)
+def test_median_frame_does_not_flag_the_bay_club_fixed_mount():
+    """The false-positive side of the guard: real footage from the product's
+    actual fixed fin mount must not be flagged as a pan.
+
+    Measured 2026-07-27, same 5-frames-evenly-spread sampling as the
+    SquashAnalytics test above (indices 0, 127, 254, 381, 502 of 509 total
+    frames): mean changed-pixel fraction 0.12, comfortably below
+    MOTION_FRACTION (0.25). A second sampling at fractions
+    [0.1, 0.3, 0.5, 0.7, 0.9] measured 0.10 -- consistently well clear of the
+    threshold. Together with the SquashAnalytics measurement above, 0.25
+    separates real panning from a real fixed mount by a wide margin on both
+    sides (~0.13-0.15 below across samplings, ~0.06-0.38 above).
+    """
+    frames = _sample_frames(BAY_CLUB_MOV)
+
+    _, moved = court_detect.median_frame(frames)
+
+    assert moved is False
