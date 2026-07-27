@@ -152,31 +152,42 @@ class DetectedLine:
         return (self.x1 + dx1 * along, self.y1 + dy1 * along)
 
 
-def _angle_delta(first, second):
-    """Smallest angle between two orientations, accounting for the ±90 wrap."""
-    delta = abs(first - second) % 180.0
-    return min(delta, 180.0 - delta)
-
-
-def _normal_form(segment):
-    """(orientation, signed perpendicular offset from the origin).
-
-    The direction is canonicalised into the upper half-plane before the normal
-    is taken. Wrapping the ANGLE alone is not enough: two fragments of one
-    near-vertical line can be measured at +89.97 and -89.97 degrees, whose
-    normals point in opposite directions, so their offsets come out negated
-    (-500 vs +500) and the merge rejects them as 1000 px apart. Canonicalising
-    the direction keeps one line's fragments sharing one normal.
-    """
+def _segment_direction(segment):
+    """Unit direction of a segment, or None if it is degenerate."""
     x1, y1, x2, y2 = segment
     dx, dy = x2 - x1, y2 - y1
     length = math.hypot(dx, dy)
     if length < 1e-9:
-        return 0.0, float(y1)
-    ux, uy = dx / length, dy / length
-    if uy < 0 or (uy == 0.0 and ux < 0):
-        ux, uy = -ux, -uy
-    return math.degrees(math.atan2(uy, ux)), -uy * x1 + ux * y1
+        return None
+    return dx / length, dy / length
+
+
+def _offset_along(direction, point):
+    """Signed perpendicular offset of `point` from the origin in a direction frame.
+
+    Only comparable between two segments expressed in the SAME frame: negating
+    a direction negates the offset. That is why fragments are aligned to their
+    group's direction before this is measured, rather than each canonicalising
+    itself -- any per-fragment rule (wrap the angle, force uy >= 0) merely moves
+    the sign flip to whatever orientation its tie-break sits on, and a flip
+    turns a 0 px offset difference into ~2*y.
+    """
+    ux, uy = direction
+    return -uy * point[0] + ux * point[1]
+
+
+def _aligned_to(direction, reference):
+    """`direction`, flipped if needed to point the same way as `reference`."""
+    ux, uy = direction
+    rx, ry = reference
+    return (-ux, -uy) if ux * rx + uy * ry < 0 else (ux, uy)
+
+
+def _direction_delta_deg(first, second):
+    """Unsigned angle between two unit directions, in degrees."""
+    ax, ay = first
+    bx, by = second
+    return abs(math.degrees(math.atan2(ax * by - ay * bx, ax * bx + ay * by)))
 
 
 def _fit_group(segments):
@@ -219,16 +230,24 @@ def find_lines(response, min_length_px):
         return []
 
     groups = []
-    for segment in found[:, 0, :]:
-        angle, offset = _normal_form([float(value) for value in segment])
+    for raw in found[:, 0, :]:
+        segment = [float(value) for value in raw]
+        direction = _segment_direction(segment)
+        if direction is None:
+            continue
         for group in groups:
-            if (_angle_delta(angle, group["angle"]) <= MERGE_ANGLE_DEG
-                    and abs(offset - group["offset"]) <= MERGE_OFFSET_PX):
-                group["segments"].append([float(value) for value in segment])
-                break
+            aligned = _aligned_to(direction, group["direction"])
+            if _direction_delta_deg(aligned, group["direction"]) > MERGE_ANGLE_DEG:
+                continue
+            if abs(_offset_along(aligned, segment[:2])
+                   - group["offset"]) > MERGE_OFFSET_PX:
+                continue
+            group["segments"].append(segment)
+            break
         else:
-            groups.append({"angle": angle, "offset": offset,
-                           "segments": [[float(value) for value in segment]]})
+            groups.append({"direction": direction,
+                           "offset": _offset_along(direction, segment[:2]),
+                           "segments": [segment]})
 
     lines = [_fit_group(group["segments"]) for group in groups]
     return sorted(lines, key=lambda line: line.length_px, reverse=True)

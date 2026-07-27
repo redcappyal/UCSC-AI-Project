@@ -8,6 +8,7 @@ returning a stripe's centre instead of its named edge is a half-line-width
 bias, and it must fail here rather than in a match.
 """
 
+import math
 import sys
 from pathlib import Path
 
@@ -271,36 +272,16 @@ def test_edge_response_finds_the_wall_floor_seams():
     assert abs(found.y_at(start[0]) - start[1]) < 8
 
 
-def test_normal_form_agrees_for_a_near_vertical_line_regardless_of_traversal():
-    """Regression test for a wrap-discontinuity bug in `_normal_form`: it used
-    to wrap the ANGLE into (-90, 90] and then derive the perpendicular offset
-    from that wrapped angle via (-sin, cos) -- a direction that flips sign
-    right at the wrap. Two fragments of one near-vertical line, traversed in
-    opposite directions, land on opposite sides of it: one measures at
-    +89.97 degrees, the other at -89.97 degrees, and their offsets come out
-    negated (-499.94 vs +500.46, |diff| ~= 1000.4) even though both lie on
-    the same real line. The fix canonicalises the direction before taking
-    the normal, so both fragments share one normal and their offsets agree.
-    """
-    seg_a = (500.0, 100.0, 500.4, 800.0)  # tiny +0.4px tilt
-    seg_b = (500.4, 100.0, 500.0, 800.0)  # same real line, opposite traversal
-
-    angle_a, offset_a = court_detect._normal_form(seg_a)
-    angle_b, offset_b = court_detect._normal_form(seg_b)
-
-    assert court_detect._angle_delta(angle_a, angle_b) <= court_detect.MERGE_ANGLE_DEG
-    assert abs(offset_a - offset_b) <= court_detect.MERGE_OFFSET_PX
-
-
 def test_find_lines_merges_a_broken_near_vertical_line_into_one():
-    """find_lines-level regression test for the same wrap bug: the half-court
-    line and service-box side lines are near-vertical court features that get
-    interrupted by players and glare like any other line. Real HoughLinesP
-    output for a near-vertical line already exhibits the +90/-90 sign flip
-    between different fragments -- verified empirically here with nothing
-    more than a 4 px total tilt over a 700 px run -- so under the old
-    `_normal_form` this broken line under-merges into two DetectedLines
-    instead of one.
+    """find_lines-level regression test for the merge-frame bug: the
+    half-court line and service-box side lines are near-vertical court
+    features that get interrupted by players and glare like any other line.
+    Real HoughLinesP output for a near-vertical line already exhibits a
+    direction sign flip between different fragments -- verified empirically
+    here with nothing more than a 4 px total tilt over a 700 px run -- so a
+    merge rule that canonicalises each fragment on its own (rather than in
+    its comparison group's frame) under-merges this broken line into two
+    DetectedLines instead of one.
     """
     height, width = 900, 400
     y_top, y_bottom = 100, 800
@@ -322,6 +303,129 @@ def test_find_lines_merges_a_broken_near_vertical_line_into_one():
     # Spans most of the drawn extent (measured ~678 px of the 700 px run)
     # despite the two gaps, not just one fragment's worth (~160 px).
     assert abs(line.y1 - line.y2) > 600
+
+
+def test_find_lines_merges_a_broken_near_horizontal_line_into_one():
+    """The near-HORIZONTAL analogue of the test above -- the orientation that
+    matters in this app, since every real court line here (out line, service
+    line, tin, front seam, short line, box backs) is near-horizontal.
+
+    This is the case a first attempted fix broke: it canonicalised each
+    fragment's own direction into the upper half-plane (`uy >= 0`) before
+    taking its offset. That does not remove the sign-flip boundary, it only
+    relocates it -- the original bug wrapped the angle and put the flip at
+    near-vertical (dormant for every line in this app); the first fix put it
+    at near-horizontal (live for every line in this app). A 200-trial
+    measurement against realistic near-horizontal broken lines found the
+    original code over-splitting in 61/200 trials (offset gap 6-16 px) and
+    the first fix over-splitting in 125/200 (offset gap 6-813 px, median
+    804 px) -- strictly worse. The correct fix never canonicalises a
+    fragment on its own: it aligns each fragment to the direction of the
+    group it is being compared against, so there is no boundary anywhere.
+
+    The roll here (~0.06 degrees) is small but deliberately nonzero: an
+    exactly-horizontal fixture has dy identically 0 for every fragment, which
+    can never produce the sign flip that this bug depends on.
+
+    Finding parameters that discriminate took a search, the same way the
+    near-vertical test above did originally: at thickness=1 this exact shape
+    happens to survive even the first fix, because a single-pixel-wide
+    near-horizontal line rasterises to long flat (dy=0) runs between rounding
+    steps and HoughLinesP's own fragments rarely straddle the flip. A 2 px
+    thickness produces enough sub-pixel variation in each fragment's fitted
+    local slope to reproduce the flip reliably. Swept roll from 0.01 to 0.2
+    degrees in 0.01 steps at this thickness/gap configuration: 0.05-0.06
+    degrees sit in a noisy transitional zone where even the correct fix
+    fragments into 2-3 groups (an unrelated Hough-sampling artefact, not this
+    bug -- see the property test below for why that range is avoided there
+    too), 0.10 degrees happens to still merge under all three versions, and
+    every other value in the sweep reproduces the target split (original: 1
+    group, this fix: 1 group, first fix: 2 groups). 0.08 sits mid-range in
+    that split with margin on both sides.
+    """
+    height, width = 400, 900
+    x_left, x_right = 100, 800
+    y_at_left = 200.0
+    roll_deg = 0.08
+    slope = math.tan(math.radians(roll_deg))
+    gaps = ((300, 340), (500, 540))
+
+    image = np.zeros((height, width), dtype=np.uint8)
+    for x in range(x_left, x_right):
+        if any(lo <= x < hi for lo, hi in gaps):
+            continue
+        y = int(round(y_at_left + slope * (x - x_left)))
+        cv2.line(image, (x, y), (x, y), 255, thickness=2)
+
+    lines = court_detect.find_lines(image, min_length_px=width * 0.10)
+
+    assert len(lines) == 1
+    (line,) = lines
+    # Spans most of the drawn extent (the 700 px run minus the two gaps)
+    # rather than just one fragment's worth.
+    assert abs(line.x1 - line.x2) > 600
+
+
+def test_find_lines_merges_broken_lines_across_orientations_and_noise():
+    """Randomized property test for the merge-frame fix.
+
+    Neither prior version survives being checked at BOTH orientations across
+    a spread of rolls and pixel noise: the original code's sign-flip
+    boundary sits at near-vertical, the first fix's sits at near-horizontal,
+    and each version fails roughly half of these trials depending on which
+    orientation they land on. Only aligning each fragment to its comparison
+    group's frame (rather than canonicalising either fragment on its own)
+    has no boundary for either orientation to land on.
+
+    Deterministic (fixed per-trial seeds via `numpy.random.default_rng`) so
+    a failure is reproducible. Roll and noise are kept in a realistic
+    near-axis range (a court line photographed close to level, with a few
+    tenths of a pixel of edge/detection jitter) -- pushed much past this
+    (e.g. +-0.5 degrees roll or 0.8 px noise), a single Hough fragment can
+    legitimately land outside MERGE_OFFSET_PX on its own local fit even
+    under a correct merge rule, which would make the assertion flaky for a
+    reason unrelated to the bug this test targets.
+    """
+    trials_per_orientation = 50
+    span, margin, cross = 700, 100, 400
+    gaps = ((300, 340),)
+    min_length_px = cross * 0.10
+
+    def make_image(orientation, seed):
+        rng = np.random.default_rng(seed)
+        roll_deg = rng.uniform(-0.2, 0.2)
+        noise_sigma = rng.uniform(0.0, 0.3)
+        slope = math.tan(math.radians(roll_deg))
+        base = cross / 2.0
+        length = span + 2 * margin
+        shape = (cross, length) if orientation == "horizontal" else (length, cross)
+        image = np.zeros(shape, dtype=np.uint8)
+        for offset in range(span):
+            if any(lo <= offset < hi for lo, hi in gaps):
+                continue
+            along = margin + offset
+            jitter = float(rng.normal(0.0, noise_sigma)) if noise_sigma > 0 else 0.0
+            coord = int(round(base + slope * offset + jitter))
+            if not (0 <= coord < cross):
+                continue
+            point = (along, coord) if orientation == "horizontal" else (coord, along)
+            cv2.line(image, point, point, 255, thickness=1)
+        return image
+
+    failures = []
+    for orientation in ("vertical", "horizontal"):
+        for trial in range(trials_per_orientation):
+            seed = (0 if orientation == "vertical" else 1) * 100_000 + trial
+            image = make_image(orientation, seed)
+            lines = court_detect.find_lines(image, min_length_px=min_length_px)
+            if len(lines) != 1:
+                failures.append((orientation, trial, seed, len(lines)))
+
+    total = 2 * trials_per_orientation
+    assert not failures, (
+        f"{len(failures)}/{total} trials failed to merge into a single "
+        f"group: {failures[:10]}"
+    )
 
 
 def test_detected_line_intersect_returns_none_for_parallels():
