@@ -154,3 +154,57 @@ def detect_frame(runner, frame, manifest):
                 })
 
     return merge_detections(detections, manifest.nms_iou)
+
+
+def detect_frame_stack(runner, frames, manifest):
+    """Full-frame detections for the MIDDLE frame of an oldest-first stack.
+
+    `frames` is `[t-1, t, t+1, ...]`, length `manifest.frames_per_input`. This
+    cuts co-located tiles from every frame, concatenates them along the
+    channel axis (oldest first -- the temporal ordering the model was trained
+    on, see HeatmapRunner), and reuses the same tile-local -> full-frame
+    mapping and cross-tile merge as detect_frame. The runner decodes the
+    centre MIMO channel, so the returned detections locate the ball in
+    frames[len(frames) // 2], not in every frame of the stack.
+    """
+    import numpy as np
+
+    expected = int(manifest.frames_per_input)
+    if len(frames) != expected:
+        raise ValueError(
+            f"detect_frame_stack got {len(frames)} frames but "
+            f"manifest.frames_per_input is {expected}")
+    shapes = {frame.shape for frame in frames}
+    if len(shapes) != 1:
+        raise ValueError(f"detect_frame_stack frames disagree on shape: {sorted(shapes)}")
+
+    tile = _tile_edge(manifest.input_size)
+    frame_h, frame_w = frames[0].shape[:2]
+    windows = tile_windows(frame_w, frame_h, tile, manifest.tile_overlap_px)
+
+    detections = []
+    batch = max(1, manifest.max_batch_tiles)
+    for start in range(0, len(windows), batch):
+        chunk = windows[start:start + batch]
+        stacks = [
+            np.concatenate([_crop(frame, x0, y0, tile) for frame in frames], axis=2)
+            for x0, y0 in chunk
+        ]
+        # strict: see detect_frame's comment -- a runner that drops a stack
+        # would otherwise re-align every later result onto the wrong origin.
+        for (x0, y0), boxes in zip(chunk, runner.run_batch(stacks), strict=True):
+            for cx, cy, width, height, score, class_index in boxes:
+                if score < manifest.conf_threshold:
+                    continue
+                name = _class_name(manifest.class_names, class_index)
+                detections.append({
+                    "x": float(cx) + x0,
+                    "y": float(cy) + y0,
+                    "width": float(width),
+                    "height": float(height),
+                    "confidence": float(score),
+                    "class": name,
+                    "class_name": name,
+                })
+
+    return merge_detections(detections, manifest.nms_iou)
