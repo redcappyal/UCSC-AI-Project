@@ -18,10 +18,9 @@ from pathlib import Path
 import cv2
 
 import court_model
-from audio_events import extract_audio_candidates, extract_repeating_audio_windows
+from audio_events import extract_audio_candidates
 from bounce_gb_model_detector import DEFAULT_MODEL_PATH as BOUNCE_GB_MODEL_PATH
 from bounce_gb_model_detector import detect_hits_with_gb_model
-from event_engine import detect_events_fused
 from classify_events import classify_events
 from detect_wall_hits import MAX_GAP_FRAMES, detect_hits_from_rows
 from inference_engine import get_tracking_model, infer_frame_predictions
@@ -58,11 +57,6 @@ PROGRESS_UPDATE_FRAMES = 10
 PROGRESS_UPDATE_SECONDS = 0.5
 COARSE_INFERENCE_WIDTH = 640
 REFINE_WINDOW_MIN_RADIUS = 12
-# Which event engine labels detected events. "gb_model" = trained
-# GradientBoostingClassifier; "fusion" = audio repetition x derivative peaks x
-# parabolic arcs + squash sequence grammar (event_engine); "votes" = the prior
-# detect + classify_events pipeline, kept for comparison.
-EVENT_ENGINE = "gb_model"
 AUDIO_WINDOW_PAD_FRAMES = 4
 # Audio windows with no ball detections get one re-track at this width so
 # the event has a position to judge (the normal refine pass skips stride 1).
@@ -676,7 +670,7 @@ def build_player_target_zone_summaries(hits):
     return summaries
 
 
-def judge_hits(run_dir, results, detected, audio_available=None, camera=None, camera_info=None):
+def judge_hits(run_dir, results, detected, audio_available=None):
     top_line = bottom_line = None
     service_line = None
     wall_corners = None
@@ -806,31 +800,27 @@ def judge_hits(run_dir, results, detected, audio_available=None, camera=None, ca
                     "y_reference": "0 is the out-line lower edge; 1 is the tin top edge",
                 }
                 entry["target_zone"] = target_zone_for_diagram(diagram)
-        if entry.get("event_type") == "floor":
-            if hit.get("court_position_ft"):
-                entry["court_position_ft"] = hit["court_position_ft"]
-                x_ft = hit["court_position_ft"]["x"]
-                y_ft = hit["court_position_ft"]["y"]
-                entry["floor_zone"] = court_model.floor_zone_for_point(x_ft, y_ft)
-            elif floor_map is not None:
-                bounce_point = None
-                if "impact_x" in hit:
-                    bounce_point = (hit["impact_x"], hit["impact_y"])
-                elif display_row is not None:
-                    detected_point = ball_point_from_row(display_row)
-                    if detected_point is not None:
-                        bounce_point = (detected_point.x, detected_point.y)
-                if bounce_point is not None:
-                    try:
-                        x_ft, y_ft = floor_map.image_to_court(*bounce_point)
-                    except ValueError:
-                        pass
-                    else:
-                        entry["court_position_ft"] = {
-                            "x": round(x_ft, 2),
-                            "y": round(y_ft, 2),
-                        }
-                        entry["floor_zone"] = court_model.floor_zone_for_point(x_ft, y_ft)
+        if entry.get("event_type") == "floor" and floor_map is not None:
+            # Floor bounces are the one event on the floor plane, so the
+            # homography is exact for them.
+            bounce_point = None
+            if "impact_x" in hit:
+                bounce_point = (hit["impact_x"], hit["impact_y"])
+            elif display_row is not None:
+                detected_point = ball_point_from_row(display_row)
+                if detected_point is not None:
+                    bounce_point = (detected_point.x, detected_point.y)
+            if bounce_point is not None:
+                try:
+                    x_ft, y_ft = floor_map.image_to_court(*bounce_point)
+                except ValueError:
+                    pass
+                else:
+                    entry["court_position_ft"] = {
+                        "x": round(x_ft, 2),
+                        "y": round(y_ft, 2),
+                    }
+                    entry["floor_zone"] = court_model.floor_zone_for_point(x_ft, y_ft)
         hits.append(entry)
 
     player_assignment = assign_front_wall_hit_players(hits)
@@ -886,10 +876,6 @@ def judge_hits(run_dir, results, detected, audio_available=None, camera=None, ca
         payload["floor_zones"] = court_model.build_floor_zone_summary(hits)
     if audio_available is not None:
         payload["audio_available"] = audio_available
-    if camera is not None:
-        payload["camera_model"] = camera.to_dict()
-    elif camera_info is not None:
-        payload["camera_warning"] = camera_info
     (Path(run_dir) / "detected_hits.json").write_text(
         json.dumps(payload, indent=2), encoding="utf-8"
     )
@@ -975,20 +961,12 @@ def run_tracking_job(run_id):
 
             # Audio impact events drive recall: they add refine windows around
             # events the coarse trajectory pass missed, and later feed the
-            # event engine. They corroborate or add detections; they never
+            # bounce detector. They corroborate or add detections; they never
             # move trajectory-detected ones.
-            engine = job.get("event_engine") or EVENT_ENGINE
             update_job(run_id, stage="coarse", message="Analyzing audio...")
-            audio_windows = audio_candidates = None
-            if engine == "fusion":
-                audio_windows = extract_repeating_audio_windows(
-                    video_path, start_frame, end_frame, source_fps
-                )
-            else:
-                audio_candidates = extract_audio_candidates(
-                    video_path, start_frame, end_frame, source_fps
-                )
-            refine_audio = audio_windows if audio_windows else audio_candidates
+            audio_candidates = extract_audio_candidates(
+                video_path, start_frame, end_frame, source_fps
+            )
 
             # Coarse samples are frame_stride apart; the default max_gap would
             # split every track at stride > 3.
@@ -1000,9 +978,9 @@ def run_tracking_job(run_id):
                 calibration=calibration,
             )
             segments = refine_segments_for_hits(detected, start_frame, end_frame, frame_stride)
-            if refine_audio:
+            if audio_candidates:
                 audio_segments = refine_segments_for_audio_candidates(
-                    refine_audio, start_frame, end_frame
+                    audio_candidates, start_frame, end_frame
                 )
                 segments = merge_frame_windows(
                     (low, high) for low, high, _ in segments + audio_segments
@@ -1032,10 +1010,10 @@ def run_tracking_job(run_id):
             # boosted inference width — even at stride 1, where the normal
             # refine pass is skipped because the whole clip was already
             # tracked at the requested width.
-            if refine_audio:
+            if audio_candidates:
                 unseen = [
                     window
-                    for window in refine_audio
+                    for window in audio_candidates
                     if not any(
                         row_has_ball_detection(results.get(f))
                         for f in range(
@@ -1076,73 +1054,33 @@ def run_tracking_job(run_id):
             hits = []
             hits_error = None
             try:
-                camera = camera_info = None
-                if engine == "fusion":
-                    update_job(run_id, stage="judging", message="Judging wall hits...")
-                    if job.get("fusion_3d") and calibration:
-                        camera, camera_info = court_model.solve_camera_model(calibration)
-                    classified = detect_events_fused(
-                        sorted_rows(results),
-                        audio_windows=audio_windows,
-                        calibration=calibration,
-                        wall_x_range=wall_x_range,
-                        config=job.get("fusion"),
-                        max_gap=max(MAX_GAP_FRAMES, frame_stride),
-                        camera=camera,
-                    )
-                    audio_available = audio_windows is not None
-                elif engine == "gb_model":
-                    update_job(run_id, stage="judging", message="Analyzing audio...")
-                    audio_candidates = extract_audio_candidates(
-                        video_path, start_frame, end_frame, source_fps
-                    )
-                    update_job(
-                        run_id,
-                        stage="judging",
-                        message=f"Judging wall hits with {BOUNCE_GB_MODEL_PATH.name}...",
-                    )
-                    detected = detect_hits_with_gb_model(
-                        sorted_rows(results),
-                        wall_x_range=wall_x_range,
-                        calibration=calibration,
-                        # Location filtering runs inside the detector before
-                        # wall-visit grouping, so sidewall/outside-wall
-                        # candidates cannot merge otherwise valid wall hits.
-                        apply_spatial_filter=True,
-                        spatial_filter_mode="sidewall",
-                    )
-                    classified = classify_events(
-                        detected,
-                        results,
-                        audio_candidates,
-                        source_fps,
-                        config=job.get("classify"),
-                    )
-                    audio_available = audio_candidates is not None
-                else:
-                    update_job(run_id, stage="judging", message="Judging wall hits...")
-                    detected = detect_hits_from_rows(
-                        sorted_rows(results),
-                        max_gap=max(MAX_GAP_FRAMES, frame_stride),
-                        wall_x_range=wall_x_range,
-                        calibration=calibration,
-                        audio_candidates=audio_candidates,
-                    )
-                    classified = classify_events(
-                        detected,
-                        results,
-                        audio_candidates,
-                        source_fps,
-                        config=job.get("classify"),
-                    )
-                    audio_available = audio_candidates is not None
+                update_job(
+                    run_id,
+                    stage="judging",
+                    message=f"Judging wall hits with {BOUNCE_GB_MODEL_PATH.name}...",
+                )
+                detected = detect_hits_with_gb_model(
+                    sorted_rows(results),
+                    wall_x_range=wall_x_range,
+                    calibration=calibration,
+                    # Location filtering runs inside the detector before
+                    # wall-visit grouping, so sidewall/outside-wall
+                    # candidates cannot merge otherwise valid wall hits.
+                    apply_spatial_filter=True,
+                    spatial_filter_mode="sidewall",
+                )
+                classified = classify_events(
+                    detected,
+                    results,
+                    audio_candidates,
+                    source_fps,
+                    config=job.get("classify"),
+                )
                 hits = judge_hits(
                     run_dir,
                     results,
                     classified,
-                    audio_available=audio_available,
-                    camera=camera,
-                    camera_info=camera_info,
+                    audio_available=audio_candidates is not None,
                 )
                 player_assignment = assign_front_wall_hit_players(hits)
                 target_zones = build_target_zone_summary(hits)

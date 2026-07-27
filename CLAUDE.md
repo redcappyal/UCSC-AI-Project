@@ -31,9 +31,17 @@ What this changes about work in this repo:
 - **Detection recall still gates everything downstream** (~35% at rally scale). Statistics
   built on missed bounces are wrong *quietly*, which is worse in a coaching product than in
   a refereeing one, where a miss at least shows up as a missing call.
-- **Two-phone stereo has been archived, not deleted.** It lives in `archive/stereo/`,
-  inert and uncollected, with tag `archive/stereo-v1` as the exact restore point. Do not
-  extend it or import from it. Revisit gate: single-view wall-hit recall ~85%.
+- **There is one bounce-detection path, not a choice of engines.** The selectable
+  `event_engine` (`votes` / `gb_model` / `fusion`) and the `fusion_3d` flag were removed
+  2026-07-27: `detect_wall_hits` finds candidates for the refine pass, then
+  `bounce_gb_model_detector` + `classify_events` label them. Don't reintroduce a fork
+  here — the pipeline needs one well-measured path.
+- **Two features are archived, not deleted.** Two-phone stereo in `archive/stereo/`
+  (tag `archive/stereo-v1`, revisit gate: single-view wall-hit recall ~85%) and the
+  fusion engine + 3D contact detection in `archive/fusion-engine/` (tag
+  `archive/fusion-engine-v1`; it was evaluated and failed its gate — see
+  `eval_set/RESULTS-3d-contact.md`). Both are inert and uncollected. Do not extend
+  them or import from them.
 
 ## Design
 
@@ -51,15 +59,17 @@ The venv is `.venv`; everything runs through it. System `python3` has no flask o
 
 ```bash
 .venv/bin/python app.py                  # http://127.0.0.1:5188
-.venv/bin/python -m pytest tests/ -q     # 318 tests, ~5s
+.venv/bin/python -m pytest tests/ -q     # 283 tests, ~9s
 ```
 
 `pytest.ini` deselects `requires_model` by default — one test that needs the exported
 TorchScript ball model (see the `ball_track_offline.py` note below). A green run reads
-"318 passed, 1 deselected"; that deselection is expected, not a skip to chase.
+"283 passed, 1 deselected"; that deselection is expected, not a skip to chase.
 
-`pytest.ini` also excludes `archive/` from collection entirely. The archived stereo tests
-are preserved verbatim and still import modules that moved — they must never be collected.
+`pytest.ini` also excludes `archive/` from collection entirely. The archived stereo and
+fusion-engine tests are preserved verbatim and still import modules that moved — they must
+never be collected. A bare `pytest` from the repo root errors during collection for
+unrelated pre-existing reasons; `pytest tests/` is the invocation that works.
 
 Editing a `*.py` that has a paired `tests/test_*.py` auto-runs that file (PostToolUse
 hook). Failures come back as a *blocked edit*, not a warning.

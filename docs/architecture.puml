@@ -119,13 +119,11 @@ package "3 · Perception layer" #FFF6EC {
   component "**tracking_common.py**\n<size:10>CSV schema, ball-class filter,</size>\n<size:10>motion-consistent ball selection</size>" as common
   component "**audio_events.py**\n<size:10>impact sounds → candidate windows</size>" as audio
 
-  package "Bounce engines — pick ONE per run" #FFFFFF {
-    component "**bounce_gb_model_detector.py**\n<size:10>engine = “gb_model”  ← DEFAULT</size>" as gb
-    component "**detect_wall_hits.py**\n<size:10>engine = “votes”</size>" as votes
-    component "**event_engine.py**\n<size:10>engine = “fusion”</size>\n<size:10>audio × derivative × arcs</size>\n<size:10>+ squash sequence grammar</size>" as fusion
+  package "Bounce detection — ONE path" #FFFFFF {
+    component "**detect_wall_hits.py**\n<size:10>trajectory kinks → refine-pass</size>\n<size:10>candidate windows</size>" as kinks
+    component "**bounce_gb_model_detector.py**\n<size:10>labels the events</size>" as gb
   }
 
-  component "**ballistic.py**\n<size:10>gravity-constrained 3D arcs</size>\n<size:10>(fusion_3d only)</size>" as ballistic
   component "**classify_events.py**\n<size:10>wall / racket / unknown</size>" as classify
 }
 
@@ -153,15 +151,11 @@ runner --> infer
 runner --> common
 runner --> audio
 infer ..> common
+runner --> kinks : candidate windows\nfor the refine pass
 runner --> gb
-runner --> votes
-runner --> fusion
-fusion --> ballistic
 gb --> classify
-votes --> classify
 runner --> judge
 runner --> court
-ballistic --> court
 judge <.. court : shares the tapped\ncorner geometry
 
 infer <-- weights
@@ -179,11 +173,12 @@ gb -[#CC5500,bold]-> trainer : **runtime import**\nbuild_features_for_frame()
 note as n1 #FFFDF0
   <b>Two edges that surprise everyone:</b>
 
-  1. The three bounce engines are <b>interchangeable</b>.
-     POST /api/track picks one per run via the
-     "event_engine" field. Default is "gb_model".
-     The "fusion" engine emits its own event_type,
-     so it <b>skips</b> classify_events entirely.
+  1. detect_wall_hits runs <b>before</b> the refine pass, on
+     the coarse strided trajectory — it exists to say
+     <i>where to look again</i>, not to label events.
+     bounce_gb_model_detector then labels them.
+     (Until 2026-07-27 these were interchangeable
+     engines picked per run; see archive/fusion-engine.)
 
   2. bounce_gb_model_detector imports
      train_bounce_classifier <b>at request time</b> — a
@@ -243,9 +238,8 @@ partition "stage = **coarse**" {
 
   :write ball_coordinates.csv;
 
-  :**Audio analysis**
-  <size:10>fusion → extract_repeating_audio_windows()</size>
-  <size:10>else → extract_audio_candidates()</size>;
+  :**Audio analysis** — extract_audio_candidates()
+  <size:10>once per run; feeds the refine windows AND classify</size>;
 
   :**Find hit candidates** — detect_hits_from_rows()
   <size:10>only to decide WHERE to look closely</size>;
@@ -269,13 +263,9 @@ else (no)
 endif
 
 partition "stage = **judging**" {
-  :**Detect bounces** with the selected engine
-  <size:10>gb_model (default) | votes | fusion</size>;
-  if (engine == fusion?) then (yes)
-    :engine already emitted event_type;
-  else (no)
-    :**classify_events()** → wall / racket / unknown;
-  endif
+  :**Detect bounces** — detect_hits_with_gb_model()
+  <size:10>sidewall spatial filter applied inside the detector</size>;
+  :**classify_events()** → wall / racket / unknown;
 
   :**judge_hits()**;
   note right
@@ -352,7 +342,7 @@ note right of API
 end note
 deactivate API
 
-UI -> API : POST /api/track\n<size:10>video_id, calibration_json, start/end,</size>\n<size:10>frame_stride, inference_width, event_engine</size>
+UI -> API : POST /api/track\n<size:10>video_id, calibration_json, start/end,</size>\n<size:10>frame_stride, inference_width</size>
 activate API
 API -> FS : mkdir {run_id}/ + write calibration.json
 API -> JOB : start_tracking_job()\n<size:10>threading.Thread(daemon=True)</size>
@@ -613,7 +603,7 @@ class "Detected hit" as hit <<dict>> #FFF6EC {
   candidate_x, candidate_y : float
   detector : str
   event_type : "wall"|"racket"|"floor"|"side_wall"
-  ..votes / fusion also carry..
+  ..impact fitting also carries..
   impact_x, impact_y : float
   impact_frame, impact_time
   method, diagnostics
@@ -691,7 +681,6 @@ class "job.json" as job <<the run record>> #F4F4F4 {
   message : str
   video_path, start_frame, end_frame, fps
   frame_stride, inference_width
-  event_engine, fusion_3d
   processed_frames, total_frames
   hits : [Judged hit]
   target_zones, floor_zones
@@ -721,7 +710,7 @@ class "corrections.json" as corr <<corrections-v2>> #F4F4F4 {
   <size:10>corrected = null means "undo".</size>
 }
 
-row --> hit : bounce engine\n<size:10>gb_model | votes | fusion</size>
+row --> hit : detect_hits_with_gb_model()
 hit --> verdict : judge_hits()
 Line --> verdict : judge_ball(point, out, tin, corners)
 WallCorners --> verdict
@@ -731,7 +720,6 @@ cal --> Line : parsed into
 cal --> WallCorners
 cal --> CameraModel : solve_camera_model()
 cal --> FloorMap : load_floor_calibration()
-CameraModel ..> hit : fusion_3d only\n<size:10>(ballistic arcs in court feet)</size>
 FloorMap --> verdict : floor events →\ncourt_position_ft
 verdict --* job
 verdict ..> corr : the human disagrees
