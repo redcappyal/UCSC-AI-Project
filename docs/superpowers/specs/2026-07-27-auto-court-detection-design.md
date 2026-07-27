@@ -178,10 +178,14 @@ detection is the default path, and the manual flow is reached from the confirm s
 **Back-chevron:** `hdrBack` from `confirm` returns to `frame` and clears detection state,
 matching how `tap_out` already returns to `frame` (`index.html:1890`).
 
-**On-site recording calibration inherits this for free.** The record phase runs the same
-wizard behind `S.rec.calibrating`, and `finishCalWizard()` (`index.html:1878`) already
-branches on it, so accepting a detected calibration works identically in both entry
-points with no extra work.
+**On-site recording calibration inherits half of this for free.** The record phase runs
+the same wizard behind `S.rec.calibrating`, and `finishCalWizard()` (`index.html:1878`)
+already branches on it, so *accepting* a detected calibration works identically from
+either entry point. The *trigger* does not carry over: `recCalibrateBtn` freezes a live
+camera frame and enters `tap_out` directly, and frame grabbing here seeks the `<video>`
+element, which the record path is not using. Automatic detection during recording needs a
+second frame source off the live `camVid` stream and is out of scope (§9); the record
+phase keeps the manual wizard.
 
 **Draws:** the fitted lines in their existing reserved colours (`CFG.out` `#35e0ff`,
 `CFG.service` `#ff9f43`, `CFG.tin` `#b4ff3a`), the floor wireframe via the existing
