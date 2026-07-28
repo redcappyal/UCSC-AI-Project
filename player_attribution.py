@@ -120,15 +120,23 @@ def build_players_v1(assignment, tracker_stats, detector_backend,
 
 
 def serve_crop_target(assignment, samples_by_track):
-    """-> (frame_idx, TrackSample) for the rally-1 observed server, or None."""
+    """-> (frame_idx, TrackSample) for the first observed server, or None.
+
+    Anchors on the first rally with server_source == "observed" and a valid
+    server_track — same anchor rule as index.html's attributionAnchor() —
+    not unconditionally rally 1, since rally 1's serve can go unobserved
+    while a later rally's is."""
     rallies = assignment.get("rallies") or []
-    if not rallies:
+    anchor = next(
+        (rally for rally in rallies
+         if rally.get("server_source") == "observed"
+         and rally.get("server_track") in ("A", "B")),
+        None,
+    )
+    if anchor is None:
         return None
-    first = rallies[0]
-    track = first.get("server_track")
-    if first.get("server_source") != "observed" or track not in ("A", "B"):
-        return None
-    serve_t = float(first.get("start_time_seconds", 0.0))
+    track = anchor.get("server_track")
+    serve_t = float(anchor.get("start_time_seconds", 0.0))
     live = [s for s in samples_by_track.get(track, []) if not s.coasted]
     if not live:
         return None

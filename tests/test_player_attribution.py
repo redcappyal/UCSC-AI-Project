@@ -126,6 +126,35 @@ def test_serve_crop_target_uses_rally1_observed_server():
     assert serve_crop_target(no_obs, samples) is None
 
 
+def test_serve_crop_target_anchors_on_first_observed_rally():
+    # Rally 1's serve is unobserved; rally 2's is observed on track B --
+    # same anchor rule as index.html's attributionAnchor(), so the crop
+    # must come from rally 2's server track, not rally 1 (which would
+    # otherwise silently no-op the crop to None).
+    assignment = {"rallies": [
+        {"rally_number": 1, "server_track": None,
+         "server_source": "propagated", "start_time_seconds": 10.0},
+        {"rally_number": 2, "server_track": "B",
+         "server_source": "observed", "start_time_seconds": 30.0},
+    ]}
+    samples = {"A": [sample(9.8, 300, 500)],
+               "B": [sample(29.8, 900, 500), sample(30.6, 910, 500)]}
+    frame_idx, chosen = serve_crop_target(assignment, samples)
+    assert chosen.foot_px == (900.0, 500.0)
+    assert frame_idx == chosen.frame_idx
+
+
+def test_serve_crop_target_none_when_no_rally_observed():
+    assignment = {"rallies": [
+        {"rally_number": 1, "server_track": None,
+         "server_source": "propagated", "start_time_seconds": 10.0},
+        {"rally_number": 2, "server_track": None,
+         "server_source": "propagated", "start_time_seconds": 30.0},
+    ]}
+    samples = {"A": [sample(9.8, 300, 500)], "B": [sample(29.8, 900, 500)]}
+    assert serve_crop_target(assignment, samples) is None
+
+
 def test_write_track_samples_round_trip(tmp_path):
     import json
     import job_runner
