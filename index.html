@@ -4772,12 +4772,12 @@ function renderOutcomeMetricSection(player, outcome){
     coachMetric(
       'Main targets',
       formatZoneList(metrics.common_target_zones || [], 3),
-      `${player.label}'s most-used front-wall areas in ${context}.`
+      `${player.labelHtml}'s most-used front-wall areas in ${context}.`
     ),
     coachMetric(
       'Average shot height',
       metricValue(metrics.average_wall_height_ft, ' ft'),
-      `Average front-wall contact height across ${player.label}'s shots in ${context}.`
+      `Average front-wall contact height across ${player.labelHtml}'s shots in ${context}.`
     ),
     coachMetric(
       'Average pace into front wall',
@@ -4792,17 +4792,17 @@ function renderOutcomeMetricSection(player, outcome){
     coachMetric(
       'Middle usage',
       metricValue(metrics.center_target_rate, '%'),
-      `Share of ${player.label}'s analyzed shots that used middle targets in ${context}.`
+      `Share of ${player.labelHtml}'s analyzed shots that used middle targets in ${context}.`
     ),
     coachMetric(
       'Wide usage',
       metricValue(metrics.side_target_rate, '%'),
-      `Share of ${player.label}'s analyzed shots that used wide targets in ${context}.`
+      `Share of ${player.labelHtml}'s analyzed shots that used wide targets in ${context}.`
     ),
     coachMetric(
       'Low attacking rate',
       metricValue(metrics.low_target_rate, '%'),
-      `Share of ${player.label}'s analyzed shots that used low targets in ${context}.`
+      `Share of ${player.labelHtml}'s analyzed shots that used low targets in ${context}.`
     ),
   ].join('');
   return (
@@ -4814,9 +4814,15 @@ function renderOutcomeMetricSection(player, outcome){
 function renderPlayerCoachPanel(data, playerNumber, sourceText){
   const analytics = data.analytics || {};
   const found = (analytics.players || []).find(item => Number(item.player_number) === playerNumber);
-  // player.label drives every "{label}'s shots..." caption below (and in
-  // renderOutcomeMetricSection, which receives this same object) — overriding
-  // it once here propagates the saved name through the whole report.
+  // player.label drives every "{label}: ..." textContent fallback below and
+  // MUST stay raw (unescaped) — it also feeds the coachFeedbackP textContent
+  // assignment near the bottom of this function, where entity-encoding would
+  // show literally ("O&#39;Brien") since textContent never decodes entities.
+  // player.labelHtml is the escaped copy for the innerHTML-bound captions
+  // below (and in renderOutcomeMetricSection, which receives this same
+  // object) — overriding both once here propagates the saved name through
+  // the whole report while keeping each sink using the right variant.
+  const rawLabel = playerDisplayName(playerNumber);
   const player = Object.assign({
     player_number: playerNumber,
     total_wall_hits: 0,
@@ -4829,7 +4835,7 @@ function renderPlayerCoachPanel(data, playerNumber, sourceText){
     side_target_rate: null,
     low_target_rate: null,
     rally_outcome_analytics: {},
-  }, found, { label: escapeHtml(playerDisplayName(playerNumber)) });
+  }, found, { label: rawLabel, labelHtml: escapeHtml(rawLabel) });
   $(`coachPanelP${playerNumber}`).classList.remove('hidden');
   $(`coachSourceP${playerNumber}`).textContent = sourceText;
   $(`coachIntroP${playerNumber}`).textContent =
@@ -4838,57 +4844,57 @@ function renderPlayerCoachPanel(data, playerNumber, sourceText){
     coachMetric(
       'Shots analyzed',
       metricValue(player.total_wall_hits),
-      `How many of ${player.label}'s front-wall contacts were reliable enough to include.`
+      `How many of ${player.labelHtml}'s front-wall contacts were reliable enough to include.`
     ),
     coachMetric(
       'Unforced errors',
       metricValue(player.unforced_errors),
-      `Number of rally losses where ${player.label}'s final front-wall shot was OUT.`
+      `Number of rally losses where ${player.labelHtml}'s final front-wall shot was OUT.`
     ),
     coachMetric(
       'Unforced error rate',
       metricValue(player.unforced_error_percentage, '%'),
-      `${player.label}'s unforced errors as a percentage of all rally losses: unforced errors ÷ (unforced + forced errors).`
+      `${player.labelHtml}'s unforced errors as a percentage of all rally losses: unforced errors ÷ (unforced + forced errors).`
     ),
     coachMetric(
       'Average rally duration',
       metricValue(player.average_rally_duration_seconds, ' s'),
-      `Average length of rallies ${player.label} won, from the first to final detected front-wall contact.`
+      `Average length of rallies ${player.labelHtml} won, from the first to final detected front-wall contact.`
     ),
     coachMetric(
       'Main targets',
       formatZoneList(player.common_target_zones, 3),
-      `The wall areas ${player.label} used most often.`
+      `The wall areas ${player.labelHtml} used most often.`
     ),
     coachMetric(
       'Typical shot height',
       metricValue(player.average_wall_height_ft, ' ft'),
-      `Where ${player.label}'s shots usually struck the front wall, measured from the floor.`
+      `Where ${player.labelHtml}'s shots usually struck the front wall, measured from the floor.`
     ),
     coachMetric(
       'Average pace into front wall',
       metricValue(player.average_incoming_speed_mph, ' mph'),
-      `The mean speed across ${player.label}'s analyzed shots with a usable estimate as the ball approached the front wall.`
+      `The mean speed across ${player.labelHtml}'s analyzed shots with a usable estimate as the ball approached the front wall.`
     ),
     coachMetric(
       'Average pace off front wall',
       metricValue(player.average_exit_speed_mph, ' mph'),
-      `The mean speed across ${player.label}'s analyzed shots with a usable estimate immediately after the ball rebounded from the front wall.`
+      `The mean speed across ${player.labelHtml}'s analyzed shots with a usable estimate immediately after the ball rebounded from the front wall.`
     ),
     coachMetric(
       'Middle usage',
       metricValue(player.center_target_rate, '%'),
-      `Higher means ${player.label} fed more balls through the center instead of making the opponent move wide.`
+      `Higher means ${player.labelHtml} fed more balls through the center instead of making the opponent move wide.`
     ),
     coachMetric(
       'Wide usage',
       metricValue(player.side_target_rate, '%'),
-      `How often ${player.label} used the left and right target areas.`
+      `How often ${player.labelHtml} used the left and right target areas.`
     ),
     coachMetric(
       'Low attacking rate',
       metricValue(player.low_target_rate, '%'),
-      `How often ${player.label} hit lower front-wall targets.`
+      `How often ${player.labelHtml} hit lower front-wall targets.`
     ),
   ].join('');
   $(`coachOutcomesP${playerNumber}`).innerHTML =
@@ -4924,13 +4930,16 @@ function setCoachLoading(playerNumber){
     coachMetric('Typical shot height', '—', 'Where your shots usually struck the front wall.'),
     coachMetric('Average pace into front wall', '—', 'Mean speed across analyzed shots with a usable estimate approaching the front wall.'),
   ].join('');
+  const loadingLabel = playerDisplayName(playerNumber);
   $(`coachOutcomesP${playerNumber}`).innerHTML =
     renderOutcomeMetricSection({
-      label: escapeHtml(playerDisplayName(playerNumber)),
+      label: loadingLabel,
+      labelHtml: escapeHtml(loadingLabel),
       rally_outcome_analytics: {},
     }, 'winning') +
     renderOutcomeMetricSection({
-      label: escapeHtml(playerDisplayName(playerNumber)),
+      label: loadingLabel,
+      labelHtml: escapeHtml(loadingLabel),
       rally_outcome_analytics: {},
     }, 'losing');
   $(`coachFeedbackP${playerNumber}`).textContent = 'Building player feedback from the target map...';
