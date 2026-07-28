@@ -25,3 +25,7 @@ pypdf
 # and prepare_ball_dataset.py — which reads an already-exported COCO tree — both
 # run without it.
 roboflow
+
+# Person detection (player attribution). Apache-2.0. Lazy-imported in
+# person_model.py only — the test suite must run without it.
+rfdetr==1.8.3

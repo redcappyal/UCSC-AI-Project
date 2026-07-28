@@ -1,0 +1,8 @@
+{
+  "schema": "attribution-labels-v1",
+  "clip": "SquashAnalytics.mp4",
+  "note": "HUMAN GATE: watch the clip, fill server per rally (1 = the rally-1 server, 2 = the other player, null = cannot tell), save without .template",
+  "rallies": [
+    {"rally_number": 1, "server": 1}
+  ]
+}

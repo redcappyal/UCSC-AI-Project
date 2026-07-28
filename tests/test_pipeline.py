@@ -7,6 +7,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+import job_runner
 from job_runner import audio_hits_from_candidates, refine_segments_for_audio_candidates, refine_segments_for_hits
 
 
@@ -586,3 +587,182 @@ def test_label_run_creation_from_uploaded_video(tmp_path, runs_dir):
         "events": [{"frame": 6, "type": "wall"}],
     })
     assert response.status_code == 200
+
+
+def _attribution_hit(t_s, call="IN", is_serve=False):
+    return {
+        "timestamp_seconds": t_s,
+        "frame": int(t_s * 60),
+        "event_type": "wall",
+        "target_zone": {"zone": 4, "side": "center", "x": 0.5, "y": 0.5},
+        "call": call,
+        "is_serve": is_serve,
+    }
+
+
+def _three_rally_hits():
+    # Rally 1: t=10.0 (serve), 11.0, 12.0 ; rally 2: t=30.0, 31.0 ;
+    # rally 3: t=60.0. Gaps >> RALLY_GAP defaults.
+    return (
+        [_attribution_hit(10.0, is_serve=True), _attribution_hit(11.0),
+         _attribution_hit(12.0)]
+        + [_attribution_hit(30.0, is_serve=True), _attribution_hit(31.0)]
+        + [_attribution_hit(60.0, is_serve=True)]
+    )
+
+
+def test_assign_without_resolver_matches_legacy_and_labels_sources():
+    hits = _three_rally_hits()
+    assignment = job_runner.assign_front_wall_hit_players(hits)
+    assert assignment["method"] == "rally_gap_server_alternation"
+    assert assignment["observed_serve_count"] == 0
+    for rally in assignment["rallies"]:
+        assert rally["server_track"] is None
+        assert rally["server_source"] == "propagated"
+        assert rally["winner_crosscheck_agrees"] is None
+    # Legacy alternation: rally 1 server=1, winner=1 (last hit IN by player 1).
+    assert assignment["rallies"][0]["server_player_number"] == 1
+    assert assignment["rallies"][0]["winner_player_number"] == 1
+    assert assignment["rallies"][0]["winner_source"] == "est"
+
+
+def test_assign_with_resolver_observed_servers_and_next_serve_winners():
+    hits = _three_rally_hits()
+    by_first_hit_t = {10.0: "A", 30.0: "B", 60.0: "B"}
+
+    def resolver(rally_hits):
+        return by_first_hit_t.get(float(rally_hits[0]["timestamp_seconds"]))
+
+    assignment = job_runner.assign_front_wall_hit_players(hits, serve_resolver=resolver)
+    assert assignment["method"] == "rally_gap_observed_serves"
+    assert assignment["observed_serve_count"] == 3
+    rallies = assignment["rallies"]
+    # Anchor: rally 1 observed "A" -> A=player 1 (propagated first server).
+    assert rallies[0]["server_player_number"] == 1
+    assert rallies[0]["server_track"] == "A"
+    assert rallies[0]["server_source"] == "observed"
+    # Rally 2 served by B -> player 2; so rally 1 winner = 2 via next_serve.
+    assert rallies[1]["server_player_number"] == 2
+    assert rallies[0]["winner_player_number"] == 2
+    assert rallies[0]["winner_source"] == "next_serve"
+    # est winner of rally 1 was player 1 (last IN hit) -> crosscheck disagrees.
+    assert rallies[0]["winner_crosscheck_agrees"] is False
+    # Back-filled winner_reason must explain the *actual* winner (next-serve
+    # observation), not stay frozen on the est explanation for the player who
+    # was overridden -- otherwise the payload self-contradicts (winner=2 but
+    # reason talks about player 1's last hit).
+    assert rallies[0]["winner_reason"] == "next_rally_serve_observed"
+    # Rally 3 also served by B: winner of rally 2 = player 2 via next_serve.
+    # Rally 2's LAST hit (t=31.0, IN) was by the receiver (player 1), so the
+    # est winner is 1 and the cross-check disagrees.
+    assert rallies[1]["winner_player_number"] == 2
+    assert rallies[1]["winner_source"] == "next_serve"
+    assert rallies[1]["winner_crosscheck_agrees"] is False
+    assert rallies[1]["winner_reason"] == "next_rally_serve_observed"
+    # Last rally: est only, never back-filled -> keeps its est winner_reason.
+    assert rallies[2]["winner_source"] in ("est", None)
+    assert rallies[2]["winner_reason"] in (
+        "last_front_wall_hit_in_winner",
+        "last_front_wall_hit_out",
+        "serve_out",
+        "last_front_wall_hit_unjudged",
+    )
+    # Per-hit alternation from the observed servers.
+    rally2_hits = [h for h in hits if h.get("rally_number") == 2]
+    assert [h["player_number"] for h in rally2_hits] == [2, 1]
+
+
+def test_assign_with_partial_resolver_falls_back_to_propagation():
+    hits = _three_rally_hits()
+
+    def resolver(rally_hits):
+        # Only rally 2 observed.
+        return "B" if float(rally_hits[0]["timestamp_seconds"]) == 30.0 else None
+
+    assignment = job_runner.assign_front_wall_hit_players(hits, serve_resolver=resolver)
+    rallies = assignment["rallies"]
+    assert rallies[0]["server_source"] == "propagated"
+    assert rallies[1]["server_source"] == "observed"
+    # Anchor is rally 2: its propagated server is the est winner of rally 1
+    # (player 1), so B -> player 1 there.
+    assert rallies[1]["server_player_number"] == 1
+    assert assignment["observed_serve_count"] == 1
+
+
+def test_safe_resolver_swallows_exceptions_and_falls_back_to_propagation():
+    """job_runner._safe_resolver is the one hole review found left in the
+    person-layer degradation invariant: build_person_pass already swallows
+    detector-load failures and PersonFramePass.observe already swallows
+    detect() failures, but a resolver built from their output (samples_by_
+    track, ball rows) ran unguarded inside assign_front_wall_hit_players --
+    an exception there would fail the whole tracking job. Wrapping it must
+    make assign_front_wall_hit_players behave exactly as if no resolver had
+    been supplied at all: every rally propagated, nothing observed."""
+    hits = _three_rally_hits()
+
+    def raising_resolver(rally_hits):
+        raise RuntimeError("boom")
+
+    safe_resolver = job_runner._safe_resolver(raising_resolver)
+    assignment = job_runner.assign_front_wall_hit_players(
+        hits, serve_resolver=safe_resolver
+    )
+    assert assignment["method"] == "rally_gap_server_alternation"
+    assert assignment["observed_serve_count"] == 0
+    for rally in assignment["rallies"]:
+        assert rally["server_track"] is None
+        assert rally["server_source"] == "propagated"
+
+
+def test_judge_hits_threads_resolver_through_unconditional_assign_without_service_line(tmp_path):
+    # Regression: judge_hits calls assign_front_wall_hit_players twice — an
+    # unconditional call whose result seeds player_assignment, and a second
+    # call inside `if top_line is not None and service_line is not None`
+    # that overwrites it once serve-line judging has run. A run with no
+    # service_line calibration line never enters that second branch, so the
+    # unconditional call is the ONLY one that determines the final
+    # player_assignment. It must receive serve_resolver too, or observed
+    # attribution silently vanishes for every un-service-line-calibrated run.
+    (tmp_path / "calibration.json").write_text(json.dumps({
+        "lines": [
+            {"name": "out_line_lower_edge", "endpoints": [[0, 100], [2000, 100]]},
+            {"name": "tin_top_edge", "endpoints": [[0, 700], [2000, 700]]},
+        ]
+        # No service_line_top_edge -> service_line stays None in judge_hits.
+    }))
+    results = {
+        60: {
+            "source_frame": 60,
+            "timestamp_seconds": "2.000000",
+            "detected": "True",
+            "x_center": "900.000",
+            "y_center": "180.000",
+        }
+    }
+    hit = {
+        "hit_frame": 60,
+        "timestamp_seconds": 2.0,
+        "dv_magnitude": 400.0,
+        "speed_before": 400.0,
+        "speed_after": 380.0,
+        "after_gap": False,
+        "event_type": "wall",
+        "wall_score": 0.9,
+        "signals": {"audio_score": 24.0},
+    }
+
+    def resolver(rally_hits):
+        return "A"
+
+    judged = job_runner.judge_hits(tmp_path, results, [hit], serve_resolver=resolver)
+
+    entry = judged[0]
+    assert entry["call"] == "IN"
+    assert entry["rally_number"] == 1
+    assert entry["server_player_number"] in (1, 2)
+
+    payload = json.loads((tmp_path / "detected_hits.json").read_text())
+    assert payload["player_assignment"]["method"] == "rally_gap_observed_serves"
+    assert payload["player_assignment"]["observed_serve_count"] == 1
+    assert payload["rallies"][0]["server_track"] == "A"
+    assert payload["rallies"][0]["server_source"] == "observed"

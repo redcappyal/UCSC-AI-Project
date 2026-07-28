@@ -407,6 +407,10 @@ above is unchanged.
 - Range: native, `accent-color:var(--accent-bg)`, 44 px hit area, paired `.sliderlabel`
   (14 dim label + 600 tabular value `output`).
 - File: hidden input inside `label.filebtn`.
+- Text: `color-mix(in srgb, var(--surface) 86%, var(--bg))` fill, radius 12 (§4.4), 17 px,
+  `min-height:48px`, `1px --line` border — the border is what distinguishes it from the
+  Number variant, needed because a text field sits inside a `--surface` card (post-hoc
+  player naming, §4.6) rather than always on `--bg` the way Number fields do.
 
 ### 8.5 Progress (`.progressbox`)
 
@@ -882,7 +886,7 @@ Each phase: header shows step label + proxied primary; `#instr` gives the one-li
 | `p-analyze` | Honest processing | `.progressbox` stats + bar (+ stage ANALYZING pulse) | — (auto-advances) |
 | `p-track` | Review track, judge calls | control area keeps its pre-rally-visualization height so the video stage does not shrink; the added content scrolls inside that footprint · scrub hint lives in the header `#instr` line (detection failures replace it, `.warn`) · rally segmentation card (proportional neutral ribbon, active segment in accent, text winner chip for every rally) · overview w/ marker minis · hit timeline (neon bars, center playhead) · readout · transport — **Review pane:** frame input + "Player maps" row · verdict box; **Challenge pane:** type dropdown (In/Out folded into the front-wall options) · Bounce / Not-bounce toggle (`.corrSeg`) · panes switched by a floating Review \| Challenge pill (`.callTabs`, same liquid-glass style as `#navPill`, fixed bottom-center) | "Judge frame" |
 | `p-label` | Human bounce labeling | overview · label timeline · transport+zoom · 2-col type grid (dot+label) · delete (destructive = plain secondary, disabled until selection) | — |
-| `p-target` | Stats: targets & bounces (debug) | Front-wall targets card (court chart + meta) · Floor bounces card (SVG map + meta) | — |
+| `p-target` | Stats: targets & bounces (debug) | Front-wall targets card (court chart + meta) · Floor bounces card (SVG map + meta) · Players card (naming + serve crop) | — |
 | `p-player1-report` / `p-player2-report` | Per-player coaching report — the last two steps of the judge flow | Player N front-wall map (§8.10 court chart + `.targetMeta`; serves excluded) · Player N report panel (§8.17) · P1 only: a `.row` "Player 2 report" secondary | — (back chevron only) |
 | `p-matches` | Matches section root (placeholder) | placeholder hero · Planned card (§8.14) | — (no chevron; section root) |
 | `p-coach` | Coach section root (hub) | three feature cards (§8.13) — no hero, no copy | — (no chevron; section root) |

@@ -151,6 +151,11 @@
   input[type=number]{width:100%; background:var(--surface); color:var(--text); border:none;
     border-radius:12px; font:inherit; font-size:17px; padding:10px 12px; min-height:48px;
     font-variant-numeric:tabular-nums}
+  /* Text input (post-hoc player naming, §4.6): a --line border distinguishes it from the
+     --surface card it sits inside, unlike input[type=number] which always sits on --bg. */
+  input[type=text]{width:100%; background:color-mix(in srgb, var(--surface) 86%, var(--bg));
+    color:var(--text); border:1px solid var(--line); border-radius:12px; font:inherit;
+    font-size:17px; padding:10px 12px; min-height:48px}
   .sliderlabel{display:flex; justify-content:space-between; font-size:14px; color:var(--dim)}
   .sliderlabel output{color:var(--text); font-weight:600; font-variant-numeric:tabular-nums}
 
@@ -470,6 +475,17 @@
      ragged. Same label-over-value shape as .coachMetric. */
   .drillStage{display:block; font-style:normal; font-size:11px; font-weight:700;
     letter-spacing:.05em; text-transform:uppercase; color:var(--text); margin-bottom:2px}
+
+  /* Post-hoc player naming (spec §4.6): backend note, the two name fields, the
+     optional rally-1 serve identification crop, and the save action. */
+  .playersNote{padding:12px 14px 0; color:var(--dim); font-size:14px; line-height:1.45}
+  .playersFields{padding:10px 14px 4px}
+  .playersField{display:flex; flex-direction:column; gap:6px; font-size:13px; color:var(--dim); min-width:0}
+  .playersCrop{padding:4px 14px 12px; display:flex; flex-direction:column; gap:8px}
+  #serveCropImg{display:block; width:100%; max-width:220px; margin:0 auto; border-radius:8px;
+    border:1px solid var(--line); background:var(--strip-bg)}
+  .playersCropPrompt{margin:0; text-align:center; font-size:14px; color:var(--dim)}
+  .playersSave{padding:4px 14px 14px; display:flex; flex-direction:column; gap:6px}
 
   /* The verdict box always occupies the same space: empty (blank), event
      classification (neutral), and IN/OUT states share one reserved height so
@@ -986,6 +1002,32 @@
         <div><strong>Untouched zones</strong><span id="floorMissing"></span></div>
       </div>
     </div>
+    <div class="targetZones hidden" id="playersCard">
+      <div class="targetHead">
+        <strong>Players</strong>
+      </div>
+      <p class="playersNote" id="playersBackendNote"></p>
+      <div class="labelGrid playersFields">
+        <label class="playersField">Player A name
+          <input type="text" id="playerNameA" maxlength="40" autocomplete="off" placeholder="Player A">
+        </label>
+        <label class="playersField">Player B name
+          <input type="text" id="playerNameB" maxlength="40" autocomplete="off" placeholder="Player B">
+        </label>
+      </div>
+      <div class="playersCrop hidden" id="serveCropBlock">
+        <img id="serveCropImg" alt="First server at the rally 1 serve">
+        <p class="playersCropPrompt">Who is this? (server at the first attributed serve)</p>
+        <div class="row">
+          <button type="button" id="cropIsA"></button>
+          <button type="button" id="cropIsB"></button>
+        </div>
+      </div>
+      <div class="playersSave">
+        <button type="button" id="savePlayersBtn">Save players</button>
+        <p class="status" id="playersSaveStatus"></p>
+      </div>
+    </div>
     <div class="row">
       <button id="player1ReportBtn" type="button">Player 1 report</button>
       <button id="player2ReportBtn" type="button">Player 2 report</button>
@@ -997,7 +1039,7 @@
   <section class="hidden" id="p-player1-report">
     <div class="targetZones hidden" id="targetZonesP1">
       <div class="targetHead">
-        <strong>Player 1 front-wall map</strong>
+        <strong id="targetTitleP1">Player 1 front-wall map</strong>
         <span id="targetTotalP1"></span>
       </div>
       <div class="targetCourt" aria-label="Player 1 squash front wall target zone chart">
@@ -1021,7 +1063,7 @@
     </div>
     <div class="targetZones hidden coachPlayerPanel" id="coachPanelP1">
       <div class="targetHead">
-        <strong>Player 1 report</strong>
+        <strong id="coachTitleP1">Player 1 report</strong>
         <span id="coachSourceP1"></span>
       </div>
       <div class="coachIntro" id="coachIntroP1"></div>
@@ -1039,7 +1081,7 @@
   <section class="hidden" id="p-player2-report">
     <div class="targetZones hidden" id="targetZonesP2">
       <div class="targetHead">
-        <strong>Player 2 front-wall map</strong>
+        <strong id="targetTitleP2">Player 2 front-wall map</strong>
         <span id="targetTotalP2"></span>
       </div>
       <div class="targetCourt" aria-label="Player 2 squash front wall target zone chart">
@@ -1063,7 +1105,7 @@
     </div>
     <div class="targetZones hidden coachPlayerPanel" id="coachPanelP2">
       <div class="targetHead">
-        <strong>Player 2 report</strong>
+        <strong id="coachTitleP2">Player 2 report</strong>
         <span id="coachSourceP2"></span>
       </div>
       <div class="coachIntro" id="coachIntroP2"></div>
@@ -1221,6 +1263,20 @@
 <script>
 'use strict';
 const $ = id => document.getElementById(id);
+
+/* Escapes a string for safe interpolation into an innerHTML template string.
+   Player names are free-text (typed, persisted server-side, up to 40 chars)
+   and reach a handful of innerHTML sinks — coach report metric captions,
+   rally winner ribbon segments, the judge verdict's player-attribution span.
+   Apply this at those sinks only; playerDisplayName/playerAttributionText
+   stay unescaped because they also feed plain textContent/.title assignments,
+   which are already safe and would double-encode ("&amp;amp;") if escaped
+   twice. */
+function escapeHtml(value){
+  return String(value).replace(/[&<>"']/g, ch => ({
+    '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;',
+  }[ch]));
+}
 const vid = $('vid'), canvas = $('view'), ctx = canvas.getContext('2d', {willReadFrequently:true});
 const stage = $('stage');
 
@@ -1337,8 +1393,70 @@ function stepSequence(){
 function stepLabelFor(p){
   const seq = stepSequence();
   const idx = seq.indexOf(p);
-  return idx === -1 ? STEP_META[p].label
-                    : `${idx + 1}/${seq.length} · ${STEP_META[p].label}`;
+  const label = p === 'player1_report' ? playerDisplayName(1)
+    : p === 'player2_report' ? playerDisplayName(2)
+    : STEP_META[p].label;
+  return idx === -1 ? label
+                    : `${idx + 1}/${seq.length} · ${label}`;
+}
+
+/* Post-hoc player naming (spec §4.6): the anchor is the FIRST rally whose
+   serve was actually observed, not necessarily rally 1 — rally 1's serve can
+   go unobserved while a later rally's is (e.g. person detection picks the
+   ball up mid-clip), and job_runner.assign_front_wall_hit_players binds a
+   track to a player number once, at that anchor rally, then propagates it
+   forward. Reading rally 1 unconditionally (as this used to) silently no-ops
+   naming when rally 1 is unobserved, and — worse — SWAPS names whenever
+   PLAYER_ASSIGNMENT_FIRST_SERVER=2, because the anchor's track binds to
+   whichever player was serving *at that point in the chain*, not always
+   player 1. anchor.server_player_number carries that binding already, so use
+   it directly instead of assuming player 1. */
+function attributionAnchor(v1){
+  const rallies = (v1 && v1.rallies) || [];
+  return rallies.find(rally => rally.server_source === 'observed' &&
+    (rally.server_track === 'A' || rally.server_track === 'B')) || null;
+}
+
+/* attribution_backend 'observed' asserts some rally's serve was observed
+   (that's how the backend derives the flag), so an anchor should always
+   exist alongside it. If it doesn't — a data contradiction, e.g. a stale or
+   hand-built players_v1 — track→player mapping is impossible; the card must
+   say so rather than silently freezing every name at 'Player N' forever. */
+function attributionMappingBroken(v1){
+  return !!v1 && v1.attribution_backend === 'observed' && !attributionAnchor(v1);
+}
+
+/* -> 'A' | 'B' | null for the given player number, or null when no mapping
+   is possible (no anchor and not in the broken-mapping fallback state).
+   anchor.server_player_number is the player who was serving AT THE ANCHOR
+   RALLY, per the same chain-of-custody job_runner.assign_front_wall_hit_players
+   used to build it — it is not always player 1 (that only holds when
+   PLAYER_ASSIGNMENT_FIRST_SERVER's default of 1 also happens to be who's
+   serving by the time the anchor rally is reached). Mapping unconditionally
+   to player 1 here is exactly the swap bug this function replaces. */
+function trackForPlayer(v1, playerNumber){
+  const anchor = attributionAnchor(v1);
+  if(anchor){
+    const anchorPlayer = Number(anchor.server_player_number);
+    if(anchorPlayer === 1 || anchorPlayer === 2){
+      return playerNumber === anchorPlayer ? anchor.server_track
+                                           : (anchor.server_track === 'A' ? 'B' : 'A');
+    }
+  }
+  if(attributionMappingBroken(v1)){
+    // Documented fallback (spec §4.6): A -> Player 1, B -> Player 2, so
+    // naming still does something predictable instead of a permanent no-op.
+    return playerNumber === 1 ? 'A' : 'B';
+  }
+  return null;
+}
+
+function playerDisplayName(playerNumber){
+  const v1 = S.run && S.run.players_v1;
+  const names = v1 && v1.player_names;
+  const track = v1 ? trackForPlayer(v1, playerNumber) : null;
+  const name = track && names ? names[track] : null;
+  return name || ('Player ' + playerNumber);
 }
 
 /* Header action pill: proxies the current phase's primary button, which stays
@@ -5120,15 +5238,16 @@ function coachingSourceText(data){
 }
 
 function playerAssignmentText(playerNumber, assignment=null){
+  const name = playerDisplayName(playerNumber);
   const source = assignment || (S.run && S.run.player_assignment);
   if(source && source.method === 'rally_gap_server_alternation'){
     const rallies = Number(source.rally_count || 0);
     const rallyText = rallies === 1 ? '1 rally' : `${rallies} rallies`;
-    return `Player ${playerNumber} uses rally-aware assignments from ${rallyText}: each rally starts with the inferred server, then alternates front-wall contacts.`;
+    return `${name} uses rally-aware assignments from ${rallyText}: each rally starts with the inferred server, then alternates front-wall contacts.`;
   }
   return playerNumber === 1
-    ? 'Player 1 uses the 1st, 3rd, 5th, and other odd-numbered detected front-wall contacts.'
-    : 'Player 2 uses the 2nd, 4th, 6th, and other even-numbered detected front-wall contacts.';
+    ? `${name} uses the 1st, 3rd, 5th, and other odd-numbered detected front-wall contacts.`
+    : `${name} uses the 2nd, 4th, 6th, and other even-numbered detected front-wall contacts.`;
 }
 
 function renderOutcomeMetricSection(player, outcome){
@@ -5158,12 +5277,12 @@ function renderOutcomeMetricSection(player, outcome){
     coachMetric(
       'Main targets',
       formatZoneList(metrics.common_target_zones || [], 3),
-      `${player.label}'s most-used front-wall areas in ${context}.`
+      `${player.labelHtml}'s most-used front-wall areas in ${context}.`
     ),
     coachMetric(
       'Average shot height',
       metricValue(metrics.average_wall_height_ft, ' ft'),
-      `Average front-wall contact height across ${player.label}'s shots in ${context}.`
+      `Average front-wall contact height across ${player.labelHtml}'s shots in ${context}.`
     ),
     coachMetric(
       'Average pace into front wall',
@@ -5178,17 +5297,17 @@ function renderOutcomeMetricSection(player, outcome){
     coachMetric(
       'Middle usage',
       metricValue(metrics.center_target_rate, '%'),
-      `Share of ${player.label}'s analyzed shots that used middle targets in ${context}.`
+      `Share of ${player.labelHtml}'s analyzed shots that used middle targets in ${context}.`
     ),
     coachMetric(
       'Wide usage',
       metricValue(metrics.side_target_rate, '%'),
-      `Share of ${player.label}'s analyzed shots that used wide targets in ${context}.`
+      `Share of ${player.labelHtml}'s analyzed shots that used wide targets in ${context}.`
     ),
     coachMetric(
       'Low attacking rate',
       metricValue(metrics.low_target_rate, '%'),
-      `Share of ${player.label}'s analyzed shots that used low targets in ${context}.`
+      `Share of ${player.labelHtml}'s analyzed shots that used low targets in ${context}.`
     ),
   ].join('');
   return (
@@ -5199,9 +5318,18 @@ function renderOutcomeMetricSection(player, outcome){
 
 function renderPlayerCoachPanel(data, playerNumber, sourceText){
   const analytics = data.analytics || {};
-  const player = (analytics.players || []).find(item => Number(item.player_number) === playerNumber) || {
+  const found = (analytics.players || []).find(item => Number(item.player_number) === playerNumber);
+  // player.label drives every "{label}: ..." textContent fallback below and
+  // MUST stay raw (unescaped) — it also feeds the coachFeedbackP textContent
+  // assignment near the bottom of this function, where entity-encoding would
+  // show literally ("O&#39;Brien") since textContent never decodes entities.
+  // player.labelHtml is the escaped copy for the innerHTML-bound captions
+  // below (and in renderOutcomeMetricSection, which receives this same
+  // object) — overriding both once here propagates the saved name through
+  // the whole report while keeping each sink using the right variant.
+  const rawLabel = playerDisplayName(playerNumber);
+  const player = Object.assign({
     player_number: playerNumber,
-    label: `Player ${playerNumber}`,
     total_wall_hits: 0,
     common_target_zones: [],
     average_rally_duration_seconds: null,
@@ -5212,7 +5340,7 @@ function renderPlayerCoachPanel(data, playerNumber, sourceText){
     side_target_rate: null,
     low_target_rate: null,
     rally_outcome_analytics: {},
-  };
+  }, found, { label: rawLabel, labelHtml: escapeHtml(rawLabel) });
   $(`coachPanelP${playerNumber}`).classList.remove('hidden');
   $(`coachSourceP${playerNumber}`).textContent = sourceText;
   $(`coachIntroP${playerNumber}`).textContent =
@@ -5221,67 +5349,67 @@ function renderPlayerCoachPanel(data, playerNumber, sourceText){
     coachMetric(
       'Shots analyzed',
       metricValue(player.total_wall_hits),
-      `How many of ${player.label}'s front-wall contacts were reliable enough to include.`
+      `How many of ${player.labelHtml}'s front-wall contacts were reliable enough to include.`
     ),
     coachMetric(
       'Unforced errors',
       metricValue(player.unforced_errors),
-      `Number of rally losses where ${player.label}'s final front-wall shot was OUT.`
+      `Number of rally losses where ${player.labelHtml}'s final front-wall shot was OUT.`
     ),
     coachMetric(
       'Unforced error rate',
       metricValue(player.unforced_error_percentage, '%'),
-      `${player.label}'s unforced errors as a percentage of all rally losses: unforced errors ÷ (unforced + forced errors).`
+      `${player.labelHtml}'s unforced errors as a percentage of all rally losses: unforced errors ÷ (unforced + forced errors).`
     ),
     coachMetric(
       'Average rally duration',
       metricValue(player.average_rally_duration_seconds, ' s'),
-      `Average length of rallies ${player.label} won, from the first to final detected front-wall contact.`
+      `Average length of rallies ${player.labelHtml} won, from the first to final detected front-wall contact.`
     ),
     coachMetric(
       'Main targets',
       formatZoneList(player.common_target_zones, 3),
-      `The wall areas ${player.label} used most often.`
+      `The wall areas ${player.labelHtml} used most often.`
     ),
     coachMetric(
       'Typical shot height',
       metricValue(player.average_wall_height_ft, ' ft'),
-      `Where ${player.label}'s shots usually struck the front wall, measured from the floor.`
+      `Where ${player.labelHtml}'s shots usually struck the front wall, measured from the floor.`
     ),
     coachMetric(
       'Average pace into front wall',
       metricValue(player.average_incoming_speed_mph, ' mph'),
-      `The mean speed across ${player.label}'s analyzed shots with a usable estimate as the ball approached the front wall.`
+      `The mean speed across ${player.labelHtml}'s analyzed shots with a usable estimate as the ball approached the front wall.`
     ),
     coachMetric(
       'Average pace off front wall',
       metricValue(player.average_exit_speed_mph, ' mph'),
-      `The mean speed across ${player.label}'s analyzed shots with a usable estimate immediately after the ball rebounded from the front wall.`
+      `The mean speed across ${player.labelHtml}'s analyzed shots with a usable estimate immediately after the ball rebounded from the front wall.`
     ),
     coachMetric(
       'Middle usage',
       metricValue(player.center_target_rate, '%'),
-      `Higher means ${player.label} fed more balls through the center instead of making the opponent move wide.`
+      `Higher means ${player.labelHtml} fed more balls through the center instead of making the opponent move wide.`
     ),
     coachMetric(
       'Wide usage',
       metricValue(player.side_target_rate, '%'),
-      `How often ${player.label} used the left and right target areas.`
+      `How often ${player.labelHtml} used the left and right target areas.`
     ),
     coachMetric(
       'Low attacking rate',
       metricValue(player.low_target_rate, '%'),
-      `How often ${player.label} hit the bottom band, between the service line and the tin.`
+      `How often ${player.labelHtml} hit the bottom band, between the service line and the tin.`
     ),
     coachMetric(
       'Driving height',
       metricValue(player.mid_target_rate, '%'),
-      `How often ${player.label} struck the middle band, from the service line up to about 10.6 ft — the height that builds length.`
+      `How often ${player.labelHtml} struck the middle band, from the service line up to about 10.6 ft — the height that builds length.`
     ),
     coachMetric(
       'Lob height',
       metricValue(player.high_target_rate, '%'),
-      `How often ${player.label} lifted above about 10.6 ft, to escape pressure or move the opponent back.`
+      `How often ${player.labelHtml} lifted above about 10.6 ft, to escape pressure or move the opponent back.`
     ),
   ].join('');
   $(`coachOutcomesP${playerNumber}`).innerHTML =
@@ -5348,7 +5476,7 @@ function setCoachLoading(playerNumber){
   hidePlayerCoachPanels();
   $(`coachPanelP${playerNumber}`).classList.remove('hidden');
   $(`coachSourceP${playerNumber}`).textContent = 'Loading';
-  $(`coachIntroP${playerNumber}`).textContent = `Building the Player ${playerNumber} report from detected front-wall contacts.`;
+  $(`coachIntroP${playerNumber}`).textContent = `Building the ${playerDisplayName(playerNumber)} report from detected front-wall contacts.`;
   $(`coachMetricsP${playerNumber}`).innerHTML = [
     coachMetric('Shots analyzed', '—', 'Reliable front-wall contacts included in the report.'),
     coachMetric('Unforced errors', '—', 'Number of rally losses ending with this player hitting OUT.'),
@@ -5358,13 +5486,16 @@ function setCoachLoading(playerNumber){
     coachMetric('Typical shot height', '—', 'Where your shots usually struck the front wall.'),
     coachMetric('Average pace into front wall', '—', 'Mean speed across analyzed shots with a usable estimate approaching the front wall.'),
   ].join('');
+  const loadingLabel = playerDisplayName(playerNumber);
   $(`coachOutcomesP${playerNumber}`).innerHTML =
     renderOutcomeMetricSection({
-      label: `Player ${playerNumber}`,
+      label: loadingLabel,
+      labelHtml: escapeHtml(loadingLabel),
       rally_outcome_analytics: {},
     }, 'winning') +
     renderOutcomeMetricSection({
-      label: `Player ${playerNumber}`,
+      label: loadingLabel,
+      labelHtml: escapeHtml(loadingLabel),
       rally_outcome_analytics: {},
     }, 'losing');
   $(`coachFeedbackP${playerNumber}`).textContent = 'Building player feedback from the target map...';
@@ -5437,9 +5568,113 @@ function requestLlmCoachReport(runId){
 
 function buildPlayerReportView(playerNumber){
   hidePlayerCoachPanels();
+  updatePlayerReportButtonLabels();
+  $(`targetTitleP${playerNumber}`).textContent = `${playerDisplayName(playerNumber)} front-wall map`;
+  $(`coachTitleP${playerNumber}`).textContent = `${playerDisplayName(playerNumber)} report`;
   renderTargetZones(playerTargetSummary(playerNumber), TARGET_MAP_IDS[playerNumber]);
   loadCoachReport(playerNumber);
 }
+
+/* Player report tab labels + header step label (stepLabelFor) share this one
+   naming source. Safe to call even when players_v1 is absent — playerDisplayName
+   falls back to 'Player N'. */
+function updatePlayerReportButtonLabels(){
+  $('player1ReportBtn').textContent = `${playerDisplayName(1)} report`;
+  $('player2ReportBtn').textContent = `${playerDisplayName(2)} report`;
+  $('player2NextBtn').textContent = `${playerDisplayName(2)} report`;
+}
+
+/* Players card (spec §4.6): post-hoc naming of tracks A/B. Renders only when
+   the run has players_v1; the backend note, name fields, and (when the
+   anchor rally's serve was observed) the "who is this" crop all key off the
+   same attributionAnchor() used by playerDisplayName, so the card and every
+   name-propagation site agree on which track is which player. */
+function renderPlayersCard(){
+  updatePlayerReportButtonLabels();
+  const card = $('playersCard');
+  const v1 = S.run && S.run.players_v1;
+  if(!v1){
+    card.classList.add('hidden');
+    return;
+  }
+  card.classList.remove('hidden');
+  $('playersBackendNote').textContent = v1.attribution_backend !== 'observed'
+    ? 'Player attribution is assumed serve alternation — person detection was unavailable for this run.'
+    : attributionMappingBroken(v1)
+      ? 'No serve could be attributed — names will label Player 1/2 by convention.'
+      : 'Players detected automatically (RF-DETR).';
+
+  const names = v1.player_names || {};
+  $('playerNameA').value = names.A || '';
+  $('playerNameB').value = names.B || '';
+
+  const anchor = attributionAnchor(v1);
+  const track = anchor && anchor.server_track;
+  if(v1.serve_crop && (track === 'A' || track === 'B')){
+    $('serveCropBlock').classList.remove('hidden');
+    $('serveCropImg').src = `/api/runs/${encodeURIComponent(S.run.run_id)}/${v1.serve_crop}`;
+  } else {
+    $('serveCropBlock').classList.add('hidden');
+  }
+  updateCropButtonLabels();
+}
+
+function updateCropButtonLabels(){
+  $('cropIsA').textContent = $('playerNameA').value.trim() || 'Player A';
+  $('cropIsB').textContent = $('playerNameB').value.trim() || 'Player B';
+}
+
+/* The crop shows whichever track (A/B — meaningless letters to the user)
+   served the anchor rally (attributionAnchor — the first observed serve, not
+   necessarily rally 1). Tapping the button matching the recognized name
+   binds that typed name to the crop's actual track and the other typed name
+   to the other track, regardless of which input field the user happened to
+   type each name into first. */
+function assignCropTrack(pickedField){
+  const v1 = S.run && S.run.players_v1;
+  const anchor = v1 && attributionAnchor(v1);
+  const track = anchor && anchor.server_track;
+  if(track !== 'A' && track !== 'B') return;
+  const otherTrack = track === 'A' ? 'B' : 'A';
+  const otherField = pickedField === 'A' ? 'B' : 'A';
+  const pickedValue = $(`playerName${pickedField}`).value;
+  const otherValue = $(`playerName${otherField}`).value;
+  $(`playerName${track}`).value = pickedValue;
+  $(`playerName${otherTrack}`).value = otherValue;
+  updateCropButtonLabels();
+}
+
+$('cropIsA').onclick = () => assignCropTrack('A');
+$('cropIsB').onclick = () => assignCropTrack('B');
+$('playerNameA').addEventListener('input', updateCropButtonLabels);
+$('playerNameB').addEventListener('input', updateCropButtonLabels);
+
+$('savePlayersBtn').onclick = async () => {
+  if(!S.run || !S.run.run_id) return;
+  const trimmed = value => { const t = value.trim(); return t ? t : null; };
+  const body = { A: trimmed($('playerNameA').value), B: trimmed($('playerNameB').value) };
+  $('savePlayersBtn').disabled = true;
+  $('playersSaveStatus').textContent = 'Saving…';
+  $('playersSaveStatus').className = 'status';
+  try{
+    const response = await fetch(`/api/runs/${encodeURIComponent(S.run.run_id)}/players`, {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify(body),
+    });
+    const data = await response.json();
+    if(!response.ok || data.ok === false) throw new Error(data.error || 'Could not save players.');
+    S.run.players_v1.player_names = data.player_names;
+    $('playersSaveStatus').textContent = 'Saved.';
+    $('playersSaveStatus').className = 'status ok';
+    renderPlayersCard();
+  } catch(error){
+    $('playersSaveStatus').textContent = error.message || 'Could not save players.';
+    $('playersSaveStatus').className = 'status warn';
+  } finally {
+    $('savePlayersBtn').disabled = false;
+  }
+};
 
 function buildTargetView(){
   const summary = S.debugTargetZones ||
@@ -5447,6 +5682,7 @@ function buildTargetView(){
     (S.run && S.run.target_zones);
   renderTargetZones(summary);
   const hasFloor = renderFloorMap();
+  renderPlayersCard();
   const total = summary ? summary.total_wall_hits : 0;
   const canReport = !!(!S.debugTargetZones && S.run && total);
   $('player1ReportBtn').disabled = !canReport;
@@ -5532,19 +5768,42 @@ function runRallies(){
 
 function rallyWinnerText(rally){
   const winner = Number(rally.winner_player_number);
-  return winner === 1 || winner === 2 ? `Player ${winner} wins` : 'Winner TBD';
+  return winner === 1 || winner === 2 ? `${playerDisplayName(winner)} wins` : 'Winner TBD';
 }
 
 function rallyWinnerDetail(rally){
   const winner = rallyWinnerText(rally);
+  // Back-filled winners (job_runner's next-serve rule) contradict last_call/
+  // last_player_number below — this rally's est. winner was silently
+  // overridden by who actually served next, so explain THAT, not the stale
+  // front-wall call.
+  if(rally.winner_source === 'next_serve') return `${winner}; served the next rally`;
   const server = Number(rally.server_player_number);
   if(rally.winner_reason === 'serve_out' && (server === 1 || server === 2))
-    return `${winner}; Player ${server}'s serve was OUT`;
+    return `${winner}; ${playerDisplayName(server)}'s serve was OUT`;
   const lastPlayer = Number(rally.last_player_number);
   if(rally.last_call === 'OUT' && (lastPlayer === 1 || lastPlayer === 2))
-    return `${winner}; Player ${lastPlayer}'s final front-wall hit was OUT`;
+    return `${winner}; ${playerDisplayName(lastPlayer)}'s final front-wall hit was OUT`;
   if(rally.last_call === 'IN') return `${winner}; final front-wall hit was IN`;
   return `${winner}; final front-wall hit was not judged`;
+}
+
+/* Running score (spec §4.6 item 3): players_v1 carries its own rallies array
+   with score_after, separate from S.run.rallies (player_assignment's rallies,
+   used for timing/segmentation above) — look the matching rally up by number.
+   winner_source 'est' rows are marked so the score never asserts more
+   confidence than the front-wall judging actually has; back-filled
+   (next_serve) rows are not, since those were corrected by stronger evidence. */
+function rallyScoreText(rally){
+  const v1Rallies = S.run && S.run.players_v1 && S.run.players_v1.rallies;
+  if(!Array.isArray(v1Rallies)) return '';
+  const match = v1Rallies.find(r => Number(r.rally_number) === Number(rally.rally_number));
+  const scoreAfter = match && match.score_after;
+  if(!scoreAfter) return '';
+  const p1 = Number(scoreAfter['1'] || 0);
+  const p2 = Number(scoreAfter['2'] || 0);
+  const score = `${playerDisplayName(1)} ${p1}–${playerDisplayName(2)} ${p2}`;
+  return match.winner_source === 'est' ? `${score} (est.)` : score;
 }
 
 function rallyDisplayBounds(rallies){
@@ -5610,7 +5869,7 @@ function buildRallyVisualization(initialFrame){
     segment.setAttribute('aria-label',
       `Rally ${number}, ${winner}, frames ${rally.start_frame} to ${rally.end_frame}`);
     segment.title = segment.getAttribute('aria-label');
-    segment.innerHTML = `<strong>R${number}</strong><span>${winner.replace('Player ', 'P')}</span>`;
+    segment.innerHTML = `<strong>R${number}</strong><span>${escapeHtml(winner.replace('Player ', 'P'))}</span>`;
     ribbon.appendChild(segment);
 
     const chip = document.createElement('button');
@@ -5618,10 +5877,14 @@ function buildRallyVisualization(initialFrame){
     chip.className = 'rallyWinner';
     chip.dataset.start = start;
     chip.dataset.end = end;
-    chip.textContent = `R${number} · ${winner}`;
+    const scoreText = rallyScoreText(rally);
+    chip.textContent = scoreText ? `R${number} · ${winner} · ${scoreText}` : `R${number} · ${winner}`;
     const hitCount = Number(rally.front_wall_hit_count || 0);
-    chip.title = `${rallyWinnerDetail(rally)} · ${hitCount} front-wall hit${hitCount === 1 ? '' : 's'}`;
-    chip.setAttribute('aria-label', `Rally ${number}: ${rallyWinnerDetail(rally)}. Jump to rally.`);
+    chip.title = scoreText
+      ? `${rallyWinnerDetail(rally)} · ${scoreText} · ${hitCount} front-wall hit${hitCount === 1 ? '' : 's'}`
+      : `${rallyWinnerDetail(rally)} · ${hitCount} front-wall hit${hitCount === 1 ? '' : 's'}`;
+    chip.setAttribute('aria-label',
+      `Rally ${number}: ${rallyWinnerDetail(rally)}${scoreText ? '. ' + scoreText : ''}. Jump to rally.`);
     chip.onclick = () => {
       transportStop();
       seekSourceFrameToCanvas(Number(rally.start_frame));
@@ -5969,12 +6232,12 @@ const EVENT_LABELS = { racket:'Racket hit', floor:'Floor bounce', side_wall:'Sid
 function playerAttributionText(hit){
   const player = Number(hit && hit.player_number);
   return player === 1 || player === 2
-    ? `Hit by Player ${player}`
+    ? `Hit by ${playerDisplayName(player)}`
     : 'Player attribution unavailable';
 }
 
 function playerAttributionMarkup(hit){
-  return `<span class="verdictPlayer">${playerAttributionText(hit)}</span>`;
+  return `<span class="verdictPlayer">${escapeHtml(playerAttributionText(hit))}</span>`;
 }
 
 function clearJudgeResult(){

@@ -18,6 +18,8 @@ from pathlib import Path
 import cv2
 
 import court_model
+import person_model
+import player_attribution
 from audio_events import extract_audio_candidates
 from bounce_gb_model_detector import DEFAULT_MODEL_PATH as BOUNCE_GB_MODEL_PATH
 from bounce_gb_model_detector import detect_hits_with_gb_model
@@ -34,6 +36,7 @@ from judge_call import (
     load_wall_corners,
 )
 from judge_call import wall_diagram_coordinates
+from player_tracker import PersonFramePass
 from tracking_common import (
     CONFIDENCE_THRESHOLD,
     CSV_FIELDNAMES,
@@ -134,9 +137,78 @@ def persist_job(job):
         pass
 
 
+def build_person_pass(source_fps, frame_stride):
+    """PersonFramePass when the detector backend is available, else None.
+    Detector load failures must never kill a tracking job."""
+    try:
+        detector = person_model.load_person_detector()
+    except Exception:
+        return None
+    if detector is None:
+        return None
+    return PersonFramePass(detector, source_fps, frame_stride)
+
+
+def write_track_samples(run_dir, samples_by_track, ambiguity_times):
+    """Best-effort persistence: a write failure (e.g. an unwritable run dir)
+    must not fail the tracking job, so this returns True/False instead of
+    raising -- same pattern as persist_job's OSError guard."""
+    payload = {
+        "schema": "player-tracks-v1",
+        "ambiguity_times": [float(t) for t in ambiguity_times],
+        "tracks": {
+            track: [
+                {
+                    "t_s": s.t_s,
+                    "frame_idx": s.frame_idx,
+                    "foot_px": [s.foot_px[0], s.foot_px[1]],
+                    "bbox": [s.bbox[0], s.bbox[1], s.bbox[2], s.bbox[3]],
+                    "confidence": s.confidence,
+                    "coasted": s.coasted,
+                }
+                for s in samples
+            ]
+            for track, samples in samples_by_track.items()
+        },
+    }
+    try:
+        players_dir = Path(run_dir) / "players"
+        players_dir.mkdir(parents=True, exist_ok=True)
+        (players_dir / "track_samples.json").write_text(
+            json.dumps(payload), encoding="utf-8"
+        )
+    except OSError:
+        return False
+    return True
+
+
 def update_job(run_id, /, **updates):
     with JOBS_LOCK:
-        job = JOBS.setdefault(run_id, {})
+        if run_id not in JOBS:
+            # This run may exist only on disk (server restarted since it last
+            # ran in memory). Rehydrate from job.json before merging, or the
+            # merge lands on a fresh empty stub that then SHADOWS the real
+            # job.json for every later get_job call, since get_job short-
+            # circuits on any in-memory hit -- even an empty one.
+            #
+            # Read raw: do not apply get_job's queued/running->failed
+            # rewrite here. That rewrite is a read-view decision about a live
+            # status, not stored state, and this path also rehydrates jobs
+            # that are already "complete" (e.g. a post-hoc players rename
+            # long after the run finished).
+            #
+            # The disk read stays inside JOBS_LOCK on purpose: reading
+            # outside the lock could race a concurrent update_job for the
+            # same run_id that persists first, so it would either duplicate
+            # a rehydrate or clobber a fresher in-memory update with a stale
+            # disk read. persist_job's own I/O still happens outside the
+            # lock, same as before -- only this rehydrate read is kept in.
+            job_path = RUNS_DIR / run_id / "job.json"
+            try:
+                JOBS[run_id] = json.loads(job_path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                JOBS[run_id] = {}
+        job = JOBS[run_id]
         job.update(updates)
         snapshot = dict(job)
 
@@ -222,10 +294,15 @@ def decode_segments_to_queue(video_path, segments, frame_queue, stop_event, deco
         enqueue(None)
 
 
-def track_segments(model, video_path, segments, inference_width, source_fps, results, on_frame):
+def track_segments(model, video_path, segments, inference_width, source_fps, results, on_frame,
+                   frame_observer=None):
     """Consumer loop: infer frames from the decode queue into `results`.
 
     Decode runs on its own thread so it overlaps inference, which dominates.
+    `frame_observer(frame_idx, frame)`, when given, is called for every
+    decoded frame in this call — callers wire it only on the coarse pass so
+    the person-detection cadence rides the coarse decode, never refine or
+    audio-rescue (spec §4.2).
     """
     frame_queue = queue.Queue(maxsize=DECODE_QUEUE_SIZE)
     stop_event = threading.Event()
@@ -245,6 +322,8 @@ def track_segments(model, video_path, segments, inference_width, source_fps, res
                 break
 
             frame_idx, frame = item
+            if frame_observer is not None:
+                frame_observer(frame_idx, frame)
             predictions = infer_frame_predictions(
                 model,
                 frame,
@@ -606,7 +685,7 @@ def segment_front_wall_hits_into_rallies(front_wall_hits, rally_gap_seconds=None
     return rallies, rally_gap_seconds, gap_method
 
 
-def assign_front_wall_hit_players(hits):
+def assign_front_wall_hit_players(hits, serve_resolver=None):
     for hit in hits:
         for key in (
             "front_wall_sequence",
@@ -632,11 +711,31 @@ def assign_front_wall_hit_players(hits):
     if first_server not in (1, 2):
         first_server = DEFAULT_FIRST_SERVER_PLAYER
 
+    resolved_tracks = [
+        serve_resolver(rally_hits) if serve_resolver is not None else None
+        for rally_hits in rallies
+    ]
+
     sequence = 0
     server = first_server
+    track_player_map = None
     rally_summaries = []
     for rally_index, rally_hits in enumerate(rallies, start=1):
-        rally_server = server
+        resolved = resolved_tracks[rally_index - 1]
+        if resolved in ("A", "B") and track_player_map is None:
+            # Anchor: the first observed rally binds its track to the
+            # propagated server at this point in the chain (spec §4.4).
+            track_player_map = {
+                resolved: server,
+                ("B" if resolved == "A" else "A"): other_player(server),
+            }
+        if resolved in ("A", "B") and track_player_map is not None:
+            rally_server = track_player_map[resolved]
+            server_source = "observed"
+        else:
+            rally_server = server
+            server_source = "propagated"
+
         for rally_sequence, hit in enumerate(rally_hits, start=1):
             sequence += 1
             player_number = (
@@ -679,8 +778,12 @@ def assign_front_wall_hit_players(hits):
             "duration_seconds": round(max(0.0, rally_end_time - rally_start_time), 3),
             "front_wall_hit_count": len(rally_hits),
             "server_player_number": rally_server,
+            "server_track": resolved if resolved in ("A", "B") else None,
+            "server_source": server_source,
             "winner_player_number": winner,
             "winner_reason": winner_reason,
+            "winner_source": "est" if winner is not None else None,
+            "winner_crosscheck_agrees": None,
             "last_call": last_call,
             "last_player_number": last_player,
             "serve_frame": (
@@ -693,13 +796,38 @@ def assign_front_wall_hit_players(hits):
         if winner in (1, 2):
             server = winner
 
+    # Winner back-fill: winner of rally N := observed server of rally N+1
+    # (squash rule — the winner serves next). The est winner stays as a
+    # silent cross-check (spec §4.4). Last rally keeps est.
+    for index in range(len(rally_summaries) - 1):
+        next_summary = rally_summaries[index + 1]
+        if next_summary["server_source"] != "observed":
+            continue
+        summary = rally_summaries[index]
+        est_winner = summary["winner_player_number"]
+        observed_winner = next_summary["server_player_number"]
+        summary["winner_player_number"] = observed_winner
+        summary["winner_source"] = "next_serve"
+        summary["winner_reason"] = "next_rally_serve_observed"
+        summary["winner_crosscheck_agrees"] = (
+            (est_winner == observed_winner) if est_winner is not None else None
+        )
+
+    observed_serve_count = sum(
+        1 for summary in rally_summaries if summary["server_source"] == "observed"
+    )
     return {
-        "method": "rally_gap_server_alternation",
+        "method": (
+            "rally_gap_observed_serves"
+            if observed_serve_count
+            else "rally_gap_server_alternation"
+        ),
         "rally_gap_seconds": rally_gap_seconds,
         "rally_gap_method": rally_gap_method,
         "first_server_player_number": first_server,
         "rally_count": len(rally_summaries),
         "assigned_front_wall_hit_count": len(assignable_hits),
+        "observed_serve_count": observed_serve_count,
         "rallies": rally_summaries,
     }
 
@@ -719,7 +847,7 @@ def build_player_target_zone_summaries(hits):
     return summaries
 
 
-def judge_hits(run_dir, results, detected, audio_available=None):
+def judge_hits(run_dir, results, detected, audio_available=None, serve_resolver=None):
     top_line = bottom_line = None
     service_line = None
     wall_corners = None
@@ -872,7 +1000,7 @@ def judge_hits(run_dir, results, detected, audio_available=None):
                     entry["floor_zone"] = court_model.floor_zone_for_point(x_ft, y_ft)
         hits.append(entry)
 
-    player_assignment = assign_front_wall_hit_players(hits)
+    player_assignment = assign_front_wall_hit_players(hits, serve_resolver=serve_resolver)
     if top_line is not None and service_line is not None:
         for entry in hits:
             if int(entry.get("rally_hit_sequence") or 0) != 1:
@@ -913,7 +1041,7 @@ def judge_hits(run_dir, results, detected, audio_available=None):
         # Serve OUT can change the rally winner and therefore the next rally's
         # inferred server. Re-run the deterministic assignment after applying
         # the first-contact serve rule.
-        player_assignment = assign_front_wall_hit_players(hits)
+        player_assignment = assign_front_wall_hit_players(hits, serve_resolver=serve_resolver)
     payload = {
         "hits": hits,
         "target_zones": build_target_zone_summary(hits),
@@ -945,6 +1073,23 @@ def floor_zones_from_run(run_dir):
 
 def sorted_rows(results):
     return [results[frame_idx] for frame_idx in sorted(results)]
+
+
+def _safe_resolver(resolver):
+    """Wrap a serve resolver so an exception inside it resolves to None
+    instead of propagating. assign_front_wall_hit_players calls resolver(...)
+    once per rally on both the try and except paths of the hit-judging block
+    below -- an uncaught exception there would fail the whole tracking job,
+    which is the one hole left in the person-layer degradation invariant
+    (build_person_pass already swallows detector-load failures,
+    PersonFramePass.observe already swallows detect() failures; this
+    resolver is built from *their* output and was the last uncaught path)."""
+    def wrapped(rally_hits):
+        try:
+            return resolver(rally_hits)
+        except Exception:
+            return None
+    return wrapped
 
 
 def run_tracking_job(run_id):
@@ -994,6 +1139,10 @@ def run_tracking_job(run_id):
             model = get_tracking_model()
             wall_x_range = tin_horizontal_range_from_run(run_dir)
 
+            person_pass = build_person_pass(source_fps, frame_stride)
+            if person_pass is not None:
+                update_job(run_id, message="Person detector: rfdetr")
+
             results = {}
             # A pass at stride > 1 only needs to be good enough to locate hit
             # candidates, so it can also run at a reduced inference width.
@@ -1006,6 +1155,7 @@ def run_tracking_job(run_id):
                 source_fps,
                 results,
                 make_progress_callback("Coarse pass"),
+                frame_observer=person_pass.observe if person_pass is not None else None,
             )
             write_results_csv(csv_path, results)
 
@@ -1110,6 +1260,16 @@ def run_tracking_job(run_id):
                     )
                     write_results_csv(csv_path, results)
 
+            serve_resolver = None
+            samples_by_track = None
+            ambiguity_times = []
+            if person_pass is not None:
+                samples_by_track = person_pass.tracker.samples()
+                ambiguity_times = person_pass.tracker.ambiguity_times()
+                serve_resolver = _safe_resolver(player_attribution.build_serve_resolver(
+                    samples_by_track, sorted_rows(results)
+                ))
+
             hits = []
             hits_error = None
             try:
@@ -1140,17 +1300,55 @@ def run_tracking_job(run_id):
                     results,
                     classified,
                     audio_available=audio_candidates is not None,
+                    serve_resolver=serve_resolver,
                 )
-                player_assignment = assign_front_wall_hit_players(hits)
+                player_assignment = assign_front_wall_hit_players(hits, serve_resolver=serve_resolver)
                 target_zones = build_target_zone_summary(hits)
                 target_zones_by_player = build_player_target_zone_summaries(hits)
                 floor_zones = floor_zones_from_run(run_dir)
             except Exception as error:
                 hits_error = str(error)
-                player_assignment = assign_front_wall_hit_players(hits)
+                player_assignment = assign_front_wall_hit_players(hits, serve_resolver=serve_resolver)
                 target_zones = build_target_zone_summary(hits)
                 target_zones_by_player = build_player_target_zone_summaries(hits)
                 floor_zones = None
+
+            players_v1 = None
+            if person_pass is not None:
+                confidences = player_attribution.rally_identity_confidences(
+                    ambiguity_times, player_assignment["rallies"]
+                )
+                for rally in player_assignment["rallies"]:
+                    rally["identity_confidence"] = confidences.get(rally["rally_number"])
+                write_track_samples(run_dir, samples_by_track, ambiguity_times)
+                serve_crop_relpath = None
+                crop_target = player_attribution.serve_crop_target(
+                    player_assignment, samples_by_track
+                )
+                if crop_target is not None:
+                    crop_frame_idx, crop_sample = crop_target
+                    crop_detection = person_model.PersonDetection(
+                        x=crop_sample.bbox[0], y=crop_sample.bbox[1],
+                        width=crop_sample.bbox[2], height=crop_sample.bbox[3],
+                        confidence=crop_sample.confidence, keypoints=(),
+                    )
+                    if person_model.save_person_crop(
+                        video_path, crop_frame_idx, crop_detection,
+                        run_dir / "players" / "serve_rally1.jpg",
+                    ):
+                        serve_crop_relpath = "players/serve_rally1.jpg"
+                players_v1 = player_attribution.build_players_v1(
+                    player_assignment,
+                    person_pass.stats(),
+                    detector_backend=person_pass.detector.backend,
+                    serve_crop_relpath=serve_crop_relpath,
+                )
+                if person_pass.detect_failures:
+                    players_v1["detector_error"] = person_pass.detect_error
+            else:
+                players_v1 = player_attribution.build_players_v1(
+                    player_assignment, None, detector_backend="none"
+                )
 
             job = get_job(run_id) or {}
             total_frames = int(job.get("total_frames", processed_frames or 1))
@@ -1168,6 +1366,7 @@ def run_tracking_job(run_id):
                 target_zones_by_player=target_zones_by_player,
                 player_assignment=player_assignment,
                 hits_error=hits_error,
+                players_v1=players_v1,
                 message="Tracking complete.",
                 **extra_fields,
             )

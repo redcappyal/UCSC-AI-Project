@@ -51,6 +51,7 @@ from job_runner import (
     is_serve_hit,
     request_cancel,
     start_tracking_job,
+    update_job,
 )
 from inference_engine import DEFAULT_MODEL_ID, TRACKING_BACKEND
 
@@ -139,6 +140,7 @@ def public_job(job):
         "target_zones",
         "target_zones_by_player",
         "player_assignment",
+        "players_v1",
         "rallies",
         "floor_zones",
         "calibration_warning",
@@ -1533,6 +1535,69 @@ def save_ground_truth(run_id):
         json.dumps(payload, indent=2), encoding="utf-8"
     )
     return jsonify({"ok": True, "count": len(cleaned)})
+
+
+PLAYER_NAME_MAX_CHARS = 40
+
+
+@app.post("/api/runs/<run_id>/players")
+def save_player_names(run_id):
+    """Post-hoc naming: map anonymous tracks A/B to typed names. Pure run
+    metadata — analysis never re-runs (spec §4.5)."""
+    # Sanitize once and reuse everywhere below. get_job/update_job build their
+    # own RUNS_DIR/<run_id>/job.json path from whatever id they're given
+    # (job_runner.get_job, job_runner.update_job) -- passing the raw run_id
+    # there while the directory check above uses the sanitized one means a
+    # run_id needing sanitization resolves to two different paths: the run
+    # dir exists (found via the sanitized path), but get_job(raw) can't find
+    # job.json and returns None, so the players_v1 update below silently
+    # no-ops. Worse, if that raw id were ever passed to update_job directly,
+    # its rehydrate-from-disk miss would create a permanent empty in-memory
+    # JOBS[raw_run_id] stub under a key nothing else ever looks up.
+    run_id = secure_filename(run_id)
+    run_dir = RUNS_DIR / run_id
+    if not run_dir.is_dir():
+        return error_response("Run was not found.", status=404)
+
+    # request.get_json(silent=True) returns None for a missing/invalid-JSON
+    # body. Checking this before the old `or {}` fallback matters: `or {}`
+    # would turn that None into an empty dict, which then sails through the
+    # isinstance(dict) check below and silently clears both names (every
+    # `data.get(track)` misses -> None) even though the request was
+    # malformed, not an intentional clear. An explicit `{"A": null, "B":
+    # null}` body still clears both names -- that's real and stays.
+    data = request.get_json(silent=True)
+    if data is None:
+        return error_response("Body must be a JSON object.")
+    if not isinstance(data, dict):
+        return error_response("Body must be a JSON object.")
+    if any(key not in ("A", "B") for key in data):
+        return error_response("Only tracks A and B can be named.")
+
+    names = {}
+    for track in ("A", "B"):
+        value = data.get(track)
+        if value is None:
+            names[track] = None
+            continue
+        if not isinstance(value, str):
+            return error_response("Names must be strings or null.")
+        value = value.strip()
+        if not value or len(value) > PLAYER_NAME_MAX_CHARS:
+            return error_response(
+                f"Names must be 1-{PLAYER_NAME_MAX_CHARS} characters."
+            )
+        names[track] = value
+
+    (run_dir / "player_names.json").write_text(
+        json.dumps(names, indent=2), encoding="utf-8"
+    )
+    job = get_job(run_id)
+    if job and isinstance(job.get("players_v1"), dict):
+        players_v1 = dict(job["players_v1"])
+        players_v1["player_names"] = names
+        update_job(run_id, players_v1=players_v1)
+    return jsonify({"ok": True, "player_names": names})
 
 
 CORRECTION_SCHEMA_VERSION = "corrections-v2"
