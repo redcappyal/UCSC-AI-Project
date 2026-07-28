@@ -1,42 +1,52 @@
-# DESIGN.md — Squash Line Calling
+# DESIGN.md — CrossCourt
 
-Design system and UI rulebook for the Squash Line Calling app (`index.html`, single-file
+Design system and UI rulebook for the CrossCourt app (`index.html`, single-file
 mobile web app). This document is the **single source of truth for all UI and front-end
 work**. Any agent or human touching the UI must follow it exactly. When code and this
 document disagree, fix the code (or update this document deliberately in the same PR —
 never silently drift).
 
-The aesthetic in one sentence: **a referee's instrument with a broadcast-sports finish** —
-OLED-black stage, one loud accent, neon functional markers over film strips, giant tabular
-numerals, capsule controls, and a floating liquid-glass tab bar.
+**2026-07-28: the design-lab language was adopted.** The visual system below is the one
+prototyped in `design-lab/crosscourt-lab.html` (TennisIQ-derived) and ported into the
+app wholesale: soft canvas, white cards on soft shadows, one lime accent, ink-dark hero
+cards, and an icon-only dark dock. The pre-port system (OLED black, yellow accent,
+Chakra Petch, liquid glass) is history — do not reintroduce it.
+
+The aesthetic in one sentence: **a training companion with a modern sports-app finish** —
+soft canvas, floating white cards, one lime accent, ink-dark hero panels, neon functional
+markers over film strips, giant tabular numerals, capsule controls, and a floating dark
+icon dock.
 
 ---
 
 ## 0. TL;DR — the 12 binding rules
 
-1. **Dark-first, OLED black.** Page background is pure `#000` (dark). Every element must
-   also work in the light theme via tokens — never hardcode a themed color.
-2. **One accent.** Yellow `--accent-bg: #ffd60a` with black text is the *only* accent.
+1. **Two first-class themes.** Default follows the system; light is the reference look
+   (`--bg:#F1F2F4` canvas, white cards), dark is its ink twin (`--bg:#0E0F11`). Every
+   element must work in both via tokens — never hardcode a themed color.
+2. **One accent.** Lime `--accent-bg: #D9F04A` with ink text is the *only* accent.
    Never introduce a second accent; every other color must carry a semantic meaning
    defined in §5.
-3. **Color = meaning.** Green/red are reserved for IN/OUT verdicts. Cyan/lime are reserved
-   for fitted calibration edges. Neon marker hues are reserved for event types. Never use
-   these decoratively, and never let color be the only carrier of a meaning — always pair
-   with a text label or icon.
-4. **Capsules and cards only.** Controls are pill-shaped (`border-radius:999px`);
-   containers use the radius scale in §4.4. No sharp-cornered UI.
-5. **Chakra Petch, three weights.** 400 / 600 / 700, self-hosted from `/fonts`. Never load
-   a font (or anything else) from a CDN — the app must work offline on court.
+3. **Color = meaning.** Green/red are reserved for IN/OUT verdicts. Cyan/lime-yellow are
+   reserved for fitted calibration edges. Neon marker hues are reserved for event types.
+   Never use these decoratively, and never let color be the only carrier of a meaning —
+   always pair with a text label or icon.
+4. **Capsules and soft cards only.** Controls are pill-shaped (`border-radius:999px`);
+   containers use the radius scale in §4.4 (24 px cards) with the §4 shadow tokens.
+   No sharp-cornered UI.
+5. **System type stack.** `-apple-system / SF Pro Text` with weights 400–800; no webfonts,
+   no CDN assets of any kind — the app must work offline on court.
 6. **44 pt minimum touch targets** (Apple HIG). `min-height:44px` and ≥44 px effective
-   width on every tappable control; primary actions are 48 px.
-7. **Uppercase controls, sentence-case guidance.** Button/step labels are uppercase with
-   `letter-spacing:.05em`; instructions and status text are sentence case in `--dim`.
+   width on every tappable control; primary actions are 46–48 px.
+7. **Sentence-case controls, tight tracking.** Buttons and titles are sentence case with
+   `letter-spacing:-.01em`; uppercase survives only in micro-labels, chips/tags, and
+   telemetric overlays (ANALYZING…, state chips), with positive tracking.
 8. **Tabular numerals everywhere numbers move.** `font-variant-numeric:tabular-nums` on
    timecodes, counters, stats, and readouts.
 9. **No layout shift.** Reserve space for anything that appears/disappears (see the
    verdict box pattern, §8.7). Showing a result must never push the page around.
 10. **Direct manipulation, video-editor grammar.** Timelines are film strips that slide
-    under a **center-fixed white playhead**; trimming uses yellow handles; markers are
+    under a **center-fixed white playhead**; trimming uses accent handles; markers are
     opaque neon bars with a dark hairline and soft glow.
 11. **Respect the shell.** Every screen is a phase `<section>` inside the fixed
     header / stage / main / nav-pill shell (§3). Don't invent new navigation chrome.
@@ -72,22 +82,25 @@ Design decisions follow from that:
 
 ## 2. Aesthetic direction (mood-board translation)
 
-The mood board (sports play-by-play, F1 fantasy dashboard, training-load apps, iOS video
-editors) translates into these concrete motifs — all already in the codebase:
+The reference is the design lab (`design-lab/crosscourt-lab.html`, TennisIQ-derived
+training-app language). Its motifs, all now in the codebase:
 
-| Mood-board motif | Our implementation |
+| Lab motif | Our implementation |
 |---|---|
-| OLED-black dashboards with one hot accent | `--bg:#000`, yellow accent capsules |
-| Giant stat numerals (`121 PTS`, `41.1`) | Verdict 28 px, zone percentages 26 px, 700 weight, tabular |
-| Play-by-play event feed with OUT chips | Hit timeline markers + verdict states |
-| Video-editor trim UI (yellow handles, filmstrip, white playhead) | `.clipEditor`, `.clipHandle`, center-fixed `#clipCursor` |
-| Segmented duration controls (`15/30/60 sec`, `7D/30D/3M`) | `.corrSeg` two-way segment (§8.18) |
-| Bottom toolbar of icon+label actions | `#navPill` liquid-glass section tab bar |
+| Soft canvas, white cards on soft shadows | `--bg` canvas + `.card`/`.targetZones` with `--shadow-card` |
+| One lime accent on ink | `--accent-bg:#D9F04A` capsules, active dock circle, trim handles |
+| Ink-dark hero panel with stat tiles + progress ring | `.hero` + `.statgrid`/`.stattile` + `.ringbadge` |
+| Giant stat numerals (`68%`, `84`) | Verdict 28 px, stat tiles 22 px, gauge 30 px, 700 weight, tabular |
+| Tinted status chips (good/avg/poor) | `.chip.good/.avg/.poor` on `--tint-*` pairs |
+| Video-editor trim UI (accent handles, filmstrip, white playhead) | `.clipEditor`, `.clipHandle`, center-fixed `#clipCursor` |
+| Segmented range controls (`1W/1M/3M/6M`) | `.seg` segmented control, `.corrSeg` two-way segment (§8.18) |
+| Floating dark icon dock | `#navPill` section dock (§8.3) |
+| Expandable session cards with gauge + feedback rows | `.clipcard` on the Analysis root |
 | Zone/heat charts on a literal court | `.targetCourt` front-wall chart, `#floorMapSvg` bounce map |
-| Squared "telemetry" typeface | Chakra Petch |
 
-Tone target: **broadcast sports-tech** (F1/fitness screens), *not* consumer-cute. No
-gradients-for-fun, no glassmorphism outside the nav pill, no illustration style. The only
+Tone target: **modern training companion** (TennisIQ-class sports apps) — warm but not
+consumer-cute. No gradients-for-fun (run-thumb gradients on Analysis cards are the
+sanctioned exception), no glassmorphism anywhere, no illustration style. The only
 "physical" rendering allowed is the miniature squash court (§8.10), which is deliberately
 literal (plaster wall, wood floor, red court lines).
 
@@ -116,14 +129,14 @@ iOS app in Safari (add-to-home-screen capable).
 #instr          one-line contextual instruction strip (dim), directly under header
 #stage          flex-growing black canvas area: video frame, overlays, zoom controls
 <main>          the current phase <section> (controls, timelines, cards)
-#navPill        floating liquid-glass section tab bar, bottom-center (section roots only)
+#navPill        floating dark icon dock, bottom-center (section roots only)
 ```
 
-- Header: `min-height:56px`, padding `8px 14px`, gap 10. Step label = uppercase 16/700,
-  `letter-spacing:.05em`, ellipsizes.
-- `<main>` padding: `12px 14px calc(70px + env(safe-area-inset-bottom))` — the bottom
-  clearance keeps content above the nav pill. Never remove the safe-area term.
-- Nav pill sits at `bottom:calc(12px + env(safe-area-inset-bottom))`.
+- Header: `min-height:56px`, padding `8px 16px`, gap 10. Step label = 17/700,
+  `letter-spacing:-.02em`, ellipsizes.
+- `<main>` padding: `12px 14px calc(92px + env(safe-area-inset-bottom))` — the bottom
+  clearance keeps content above the nav dock. Never remove the safe-area term.
+- Nav dock sits at `bottom:calc(14px + env(safe-area-inset-bottom))`.
 - **Shell embed:** when loaded inside the native iOS shell the URL hash carries
   `shell=1`, which adds `body.shell-embed` and hides `#navPill` — the app's own
   tab bar owns section navigation there. Everything else renders unchanged;
@@ -143,10 +156,10 @@ native equivalent, so "Record a clip" takes the accent slot there.
 Each screen is a `<section id="p-…">` inside `<main>`, toggled with `.hidden`. The current
 phases: `p-load`, `p-record`, `p-frame`, `p-tap`, `p-review`, `p-tap-floor`, `p-clip`,
 `p-analyze`, `p-track`, `p-player1-report`, `p-player2-report`, `p-label`, `p-target`,
-and the roadmap phases
-`p-matches`, `p-coach`, `p-live`, `p-stats`, `p-shot-bot`, `p-sharing` (blueprints in §16). To add a
-screen, add a section and follow §17 — never add a second header, tab bar, or routing
-chrome beyond the §8.3 nav pill.
+the section roots `p-matches` (Analysis), `p-coach` (Training), `p-progress`, and the
+roadmap placeholders `p-live`, `p-stats`, `p-shot-bot`, `p-sharing` (blueprints in §16).
+To add a screen, add a section and follow §17 — never add a second header, tab bar, or
+routing chrome beyond the §8.3 nav dock.
 
 ### 3.4 The proxied-primary pattern
 
@@ -176,18 +189,28 @@ canonical set:
 
 ```css
 :root{ color-scheme:dark;
-  --bg:#000;            /* page + letterbox background (OLED black) */
-  --surface:#1c1c1e;    /* raised containers, secondary buttons (iOS systemGray6-dark) */
-  --line:#26262a;       /* hairlines, borders, tertiary fills, pressed state */
-  --dim:#98989f;        /* secondary text, inactive controls */
-  --text:#fff;          /* primary text */
-  --accent-bg:#ffd60a;  /* THE accent (iOS yellow-dark). Always with --accent-text */
-  --accent-text:#000;
+  --bg:#0E0F11;         /* page canvas (ink) */
+  --surface:#1B1C1F;    /* cards, raised containers, secondary buttons */
+  --line:#26272B;       /* hairlines, borders, tertiary fills */
+  --dim:#9A9DA5;        /* secondary text, inactive controls */
+  --text:#F4F5F7;       /* primary text */
+  --accent-bg:#D9F04A;  /* THE accent (lab lime). Always with --accent-text */
+  --accent-text:#141517;
+  --accent-soft:#2E321C;/* soft accent fill for icon circles */
+  --hero:#141517; --hero-text:#fff;  /* ink hero card — same in both themes */
+  --tile:#26272B;       /* stat tiles inside the hero */
+  --tint-good-bg:#20301F; --tint-good-fg:#8FD98A;   /* status chips (data, not verdicts) */
+  --tint-avg-bg:#332B14;  --tint-avg-fg:#E5B95C;
+  --tint-poor-bg:#361D19; --tint-poor-fg:#EF8A76;
+  --shadow-card:0 1px 2px rgba(0,0,0,.25), 0 10px 30px rgba(0,0,0,.35);
+  --shadow-btn:0 1px 2px rgba(0,0,0,.3), 0 4px 14px rgba(0,0,0,.35);
+  --seg-bg:#26272B;     /* segmented-control track */
+  --nav-bg:#1B1C1F;     /* dark dock (nav + call tabs) — same in both themes */
   --strip-bg:#000;      /* filmstrip + stage wells */
   --tick:rgba(255,255,255,.12);
   --out:#35e0ff;        /* fitted OUT-line edge (calibration) — cyan */
   --service:#ff9f43;    /* fitted SERVICE-line edge (calibration) — amber */
-  --tin:#b4ff3a;        /* fitted TIN edge (calibration) — lime */
+  --tin:#b4ff3a;        /* fitted TIN edge (calibration) — lime-yellow */
   --in:#2ecc5e;         /* IN verdict fill  (verdicts ONLY) */
   --outcall:#e03a2f;    /* OUT verdict fill (verdicts ONLY) */
   --mk-racket:#22d3ee;  /* timeline marker: racket hit */
@@ -197,20 +220,29 @@ canonical set:
 }
 ```
 
-### 4.2 Color tokens — light overrides
+### 4.2 Color tokens — light overrides (the reference look)
 
 ```css
 :root[data-theme="light"]{ color-scheme:light;
-  --bg:#f5f5f7; --surface:#e9e9ee; --line:#e0e0e5; --dim:#6e6e76; --text:#000;
-  --accent-bg:#ffd60a; --accent-text:#000;      /* accent is theme-invariant */
-  --strip-bg:#e3e3e8; --tick:rgba(0,0,0,.14);
+  --bg:#F1F2F4; --surface:#FFFFFF; --line:#EFF0F3; --dim:#8E9199; --text:#141517;
+  --accent-bg:#D9F04A; --accent-text:#141517;   /* accent is theme-invariant */
+  --accent-soft:#ECF3C6;
+  --hero:#141517; --hero-text:#fff; --tile:#26272B;   /* hero stays ink in light */
+  --tint-good-bg:#E7F4E9; --tint-good-fg:#2E7D3E;
+  --tint-avg-bg:#FCF3DC;  --tint-avg-fg:#A06E00;
+  --tint-poor-bg:#FBE7E4; --tint-poor-fg:#B3402F;
+  --shadow-card:0 1px 2px rgba(16,17,20,.03), 0 10px 30px rgba(16,17,20,.05);
+  --shadow-btn:0 1px 2px rgba(16,17,20,.04), 0 4px 14px rgba(16,17,20,.06);
+  --seg-bg:#E7E8EC; --nav-bg:#1B1C1F;
+  --strip-bg:#E3E4E8; --tick:rgba(0,0,0,.14);
   --out:#007da6; --service:#a84f00; --tin:#557a00;  /* darkened for contrast on light */
 }
 ```
 
-Rules: verdict (`--in`/`--outcall`), marker hues, and the accent are theme-invariant.
-Any token that renders on `--bg`/`--surface` needs a light override that keeps ≥ 4.5:1
-contrast for text and ≥ 3:1 for UI shapes.
+Rules: verdict (`--in`/`--outcall`), marker hues, the accent, and the hero/dock inks
+(`--hero`, `--tile`, `--nav-bg`) are theme-invariant. Any token that renders on
+`--bg`/`--surface` needs a light override that keeps ≥ 4.5:1 contrast for text and
+≥ 3:1 for UI shapes.
 
 ### 4.3 Canvas / overlay palette (JS-drawn, non-token by necessity)
 
@@ -225,17 +257,19 @@ Values drawn on the video canvas and SVG overlays. These are fixed — reuse, do
 | `#9aa0a6` | neutral gray annotation |
 | `#f5f5f5` | playhead white (always with `0 0 0 1px rgba(0,0,0,.45)` hairline) |
 | `rgba(0,0,0,.55–.62)` | scrims (analyzing overlay, trim shades) |
-| `rgba(255,214,10,.9)` | accent-colored canvas overlay (matches `--accent-bg`) |
+| `rgba(217,240,74,.9)` / `#D9F04A` | accent-colored canvas overlay (matches `--accent-bg`) |
 
 ### 4.4 Radius scale
 
 | Token (use literally) | Use |
 |---|---|
 | `999px` | all buttons, pills, chips, segmented containers, progress bars |
-| `14px` | verdict box |
-| `12px` | error banner, text/number inputs |
-| `10px` | progress box |
-| `8px` | film strips, cards, court containers, floor diagram |
+| `50%` | icon circles, dock buttons, play buttons |
+| `24px` | page-level cards (`.card`, `.targetZones`, hero, placeholder hero) |
+| `18px` | secondary cards (feature cards, delta tiles, rail cards, verdict box, error banner, progress box) |
+| `14px` | inner tiles (stat tiles, `.scol`, `.coachMetric`, thumbs), inputs, selects |
+| `12px` | wall-corner list chips |
+| `8px` | film strips, floor diagram, serve crop |
 | `6px` | trim selection frame |
 | `4px` | tiny tags (court text), viewport indicators |
 
@@ -247,8 +281,8 @@ row gap `10`; chip gap `6`.
 
 ### 4.6 Type, weight, motion tokens
 
-See §6 (type scale) and §10 (motion table). Weights available: **400, 600, 700** only
-(three self-hosted woff2 files, `font-display:swap`, system-stack fallback).
+See §6 (type scale) and §10 (motion table). System stack; weights **400, 500, 600, 700,
+800** (500 for quiet tile labels, 800 for gauge/metric numerals only).
 
 ---
 
@@ -258,9 +292,11 @@ See §6 (type scale) and §10 (motion table). Weights available: **400, 600, 700
 
 `--bg` (page) → `--strip-bg` (media wells) → `--surface` (raised) → `--line` (hairline /
 pressed) → `--dim` (secondary ink) → `--text` (primary ink). Depth comes from these fills
-and 1 px `--line` borders — **not** from drop shadows. The only shadows allowed: the nav
-pill's ambient shadow, marker/playhead hairlines+glows, and the court miniature's internal
-shadows.
+plus the two shadow tokens: `--shadow-card` on cards and `--shadow-btn` on raised
+controls — always the tokens, never ad-hoc shadows. `1px --line` borders mark *inner*
+tiles and ghost buttons, not page-level cards. Other sanctioned shadows:
+the dock's ambient shadow, marker/playhead hairlines+glows, and the court miniature's
+internal shadows.
 
 ### 5.2 Semantic families (never cross the streams)
 
@@ -271,6 +307,7 @@ shadows.
 | **Calibration edges** | `--out` (cyan), `--service` (amber), `--tin` (lime) | fitted line overlays on the frame + inline references to them (`#instr b.out/.service/.tin`) |
 | **Event markers** | `--mk-racket` cyan, `--mk-floor` amber, `--mk-side` purple, `--mk-unknown` gray | timeline bars + legend dots + label buttons. Single source of truth for both. `--mk-unknown` also renders an unclassified or no-call event — not a verdict, so it stays in this family, not the Verdict one. |
 | **Status (canvas)** | §4.3 greens/golds/reds | JS-drawn annotations only |
+| **Quality tints** | `--tint-good/avg/poor` bg+fg pairs | `.chip` status chips and trend deltas — *data quality*, not verdicts. Deliberately soft pastel pairs so they can never be mistaken for the loud verdict fills. |
 
 The distinction between **calibration hues (where the lines are)** and **green/red (what
 the call is)** is intentional and load-bearing. Never "simplify" them into one family.
@@ -283,7 +320,7 @@ borrowing `--in`/`--outcall` (§8.17 is the worked example).
 
 ### 5.3 Contrast requirements
 
-- Body/primary text: ≥ 4.5:1 against its fill (white on `#1c1c1e` ✓, black on yellow ✓).
+- Body/primary text: ≥ 4.5:1 against its fill (`--text` on `--surface` ✓, ink on lime ✓).
 - `--dim` is for secondary information only — never for values the user must read to act
   (timecode values, stats render in `--text`).
 - Anything drawn over video thumbnails needs a dark hairline (`0 0 0 1px rgba(0,0,0,.45)`)
@@ -294,9 +331,9 @@ borrowing `--in`/`--outcall` (§8.17 is the worked example).
 
 ## 6. Typography
 
-**Family:** `'Chakra Petch', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
-sans-serif`. Self-hosted at `/fonts/chakra-petch-{400,600,700}.woff2`. Never add another
-family or weight; never fetch fonts remotely.
+**Family:** `-apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto,
+sans-serif` with `-webkit-font-smoothing:antialiased`. No webfonts — never fetch fonts
+remotely.
 
 **Base:** 16 px / 1.4 line-height on `body`.
 
@@ -304,29 +341,34 @@ family or weight; never fetch fonts remotely.
 
 | Role | Spec | Used by |
 |---|---|---|
+| Gauge numeral | 30 / 800, tabular | Analysis gauge center |
 | Verdict word | 28 / 700, uppercase, tracking `.04em` | `.verdict strong` |
-| Stat numeral | 26 / 700, tabular | `.targetPct` |
+| Stat numeral | 26 / 700, tabular | `.targetPct`, `.trend .val` |
+| Tile numeral | 20–22 / 700, tabular | `.stattile .sv`, `.scol .sv`, `.coachMetric span` |
 | Overlay status | 22 / 700, uppercase, tracking `.14em` | `.analyzePulse` |
-| Page title | 21 / 700, centered | `h2` |
-| Card title | 18 / 700 | `.targetHead strong` |
+| View title | 20 / 700, tracking `-.02em` | `h2`, `.viewhead h2` |
+| Step label | 17 / 700, tracking `-.02em` | `#stepLabel` |
 | Input value | 17 / 400, tabular | `input[type=number]` |
-| Step label | 16 / 700, uppercase, tracking `.05em` | `#stepLabel` |
 | Body | 16 / 400 | default |
-| Control / instruction | 15 / 600–700 (controls) · 15 / 400 dim (guidance) | buttons, `.instruction`, `#floorPrompt` |
+| Card title | 15 / 600, tracking `-.01em` | `.cardtitle`, `.targetHead strong`, `.hubHead` |
+| Instruction / guidance | 15 / 400 dim | `.instruction`, `#floorPrompt` |
+| Control | 14 / 600, tracking `-.01em` | buttons, `.pill`, row names |
 | Meta / status / readout | 14 / 400 dim; values 600 `--text`, tabular | `.status`, `.stat`, `.tlReadout`, `.sliderlabel` |
-| Caption / small control | 13 / 600 | `button.small`, `.nudgeLabel`, `.targetMeta strong` |
-| Chip / tag | 12 / 600 | correction chips, `.courtText` |
-| Micro / debug | 11 / 600, uppercase, tracking `.06em` | `.devHead` |
+| Caption / small control | 13 / 600 | `button.small`, `.nudgeLabel`, `.fbrow .t` |
+| Sub-meta | 12 / 400–600 dim | `.metaline`, descriptions, `.targetHead span` |
+| Chip / tag | 10–12 / 600–700, uppercase, tracking `.04em` | `.chip`, `.statechip`, `.fcTag`, `.courtText` |
+| Micro / debug | 11 / 600, uppercase, tracking `.06em` | `.devHead`, tile labels (500, no caps) |
 
 ### 6.2 Rules
 
-- **Uppercase = interactive or telemetric** (buttons, step labels, overlay status).
-  **Sentence case = guidance** (instructions, prompts, statuses). Never uppercase a
-  paragraph.
+- **Sentence case everywhere words act** (buttons, titles, controls) with tight negative
+  tracking (`-.01em`/`-.02em`). **Uppercase survives only in micro-labels, chips/tags,
+  and telemetric overlays** (ANALYZING…, IN/OUT verdict words, state chips), always with
+  positive tracking. Never uppercase a paragraph.
 - `font-variant-numeric:tabular-nums` on every number that updates in place.
-- Big-number pattern (mood board): huge 700-weight numeral + small dim label *below or
+- Big-number pattern (lab): huge 700–800-weight numeral + small dim label *above or
   beside*, never a big label.
-- Letter-spacing only per the scale above; never negative tracking.
+- Letter-spacing only per the scale above.
 
 ---
 
@@ -350,18 +392,21 @@ family or weight; never fetch fonts remotely.
 ## 8. Component library
 
 Recipes below are the canonical implementations — copy the pattern, don't fork it.
-All buttons inherit: uppercase, `letter-spacing:.05em`, `border-radius:999px`, flex-center
-content, `cursor:pointer`, `:disabled{opacity:.4}` (never a different disabled color).
+All buttons inherit: sentence case, `letter-spacing:-.01em`, `border-radius:999px`,
+flex-center content, `cursor:pointer`, `:disabled{opacity:.4}` (never a different
+disabled color), `:active{filter:brightness(.97)}`.
 
 ### 8.1 Buttons
 
 | Variant | Spec | Use |
 |---|---|---|
-| **Primary** (`button.primary`, `label.filebtn`) | yellow fill, black text, 15/700, `min-height:48px`, full-width | the phase's main action (usually proxied) |
-| **Secondary** (default `button`) | `--surface` fill, `--text`, 15/600, `min-height:48px`, full-width | alternate actions (`Target zones`) |
-| **Small** (`button.small`) | width:auto, `min-height:44px`, 13/600, padding `8px 14px` | inline utilities (`Skip landmark`, `Dismiss`) |
-| **Header pill** (`.pill`) | yellow, width:auto, `min-height:40px`, padding `0 18px`, 15/700, `:disabled{opacity:.35}` | header action only |
-| **Chip** (`.correctionRow button`) | width:auto, `min-height:34px`, 12/600, `1px --line` border, transparent; `.active` = yellow fill + 700 | dense multi-choice rows (corrections) |
+| **Primary** (`button.primary`, `label.filebtn`) | lime fill, ink text, 14/600, `min-height:46px`, full-width, no shadow | the phase's main action (usually proxied) |
+| **Secondary** (default `button`) | `--surface` fill + `--shadow-btn`, `--text`, 14/600, `min-height:46px`, full-width | alternate actions |
+| **Small / ghost** (`button.small`, `button.ghostbtn`) | width:auto, transparent, `1px --line` border, no shadow, 12–13/600 | inline utilities (`Skip landmark`, `Dismiss`, `Watch source video`) |
+| **Header pill** (`.pill`) | lime, width:auto, `min-height:40px`, padding `0 18px`, 14/600, `:disabled{opacity:.35}` | header action only |
+| **Start chip** (`button.startchip`) | lime, `min-height:32px`, padding `6px 16px`, 12/600, right-aligned in list rows | row-level actions in `.lrow` lists |
+| **Chip** (`.correctionRow button`) | width:auto, `min-height:34px`, 12/600, `1px --line` border, transparent; `.active` = lime fill + 700 | dense multi-choice rows (corrections) |
+| **Segmented** (`.seg`) | one `--seg-bg` capsule track, equal-flex 34 px pill buttons, active = `--surface` fill + small shadow | range/mode pickers (1W/1M/3M/6M) |
 | **Two-way segment** (`.corrSeg`) | two separate equal-width pills, 6 px gap, no shared container; unselected `1px --line` transparent, selected `--accent-bg`/`--accent-text` 700 — full rules in §8.18 | binary choices (Bounce / Not bounce) |
 | **Stepper** (`.stepper button`) | 44×44 transparent circle, 26/400 glyph (−/+), `:active{background:var(--line)}`; groups divided by `1px --line`; center `.stepUnit` 13 dim label (`1 s`, `1 fr`) | frame/second nudging |
 | **Play** (`.playBtn`) | stepper-style circle with 22×22 stroke SVG | transport |
@@ -381,25 +426,27 @@ screen (hidden only on `load` itself, where you are already home). Both are head
 affordances on the single shell header — not new nav chrome (§18): the §8.3 nav pill
 remains the only section router.
 
-### 8.3 Nav pill (liquid glass — the only glass in the app)
+### 8.3 Nav dock (`#navPill` — dark, icon-only)
 
 ```css
-#navPill{position:fixed; left:50%; bottom:calc(12px + env(safe-area-inset-bottom));
-  transform:translateX(-50%); z-index:40; display:flex; gap:4px; padding:5px;
-  border-radius:999px;
-  background:color-mix(in srgb, var(--surface) 62%, transparent);
-  backdrop-filter:blur(20px) saturate(1.5);
-  border:1px solid color-mix(in srgb, var(--text) 14%, transparent);
-  box-shadow:0 12px 32px rgba(0,0,0,.4)}
+#navPill, .callTabs{position:fixed; left:50%; bottom:calc(14px + env(safe-area-inset-bottom));
+  transform:translateX(-50%); z-index:40; display:flex; gap:2px; padding:7px;
+  border-radius:999px; background:var(--nav-bg);
+  box-shadow:0 18px 36px rgba(16,17,20,.28)}
+#navPill button{width:46px; height:46px; border-radius:50%;
+  color:rgba(255,255,255,.55)}
+#navPill button.active{background:var(--accent-bg); color:var(--accent-text)}
 ```
 
-Items: icon (17×17) + 13 px label, `min-height:44px`, dim → `.active` yellow capsule.
-The pill is the app's **section tab bar** — exactly 3 items: **Play · Matches · Coach**,
-the top-level sections (not judge/label modes; Label mode lives in the Play dev row,
-§8.15). Visible only on the three section roots (`p-load`, `p-matches`, `p-coach`);
-hidden inside flows and sub-pages. Back chevron is hidden on section roots (they are
-siblings — the pill switches between them) and shown everywhere else. The glass recipe
-above is unchanged.
+The dock is ink-dark in **both** themes (`--nav-bg`), icon-only 46 px circles (20×20
+icons, labels present in markup for a11y but visually hidden — every button carries an
+`aria-label`), active = lime circle. It is the app's **section tab bar** — exactly 4
+items: **Dashboard · Analysis · Training · Progress** (not judge/label modes; Label mode
+lives in the Dashboard dev row, §8.15). Visible only on the four section roots
+(`p-load`, `p-matches`, `p-coach`, `p-progress`); hidden inside flows and sub-pages.
+Back chevron is hidden on section roots (they are siblings — the dock switches between
+them) and shown everywhere else. `.callTabs` (Review/Challenge) shares the dock shell
+but keeps its text labels. No glass anywhere — the dock is opaque.
 
 ### 8.4 Inputs
 
@@ -414,21 +461,23 @@ above is unchanged.
 
 ### 8.5 Progress (`.progressbox`)
 
-Bordered box (radius 10) containing `.stat` rows (14 px, dim label / value right) and a
-10 px pill track with yellow fill; width transitions `.18s ease`. Indeterminate = 35 %
-yellow segment sweeping via `slidebar` 1.1 s ease-in-out infinite. Always prefer real
+Surface card (radius 18, `--shadow-card`) containing `.stat` rows (14 px, dim label /
+value right) and a 10 px pill track with accent fill; width transitions `.18s ease`.
+Indeterminate = 35 % accent segment sweeping via `slidebar` 1.1 s ease-in-out infinite.
+Always prefer real
 numbers (frames, fps, ETA) over indeterminate when known.
 
 ### 8.6 Error banner (`#errBanner`)
 
-Fixed top (z 30), `--surface` fill, radius 12, 15/700 message + small "Dismiss" button in
-`--line`. No red fills for errors (red = OUT verdict); errors are calm surface + bold text.
+Fixed top (z 30), `--surface` fill, radius 18, `--shadow-card`, 15/600 message + small
+"Dismiss" button in `--seg-bg`. No red fills for errors (red = OUT verdict); errors are
+calm surface + bold text.
 
 ### 8.7 Verdict box (`.verdict`) — reserved-height pattern
 
-Radius 14, centered, `min-height:78px`, 13 px caption + 28 px `strong` word. Four states:
+Radius 18, centered, `min-height:78px`, 13 px caption + 28 px `strong` word. Four states:
 `.in` (green fill, `#03230c` ink) · `.out` (red fill, white ink) · `.neutral` (surface +
-border, for event classifications) · `.blank` (transparent + dashed `--line` border, dim —
+`--shadow-card`, for event classifications) · `.blank` (transparent + dashed dim border —
 placeholder so the box always occupies identical space). Never show/hide the box itself.
 
 Above the verdict word sits `.verdictPlayer` — 13/800 uppercase, tracking `.04em`,
@@ -450,8 +499,8 @@ Three-tier pattern, video-editor grammar:
    playhead itself never moves. `touch-action:none; cursor:grab`.
 3. **Readout** (`.tlReadout`): centered 14 px dim, tabular values in 600 `--text`.
 
-**Trim:** darkened shades `rgba(0,0,0,.62)` outside the selection; 3 px yellow selection
-frame (radius 6); 14 px yellow side handles with a dark center grip, `cursor:ew-resize`;
+**Trim:** darkened shades `rgba(0,0,0,.62)` outside the selection; 3 px accent selection
+frame (radius 6); 14 px accent side handles with a dark center grip, `cursor:ew-resize`;
 off-view handles drop to `.35` opacity. Nudge rows pair a 78 px label column with stepper
 groups.
 
@@ -471,11 +520,18 @@ Verdict markers use `--in`/`--outcall`; event markers use the `--mk-*` hues; sel
 finish (opaque core + dark hairline + soft same-hue glow) so it sits crisply over
 thumbnails next to the white playhead.
 
-### 8.9 Cards (`.targetZones` pattern)
+### 8.9 Cards (`.card` / `.targetZones` pattern)
 
-`--surface` fill, `1px --line` border, radius 8, header row (`12px 14px` padding, bottom
-hairline, 18/700 title + 13 dim meta right), body content, and an optional 2-column
-`.targetMeta` footer (13 dim `strong` labels above 15 px values).
+`--surface` fill, **no border**, radius 24, `--shadow-card`. Two shapes:
+
+- **Plain card** (`.card`): 16 px padding, `.cardtitle` (15/600) heading inline with the
+  content. Used by the lab surfaces (weekly report, trend cards, best-mark row).
+- **Headed card** (`.targetZones`): header row (`14px 16px` padding, bottom `--line`
+  hairline, 15/600 title + 12 dim meta right), body content, and an optional 2-column
+  `.targetMeta` footer (13 dim `strong` labels above 15 px values).
+
+Inner tiles inside either shape (`.scol`, `.coachMetric`, `.mvtile`-style) are
+`1px --line` bordered, radius 14, transparent — depth never stacks two shadows.
 
 ### 8.10 Court visualizations (the sanctioned "literal" art)
 
@@ -486,7 +542,7 @@ hairline, 18/700 title + 13 dim meta right), body content, and an optional 2-col
 - **Floor bounce map** (`#floorMapSvg`): flat SVG court, `--dim` lines (stroke .28),
   `#f5c518` bounce dots with dark stroke.
 - **Floor wizard diagram** (`#floorDiagram`, 118 px): `--surface` card; marks progress
-  through landmarks — dim → `active` yellow (pulsing radius) → `done` `#3ddc84` →
+  through landmarks — dim → `active` accent (pulsing radius) → `done` `#3ddc84` →
   `warned` `#f5c518`.
 - **Mini court** (`.mini-court`, post-rally replay): the two-camera trajectory over a flat
   court outline — a plan view (from above: court width × depth) and a side elevation
@@ -530,17 +586,17 @@ tokens.
 ### 8.13 Feature cards (hub pages)
 
 `.featureCard` — the tappable card variant: a `<button>` on the §8.9 card recipe.
-`--surface` fill, `1px --line` border, radius 8, full width, `min-height:56px`, padding
-`12px 14px`, flex row, gap 10, text-align left. Contents, left → right:
+`--surface` fill, `--shadow-card`, radius 18, full width, `min-height:56px`, padding
+`12px 14px`, flex row, gap 12, text-align left. Contents, left → right:
 
-- 24 px line icon (§9 grammar) in `--dim`;
-- title 16/700 **normal case** + one-line 13/400 `--dim` description (cards are content,
-  not controls — the uppercase rule applies only to the tag);
-- right-aligned phase tag: 12/600 uppercase `--dim` (`PHASE 4`, `SOON`).
+- line icon (§9 grammar) inside a 36 px `--bg` icon circle;
+- title 14/600 + one-line 12/400 `--dim` description;
+- right-aligned phase tag: 11/600 uppercase chip (`--bg` fill, radius 999) — `PHASE 4`,
+  `SOON`.
 
-`:active` = instant `--line` fill (0 ms, §10). The whole card is one target, ≥ 44 pt.
+`:active` = instant `brightness(.97)` (0 ms, §10). The whole card is one target, ≥ 44 pt.
 
-Feature cards live on **hub pages** (currently the Coach hub, `p-coach`). Hubs carry no
+Feature cards live on **hub pages** (currently the Training hub, `p-coach`). Hubs carry no
 guidance copy — the cards are the page. They navigate to sub-pages via `setPhase()` — this is
 sanctioned drill-down navigation, **not** nav chrome: the nav pill stays a section tab
 bar (§8.3) and §3.3/§18 still hold.
@@ -548,51 +604,48 @@ bar (§8.3) and §3.3/§18 still hold.
 ### 8.14 Placeholder pages
 
 `.placeholderHero` — the §13 `.blank` dashed treatment scaled to a page: dashed
-`1px --line` border, radius 8, `min-height:180px`, centered column containing the
-feature's line icon at 40 px in `--dim`, then `COMING SOON!` — 16/700, uppercase,
-tracking `.05em`, `--dim` (the one sanctioned exclamation mark, §14). Drawn inline
-(SVG + text); no image files, no network (§0.5).
+`1px` `--dim`-mixed border, radius 24, `min-height:180px`, centered column containing
+the feature's line icon at 40 px in `--dim`, then `Coming soon!` — 15/600, sentence
+case, tracking `-.01em`, `--dim` (the one sanctioned exclamation mark, §14). Drawn
+inline (SVG + text); no image files, no network (§0.5).
 
 Below the hero, a §8.9 card titled "Planned" lists capabilities as rows: a leading
-chip tag + a 15 px sentence-case label. Chip tags are 12/600 uppercase, radius 999px:
-`CORE` = `--line` fill, `--text`; `LATER` = transparent, `1px dashed --line`, `--dim`.
-Chips are informational only (not interactive), so they are exempt from the 44 px rule.
+chip tag + a 15 px sentence-case label. Chip tags are 11/600 uppercase, radius 999px,
+padding `4px 10px`: `CORE` = `--accent-soft` fill, `--text`; `LATER` = transparent,
+`1px dashed` `--dim`-mixed border, `--dim`. Chips are informational only (not
+interactive), so they are exempt from the 44 px rule.
 
 Placeholder phases have **no primary action** — the header shows the step label plus a
 back chevron on sub-pages (like `p-label`). `p-matches` is a section root: no chevron;
 the nav pill switches away from it (§8.3).
 
-### 8.15 Hero action cards (Play screen)
+### 8.15 Dashboard (`p-load` — the lab view-dashboard)
 
-`.heroCard` — the Play screen's primary actions. Radius 8, full width,
-`min-height:72px`, padding 14px, flex row, gap 12: 28 px line icon (§9) · column of
-title 16/700 **normal case** + 13/400 description. One ≥ 48 px target each (these are
-primaries). Two variants:
+The Dashboard is the section root the app boots into. Top → bottom:
 
-- **Accent** — `--accent-bg` fill, all ink `--accent-text`: the *single loudest* action
-  ("Judge a clip" — it *is* the file input, `label.filebtn` recast around the hidden
-  `<input type=file>`). Exactly one accent card per screen, ever.
-- **Surface** — `--surface` fill, `1px --line` border, `--text` title, `--dim`
-  icon/description: every other card. A working surface card ("Record a clip", opens
-  `p-record`) carries no tag; a future one carries the right-aligned `SOON` tag
-  12/600 uppercase `--dim` ("Live match", opens the `p-live` placeholder §16 — the tag
-  stays until a live path is actually wired end-to-end). The native app shows only
-  "Record a clip": its Play tab is the record screen itself, with no card list in front
-  of it. Tag presence is what separates "works today" from "coming" — never a second
-  accent.
+- **Ink hero** (`.hero`): `--hero` fill (ink in both themes), radius 24, white ink.
+  `.herotop` row = 38 px translucent-white icon circle (accent-colored icon) · title
+  15/600 + 12 dim-white subtitle · right-aligned `.ringbadge` progress ring (40 px,
+  lime arc on `rgba(255,255,255,.14)` track, centered 11/700 tabular value —
+  sessions-this-week / 5). `.statgrid` = three `.stattile`s (`--tile` fill, radius 14):
+  11/500 dim-white label over 22/700 tabular value with a small unit suffix
+  (Sessions · Front-wall IN · Avg pace). `.heronote` = 12 px dim-white sentence — the
+  latest run's first coach sentences when live, honest guidance copy otherwise.
+- **Action row** (`.btnrow`): the accent `label.filebtn` "Analyze a clip" (it *is* the
+  file input, recast around the hidden `<input type=file>`). Exactly one accent action
+  per screen, ever. The archived Record / Live cards (`.heroCard`, hidden) keep the old
+  card recipe so un-hiding them is still one attribute.
+- **Weekly Report** (`.card.weekly`, hidden until live data exists): "Active minutes"
+  bar chart — inline SVG, `--seg-bg` bars with today in accent, 10 px dim axis text.
+- **Coach Notes rail** (`.airow`, hidden until live data exists): horizontally scrolling
+  212 px `.aicard`s (radius 18, `--shadow-card`) — 28 px `--accent-soft` icon circle +
+  13/600 title + 12 dim sentence, filled from the latest run's coach feedback.
+- **Dev row:** after a `1px --line` hairline: `DEV` micro-label (11/600 uppercase,
+  `--dim`) + `button.small` utilities — the "Label mode" toggle (`.active` = accent
+  fill + 700, like correction chips).
 
-Cards sit under a 12/600 uppercase `--dim` "PLAY" heading, order: Judge a clip ·
-Record a clip · Live match.
-
-**Solo variant (`.heroSolo`)** — when only one card is visible, it carries the weight the
-full stack used to share: `min-height:104px`, padding 20, gap 16, 36 px icon, title 19,
-description 14. Applies to "Judge a clip" while recording and live match are archived
-(their cards are `.hidden`, not deleted). Add the class to whichever card is genuinely
-alone; remove it the moment a second card returns, so the stack keeps its normal rhythm.
-
-**Dev row:** bottom of Play, after a `1px --line` hairline: `DEV` micro-label (11/600
-uppercase, `--dim`) + a row of `button.small` utilities — "Debug targets" and the
-"Label mode" toggle (`.active` = accent fill + 700, like correction chips).
+All live regions render from `/api/runs` + `/api/runs/<id>/coach` (§8.20) and keep
+their markup defaults as the empty state — no fake sample data, ever.
 
 ### 8.16 Record screen components (`p-record`)
 
@@ -600,9 +653,9 @@ uppercase, `--dim`) + a row of `button.small` utilities — "Debug targets" and 
   `object-fit:contain` on the `--strip-bg` well, z-index 4 (under the §3.2 overlay
   ladder). Visible only in the record phase; the canvas stays beneath it.
 - **REC readout** (`.recRow`, reserved 24 px): 10 px `.recDot` + `#recClock` `m:ss.t`
-  14/600 tabular. Idle: dot `--line`, clock `--dim`. Recording: dot **accent yellow**
+  14/600 tabular. Idle: dot `--line`, clock `--dim`. Recording: dot **accent lime**
   with an opacity-only 1.2 s pulse (reduced-motion wrapped), clock `--text`. The dot is
-  yellow because **red belongs to OUT verdicts** (§5.2) — never a red record dot.
+  lime because **red belongs to OUT verdicts** (§5.2) — never a red record dot.
 - **Primary**: Record ↔ Stop, proxied (§3.4). Secondary full-width "Calibrate court"
   (disabled while recording) + a `.status` calibration line ("Not calibrated" /
   "Calibrated · lines + wall corners + floor map").
@@ -764,6 +817,35 @@ draggable anchor pucks at the four wall corners and the two short-line ends.
   real cause: on the product's own fin mount that sends the player off to
   re-mount a phone that was mounted fine.
 
+### 8.20 Live-analytics surfaces (Analysis & Progress roots)
+
+The Analysis and Progress roots render **real end-of-pipeline data** — `/api/runs` for
+the index, `/api/runs/<id>/coach` for analytics + feedback — ported from the design
+lab with its sample data removed. Shared rules: coach feedback is server/LLM text, so
+it is `escapeHtml`-ed at every innerHTML sink; run loading is cached per run id and
+refreshed on every root entry; every surface has an honest `.emptycard` state
+("No analyzed sessions yet…" / "Trends need at least two analyzed sessions.").
+
+- **Analysis run cards** (`.clipcard`): §8.9 card at padding 0. Collapsed row
+  (`.cliptop`): 62×46 gradient thumb (hue rotates per run — the sanctioned gradient)
+  with a court line-sketch + play glyph · run date 14/600 + duration `.metaline` ·
+  right-aligned `.statechip` (`IN n%` in accent when calls exist, `ANALYZED`
+  otherwise). Tapping toggles `.clipbody` (max-height transition, §10 Micro).
+  Expanded: tick **gauge** (13 ticks, accent-filled arc, 30/800 center value) ·
+  three `.scol` tiles (Avg height / Avg pace / Width) · `.fbrow` feedback sentences ·
+  "Ball metrics" tiles (Top pace / Floor bounces) · primary **Open full review**
+  (seeds the §16 restore stash and reboots — the same path the iOS `#run` deep link
+  takes) · ghost "Watch source video" · a dim provenance `.metaline`
+  ("n front-wall hits · n judged · run id").
+- **Progress** (`p-progress`): `.seg` range picker (1W/1M/3M/6M) · `#deltastrip` —
+  three `.delta` cards (radius 18) with 11 dim label, 20/700 value, and a `.chip`
+  delta vs the previous run (`good`/`poor` tint, `flat` when unchanged) · `.trend`
+  cards — 15/600 label, 26/700 value + unit + `vs typical` (tint-colored), and an
+  inline-SVG spline chart: quartile "typical band" (`--seg-bg`), dashed midline,
+  accent line + soft area fill, accent end-dot with the value labeled · a `.bestrow`
+  card (Best IN% to date). Baselines are the runs' own quartiles — never invented
+  targets.
+
 ---
 
 ## 9. Iconography
@@ -838,7 +920,7 @@ Rules:
 
 | State | Pattern |
 |---|---|
-| Empty / first-run | Centered phase (`body.phase-load`), hero action cards (§8.15) — no guidance copy |
+| Empty / first-run | Dashboard (§8.15) with its markup-default hero copy; live regions stay hidden; Analysis/Progress show `.emptycard` sentences (§8.20) |
 | Working (known progress) | `.progressbox` with real stats (frames, fps, ETA) + determinate bar |
 | Working (unknown) | Indeterminate bar or stage scrim + pulsing uppercase label |
 | Inline status | `.status` line (14 dim), reserved height; `.warn` = 700 `--text` (still no red), `.ok` = `--text` |
@@ -863,7 +945,7 @@ Copy for statuses is specific and actionable ("Tap the two ends of the out line"
 - Domain terms exactly: *out line, tin, service line, front/side wall, floor, rally,
   bounce* (never "boundary", "net", etc.).
 - No exclamation marks, no praise ("Great!"), no anthropomorphism. The app states facts.
-  Single sanctioned exception: the "COMING SOON!" hero text on roadmap placeholder pages
+  Single sanctioned exception: the "Coming soon!" hero text on roadmap placeholder pages
   (§8.14) — nowhere else.
 
 ---
@@ -887,32 +969,34 @@ Each phase: header shows step label + proxied primary; `#instr` gives the one-li
 
 | Phase | Purpose | Body (top→bottom) | Primary (proxied) |
 |---|---|---|---|
-| `p-load` | Play section root — get a clip | "PLAY" heading · hero cards (§8.15): Judge a clip (accent, file input) / Record a clip (surface, working) / Live match (surface, `SOON` on web only — see the per-client note below) · dev row (native has neither the heading nor the dev row — see §3.2's native-shell note) | — (no chevron; section root) |
+| `p-load` | Dashboard section root | ink hero (focus + ring + stat tiles + note) · accent "Analyze a clip" file action · Weekly Report card · Coach Notes rail · dev row — full spec §8.15 (native replaces the file action with its record screen — see §3.2's native-shell note) | — (no chevron; section root) |
 | `p-record` | Record rallies + on-site calibration | stage = live camera preview · REC readout · Calibrate court + calibration status · Recordings card (§8.16) | "Record" ↔ "Stop" |
 | `p-frame` | Pick a clean calibration frame | overview rail · editor strip w/ playhead · readout · transport+steppers | "Use this frame" |
 | `p-tap` | Tap out line, tin, then service line on frame | stage-driven; clear-selection small button | "Looks right" (disabled until the current line has a fit) |
 | `p-review` | Approve fitted lines (cyan/amber/lime on stage) | minimal; evidence is the stage | "Use these lines" |
 | `p-tap-floor` | Floor calibration wizard | `.floorRow`: diagram (progress marks) + prompt/side actions · skip-all / save-profile | "Use floor map" |
-| `p-clip` | Trim rally clip | overview · trim editor (yellow handles) · transport+readout row · start/end nudge steppers · frame summary | "Track ball" |
+| `p-clip` | Trim rally clip | overview · trim editor (accent handles) · transport+readout row · start/end nudge steppers · frame summary | "Track ball" |
 | `p-analyze` | Honest processing | `.progressbox` stats + bar (+ stage ANALYZING pulse) | — (auto-advances) |
-| `p-track` | Review track, judge calls | control area keeps its pre-rally-visualization height so the video stage does not shrink; the added content scrolls inside that footprint · scrub hint lives in the header `#instr` line (detection failures replace it, `.warn`) · rally segmentation card (proportional neutral ribbon, active segment in accent, text winner chip for every rally) · overview w/ marker minis · hit timeline (neon bars, center playhead) · readout · transport — **Review pane:** frame input + "Player maps" row · verdict box; **Challenge pane:** type dropdown (In/Out folded into the front-wall options) · Bounce / Not-bounce toggle (`.corrSeg`) · panes switched by a floating Review \| Challenge pill (`.callTabs`, same liquid-glass style as `#navPill`, fixed bottom-center) | "Judge frame" |
+| `p-track` | Review track, judge calls | control area keeps its pre-rally-visualization height so the video stage does not shrink; the added content scrolls inside that footprint · scrub hint lives in the header `#instr` line (detection failures replace it, `.warn`) · rally segmentation card (proportional neutral ribbon, active segment in accent, text winner chip for every rally) · overview w/ marker minis · hit timeline (neon bars, center playhead) · readout · transport — **Review pane:** frame input + "Player maps" row · verdict box; **Challenge pane:** type dropdown (In/Out folded into the front-wall options) · Bounce / Not-bounce toggle (`.corrSeg`) · panes switched by a floating Review \| Challenge dock (`.callTabs`, same dark-dock shell as `#navPill` §8.3, fixed bottom-center) | "Judge frame" |
 | `p-label` | Human bounce labeling | overview · label timeline · transport+zoom · 2-col type grid (dot+label) · delete (destructive = plain secondary, disabled until selection) | — |
 | `p-target` | Stats: targets & bounces (debug) | Front-wall targets card (court chart + meta) · Floor bounces card (SVG map + meta) · Players card (naming + serve crop) | — |
 | `p-player1-report` / `p-player2-report` | Per-player coaching report — the last two steps of the judge flow | Player N front-wall map (§8.10 court chart + `.targetMeta`; serves excluded) · Player N report panel (§8.17) · P1 only: a `.row` "Player 2 report" secondary | — (back chevron only) |
-| `p-matches` | Matches section root (placeholder) | placeholder hero · Planned card (§8.14) | — (no chevron; section root) |
-| `p-coach` | Coach section root (hub) | three feature cards (§8.13) — no hero, no copy | — (no chevron; section root) |
+| `p-matches` | Analysis section root — session library | view head ("Analysis" + `n runs · live pipeline`) · expandable `.clipcard` per analyzed run (§8.20) · `.emptycard` when none | — (no chevron; section root) |
+| `p-coach` | Training section root (hub) | view head · ink hero (Coaching + sessions ring) · three feature cards (§8.13) | — (no chevron; section root) |
+| `p-progress` | Progress section root — cross-session trends | view head · range `.seg` · delta strip · trend cards · best-mark card (§8.20) · `.emptycard` under two runs | — (no chevron; section root) |
 | `p-live` | Placeholder: live match | placeholder hero · Planned card (§8.14) | — (back chevron only) |
 | `p-stats` | Placeholder: stats + trends | placeholder hero · Planned card (§8.14) | — (back chevron only) |
 | `p-shot-bot` | Placeholder: shot selection | placeholder hero · Planned card (§8.14) | — (back chevron only) |
 | `p-sharing` | Placeholder: your coach (coaching platform) | placeholder hero · Planned card (§8.14) | — (back chevron only) |
 
-`p-load` is the **Play section root**: hero action cards (§8.15) + dev row replace the
-old load-button stack. Sub-page back routes: `p-record` → Play; `p-live` → Play;
-`p-stats` / `p-shot-bot` / `p-sharing` → Coach. The calibration wizard (`p-tap` → … → `p-tap-floor`) serves two
-flows: entered from `p-frame` it exits to `p-clip`; entered from `p-record` ("Calibrate
-court", on a frame frozen from the live camera) it exits back to `p-record` and the
-result rides along with each recording. The nav pill is the section tab bar and appears
-on the three section roots only (§8.3).
+`p-load` is the **Dashboard section root** (§8.15). Sub-page back routes: `p-record` →
+Dashboard; `p-live` → Dashboard; `p-stats` / `p-shot-bot` / `p-sharing` → Training. The
+calibration wizard (`p-tap` → … → `p-tap-floor`) serves two flows: entered from
+`p-frame` it exits to `p-clip`; entered from `p-record` ("Calibrate court", on a frame
+frozen from the live camera) it exits back to `p-record` and the result rides along
+with each recording. The nav dock is the section tab bar and appears on the four
+section roots only (§8.3). Deep links: `#tab=matches|coach|progress` boot straight to a
+root; `#run=<id>` seeds the restore stash — the same stash "Open full review" uses.
 
 Production surfaces (section roots and placeholder pages) carry **no `#instr` guidance
 copy** — the UI leads; onboarding will teach, later. The `#instr` strip remains for the
@@ -921,9 +1005,10 @@ explanatory. The Play hint line (`#loadHint`) is empty in judge mode (reserved h
 no CLS) and speaks only for the dev-row label mode. A healthy backend is silent —
 `#loadStatus` only reports problems.
 
-Mode switch Judge ↔ Label lives in the Play dev-row toggle (§8.15). The call page's
-Review ↔ Challenge switch is a second instance of the same liquid-glass pill
-(`.callTabs` shares `#navPill`'s rules); only one pill is ever on screen at a time.
+Mode switch Judge ↔ Label lives in the Dashboard dev-row toggle (§8.15). The call
+page's Review ↔ Challenge switch is a second instance of the same dark dock
+(`.callTabs` shares `#navPill`'s shell, §8.3); only one dock is ever on screen at a
+time.
 
 **The `SOON` tag on "Live match".** §8.15's rule is a question about one surface — does
 tapping *this* card lead to a working experience. `p-live` is a roadmap placeholder on
@@ -963,18 +1048,23 @@ must still record exactly as it does today.
 
 ## 18. Never do
 
-- No new fonts, weights, icon sets, or CDN/remote assets of any kind.
-- No second accent; no green/red outside verdicts (won/lost data splits included — §8.17);
-  no calibration hues (cyan/amber/lime) outside calibration.
-- No drop shadows on cards/buttons; no glass outside the nav pill; no decorative gradients
-  outside the court miniature.
+- No webfonts, icon sets, or CDN/remote assets of any kind.
+- No second accent; no green/red outside verdicts (won/lost data splits included — §8.17;
+  the `--tint-*` chip pairs are the sanctioned soft palette for data quality);
+  no calibration hues (cyan/amber/lime-yellow) outside calibration.
+- No ad-hoc shadows — only `--shadow-card`/`--shadow-btn` and the §5.1 sanctioned set;
+  no glass anywhere; no decorative gradients outside the court miniature and the
+  Analysis run thumbs.
+- No fake or sample data on production surfaces — live regions hide or show an honest
+  empty state instead.
 - No spinners where real progress or evidence is possible; no fake progress.
 - No layout shift from appearing content; no moving playhead (the strip moves).
 - No page-transition animations; nothing animated longer than 500 ms except ambient
-  pulses.
+  pulses and the Analysis card expand (§10 Micro at .28s).
 - No hover-only affordances; no touch targets under 44 px; no removal of safe-area math.
 - No scrolling app shell; no second header/tab-bar/nav chrome.
-- No sentence-case buttons, no uppercase paragraphs, no exclamation marks.
+- No uppercase buttons or paragraphs (uppercase is for chips/tags/micro-labels/telemetry
+  only); no exclamation marks.
 - No proportional figures in updating numbers.
 
 ---

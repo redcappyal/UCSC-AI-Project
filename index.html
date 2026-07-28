@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>Squash Line Calling</title>
+<title>CrossCourt</title>
 <meta name="theme-color" content="#000000">
 <script>
 (function(){
@@ -14,9 +14,21 @@
 })();
 </script>
 <style>
+  /* Design-lab (TennisIQ-derived) language, adopted 2026-07-28 from
+     design-lab/crosscourt-lab.html. Dark is the default (color-scheme boot
+     script unchanged); the light theme is the lab's reference look. Variable
+     NAMES are the pre-port ones so every downstream rule keeps working —
+     only the values and the new lab tokens (card/tints/shadows) changed. */
   :root{ color-scheme:dark;
-    --bg:#000; --surface:#1c1c1e; --line:#26262a; --dim:#98989f; --text:#fff;
-    --accent-bg:#ffd60a; --accent-text:#000;
+    --bg:#0E0F11; --surface:#1B1C1F; --line:#26272B; --dim:#9A9DA5; --text:#F4F5F7;
+    --accent-bg:#D9F04A; --accent-text:#141517; --accent-soft:#2E321C;
+    --hero:#141517; --hero-text:#fff; --tile:#26272B;
+    --tint-good-bg:#20301F; --tint-good-fg:#8FD98A;
+    --tint-avg-bg:#332B14;  --tint-avg-fg:#E5B95C;
+    --tint-poor-bg:#361D19; --tint-poor-fg:#EF8A76;
+    --shadow-card:0 1px 2px rgba(0,0,0,.25), 0 10px 30px rgba(0,0,0,.35);
+    --shadow-btn:0 1px 2px rgba(0,0,0,.3), 0 4px 14px rgba(0,0,0,.35);
+    --seg-bg:#26272B; --nav-bg:#1B1C1F;
     --strip-bg:#000; --tick:rgba(255,255,255,.12);
     --out:#35e0ff;           /* fitted out-line edge */
     --service:#ff9f43;       /* fitted service-line edge */
@@ -28,45 +40,47 @@
     --mk-racket:#22d3ee; --mk-floor:#ffb020; --mk-side:#c77dff; --mk-unknown:#c7c7cc;
   }
   :root[data-theme="light"]{ color-scheme:light;
-    --bg:#f5f5f7; --surface:#e9e9ee; --line:#e0e0e5; --dim:#6e6e76; --text:#000;
-    --accent-bg:#ffd60a; --accent-text:#000;
-    --strip-bg:#e3e3e8; --tick:rgba(0,0,0,.14);
+    --bg:#F1F2F4; --surface:#FFFFFF; --line:#EFF0F3; --dim:#8E9199; --text:#141517;
+    --accent-bg:#D9F04A; --accent-text:#141517; --accent-soft:#ECF3C6;
+    --hero:#141517; --hero-text:#fff; --tile:#26272B;
+    --tint-good-bg:#E7F4E9; --tint-good-fg:#2E7D3E;
+    --tint-avg-bg:#FCF3DC;  --tint-avg-fg:#A06E00;
+    --tint-poor-bg:#FBE7E4; --tint-poor-fg:#B3402F;
+    --shadow-card:0 1px 2px rgba(16,17,20,.03), 0 10px 30px rgba(16,17,20,.05);
+    --shadow-btn:0 1px 2px rgba(16,17,20,.04), 0 4px 14px rgba(16,17,20,.06);
+    --seg-bg:#E7E8EC; --nav-bg:#1B1C1F;
+    --strip-bg:#E3E4E8; --tick:rgba(0,0,0,.14);
     --out:#007da6; --service:#a84f00; --tin:#557a00;
   }
-  /* Self-hosted (fonts/ + /fonts route) so the app works offline; falls back
-     to the system stack until the woff2 loads. */
-  @font-face{font-family:'Chakra Petch'; font-style:normal; font-weight:400; font-display:swap;
-    src:url('/fonts/chakra-petch-400.woff2') format('woff2')}
-  @font-face{font-family:'Chakra Petch'; font-style:normal; font-weight:600; font-display:swap;
-    src:url('/fonts/chakra-petch-600.woff2') format('woff2')}
-  @font-face{font-family:'Chakra Petch'; font-style:normal; font-weight:700; font-display:swap;
-    src:url('/fonts/chakra-petch-700.woff2') format('woff2')}
 
   *{box-sizing:border-box; margin:0; padding:0}
   html{height:100%}
   body{height:100dvh; overflow:hidden; display:flex; flex-direction:column;
     background:var(--bg); color:var(--text); font-size:16px; line-height:1.4;
-    font-family:'Chakra Petch',-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+    font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",Roboto,sans-serif;
+    -webkit-font-smoothing:antialiased;
     -webkit-tap-highlight-color:transparent}
   .hidden{display:none !important}
 
   #errBanner{position:fixed; top:8px; left:10px; right:10px; z-index:30; display:flex; gap:12px;
-    align-items:center; background:var(--surface); border-radius:12px; padding:12px 14px}
-  #errBanner span{flex:1; font-weight:700; font-size:15px}
-  #errBanner button{width:auto; min-height:44px; padding:6px 14px; font-size:14px; background:var(--line)}
+    align-items:center; background:var(--surface); border-radius:18px; padding:12px 14px;
+    box-shadow:var(--shadow-card)}
+  #errBanner span{flex:1; font-weight:600; font-size:15px}
+  #errBanner button{width:auto; min-height:44px; padding:6px 14px; font-size:14px;
+    background:var(--seg-bg); box-shadow:none}
 
   header{flex:0 0 auto; display:flex; align-items:center; gap:10px;
-    padding:8px 14px; min-height:56px}
-  #stepLabel{flex:1 1 auto; min-width:0; font-size:16px; font-weight:700;
-    letter-spacing:.05em; text-transform:uppercase;
+    padding:8px 16px; min-height:56px}
+  #stepLabel{flex:1 1 auto; min-width:0; font-size:17px; font-weight:700;
+    letter-spacing:-.02em;
     white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
   #hdrBack{width:44px; min-width:44px; min-height:44px; padding:0 8px 3px 0;
     background:none; border:none; font-size:30px; font-weight:400; line-height:1; color:var(--text)}
   #hdrHome{width:44px; min-width:44px; min-height:44px; padding:0; display:flex;
     align-items:center; justify-content:center; background:none; border:none; color:var(--text)}
   .pill{width:auto; min-height:40px; padding:0 18px; border:none; border-radius:999px;
-    background:var(--accent-bg); color:var(--accent-text); font-size:15px; font-weight:700;
-    white-space:nowrap}
+    background:var(--accent-bg); color:var(--accent-text); font-size:14px; font-weight:600;
+    letter-spacing:-.01em; white-space:nowrap}
   .pill:disabled{opacity:.35}
   #themeBtn{margin-left:auto; width:44px; min-width:44px; min-height:44px; padding:0;
     background:none; border:none; color:var(--text)}
@@ -93,7 +107,7 @@
      bottom edge instead, where no wall target lives. */
   body.zoom-low #zoomCtrl{top:auto; bottom:8px; right:auto; left:50%; transform:translateX(-50%)}
   #zoomCtrl button{width:auto; min-width:48px; min-height:48px; padding:0 12px;
-    font-size:20px; font-weight:600; color:#fff; background:none; border:none;
+    font-size:20px; font-weight:600; color:#fff; background:none; border:none; box-shadow:none;
     text-shadow:0 1px 3px rgba(0,0,0,.9), 0 0 8px rgba(0,0,0,.6)}
 
   /* Analyzing overlay: darkens the frame currently under analysis and pulses a label over its center. */
@@ -105,7 +119,7 @@
   @keyframes analyzePulse{0%,100%{opacity:.35} 50%{opacity:1}}
 
   main{flex:0 0 auto; overflow:hidden;
-    padding:12px 14px calc(70px + env(safe-area-inset-bottom))}
+    padding:12px 14px calc(92px + env(safe-area-inset-bottom))}
   body.phase-load main{flex:1; display:flex; flex-direction:column; justify-content:center}
   body.phase-target main{flex:1 1 auto; min-height:0; overflow-y:auto; -webkit-overflow-scrolling:touch}
   /* Keep the stage at its pre-rally-visualization size. JS measures the
@@ -116,7 +130,7 @@
     overflow-y:auto; -webkit-overflow-scrolling:touch}
   main section{display:flex; flex-direction:column; gap:10px}
 
-  h2{font-size:21px; text-align:center}
+  h2{font-size:20px; font-weight:700; letter-spacing:-.02em; text-align:center}
   .instruction{font-size:15px; color:var(--dim); text-align:center}
   .status{font-size:14px; color:var(--dim); min-height:1.2em}
   .status.warn{color:var(--text); font-weight:700}
@@ -139,33 +153,38 @@
      corners named, so it reserves that up front. */
   #confirmDrift{min-height:60px}
 
-  button, label.filebtn{font:inherit; font-size:15px; font-weight:600; letter-spacing:.05em;
-    text-transform:uppercase; color:var(--text);
+  button, label.filebtn{font:inherit; font-size:14px; font-weight:600; letter-spacing:-.01em;
+    color:var(--text);
     background:var(--surface); border:none; border-radius:999px;
-    width:100%; min-height:48px; padding:10px 18px;
-    display:flex; align-items:center; justify-content:center; cursor:pointer}
+    width:100%; min-height:46px; padding:10px 18px;
+    display:flex; align-items:center; justify-content:center; gap:8px; cursor:pointer;
+    box-shadow:var(--shadow-btn)}
   button:disabled{opacity:.4}
-  button.primary, label.filebtn{background:var(--accent-bg); color:var(--accent-text); font-weight:700}
-  button.small{width:auto; min-height:44px; padding:8px 14px; font-size:13px; font-weight:600}
+  button:active{filter:brightness(.97)}
+  button.primary, label.filebtn{background:var(--accent-bg); color:var(--accent-text);
+    font-weight:600; box-shadow:none}
+  button.small{width:auto; min-height:44px; padding:8px 14px; font-size:13px; font-weight:600;
+    background:transparent; box-shadow:none; border:1px solid var(--line)}
   .row{display:flex; gap:10px}
   .row>*{flex:1}
 
   input[type=file]{display:none}
   input[type=range]{width:100%; height:44px; accent-color:var(--accent-bg)}
   input[type=number]{width:100%; background:var(--surface); color:var(--text); border:none;
-    border-radius:12px; font:inherit; font-size:17px; padding:10px 12px; min-height:48px;
-    font-variant-numeric:tabular-nums}
+    border-radius:14px; font:inherit; font-size:17px; padding:10px 12px; min-height:48px;
+    box-shadow:var(--shadow-btn); font-variant-numeric:tabular-nums}
   /* Text input (post-hoc player naming, §4.6): a --line border distinguishes it from the
      --surface card it sits inside, unlike input[type=number] which always sits on --bg. */
   input[type=text]{width:100%; background:color-mix(in srgb, var(--surface) 86%, var(--bg));
-    color:var(--text); border:1px solid var(--line); border-radius:12px; font:inherit;
+    color:var(--text); border:1px solid var(--line); border-radius:14px; font:inherit;
     font-size:17px; padding:10px 12px; min-height:48px}
   .sliderlabel{display:flex; justify-content:space-between; font-size:14px; color:var(--dim)}
   .sliderlabel output{color:var(--text); font-weight:600; font-variant-numeric:tabular-nums}
 
   .stat{display:flex; justify-content:space-between; font-size:14px; color:var(--dim);
     font-variant-numeric:tabular-nums}
-  .progressbox{padding:10px 12px; border-radius:10px; border:1px solid var(--line)}
+  .progressbox{padding:12px 14px; border-radius:18px; background:var(--surface);
+    box-shadow:var(--shadow-card)}
   .progressbar{height:10px; border-radius:999px; background:var(--line); overflow:hidden; margin-top:8px}
   .progressbar span{display:block; height:100%; width:0%; background:var(--accent-bg); transition:width .18s ease}
   .progressbar.indeterminate span{width:35%; animation:slidebar 1.1s ease-in-out infinite}
@@ -205,7 +224,7 @@
   .stepper{flex:1 1 0; display:flex; align-items:center; justify-content:center; min-height:44px}
   .stepper + .stepper{border-left:1px solid var(--line)}   /* thin divider between icon groups, like the reference toolbar */
   .stepper button{flex:0 0 44px; width:44px; min-height:44px; padding:0;
-    border:none; border-radius:999px; background:transparent; color:var(--text);
+    border:none; border-radius:999px; background:transparent; box-shadow:none; color:var(--text);
     font-size:26px; font-weight:400; line-height:1}
   .stepper button:active{background:var(--line)}   /* momentary press feedback only — no resting fill */
   .stepUnit{flex:0 1 auto; text-align:center; padding:0 2px;
@@ -237,7 +256,7 @@
   /* Rally segmentation: one proportional ribbon for the model's inferred
      boundaries, plus a text chip for every winner so color is never the only
      carrier of meaning. */
-  .rallyViz{background:var(--surface); border:1px solid var(--line); border-radius:8px;
+  .rallyViz{background:var(--surface); border-radius:18px; box-shadow:var(--shadow-card);
     overflow:hidden}
   .rallyVizHead{display:flex; align-items:baseline; justify-content:space-between; gap:10px;
     padding:8px 12px 6px; border-bottom:1px solid var(--line)}
@@ -259,26 +278,25 @@
     scrollbar-width:none; -webkit-overflow-scrolling:touch}
   .rallyWinners::-webkit-scrollbar{display:none}
   button.rallyWinner{flex:0 0 auto; width:auto; min-height:44px; padding:6px 12px;
-    border:1px solid var(--line); background:var(--bg); color:var(--text);
-    font-size:12px; font-weight:600; text-transform:none; letter-spacing:0;
+    border:1px solid var(--line); background:var(--bg); color:var(--text); box-shadow:none;
+    font-size:12px; font-weight:600; letter-spacing:0;
     font-variant-numeric:tabular-nums}
   button.rallyWinner.active{background:var(--accent-bg); border-color:var(--accent-bg);
     color:var(--accent-text)}
 
-  /* Floating liquid-glass mode switchers: Judge/Label on the home page and
-     Review/Challenge on the call page share one look. */
-  #navPill, .callTabs{position:fixed; left:50%; bottom:calc(12px + env(safe-area-inset-bottom));
-    transform:translateX(-50%); z-index:40; display:flex; gap:4px; padding:5px;
-    border-radius:999px;
-    background:color-mix(in srgb, var(--surface) 62%, transparent);
-    -webkit-backdrop-filter:blur(20px) saturate(1.5);
-    backdrop-filter:blur(20px) saturate(1.5);
-    border:1px solid color-mix(in srgb, var(--text) 14%, transparent);
-    box-shadow:0 12px 32px rgba(0,0,0,.4)}
-  #navPill button, .callTabs button{width:auto; min-height:44px; padding:0 18px; gap:8px;
-    border:0; background:transparent; color:var(--dim); font-size:13px}
+  /* Floating dark docks (lab nav): the section tab bar is icon-only circles;
+     Review/Challenge on the call page keeps its text labels in the same shell. */
+  #navPill, .callTabs{position:fixed; left:50%; bottom:calc(14px + env(safe-area-inset-bottom));
+    transform:translateX(-50%); z-index:40; display:flex; gap:2px; padding:7px;
+    border-radius:999px; background:var(--nav-bg);
+    box-shadow:0 18px 36px rgba(16,17,20,.28)}
+  #navPill button, .callTabs button{width:auto; min-height:44px; padding:0 16px; gap:8px;
+    border:0; background:transparent; box-shadow:none; color:rgba(255,255,255,.55); font-size:13px}
+  #navPill button{width:46px; height:46px; padding:0; border-radius:50%}
+  #navPill button span{display:none}
   #navPill button.active, .callTabs button.active{background:var(--accent-bg); color:var(--accent-text)}
-  #navPill svg, .callTabs svg{width:17px; height:17px; flex:0 0 auto}
+  #navPill svg{width:20px; height:20px; flex:0 0 auto}
+  .callTabs svg{width:17px; height:17px; flex:0 0 auto}
   /* Inside the native iOS shell (#shell=1) the app's tab bar owns navigation;
      showing the web pill too would stack two navs. */
   body.shell-embed #navPill{display:none}
@@ -295,6 +313,7 @@
   .tlReadout{text-align:center; font-size:14px; color:var(--dim);
     font-variant-numeric:tabular-nums; padding:2px 0}
   .tlReadout output{color:var(--text); font-weight:600}
+  .playBtn{box-shadow:none}
   .playBtn svg{width:22px; height:22px}
   /* clip page: play + readout share one transport row under the trim editor,
      so the transport isn't stranded in its own row at the bottom of the page */
@@ -304,46 +323,44 @@
   .clipTransportRow .playBtn:active{background:var(--line)}
   .clipTransportRow .tlReadout{padding:0}
 
-  /* hub cards: tappable drill-down cards on the Coach hub (§8.9 card, not a pill) */
-  .hubHead{font-size:12px; font-weight:600; letter-spacing:.05em; text-transform:uppercase;
-    color:var(--dim); margin-top:4px}
-  .featureCard{background:var(--surface); border:1px solid var(--line); border-radius:8px;
+  /* hub cards: tappable drill-down cards on the Training hub (§8.9 card, not a pill) */
+  .hubHead{font-size:15px; font-weight:600; letter-spacing:-.01em; color:var(--text); margin-top:4px}
+  .featureCard{background:var(--surface); border-radius:18px; box-shadow:var(--shadow-card);
     width:100%; min-height:56px; padding:12px 14px;
-    display:flex; align-items:center; justify-content:flex-start; gap:10px;
-    text-align:left; text-transform:none; letter-spacing:normal; font-weight:400}
-  .featureCard:active{background:var(--line)}   /* instant press fill, no transition */
-  .featureCard>svg{flex:0 0 24px; width:24px; height:24px; color:var(--dim)}
-  .fcBody{flex:1 1 auto; min-width:0; display:flex; flex-direction:column}
-  .fcBody strong{font-size:16px; font-weight:700; color:var(--text)}
-  .fcBody span{font-size:13px; font-weight:400; color:var(--dim);
-    white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
-  .fcTag{flex:0 0 auto; font-size:12px; font-weight:600; letter-spacing:.05em;
-    text-transform:uppercase; color:var(--dim)}
-  /* Play home: hero action cards (§8.15) — accent = works today, surface = coming soon.
-     Selectors match the filebtn/button globals' specificity to undo pill radius + uppercase. */
-  button.heroCard, label.heroCard{border-radius:8px; width:100%; min-height:72px; padding:14px;
     display:flex; align-items:center; justify-content:flex-start; gap:12px;
-    text-align:left; text-transform:none; letter-spacing:normal}
+    text-align:left; font-weight:400}
+  .featureCard:active{filter:brightness(.97)}
+  /* icon circle wrap (lab .iconcircle look) painted straight on the svg */
+  .featureCard>svg{box-sizing:content-box; padding:8px; border-radius:50%; background:var(--bg);
+    color:var(--text); width:20px; height:20px; flex:0 0 20px}
+  .fcBody{flex:1 1 auto; min-width:0; display:flex; flex-direction:column; gap:2px}
+  .fcBody strong{font-size:14px; font-weight:600; letter-spacing:-.01em; color:var(--text)}
+  .fcBody span{font-size:12px; font-weight:400; color:var(--dim);
+    white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
+  .fcTag{flex:0 0 auto; font-size:11px; font-weight:600; letter-spacing:.04em;
+    text-transform:uppercase; color:var(--dim); background:var(--bg);
+    border-radius:999px; padding:4px 10px}
+  /* Dashboard hero action cards — accent = works today, surface = coming soon. */
+  button.heroCard, label.heroCard{border-radius:18px; width:100%; min-height:72px; padding:14px;
+    display:flex; align-items:center; justify-content:flex-start; gap:12px;
+    text-align:left}
   .heroCard>svg{flex:0 0 28px; width:28px; height:28px}
   label.filebtn.heroCard>svg, label.filebtn.heroCard .fcBody strong,
   label.filebtn.heroCard .fcBody span{color:var(--accent-text)}
-  button.heroCard{background:var(--surface); border:1px solid var(--line)}
-  button.heroCard:active{background:var(--line)}   /* instant press fill */
+  button.heroCard{background:var(--surface); box-shadow:var(--shadow-card)}
+  button.heroCard:active{filter:brightness(.97)}
   button.heroCard>svg{color:var(--dim)}
   /* Solo variant: with recording and live match archived, Judge a clip is the
      only action on the Play screen, so it carries the weight the three cards
      used to share. Remove the class if a second card ever returns. */
-  .heroCard.heroSolo{min-height:104px; padding:20px; gap:16px}
-  .heroCard.heroSolo>svg{flex:0 0 36px; width:36px; height:36px}
-  .heroCard.heroSolo .fcBody strong{font-size:19px}
-  .heroCard.heroSolo .fcBody span{font-size:14px}
   /* hint line is empty in judge mode (no guidance copy on the production home) but keeps
      its slot so toggling label mode's dev hint causes no layout shift */
   #loadHint{min-height:1.4em}
-  /* dev row: internal tools parked under a hairline at the bottom of Play */
+  /* dev row: internal tools parked under a hairline at the bottom of the dashboard */
   .hairline{border:none; border-top:1px solid var(--line); margin:4px 0 0}
   .devHead{font-size:11px; font-weight:600; letter-spacing:.06em; text-transform:uppercase;
     color:var(--dim)}
+  .devRow .small{width:auto}
   .devRow{display:flex; gap:10px; align-items:center}
   #labelModeBtn.active{background:var(--accent-bg); color:var(--accent-text); font-weight:700}
   /* content can outgrow a short phone: the section scrolls internally, never the shell */
@@ -376,29 +393,30 @@
     border-radius:999px; padding:2px 8px}
   .recItemBtns{display:flex; gap:6px}
   .recItemBtns button{width:auto; min-height:34px; padding:6px 12px; font-size:12px;
-    font-weight:600; background:none; border:1px solid var(--line); color:var(--text)}
+    font-weight:600; background:none; box-shadow:none; border:1px solid var(--line); color:var(--text)}
   .recItemBtns button.arm{background:var(--accent-bg); color:var(--accent-text); font-weight:700}
   .recEmpty{padding:12px 14px; font-size:14px; color:var(--dim)}
 
   /* roadmap placeholder pages: coming-soon hero + planned-capability rows */
-  .placeholderHero{border:1px dashed var(--line); border-radius:8px; min-height:180px;
+  .placeholderHero{border:1px dashed color-mix(in srgb, var(--dim) 40%, transparent);
+    border-radius:24px; min-height:180px;
     display:flex; flex-direction:column; align-items:center; justify-content:center; gap:10px;
     color:var(--dim)}
   .placeholderHero svg{width:40px; height:40px}
-  .placeholderHero strong{font-size:16px; font-weight:700; letter-spacing:.05em;
-    text-transform:uppercase}
+  .placeholderHero strong{font-size:15px; font-weight:600; letter-spacing:-.01em}
   .planBody{padding:12px 14px; display:flex; flex-direction:column; gap:10px}
   .planRow{display:flex; align-items:center; gap:10px; font-size:15px; color:var(--text)}
-  .corePill, .laterPill{flex:0 0 auto; font-size:12px; font-weight:600; letter-spacing:.05em;
-    text-transform:uppercase; font-style:normal; padding:2px 8px; border-radius:999px}
-  .corePill{background:var(--line); color:var(--text)}
-  .laterPill{border:1px dashed var(--line); color:var(--dim)}
+  .corePill, .laterPill{flex:0 0 auto; font-size:11px; font-weight:600; letter-spacing:.04em;
+    text-transform:uppercase; font-style:normal; padding:4px 10px; border-radius:999px}
+  .corePill{background:var(--accent-soft); color:var(--text)}
+  .laterPill{border:1px dashed color-mix(in srgb, var(--dim) 40%, transparent); color:var(--dim)}
 
-  .targetZones{border:1px solid var(--line); border-radius:8px; overflow:hidden; background:var(--surface)}
+  .targetZones{border-radius:24px; overflow:hidden; background:var(--surface);
+    box-shadow:var(--shadow-card)}
   .targetHead{display:flex; justify-content:space-between; gap:12px; align-items:baseline;
-    padding:12px 14px; border-bottom:1px solid var(--line)}
-  .targetHead strong{font-size:18px}
-  .targetHead span{color:var(--dim); font-size:13px}
+    padding:14px 16px; border-bottom:1px solid var(--line)}
+  .targetHead strong{font-size:15px; font-weight:600; letter-spacing:-.01em}
+  .targetHead span{color:var(--dim); font-size:12px}
   .targetCourt{--service-y:61.1%; --tin-y:89.5%; position:relative; margin:14px auto;
     width:min(calc(100% - 28px), calc(70vh * 1.3004), 920px); aspect-ratio:1.3004; min-height:0;
     overflow:hidden; border:1px solid color-mix(in srgb, var(--line) 78%, transparent); border-radius:8px;
@@ -449,9 +467,12 @@
   .targetMeta strong{display:block; font-size:13px; color:var(--dim); margin-bottom:4px}
   .targetMeta span{font-size:15px; line-height:1.35}
   .coachMetrics{display:grid; grid-template-columns:repeat(2, minmax(0, 1fr)); gap:10px; padding:12px 14px}
-  .coachMetric{min-width:0; border:1px solid var(--line); border-radius:8px; background:color-mix(in srgb, var(--surface) 86%, var(--bg)); padding:10px 12px}
-  .coachMetric strong{display:block; color:var(--dim); font-size:13px; line-height:1.25; margin-bottom:5px}
-  .coachMetric span{display:block; font-size:22px; font-weight:800; line-height:1.1; overflow-wrap:anywhere}
+  .coachMetric{min-width:0; border:1px solid var(--line); border-radius:14px;
+    background:transparent; padding:10px 12px}
+  .coachMetric strong{display:block; color:var(--dim); font-size:12px; font-weight:500;
+    line-height:1.25; margin-bottom:5px}
+  .coachMetric span{display:block; font-size:22px; font-weight:700; line-height:1.1;
+    font-variant-numeric:tabular-nums; overflow-wrap:anywhere}
   .coachMetric small{display:block; color:var(--dim); font-size:12px; line-height:1.35; margin-top:7px}
   .coachIntro{padding:12px 14px 0; color:var(--dim); font-size:14px; line-height:1.45}
   .coachOutcomeComparison{display:grid; grid-template-columns:repeat(2, minmax(0, 1fr)); gap:12px;
@@ -459,7 +480,7 @@
   /* Won/lost is a data split, not a call: the two sections separate by the
      solid/dashed border grammar (§8.14 chips, §13 blank) and their headings,
      never by green/red — those stay verdict-only (DESIGN.md §5.2, §18). */
-  .coachOutcomeSection{min-width:0; border:1px solid var(--line); border-radius:8px; overflow:hidden;
+  .coachOutcomeSection{min-width:0; border:1px solid var(--line); border-radius:14px; overflow:hidden;
     background:color-mix(in srgb, var(--surface) 92%, var(--bg))}
   .coachOutcomeSection.losing{border-style:dashed; background:transparent}
   .coachOutcomeHead{display:flex; align-items:flex-start; justify-content:space-between; gap:12px;
@@ -474,8 +495,8 @@
   .coachDrills{padding:0 14px 14px}
   .coachDrills:empty{display:none}
   .drillNote{color:var(--dim); font-size:13px; line-height:1.4; margin:0 0 10px}
-  .drillCard{border:1px solid var(--line); border-radius:8px;
-    background:color-mix(in srgb, var(--surface) 86%, var(--bg));
+  .drillCard{border:1px solid var(--line); border-radius:14px;
+    background:transparent;
     padding:10px 12px; margin-bottom:10px}
   .drillCard:last-child{margin-bottom:0}
   .drillIssue{margin:0 0 8px; font-size:14px; font-weight:700; line-height:1.35}
@@ -501,15 +522,16 @@
   /* The verdict box always occupies the same space: empty (blank), event
      classification (neutral), and IN/OUT states share one reserved height so
      showing or clearing a verdict never shifts the layout around it. */
-  .verdict{border-radius:14px; padding:10px 14px; text-align:center; font-size:13px; line-height:1.4;
+  .verdict{border-radius:18px; padding:10px 14px; text-align:center; font-size:13px; line-height:1.4;
     min-height:78px; display:flex; flex-direction:column; justify-content:center}
   .verdictPlayer{display:block; margin-bottom:2px; font-size:13px; font-weight:800;
     letter-spacing:.04em; text-transform:uppercase}
   .verdict strong{display:block; font-size:28px; letter-spacing:.04em}
   .verdict.in{background:var(--in); color:#03230c}
   .verdict.out{background:var(--outcall); color:#fff}
-  .verdict.neutral{background:var(--surface); border:1px solid var(--line); color:var(--text)}
-  .verdict.blank{background:transparent; border:1px dashed var(--line); color:var(--dim)}
+  .verdict.neutral{background:var(--surface); box-shadow:var(--shadow-card); color:var(--text)}
+  .verdict.blank{background:transparent;
+    border:1px dashed color-mix(in srgb, var(--dim) 40%, transparent); color:var(--dim)}
   /* Review / Challenge panes on the call page: Review reads the model's call,
      Challenge is the correction flywheel's front door. The switcher itself is
      the floating .callTabs pill above. */
@@ -521,11 +543,11 @@
   .correctionRow{display:flex; gap:8px; align-items:center}
   .correctionRow .corrLabel{font-size:13px; color:var(--dim); white-space:nowrap; flex:0 0 auto}
   .correctionRow select{flex:1; min-width:0; min-height:44px; padding:8px 12px;
-    background:var(--surface); color:var(--text); border:none; border-radius:12px;
-    font:inherit; font-size:15px; font-weight:600}
+    background:var(--surface); color:var(--text); border:none; border-radius:14px;
+    box-shadow:var(--shadow-btn); font:inherit; font-size:15px; font-weight:600}
   .corrSeg{flex:1; display:flex; gap:6px}
   .corrSeg button{flex:1; width:auto; min-height:38px; padding:5px 12px; font-size:12px;
-    white-space:nowrap; border:1px solid var(--line); background:transparent}
+    white-space:nowrap; border:1px solid var(--line); background:transparent; box-shadow:none}
   .corrSeg button.active{background:var(--accent-bg); color:var(--accent-text);
     border-color:transparent; font-weight:700}
 
@@ -536,7 +558,7 @@
   /* floor calibration wizard */
   .floorRow{display:flex; gap:14px; align-items:flex-start}
   .wallCornerList{display:grid; grid-template-columns:repeat(2, minmax(0, 1fr)); gap:8px}
-  .wallCornerList span{border:1px solid var(--line); border-radius:8px; padding:8px 10px; color:var(--dim); font-size:13px}
+  .wallCornerList span{border:1px solid var(--line); border-radius:12px; padding:8px 10px; color:var(--dim); font-size:13px}
   .wallCornerList span.done{color:var(--text); border-color:color-mix(in srgb, var(--accent-bg) 70%, var(--line))}
   .wallCornerList span.active{background:var(--accent-bg); color:var(--accent-text); border-color:transparent; font-weight:700}
   .wallCornerList span.warned{border-color:#f5c518; color:var(--text)}
@@ -557,6 +579,158 @@
   #floorMapSvg{display:block; width:100%; max-height:340px}
   #floorMapSvg .courtLine{stroke:var(--dim); stroke-width:.28; fill:none}
   #floorMapSvg .bounceDot{fill:#f5c518; stroke:rgba(0,0,0,.5); stroke-width:.14}
+
+  /* ---- lab components (design-lab/crosscourt-lab.html) ---- */
+  /* app head: wordmark row on the dashboard */
+  .apphead{display:flex; align-items:center; justify-content:space-between; min-height:40px;
+    padding:2px 2px 0}
+  .wordmark{font-size:17px; font-weight:700; letter-spacing:-.02em; display:flex;
+    align-items:center; gap:7px}
+  .wordmark svg{width:20px; height:20px}
+  /* dark hero card (stays ink-dark in both themes) */
+  .hero{background:var(--hero); border-radius:24px; color:var(--hero-text); padding:16px;
+    display:flex; flex-direction:column; gap:14px}
+  .herotop{display:flex; align-items:center; gap:11px}
+  .heroicon{width:38px; height:38px; border-radius:50%; background:rgba(255,255,255,.09);
+    display:flex; align-items:center; justify-content:center; flex:none; color:var(--accent-bg)}
+  .heroicon svg{width:18px; height:18px}
+  .herotitles{display:flex; flex-direction:column; gap:1px; min-width:0}
+  .herotitles .ht{font-size:15px; font-weight:600; letter-spacing:-.01em}
+  .herotitles .hs{font-size:12px; color:rgba(255,255,255,.55)}
+  .ringbadge{position:relative; width:40px; height:40px; flex:none; margin-left:auto}
+  .ringbadge svg{width:40px; height:40px; transform:rotate(-90deg); display:block}
+  .ringbadge .rv{position:absolute; inset:0; display:flex; align-items:center;
+    justify-content:center; font-size:11px; font-weight:700; color:#fff;
+    font-variant-numeric:tabular-nums}
+  .statgrid{display:grid; grid-template-columns:1fr 1fr 1fr; gap:8px}
+  .stattile{background:var(--tile); border-radius:14px; padding:10px 12px 12px; display:flex;
+    flex-direction:column; gap:4px}
+  .stattile .sl{font-size:11px; color:rgba(255,255,255,.5); font-weight:500}
+  .stattile .sv{font-size:22px; font-weight:700; font-variant-numeric:tabular-nums; line-height:1;
+    display:flex; align-items:baseline; gap:1px}
+  .stattile .ss{font-size:11px; font-weight:600; color:rgba(255,255,255,.45)}
+  .heronote{font-size:12px; line-height:1.5; color:rgba(255,255,255,.55)}
+  .heronote b{color:#fff; font-weight:600}
+  /* generic light card + title */
+  .card{background:var(--surface); border-radius:24px; box-shadow:var(--shadow-card); padding:16px}
+  .cardtitle{font-size:15px; font-weight:600; letter-spacing:-.01em}
+  .num{font-variant-numeric:tabular-nums; font-weight:700}
+  .dim{color:var(--dim)}
+  .metaline{display:flex; align-items:center; gap:5px; font-size:12px; color:var(--dim)}
+  .metaline svg{width:12px; height:12px; flex:none}
+  /* status chips */
+  .chip{display:inline-flex; align-items:center; border-radius:999px; padding:4px 10px;
+    font-size:11px; font-weight:600}
+  .chip.good{background:var(--tint-good-bg); color:var(--tint-good-fg)}
+  .chip.avg{background:var(--tint-avg-bg); color:var(--tint-avg-fg)}
+  .chip.poor{background:var(--tint-poor-bg); color:var(--tint-poor-fg)}
+  .chip.flat{background:var(--bg); color:var(--dim)}
+  /* icon circles + list rows */
+  .iconcircle{width:40px; height:40px; border-radius:50%; background:var(--bg); display:flex;
+    align-items:center; justify-content:center; flex:none; color:var(--text)}
+  .iconcircle svg{width:18px; height:18px}
+  .listrows{display:flex; flex-direction:column}
+  .lrow{display:flex; align-items:center; gap:12px; padding:11px 0}
+  .lrow:first-of-type{padding-top:14px}
+  .lrow:last-of-type{padding-bottom:2px}
+  .lrow .info{display:flex; flex-direction:column; gap:3px; min-width:0}
+  .lrow .name{font-size:14px; font-weight:600; letter-spacing:-.01em}
+  button.startchip{border:0; background:var(--accent-bg); border-radius:999px; min-height:32px;
+    width:auto; padding:6px 16px; font-size:12px; font-weight:600; cursor:pointer;
+    margin-left:auto; color:var(--accent-text); flex:none; box-shadow:none}
+  /* dashboard action row */
+  .btnrow{display:flex; gap:10px}
+  .btnrow>*{flex:1; min-height:46px}
+  .btnrow label.filebtn{width:auto}
+  .btnrow label.filebtn svg{width:18px; height:18px; flex:none}
+  /* section head + horizontal recommendation rail */
+  .sectionhead{display:flex; align-items:baseline; justify-content:space-between; padding:4px 2px 0}
+  /* flex:none — an overflow-x:auto child of the scrolling section has a zero
+     min-content height, so without it flex squashes the rail flat */
+  .airow{display:flex; flex:none; gap:10px; overflow-x:auto; scrollbar-width:none;
+    margin:-4px -14px 0; padding:4px 14px 6px}
+  .airow::-webkit-scrollbar{display:none}
+  .aicard{flex:none; width:212px; background:var(--surface); border-radius:18px;
+    box-shadow:var(--shadow-card); padding:12px 14px; display:flex; flex-direction:column; gap:7px}
+  .aicard .top{display:flex; align-items:center; gap:8px}
+  .aicard .ic{width:28px; height:28px; border-radius:50%; background:var(--accent-soft);
+    display:flex; align-items:center; justify-content:center; color:var(--text); flex:none}
+  .aicard .ic svg{width:14px; height:14px}
+  .aicard .t{font-size:13px; font-weight:600; letter-spacing:-.01em}
+  .aicard .s{font-size:12px; color:var(--dim); line-height:1.45}
+  /* weekly report bars */
+  .weekly svg{display:block; width:100%; height:auto; margin-top:8px}
+  /* segmented control */
+  .seg{display:flex; background:var(--seg-bg); border-radius:999px; padding:4px; gap:2px}
+  .seg button{flex:1; border:0; background:none; box-shadow:none; border-radius:999px;
+    min-height:34px; font-size:12px; font-weight:600; color:var(--dim); cursor:pointer;
+    width:auto; padding:0}
+  .seg button.active{background:var(--surface); color:var(--text);
+    box-shadow:0 1px 2px rgba(16,17,20,.06), 0 3px 8px rgba(16,17,20,.06)}
+  /* analysis run cards (expandable) */
+  .clipcard{padding:0; overflow:hidden}
+  .cliptop{display:flex; align-items:center; gap:12px; padding:14px 16px; cursor:pointer}
+  .thumb{width:62px; height:46px; border-radius:14px; flex:none; display:flex; align-items:center;
+    justify-content:center; color:#fff; position:relative; overflow:hidden}
+  .thumb svg{width:15px; height:15px; filter:drop-shadow(0 1px 2px rgba(0,0,0,.25))}
+  .thumb .court{position:absolute; inset:0; width:100%; height:100%; opacity:.55; filter:none}
+  .cliptop .info{display:flex; flex-direction:column; gap:3px; min-width:0}
+  .cliptop .name{font-size:14px; font-weight:600; letter-spacing:-.01em}
+  .statechip{margin-left:auto; flex:none; border-radius:999px; padding:6px 11px; font-size:10px;
+    font-weight:700; letter-spacing:.04em; display:inline-flex; gap:5px; align-items:center}
+  .statechip.done{background:var(--accent-bg); color:var(--accent-text)}
+  .statechip.todo{background:var(--bg); color:var(--dim)}
+  .clipbody{max-height:0; overflow:hidden; transition:max-height .28s ease}
+  .clipcard.open .clipbody{max-height:1600px}
+  .clipbody .inner{padding:14px 16px 16px; display:flex; flex-direction:column; gap:14px;
+    border-top:1px solid var(--line)}
+  /* gauge + score columns + feedback rows */
+  .gauge{display:flex; justify-content:center; padding:2px 0 0}
+  .gauge svg{display:block}
+  .scorecols{display:grid; grid-template-columns:1fr 1fr 1fr; gap:8px}
+  .scol{border:1px solid var(--line); border-radius:14px; padding:10px 12px; display:flex;
+    flex-direction:column; gap:3px; align-items:flex-start}
+  .scol .sl{font-size:11px; color:var(--dim); font-weight:500}
+  .scol .sv{font-size:20px; font-weight:700; font-variant-numeric:tabular-nums; line-height:1.1;
+    display:flex; align-items:baseline; gap:1px}
+  .scol .ss{font-size:11px; font-weight:600; color:var(--dim)}
+  .fbrow{display:flex; align-items:center; gap:12px}
+  .fbrow .iconcircle{width:36px; height:36px}
+  .fbrow .iconcircle svg{width:16px; height:16px}
+  .fbrow .info{display:flex; flex-direction:column; gap:2px; min-width:0}
+  .fbrow .t{font-size:13px; font-weight:600; letter-spacing:-.01em}
+  .fbrow .s{font-size:12px; color:var(--dim); line-height:1.4}
+  .fbrow .chip{margin-left:auto; flex:none}
+  button.ghostbtn{border:1px solid var(--line); background:transparent; border-radius:999px;
+    width:auto; min-height:36px; padding:0 16px; font-size:12px; font-weight:600;
+    color:var(--text); cursor:pointer; align-self:flex-start; box-shadow:none}
+  .replaybtn{width:100%}
+  /* progress view: deltas + trend cards */
+  #deltastrip{display:grid; grid-template-columns:1fr 1fr 1fr; gap:8px}
+  .delta{background:var(--surface); border-radius:18px; box-shadow:var(--shadow-card);
+    padding:12px 13px; display:flex; flex-direction:column; gap:6px}
+  .delta .lbl{font-size:11px; color:var(--dim); font-weight:500}
+  .delta .valrow{display:flex; align-items:center; gap:6px}
+  .delta .val{font-size:20px; line-height:1}
+  .delta .chip{padding:3px 7px; font-size:10px}
+  .trend .lbl{font-size:15px; font-weight:600; letter-spacing:-.01em}
+  .trend .valrow{display:flex; align-items:baseline; gap:8px; margin:6px 0 8px}
+  .trend .val{font-size:26px; line-height:1}
+  .trend .unit{font-size:13px; color:var(--dim); font-weight:600}
+  .trend .vsbase{font-size:12px; font-weight:600}
+  .trend .vsbase.up{color:var(--tint-good-fg)}
+  .trend .vsbase.down{color:var(--tint-poor-fg)}
+  .trend svg{display:block; width:100%; height:auto}
+  .bestrow{display:flex; align-items:center; gap:12px}
+  .bestrow .info{display:flex; flex-direction:column; gap:2px}
+  .bestrow .name{font-size:14px; font-weight:600; letter-spacing:-.01em}
+  .bestrow .meta{font-size:12px; color:var(--dim)}
+  .viewhead{display:flex; align-items:baseline; justify-content:space-between; min-height:32px;
+    padding:2px 2px 0}
+  .viewhead h2{text-align:left}
+  .viewhead .dim{font-size:12px}
+  .emptycard{color:var(--dim); font-size:13px; line-height:1.5; text-align:center;
+    padding:26px 16px}
 
   @media (max-width: 560px){
     .targetCourt{width:calc(100% - 16px)}
@@ -629,18 +803,40 @@
 </div>
 
 <main>
-  <!-- PHASE: load (Play home) -->
+  <!-- PHASE: load (Dashboard root — lab view-dashboard) -->
   <section class="hidden" id="p-load">
     <p class="instruction" id="loadHint"></p>
-    <p class="hubHead">Play</p>
-    <label class="filebtn heroCard heroSolo">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
-        <circle cx="12" cy="12" r="7.5"/><circle cx="12" cy="12" r="2.4" fill="currentColor" stroke="none"/>
-        <path d="M12 1.5v3M12 19.5v3M1.5 12h3M19.5 12h3"/>
-      </svg>
-      <span class="fcBody"><strong>Judge a clip</strong><span>Call a rally from a clip on this phone</span></span>
-      <input type="file" id="fileIn" accept="video/*">
-    </label>
+    <div class="hero">
+      <div class="herotop">
+        <div class="heroicon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="8.5"/><circle cx="12" cy="12" r="4"/><circle cx="12" cy="12" r=".8" fill="currentColor"/></svg>
+        </div>
+        <div class="herotitles">
+          <span class="ht">Today&#8217;s Focus</span>
+          <span class="hs" id="heroSub">Analyze a session to build your stats</span>
+        </div>
+        <div class="ringbadge" id="heroRing" role="img" aria-label="Sessions this week">
+          <svg viewBox="0 0 40 40" fill="none">
+            <circle cx="20" cy="20" r="16.5" stroke="rgba(255,255,255,.14)" stroke-width="3.5"/>
+            <circle id="heroRingArc" cx="20" cy="20" r="16.5" stroke="#D9F04A" stroke-width="3.5" stroke-linecap="round" stroke-dasharray="0 103.7"/>
+          </svg>
+          <span class="rv" id="heroRingVal">0/5</span>
+        </div>
+      </div>
+      <div class="statgrid">
+        <div class="stattile"><span class="sl">Sessions</span><span class="sv" id="heroT1">&#8212;</span></div>
+        <div class="stattile"><span class="sl">Front-wall IN</span><span class="sv" id="heroT2">&#8212;</span></div>
+        <div class="stattile"><span class="sl">Avg pace</span><span class="sv" id="heroT3">&#8212;</span></div>
+      </div>
+      <div class="heronote" id="heroNote">Record a rally on court, upload it here, and the pipeline turns it into calls, stats, and coaching.</div>
+    </div>
+    <div class="btnrow">
+      <label class="filebtn">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 15V4"/><path d="M7 8l5-5 5 5"/><path d="M4 16v2.5A1.5 1.5 0 0 0 5.5 20h13a1.5 1.5 0 0 0 1.5-1.5V16"/></svg>
+        Analyze a clip
+        <input type="file" id="fileIn" accept="video/*">
+      </label>
+    </div>
     <!-- ARCHIVED: in-app recording and live match are shelved. The phases,
          handlers, and camera/MediaRecorder code all remain intact and working —
          only these entry points are hidden, so restoring the feature means
@@ -659,6 +855,13 @@
       <span class="fcTag">Soon</span>
     </button>
     <p class="status" id="loadStatus"></p>
+    <div class="card weekly hidden" id="weeklyCard" style="padding-top:14px;padding-bottom:12px">
+      <div class="cardtitle">Weekly Report</div>
+      <div class="dim" style="font-size:12px;margin-top:2px">Active minutes</div>
+      <svg viewBox="0 0 326 150" id="weeklySvg" aria-label="Active minutes per day over the last week"></svg>
+    </div>
+    <div class="sectionhead hidden" id="aiRecsHead"><span class="cardtitle">Coach Notes</span></div>
+    <div class="airow hidden" id="aiRecsRow"></div>
     <hr class="hairline">
     <p class="devHead">Dev</p>
     <div class="devRow">
@@ -1146,27 +1349,38 @@
     </div>
   </section>
 
-  <!-- PHASE: matches (section root, roadmap placeholder) -->
+  <!-- PHASE: matches (section root — lab view-analysis: live run cards) -->
   <section class="hidden" id="p-matches">
-    <div class="placeholderHero">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-        <rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 10h18"/>
-      </svg>
-      <strong>Coming soon!</strong>
+    <div class="viewhead">
+      <h2>Analysis</h2>
+      <span class="dim" id="clipMeta"></span>
     </div>
-    <div class="targetZones">
-      <div class="targetHead"><strong>Planned</strong><span>PHASE 3</span></div>
-      <div class="planBody">
-        <div class="planRow"><i class="corePill">Core</i>Per-rally clip library</div>
-        <div class="planRow"><i class="laterPill">Later</i>Highlight auto-reels</div>
-        <div class="planRow"><i class="laterPill">Later</i>Dead-time removal</div>
-        <div class="planRow"><i class="laterPill">Later</i>Annotated shot overlays</div>
-      </div>
+    <div id="clipList" style="display:flex;flex-direction:column;gap:12px">
+      <div class="card emptycard">Loading sessions&#8230;</div>
     </div>
   </section>
 
-  <!-- PHASE: coach (section root, hub — cards drill into the improvement pillars) -->
+  <!-- PHASE: coach (section root — Training hub; cards drill into the improvement pillars) -->
   <section class="hidden" id="p-coach">
+    <div class="viewhead"><h2>Training</h2></div>
+    <div class="hero">
+      <div class="herotop">
+        <div class="heroicon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 3L5 13.5h5.5L11 21l8-10.5h-5.5z"/></svg>
+        </div>
+        <div class="herotitles">
+          <span class="ht">Coaching</span>
+          <span class="hs" id="coachHeroSub">Built from your analyzed sessions</span>
+        </div>
+        <div class="ringbadge" id="coachRing" role="img" aria-label="Sessions this week">
+          <svg viewBox="0 0 40 40" fill="none">
+            <circle cx="20" cy="20" r="16.5" stroke="rgba(255,255,255,.14)" stroke-width="3.5"/>
+            <circle id="coachRingArc" cx="20" cy="20" r="16.5" stroke="#D9F04A" stroke-width="3.5" stroke-linecap="round" stroke-dasharray="0 103.7"/>
+          </svg>
+          <span class="rv" id="coachRingVal">0/5</span>
+        </div>
+      </div>
+    </div>
     <button class="featureCard" type="button" data-phase="stats">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
         <path d="M5 20v-7M12 20V5M19 20v-11"/>
@@ -1227,6 +1441,14 @@
     </div>
   </section>
 
+  <!-- PHASE: progress (section root — lab view-progress: live cross-session trends) -->
+  <section class="hidden" id="p-progress">
+    <div class="viewhead"><h2>Progress</h2></div>
+    <div id="progressBody" style="display:flex;flex-direction:column;gap:14px">
+      <div class="card emptycard">Loading sessions&#8230;</div>
+    </div>
+  </section>
+
   <!-- PHASE: your coach / sharing (roadmap placeholder, under Coach) -->
   <section class="hidden" id="p-sharing">
     <div class="placeholderHero">
@@ -1248,23 +1470,29 @@
 </main>
 
 <nav id="navPill">
-  <button id="navPlay" class="active" type="button">
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-      <path d="M8 5.5v13l11-6.5z"/>
+  <button id="navPlay" class="active" type="button" aria-label="Dashboard">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <path d="M3 10.5l9-7.5 9 7.5V20a1 1 0 0 1-1 1h-5.5v-6h-5v6H4a1 1 0 0 1-1-1z"/>
     </svg>
-    <span>Play</span>
+    <span>Dashboard</span>
   </button>
-  <button id="navMatches" type="button">
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-      <rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 10h18"/>
+  <button id="navMatches" type="button" aria-label="Analysis">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <rect x="2.5" y="4.5" width="19" height="15" rx="4"/><path d="M10 9.2l4.5 2.8L10 14.8z" fill="currentColor" stroke="none"/>
     </svg>
-    <span>Matches</span>
+    <span>Analysis</span>
   </button>
-  <button id="navCoach" type="button">
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-      <rect x="5" y="5" width="14" height="16" rx="2"/><path d="M9 3h6v4H9z"/>
+  <button id="navCoach" type="button" aria-label="Training">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true">
+      <circle cx="12" cy="12" r="8.5"/><circle cx="12" cy="12" r="4"/><circle cx="12" cy="12" r=".8" fill="currentColor"/>
     </svg>
-    <span>Coach</span>
+    <span>Training</span>
+  </button>
+  <button id="navProgress" type="button" aria-label="Progress">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <path d="M3.5 19.5l5.5-7 4 3.5 7.5-9.5"/><path d="M16 6.5h4.5V11"/>
+    </svg>
+    <span>Progress</span>
   </button>
 </nav>
 
@@ -1353,7 +1581,7 @@ const S = {
 
 /* ---------- phase / UI ---------- */
 const STEP_META = {
-  load:   {label:'Squash Line Calling', instr:''},
+  load:   {label:'CrossCourt', instr:''},
   record: {label:'Record', instr:'', action:{btn:'recBtn', label:'Record'}},
   frame:  {label:'Pick frame', instr:'Drag the film strip under the playhead to a frame where the out line, service line, and tin are fully visible and unblocked.',
            action:{btn:'useFrame', label:'Use frame'}},
@@ -1377,18 +1605,19 @@ const STEP_META = {
   player2_report: {label:'Player 2', instr:''},
   // Section roots (Matches, Coach hub) + roadmap placeholder pages. No action key (no
   // primary yet) and no instr — production screens carry no guidance copy; the UX leads.
-  matches: {label:'Matches', instr:''},
-  coach:   {label:'Coach', instr:''},
+  matches: {label:'Analysis', instr:''},
+  coach:   {label:'Training', instr:''},
+  progress:{label:'Progress', instr:''},
   live:    {label:'Live match', instr:''},
   stats:   {label:'Stats + trends', instr:''},
   shot_bot:{label:'Shot selection', instr:''},
   sharing: {label:'Your coach', instr:''},
 };
 /* Roadmap phases share one empty-stage treatment; section id = 'p-' + key with _ → - */
-const ROADMAP_PHASES = ['live','matches','coach','stats','shot_bot','sharing'];
+const ROADMAP_PHASES = ['live','matches','coach','progress','stats','shot_bot','sharing'];
 const roadmapSection = p => 'p-' + p.replace('_','-');
 /* Section roots: the nav pill switches between them, so they get no back chevron */
-const SECTION_ROOTS = ['load','matches','coach'];
+const SECTION_ROOTS = ['load','matches','coach','progress'];
 
 /* The numbered judge flow, in order. The floor-map step only exists when the
    court model loaded, so the total is 10 with it and 9 without — computed here
@@ -1499,7 +1728,7 @@ function setPhase(p){
   document.body.classList.toggle('phase-track', p === 'track');
   for(const id of ['p-load','p-record','p-frame','p-tap','p-review','p-wall-corners','p-tap-floor','p-confirm','p-clip','p-analyze','p-track','p-label','p-target',
                    'p-player1-report','p-player2-report',
-                   'p-live','p-matches','p-coach','p-stats','p-shot-bot','p-sharing']) $(id).classList.add('hidden');
+                   'p-live','p-matches','p-coach','p-progress','p-stats','p-shot-bot','p-sharing']) $(id).classList.add('hidden');
   $('camVid').classList.toggle('hidden', p !== 'record');   // live preview only on the record screen
   $('analyzeOverlay').classList.toggle('hidden', p !== 'analyze');
   $('stepLabel').textContent = stepLabelFor(p);
@@ -1559,6 +1788,10 @@ function setPhase(p){
   $('navPlay').classList.toggle('active', p === 'load');
   $('navMatches').classList.toggle('active', p === 'matches');
   $('navCoach').classList.toggle('active', p === 'coach');
+  $('navProgress').classList.toggle('active', p === 'progress');
+  // Live pipeline analytics feed the section roots; refresh on every entry so
+  // a run finished elsewhere (or on another device) shows up without a reload.
+  if(SECTION_ROOTS.includes(p)) refreshLiveViews();
   render();
 }
 const curKey = () => S.phase === 'tap_out' ? 'out'
@@ -2490,6 +2723,7 @@ for(const card of document.querySelectorAll('button[data-phase]'))
 $('navPlay').onclick = () => setPhase('load');
 $('navMatches').onclick = () => setPhase('matches');
 $('navCoach').onclick = () => setPhase('coach');
+$('navProgress').onclick = () => setPhase('progress');
 
 /* dev row: Label mode toggle — routes the next loaded clip into the labeling flow */
 function updateModePill(){
@@ -3069,15 +3303,15 @@ function buildWallCornerView(){
 function drawWallOverlay(){
   if(!S.wall || !S.wall.points.length) return;
   // The confirm screen draws its own pucks over these same four corners, in
-  // its own ok/warn palette. Without this guard the yellow #ffd60a quad and
+  // its own ok/warn palette. Without this guard the accent #D9F04A quad and
   // numbered pucks render UNDER them — two colour languages for one geometry
   // on a screen DESIGN.md §8.19 justifies as "one fitted picture", with
-  // amber #f5c518 pucks sitting on a #ffd60a line in the warned state.
+  // amber #f5c518 pucks sitting on a #D9F04A line in the warned state.
   // drawFloorOverlay is already guarded this way; this one was not.
   if(S.phase === 'confirm') return;
   ctx.save();
-  ctx.strokeStyle = '#ffd60a';
-  ctx.fillStyle = '#ffd60a';
+  ctx.strokeStyle = '#D9F04A';
+  ctx.fillStyle = '#D9F04A';
   ctx.lineWidth = Math.max(3, S.W / 600);
   ctx.shadowColor = 'rgba(0,0,0,.75)';
   ctx.shadowBlur = 5;
@@ -3101,8 +3335,8 @@ function drawWallOverlay(){
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     ctx.fillText(String(i + 1), x, y);
-    ctx.fillStyle = '#ffd60a';
-    ctx.strokeStyle = '#ffd60a';
+    ctx.fillStyle = '#D9F04A';
+    ctx.strokeStyle = '#D9F04A';
   });
   ctx.restore();
 }
@@ -3743,7 +3977,7 @@ function drawFloorOverlay(){
   // into wild diagonals — wait for a well-supported fit before drawing it.
   const userPlaced = F.landmarks.filter(l => l.refined_px && !l.skipped && !l.inherited).length;
   if(F.H && COURT && userPlaced >= 3){
-    ctx.strokeStyle = 'rgba(255,214,10,.9)';
+    ctx.strokeStyle = 'rgba(217,240,74,.9)';
     ctx.lineWidth = Math.max(2, S.W / 900);
     for(const [a, b] of COURT.wireframe){
       ctx.beginPath();
@@ -7208,6 +7442,381 @@ async function startDevReloadPoller(){
   }, 1000);
 }
 
+/* ---------- live pipeline analytics (design-lab port) ----------
+   The section roots (Dashboard, Analysis, Training, Progress) render real
+   end-of-pipeline analytics: /api/runs for the index, /api/runs/<id>/coach
+   for per-run analytics + feedback. Ported from design-lab/crosscourt-lab.html
+   with the sample data removed — screens show honest empty states instead. */
+const LIVE = { runs:[], coach:{}, loading:null, range:'1M' };
+const LIVE_MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+const LIVE_DAYS = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+const LIVE_HUES = [205,150,30,280,110,255,20,180,60,320];
+let openClipId = null;
+
+function fmtRunDate(ts){
+  const d = new Date(ts*1000), now = new Date();
+  const hm = d.getHours() + ':' + String(d.getMinutes()).padStart(2,'0');
+  return d.toDateString() === now.toDateString()
+    ? `Today, ${hm}` : `${LIVE_MONTHS[d.getMonth()]} ${d.getDate()}, ${hm}`;
+}
+function fmtRunDur(sec){
+  if(sec == null) return '—';
+  const m = Math.floor(sec/60), s = Math.round(sec%60);
+  return `${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
+}
+function splitSentences(text){
+  return (text||'').split(/(?<=\.)\s+/).map(s=>s.trim()).filter(Boolean);
+}
+function liveMetrics(id){
+  const a = (LIVE.coach[id]||{}).analytics || {};
+  const calls = (a.in_count||0) + (a.out_count||0);
+  return {
+    inPct: calls ? Math.round(100*(a.in_count||0)/calls) : null,
+    height: a.average_wall_height_ft, pace: a.average_incoming_speed_mph,
+    top: a.max_incoming_speed_mph, side: a.side_target_rate,
+    bounces: a.total_floor_bounces, hits: a.total_wall_hits||0, calls
+  };
+}
+function weekRunCount(){
+  const now = Date.now()/1000;
+  return LIVE.runs.filter(r => (now - r.created) < 7*86400).length;
+}
+async function fetchLiveJSON(url){
+  const r = await fetch(url);
+  if(!r.ok) throw new Error(url);
+  return r.json();
+}
+/* One in-flight load shared by every root; coach payloads cache by run id. */
+function loadLiveRuns(){
+  if(LIVE.loading) return LIVE.loading;
+  LIVE.loading = (async () => {
+    try{
+      const idx = await fetchLiveJSON('/api/runs');
+      const candidates = (idx.runs||[])
+        .filter(r => r.has_analytics && r.status === 'complete').slice(0,10);
+      const coaches = await Promise.all(candidates.map(r =>
+        LIVE.coach[r.run_id] ? Promise.resolve(LIVE.coach[r.run_id])
+          : fetchLiveJSON(`/api/runs/${r.run_id}/coach`).catch(()=>null)));
+      const good = [];
+      candidates.forEach((r,i) => {
+        const c = coaches[i];
+        if(c && c.ok && ((c.analytics||{}).total_wall_hits||0) > 0){
+          LIVE.coach[r.run_id] = c; good.push(r);
+        }
+      });
+      LIVE.runs = good;
+    }catch(_){ /* backend unreachable — roots keep their empty states */ }
+    finally{ LIVE.loading = null; }
+  })();
+  return LIVE.loading;
+}
+function refreshLiveViews(){
+  const p = S.phase;
+  loadLiveRuns().then(() => {
+    if(S.phase !== p) return;   // user already navigated into a flow
+    if(p === 'load') renderDashboardLive();
+    if(p === 'matches') renderClipCards();
+    if(p === 'coach') renderCoachHero();
+    if(p === 'progress') renderProgressView();
+  });
+  // Paint what we already have (or the empty state) immediately.
+  if(p === 'load') renderDashboardLive();
+  if(p === 'matches') renderClipCards();
+  if(p === 'coach') renderCoachHero();
+  if(p === 'progress') renderProgressView();
+}
+function setRing(arcId, valId, count, target){
+  const frac = Math.min(1, count/target);
+  $(arcId).setAttribute('stroke-dasharray', `${(103.7*frac).toFixed(1)} 103.7`);
+  $(valId).textContent = `${count}/${target}`;
+}
+function renderDashboardLive(){
+  const weekCount = weekRunCount();
+  setRing('heroRingArc','heroRingVal', weekCount, 5);
+  if(!LIVE.runs.length) return;   // markup defaults are the empty state
+  const latest = LIVE.runs[0], m = liveMetrics(latest.run_id);
+  $('heroT1').innerHTML = `${weekCount}<span class="ss">/5</span>`;
+  $('heroT2').innerHTML = m.inPct==null ? '—' : `${m.inPct}<span class="ss">%</span>`;
+  $('heroT3').innerHTML = m.pace==null ? '—' : `${Math.round(m.pace)}<span class="ss">mph</span>`;
+  $('heroSub').textContent = `From your last ${LIVE.runs.length} analyzed ${LIVE.runs.length===1?'clip':'clips'}`;
+  const note = splitSentences((LIVE.coach[latest.run_id]||{}).feedback).slice(0,2).join(' ');
+  if(note) $('heroNote').textContent = note;
+  renderWeeklyBars();
+  renderCoachNotes();
+}
+function renderWeeklyBars(){
+  $('weeklyCard').classList.remove('hidden');
+  const mins = [0,0,0,0,0,0,0], labels = [];
+  const dayStart = new Date(); dayStart.setHours(0,0,0,0);
+  for(let i=6;i>=0;i--){
+    const d = new Date(dayStart); d.setDate(d.getDate()-i);
+    labels.push(LIVE_DAYS[d.getDay()]);
+  }
+  LIVE.runs.forEach(r => {
+    const d = new Date(r.created*1000); d.setHours(0,0,0,0);
+    const slot = 6 - Math.round((dayStart - d)/86400000);
+    if(slot>=0 && slot<7) mins[slot] += (r.duration_seconds||0)/60;
+  });
+  const W=326, top=8, bottom=124, span=bottom-top;
+  const maxV = Math.max(30, Math.ceil(Math.max(...mins)/10)*10);
+  const y = v => bottom - (v/maxV)*span;
+  let out = [maxV, maxV/2, 0].map(v =>
+    `<text x="26" y="${(y(v)+4).toFixed(1)}" text-anchor="end" font-size="10" fill="var(--dim)" opacity=".7">${Math.round(v)}</text>`).join('');
+  const active = 6;
+  mins.forEach((v,i) => {
+    const x = 34 + i*41 + 8.5;
+    const h = Math.max(4, (v/maxV)*span);
+    out += `<rect x="${x}" y="${(bottom-h).toFixed(1)}" width="24" height="${h.toFixed(1)}" rx="7" fill="${i===active?'var(--accent-bg)':'var(--seg-bg)'}"/>`;
+    out += `<text x="${x+12}" y="142" text-anchor="middle" font-size="10" fill="var(--dim)"${i===active?' font-weight="600"':' opacity=".7"'}>${labels[i]}</text>`;
+  });
+  $('weeklySvg').innerHTML = out;
+}
+const NOTE_ICONS = [
+  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="8.5"/><circle cx="12" cy="12" r="4"/><circle cx="12" cy="12" r=".8" fill="currentColor"/></svg>',
+  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 19L19 5"/><path d="M5 19h5.5"/><path d="M5 19v-5.5"/></svg>',
+  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>'
+];
+function renderCoachNotes(){
+  const latest = LIVE.runs[0];
+  const sentences = splitSentences((LIVE.coach[latest.run_id]||{}).feedback).slice(0,3);
+  if(!sentences.length) return;
+  $('aiRecsHead').classList.remove('hidden');
+  const row = $('aiRecsRow');
+  row.classList.remove('hidden');
+  row.innerHTML = sentences.map((s,i) => `
+    <div class="aicard">
+      <div class="top"><span class="ic">${NOTE_ICONS[i%NOTE_ICONS.length]}</span>
+        <span class="t">From your last session</span></div>
+      <span class="s">${escapeHtml(s)}</span>
+    </div>`).join('');
+}
+function renderCoachHero(){
+  setRing('coachRingArc','coachRingVal', weekRunCount(), 5);
+  $('coachHeroSub').textContent = LIVE.runs.length
+    ? `Built from your last ${LIVE.runs.length} analyzed ${LIVE.runs.length===1?'session':'sessions'}`
+    : 'Built from your analyzed sessions';
+}
+/* Analysis: one expandable card per analyzed run. */
+function gaugeSVG(score, label){
+  const N = 13, cx = 105, cy = 84, r = 64, tick = 19, w = 9;
+  const start = 205, sweep = 230;
+  const filled = Math.round(score/100*N);
+  let ticks = '';
+  for(let i=0;i<N;i++){
+    const a = (start - i*(sweep/(N-1))) * Math.PI/180;
+    const x1 = cx + Math.cos(a)*(r-tick/2), y1 = cy - Math.sin(a)*(r-tick/2);
+    const x2 = cx + Math.cos(a)*(r+tick/2), y2 = cy - Math.sin(a)*(r+tick/2);
+    const on = i < filled;
+    const op = on ? (0.45 + 0.55*((i+1)/filled)) : 1;
+    const col = on ? 'var(--accent-bg)' : 'var(--seg-bg)';
+    ticks += `<line x1="${x1.toFixed(1)}" y1="${y1.toFixed(1)}" x2="${x2.toFixed(1)}" y2="${y2.toFixed(1)}" stroke="${col}" stroke-opacity="${op.toFixed(2)}" stroke-width="${w}" stroke-linecap="round"/>`;
+  }
+  return `<svg width="210" height="126" viewBox="0 0 210 126" aria-label="${label} ${score} out of 100">
+    ${ticks}
+    <text x="${cx}" y="${cy-8}" text-anchor="middle" font-size="11" fill="var(--dim)" font-weight="500">${label}</text>
+    <text x="${cx}" y="${cy+22}" text-anchor="middle" font-size="30" font-weight="800" fill="var(--text)">${score}%</text>
+  </svg>`;
+}
+const COURT_THUMB = '<svg class="court" viewBox="0 0 62 46" fill="none" stroke="#fff" stroke-width="1.2" aria-hidden="true"><rect x="9" y="8" width="44" height="26" rx="1"/><path d="M9 21h44"/><path d="M9 28h44"/></svg>';
+/* thumbnail play glyph reuses the transport PLAY_ICON declared above */
+const FB_NOTE_ICON ='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 8v5"/><circle cx="12" cy="16.5" r=".5" fill="currentColor"/><circle cx="12" cy="12" r="9"/></svg>';
+function renderClipCards(){
+  const list = $('clipList');
+  if(!LIVE.runs.length){
+    $('clipMeta').textContent = '';
+    list.innerHTML = '<div class="card emptycard">No analyzed sessions yet.<br>Analyze a clip from the Dashboard to see it here.</div>';
+    return;
+  }
+  $('clipMeta').textContent = `${LIVE.runs.length} runs · live pipeline`;
+  const fmt = (v,d) => v==null ? '—' : (Math.round(v*10)/10).toFixed(d);
+  list.innerHTML = LIVE.runs.map((r,i) => {
+    const id = r.run_id, m = liveMetrics(id);
+    const hue = LIVE_HUES[i%LIVE_HUES.length];
+    const grad = `linear-gradient(140deg, hsl(${hue} 28% 74%), hsl(${hue} 26% 48%))`;
+    const state = m.inPct != null
+      ? `<span class="statechip done">IN <span class="num">${m.inPct}%</span></span>`
+      : `<span class="statechip done">ANALYZED</span>`;
+    const sentences = splitSentences((LIVE.coach[id]||{}).feedback).slice(0,3);
+    const fb = sentences.map(s => `
+      <div class="fbrow">
+        <div class="iconcircle">${FB_NOTE_ICON}</div>
+        <div class="info"><span class="s" style="color:var(--text)">${escapeHtml(s)}</span></div>
+      </div>`).join('');
+    const body = `
+      <div class="gauge">${m.inPct != null ? gaugeSVG(m.inPct,'Front-wall IN')
+        : '<div class="metaline">No judged front-wall calls in this clip.</div>'}</div>
+      <div class="scorecols">
+        <div class="scol"><span class="sl">Avg height</span><span class="sv">${fmt(m.height,1)}<span class="ss">ft</span></span></div>
+        <div class="scol"><span class="sl">Avg pace</span><span class="sv">${fmt(m.pace,0)}<span class="ss">mph</span></span></div>
+        <div class="scol"><span class="sl">Width</span><span class="sv">${fmt(m.side,0)}<span class="ss">%</span></span></div>
+      </div>
+      ${fb}
+      <div class="cardtitle" style="font-size:14px">Ball metrics</div>
+      <div class="scorecols" style="grid-template-columns:1fr 1fr">
+        <div class="scol"><span class="sl">Top pace</span><span class="sv num">${fmt(m.top,0)}<span class="ss">mph</span></span></div>
+        <div class="scol"><span class="sl">Floor bounces</span><span class="sv num">${m.bounces==null?'—':m.bounces}</span></div>
+      </div>
+      <button class="primary" type="button" data-review="${escapeHtml(id)}">Open full review</button>
+      <button class="ghostbtn" type="button" data-video="${escapeHtml(id)}">Watch source video</button>
+      <div class="metaline">${m.hits} front-wall hits · ${m.calls} judged · run ${escapeHtml(id)}</div>`;
+    return `
+      <div class="card clipcard ${openClipId===id?'open':''}" data-clip="${escapeHtml(id)}">
+        <div class="cliptop" data-toggle="${escapeHtml(id)}">
+          <div class="thumb" style="background:${grad}">${COURT_THUMB}${PLAY_ICON}</div>
+          <div class="info">
+            <span class="name">${fmtRunDate(r.created)}</span>
+            <span class="metaline"><span class="num" style="font-weight:500">${fmtRunDur(r.duration_seconds)}</span>· rally clip</span>
+          </div>
+          ${state}
+        </div>
+        <div class="clipbody"><div class="inner">${body}</div></div>
+      </div>`;
+  }).join('');
+  list.querySelectorAll('[data-toggle]').forEach(el => el.onclick = () => {
+    const id = el.dataset.toggle;
+    openClipId = (openClipId === id) ? null : id;
+    renderClipCards();
+  });
+  list.querySelectorAll('[data-review]').forEach(el => el.onclick = () => openRunReview(el.dataset.review));
+  list.querySelectorAll('[data-video]').forEach(el => el.onclick = () =>
+    window.open(`/api/runs/${encodeURIComponent(el.dataset.video)}/source_video`));
+}
+/* Open the full call page for a run: seed the restore stash and reboot —
+   the exact path the iOS #run deep link takes, so rehydration is identical. */
+function openRunReview(id){
+  try{
+    localStorage.setItem(RESTORE_KEY, JSON.stringify({run_id:id, frame:0, videoName:null}));
+  }catch(_){ return; }
+  if(location.hash) history.replaceState(null, '', location.pathname + location.search);
+  location.reload();
+}
+/* Progress: per-run trends with a typical-range band (quartiles). */
+function splinePath(pts){
+  if(pts.length < 2) return '';
+  let d = `M ${pts[0].x} ${pts[0].y}`;
+  for(let i=0;i<pts.length-1;i++){
+    const p0 = pts[Math.max(0,i-1)], p1 = pts[i], p2 = pts[i+1],
+          p3 = pts[Math.min(pts.length-1,i+2)];
+    const c1x = p1.x + (p2.x-p0.x)/6, c1y = p1.y + (p2.y-p0.y)/6;
+    const c2x = p2.x - (p3.x-p1.x)/6, c2y = p2.y - (p3.y-p1.y)/6;
+    d += ` C ${c1x.toFixed(2)} ${c1y.toFixed(2)}, ${c2x.toFixed(2)} ${c2y.toFixed(2)}, ${p2.x.toFixed(2)} ${p2.y.toFixed(2)}`;
+  }
+  return d;
+}
+function quantile(sorted, p){
+  if(!sorted.length) return 0;
+  const i = (sorted.length-1)*p, lo = Math.floor(i), hi = Math.ceil(i);
+  return sorted[lo] + (sorted[hi]-sorted[lo])*(i-lo);
+}
+const TREND_RANGES = ['1W','1M','3M','6M'];
+const TREND_SPANS = {'1W':7,'1M':30,'3M':90,'6M':180};
+const TREND_DEFS = [
+  {key:'inpct',  label:'Front-wall IN %', unit:'%',   get:id=>liveMetrics(id).inPct},
+  {key:'height', label:'Avg wall height', unit:'ft',  get:id=>liveMetrics(id).height},
+  {key:'pace',   label:'Avg pace',        unit:'mph', get:id=>liveMetrics(id).pace}
+];
+function buildTrendMetrics(){
+  const runsAsc = [...LIVE.runs].reverse();
+  const now = Date.now()/1000;
+  return TREND_DEFS.map(d => {
+    const series = runsAsc
+      .map(r => ({t:r.created, v:d.get(r.run_id)}))
+      .filter(p => p.v != null)
+      .map(p => ({t:p.t, v:Math.round(p.v*10)/10}));
+    const data = {};
+    for(const [k, days] of Object.entries(TREND_SPANS)){
+      let pts = series.filter(p => now-p.t < days*86400).map(p=>p.v);
+      if(pts.length < 2) pts = series.map(p=>p.v);
+      if(pts.length === 1) pts = [pts[0], pts[0]];
+      if(!pts.length) pts = [0, 0];
+      data[k] = pts;
+    }
+    const sorted = series.map(p=>p.v).sort((a,b)=>a-b);
+    let baseline = [quantile(sorted,.25), quantile(sorted,.75)];
+    if(baseline[0] === baseline[1]) baseline = [baseline[0]-1, baseline[1]+1];
+    return {label:d.label, unit:d.unit, baseline, data, count:series.length};
+  }).filter(m => m.count >= 1 && m.data['6M'].some(v=>v));
+}
+function renderProgressView(){
+  const body = $('progressBody');
+  const metrics = buildTrendMetrics();
+  if(LIVE.runs.length < 2 || !metrics.length){
+    body.innerHTML = '<div class="card emptycard">Trends need at least two analyzed sessions.<br>Each analyzed clip adds a point to every metric.</div>';
+    return;
+  }
+  const latest = liveMetrics(LIVE.runs[0].run_id);
+  const prev = LIVE.runs[1] ? liveMetrics(LIVE.runs[1].run_id) : null;
+  const deltaTile = (label, val, unit, prevVal) => {
+    let chip = '<span class="chip flat">—</span>';
+    if(val!=null && prevVal!=null && Math.round(val)!==Math.round(prevVal)){
+      const up = val > prevVal;
+      chip = `<span class="chip ${up?'good':'poor'}">${up?'▲':'▼'}${Math.abs(Math.round(val-prevVal))}</span>`;
+    }
+    return `<div class="delta"><span class="lbl">${label}</span>
+      <span class="valrow"><span class="val num">${val==null?'—':Math.round(val)+unit}</span>${chip}</span></div>`;
+  };
+  const seg = `<div class="seg" id="rangeSeg">${TREND_RANGES.map(r =>
+    `<button type="button" class="${r===LIVE.range?'active':''}" data-range="${r}">${r}</button>`).join('')}</div>`;
+  const W = 326, H = 118, PADL = 30, PADR = 12, PADY = 10;
+  const trendCards = metrics.map(m => {
+    const vals = m.data[LIVE.range];
+    const lo = Math.min(...vals, m.baseline[0]), hi = Math.max(...vals, m.baseline[1]);
+    const span = (hi - lo) || 1, pad = span * 0.12;
+    const y = v => H - PADY - ((v - (lo - pad)) / (span + 2*pad)) * (H - 2*PADY);
+    const x = i => PADL + i * ((W - PADL - PADR) / (vals.length - 1));
+    const pts = vals.map((v,i)=>({x:x(i), y:y(v)}));
+    const line = splinePath(pts);
+    const area = `${line} L ${pts[pts.length-1].x.toFixed(2)} ${H-2} L ${pts[0].x} ${H-2} Z`;
+    const bandTop = y(m.baseline[1]), bandBot = y(m.baseline[0]);
+    const mid = y((m.baseline[0]+m.baseline[1])/2);
+    const last = pts[pts.length-1], lastVal = vals[vals.length-1];
+    const baseMid = (m.baseline[0]+m.baseline[1])/2;
+    const diff = lastVal - baseMid;
+    const vs = diff >= 0 ? `+${Math.round(diff)} vs typical` : `${Math.round(diff)} vs typical`;
+    const yLabels = [hi, Math.round((hi+lo)/2), lo].map(v =>
+      `<text x="${PADL-8}" y="${(y(v)+3).toFixed(1)}" text-anchor="end" font-size="10" fill="var(--dim)" opacity=".7" font-variant-numeric="tabular-nums">${v}</text>`).join('');
+    return `
+      <div class="card trend">
+        <div class="lbl">${m.label}</div>
+        <div class="valrow">
+          <span class="val num">${lastVal}</span><span class="unit">${m.unit}</span>
+          <span class="vsbase ${diff>=0?'up':'down'}">${vs}</span>
+        </div>
+        <svg viewBox="0 0 ${W} ${H}" aria-label="${m.label} trend">
+          ${yLabels}
+          <rect x="${PADL}" y="${bandTop.toFixed(2)}" width="${W-PADL-PADR}" height="${(bandBot-bandTop).toFixed(2)}" rx="6" fill="var(--seg-bg)" opacity=".55"/>
+          <line x1="${PADL}" x2="${W-PADR}" y1="${mid.toFixed(2)}" y2="${mid.toFixed(2)}" stroke="var(--dim)" stroke-opacity=".35" stroke-dasharray="2 4"/>
+          <path d="${area}" fill="var(--accent-bg)" fill-opacity=".18"/>
+          <path d="${line}" fill="none" stroke="var(--accent-bg)" stroke-width="2.5" stroke-linecap="round"/>
+          <circle cx="${last.x.toFixed(2)}" cy="${last.y.toFixed(2)}" r="4.5" fill="var(--accent-bg)" stroke="var(--text)" stroke-width="2"/>
+          <text x="${Math.min(last.x, W-14).toFixed(2)}" y="${Math.max(last.y-11, 11).toFixed(2)}" text-anchor="end" font-size="11" font-weight="700" fill="var(--text)">${lastVal}${m.unit}</text>
+        </svg>
+      </div>`;
+  }).join('');
+  let best = null;
+  LIVE.runs.forEach(r => {
+    const mm = liveMetrics(r.run_id);
+    if(mm.inPct != null && (!best || mm.inPct > best.v)) best = {v:mm.inPct, t:r.created};
+  });
+  const bestCard = best ? `
+    <div class="card bestrow">
+      <div class="iconcircle">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M8 21h8"/><path d="M12 17v4"/><path d="M7 4h10v6a5 5 0 0 1-10 0z"/><path d="M7 6H4a1 1 0 0 0-1 1c0 2.2 1.8 4 4 4"/><path d="M17 6h3a1 1 0 0 1 1 1c0 2.2-1.8 4-4 4"/></svg>
+      </div>
+      <div class="info">
+        <span class="name">Best IN% to date — <span class="num">${best.v}%</span></span>
+        <span class="meta">${LIVE_MONTHS[new Date(best.t*1000).getMonth()]} ${new Date(best.t*1000).getDate()} · beat it to set a new mark</span>
+      </div>
+    </div>` : '';
+  body.innerHTML = seg
+    + `<div id="deltastrip">${deltaTile('Front-wall IN', latest.inPct, '%', prev && prev.inPct)}${deltaTile('Avg height', latest.height, 'ft', prev && prev.height)}${deltaTile('Avg pace', latest.pace, 'mph', prev && prev.pace)}</div>`
+    + `<div style="display:flex;flex-direction:column;gap:12px">${trendCards}</div>`
+    + bestCard;
+  body.querySelectorAll('#rangeSeg button').forEach(b => b.onclick = () => {
+    LIVE.range = b.dataset.range; renderProgressView();
+  });
+}
+
 /* ---------- deep links (#run=<id>&frame=<n>, #tab=matches|coach) ----------
    The native iOS shell opens the webview at a specific run (results card →
    full review) or a section tab. A #run link seeds the restore stash so
@@ -7233,14 +7842,14 @@ function applyDeepLink(){
     return 'run';
   }
   const tab = params.get('tab');
-  return (tab === 'matches' || tab === 'coach') ? tab : null;
+  return (tab === 'matches' || tab === 'coach' || tab === 'progress') ? tab : null;
 }
 
 updatePlayButtons();
 setPhase('load');
 checkBackend();
 const bootLink = applyDeepLink();
-if(bootLink === 'matches' || bootLink === 'coach') setPhase(bootLink);
+if(bootLink === 'matches' || bootLink === 'coach' || bootLink === 'progress') setPhase(bootLink);
 else tryRestoreSession();
 startDevReloadPoller();
 </script>
