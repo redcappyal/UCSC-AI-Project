@@ -685,6 +685,30 @@ def segment_front_wall_hits_into_rallies(front_wall_hits, rally_gap_seconds=None
     return rallies, rally_gap_seconds, gap_method
 
 
+def split_rallies_on_serve_fault(rallies):
+    """A serve called OUT ends its rally there and then.
+
+    Gap segmentation only sees time, so a serve fault followed by a quick
+    re-serve lands in one rally. That corrupts everything downstream: the
+    winner is decided by the fault while last_player points at a later
+    contact, so a genuine error gets attributed to the wrong player and
+    counted as forced rather than unforced.
+
+    The first contact of a rally is its serve by definition, so a rally whose
+    first hit was called OUT is cut immediately after it; the remainder starts
+    a fresh rally (whose own first hit is then a serve, possibly also a fault).
+    """
+    split = []
+    for rally in rallies:
+        remaining = rally
+        while len(remaining) > 1 and remaining[0].get("call") == "OUT":
+            split.append(remaining[:1])
+            remaining = remaining[1:]
+        if remaining:
+            split.append(remaining)
+    return split
+
+
 def assign_front_wall_hit_players(hits, serve_resolver=None):
     for hit in hits:
         for key in (
@@ -702,6 +726,7 @@ def assign_front_wall_hit_players(hits, serve_resolver=None):
     rallies, rally_gap_seconds, rally_gap_method = segment_front_wall_hits_into_rallies(
         assignable_hits
     )
+    rallies = split_rallies_on_serve_fault(rallies)
     try:
         first_server = int(
             env_float("PLAYER_ASSIGNMENT_FIRST_SERVER", DEFAULT_FIRST_SERVER_PLAYER)
@@ -1000,48 +1025,66 @@ def judge_hits(run_dir, results, detected, audio_available=None, serve_resolver=
                     entry["floor_zone"] = court_model.floor_zone_for_point(x_ft, y_ft)
         hits.append(entry)
 
+    def apply_serve_rule(entry):
+        """Judge one first-contact against the service line."""
+        point = None
+        if entry.get("impact"):
+            point = Point(float(entry["impact"]["x"]), float(entry["impact"]["y"]))
+        else:
+            display_row = results.get(int(entry.get("frame", -1)))
+            if display_row is not None:
+                point = ball_point_from_row(display_row)
+        if point is None:
+            return
+
+        entry["is_serve"] = True
+        entry.setdefault("standard_call", entry.get("call"))
+        try:
+            call, reason, _, service_y = judge_serve_ball(
+                point, top_line, service_line, wall_corners
+            )
+            entry["call"] = call
+            entry["reason"] = reason
+            entry["margin_px"] = (
+                judge_margin_px(point, top_line, service_line, wall_corners)
+                if call in ("IN", "OUT")
+                else None
+            )
+            entry["serve_call"] = call
+            entry["serve_reason"] = reason
+            entry["service_line_y"] = service_y
+        except ValueError as error:
+            entry["call"] = "UNKNOWN"
+            entry["reason"] = str(error)
+            entry["margin_px"] = None
+            entry["serve_call"] = "UNKNOWN"
+            entry["serve_reason"] = str(error)
+
+    def clear_serve_rule(entry):
+        """Undo the serve rule for a contact that is no longer a first one."""
+        if not entry.get("is_serve"):
+            return
+        entry["is_serve"] = False
+        if "standard_call" in entry:
+            entry["call"] = entry["standard_call"]
+        for key in ("serve_call", "serve_reason", "service_line_y", "standard_call"):
+            entry.pop(key, None)
+
     player_assignment = assign_front_wall_hit_players(hits, serve_resolver=serve_resolver)
     if top_line is not None and service_line is not None:
-        for entry in hits:
-            if int(entry.get("rally_hit_sequence") or 0) != 1:
-                continue
-            point = None
-            if entry.get("impact"):
-                point = Point(float(entry["impact"]["x"]), float(entry["impact"]["y"]))
-            else:
-                display_row = results.get(int(entry.get("frame", -1)))
-                if display_row is not None:
-                    point = ball_point_from_row(display_row)
-            if point is None:
-                continue
-
-            entry["is_serve"] = True
-            entry["standard_call"] = entry.get("call")
-            try:
-                call, reason, _, service_y = judge_serve_ball(
-                    point, top_line, service_line, wall_corners
-                )
-                entry["call"] = call
-                entry["reason"] = reason
-                entry["margin_px"] = (
-                    judge_margin_px(point, top_line, service_line, wall_corners)
-                    if call in ("IN", "OUT")
-                    else None
-                )
-                entry["serve_call"] = call
-                entry["serve_reason"] = reason
-                entry["service_line_y"] = service_y
-            except ValueError as error:
-                entry["call"] = "UNKNOWN"
-                entry["reason"] = str(error)
-                entry["margin_px"] = None
-                entry["serve_call"] = "UNKNOWN"
-                entry["serve_reason"] = str(error)
-
-        # Serve OUT can change the rally winner and therefore the next rally's
-        # inferred server. Re-run the deterministic assignment after applying
-        # the first-contact serve rule.
-        player_assignment = assign_front_wall_hit_players(hits, serve_resolver=serve_resolver)
+        # A serve called OUT ends its rally, which promotes the next contact to
+        # a serve in its own right — and that one may be a fault too. So apply
+        # the rule, re-segment, and repeat until the rally boundaries settle.
+        for _ in range(4):
+            before = [entry.get("rally_number") for entry in hits]
+            for entry in hits:
+                if int(entry.get("rally_hit_sequence") or 0) == 1:
+                    apply_serve_rule(entry)
+                else:
+                    clear_serve_rule(entry)
+            player_assignment = assign_front_wall_hit_players(hits, serve_resolver=serve_resolver)
+            if [entry.get("rally_number") for entry in hits] == before:
+                break
     payload = {
         "hits": hits,
         "target_zones": build_target_zone_summary(hits),
