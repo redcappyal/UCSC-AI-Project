@@ -74,6 +74,95 @@ def test_post_players_rejects_non_string_names(runs_dir):
                        json={"A": True}).status_code == 400
 
 
+def test_post_players_rejects_missing_or_invalid_json_body(runs_dir):
+    """request.get_json(silent=True) returns None for a missing body or one
+    that isn't valid JSON. Finding: the old `data = get_json(silent=True) or
+    {}` fallback turned that None into an empty dict, which then passed the
+    isinstance(dict) check and silently cleared both names (every
+    data.get(track) misses -> None) even though nothing valid was sent."""
+    client = make_client()
+    make_run(runs_dir)
+
+    # No body at all, no JSON content type.
+    response = client.post("/api/runs/run-players/players")
+    assert response.status_code == 400
+    assert "JSON object" in response.get_json()["error"]
+
+    # JSON content type, but the body isn't parseable JSON.
+    response = client.post(
+        "/api/runs/run-players/players",
+        data="not valid json",
+        content_type="application/json",
+    )
+    assert response.status_code == 400
+    assert "JSON object" in response.get_json()["error"]
+
+
+def test_post_players_explicit_null_body_still_clears_names(runs_dir):
+    """An explicit {"A": null, "B": null} is a real, intentional clear —
+    distinct from the missing/invalid-body case above — and must keep
+    working exactly as before."""
+    import job_runner
+    client = make_client()
+    run_dir = make_run(runs_dir)
+    job_runner.update_job(
+        "run-players",
+        run_dir=str(run_dir),
+        status="complete",
+        players_v1={"attribution_backend": "observed",
+                    "player_names": {"A": "Ian", "B": "Alvin"}},
+    )
+
+    response = client.post("/api/runs/run-players/players",
+                           json={"A": None, "B": None})
+    assert response.status_code == 200
+    assert response.get_json()["player_names"] == {"A": None, "B": None}
+
+
+def test_post_players_sanitizes_run_id_consistently(runs_dir):
+    """The run directory is looked up via secure_filename(run_id). Before
+    this fix, get_job/update_job further down used the raw, unsanitized
+    run_id instead -- for a run_id that sanitization actually changes, that
+    meant the directory check and the job lookup disagreed about which run
+    they meant. get_job(raw) would find nothing on disk and, if it had ever
+    reached update_job(raw, ...), that call's rehydrate-from-disk miss would
+    silently create a permanent empty in-memory JOBS[raw_run_id] stub under
+    a key nothing else ever looks up. Sanitizing once up front makes every
+    lookup in this handler agree with the other run-scoped routes (which
+    all key off secure_filename(run_id) already)."""
+    import job_runner
+
+    raw_run_id = "run:players"
+    sanitized_run_id = "runplayers"
+    assert raw_run_id != sanitized_run_id  # the case actually under test
+
+    client = make_client()
+    run_dir = make_run(runs_dir, sanitized_run_id)
+    job_runner.update_job(
+        sanitized_run_id,
+        run_dir=str(run_dir),
+        status="complete",
+        players_v1={"attribution_backend": "observed",
+                    "player_names": {"A": None, "B": None}},
+    )
+    job_runner.JOBS.pop(raw_run_id, None)
+
+    response = client.post(f"/api/runs/{raw_run_id}/players",
+                           json={"A": "Ian", "B": "Alvin"})
+    assert response.status_code == 200
+    assert response.get_json()["player_names"] == {"A": "Ian", "B": "Alvin"}
+
+    # The update landed on the run the sanitized id actually names...
+    job = job_runner.get_job(sanitized_run_id)
+    assert job["players_v1"]["player_names"] == {"A": "Ian", "B": "Alvin"}
+    on_disk = json.loads((run_dir / "job.json").read_text())
+    assert on_disk["players_v1"]["player_names"] == {"A": "Ian", "B": "Alvin"}
+
+    # ...and no divergent stub was created under the raw, unsanitized key.
+    assert raw_run_id not in job_runner.JOBS
+    job_runner.JOBS.pop(sanitized_run_id, None)
+
+
 def test_post_players_rehydrates_disk_only_job(runs_dir, monkeypatch):
     """Finding 1 repro: a run whose job lives only in job.json (server
     restarted since the job finished) must not be shadowed by an empty

@@ -1440,11 +1440,31 @@ PLAYER_NAME_MAX_CHARS = 40
 def save_player_names(run_id):
     """Post-hoc naming: map anonymous tracks A/B to typed names. Pure run
     metadata — analysis never re-runs (spec §4.5)."""
-    run_dir = RUNS_DIR / secure_filename(run_id)
+    # Sanitize once and reuse everywhere below. get_job/update_job build their
+    # own RUNS_DIR/<run_id>/job.json path from whatever id they're given
+    # (job_runner.get_job, job_runner.update_job) -- passing the raw run_id
+    # there while the directory check above uses the sanitized one means a
+    # run_id needing sanitization resolves to two different paths: the run
+    # dir exists (found via the sanitized path), but get_job(raw) can't find
+    # job.json and returns None, so the players_v1 update below silently
+    # no-ops. Worse, if that raw id were ever passed to update_job directly,
+    # its rehydrate-from-disk miss would create a permanent empty in-memory
+    # JOBS[raw_run_id] stub under a key nothing else ever looks up.
+    run_id = secure_filename(run_id)
+    run_dir = RUNS_DIR / run_id
     if not run_dir.is_dir():
         return error_response("Run was not found.", status=404)
 
-    data = request.get_json(silent=True) or {}
+    # request.get_json(silent=True) returns None for a missing/invalid-JSON
+    # body. Checking this before the old `or {}` fallback matters: `or {}`
+    # would turn that None into an empty dict, which then sails through the
+    # isinstance(dict) check below and silently clears both names (every
+    # `data.get(track)` misses -> None) even though the request was
+    # malformed, not an intentional clear. An explicit `{"A": null, "B":
+    # null}` body still clears both names -- that's real and stays.
+    data = request.get_json(silent=True)
+    if data is None:
+        return error_response("Body must be a JSON object.")
     if not isinstance(data, dict):
         return error_response("Body must be a JSON object.")
     if any(key not in ("A", "B") for key in data):
