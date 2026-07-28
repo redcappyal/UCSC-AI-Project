@@ -117,6 +117,18 @@
   .status{font-size:14px; color:var(--dim); min-height:1.2em}
   .status.warn{color:var(--text); font-weight:700}
   .status.ok{color:var(--text)}
+  /* #confirmWarn can now grow to a divergence sentence on top of the "Off:"
+     list (up to ~4 lines in the worst case: 3 self-check names plus both
+     out-line corners diverging). The shared .status min-height only reserves
+     one line, which is fine everywhere else it's used, but here the canvas
+     above is vertically centered in a flex-grow stage (§7) — any change to
+     this paragraph's real height reflows that stage and re-centers the
+     canvas, shifting it under an in-progress drag and corrupting the pointer
+     math (confirmed while verifying dragging: a steady drag jumped ~50px the
+     instant the divergence sentence first wrapped to an extra line). Reserve
+     the worst case up front so the height never changes after landing on
+     this screen, satisfying §0.9 for real rather than only for one-line text. */
+  #confirmWarn{min-height:80px}
 
   button, label.filebtn{font:inherit; font-size:15px; font-weight:600; letter-spacing:.05em;
     text-transform:uppercase; color:var(--text);
@@ -1212,6 +1224,7 @@ const S = {
   wall:null,                  // front-wall corner taps, clockwise from upper left
   floor:null,                 // floor-homography wizard state (see newFloorState)
   detect:null,                // last /api/detect-court response, kept for the confirm screen
+  confirmDrag:null,           // key of the anchor being dragged on the confirm screen ('wall:0', 'floor:short_line_left', ...)
   profile:null,               // {id, name, created_utc} when a saved profile is in play
   run:null,                   // backend tracking result
   coachReports:{},            // run_id -> coaching analytics/feedback response
@@ -2020,6 +2033,23 @@ function drawConfirmOverlay(){
   if(S.phase !== 'confirm') return;
   const warned = confirmOffChecks().length > 0;
   ctx.save();
+  // Floor wireframe (DESIGN.md §8.19). Deliberately not drawFloorOverlay's
+  // palette: that one colors landmarks red past a 4px residual, and red is
+  // reserved for OUT verdicts (§0.3). Here the whole wireframe just tracks
+  // the same ok/warn signal as the anchor pucks below, so the screen reads
+  // as one picture instead of two different color languages.
+  if(S.floor && S.floor.H && COURT){
+    ctx.strokeStyle = warned ? CONFIRM_WARN : CONFIRM_OK;
+    ctx.lineWidth = Math.max(2, S.W / 900);
+    for(const [a, b] of COURT.wireframe){
+      ctx.beginPath();
+      for(let t = 0; t <= 16; t++){
+        const p = applyH(S.floor.H, [a[0] + (b[0]-a[0]) * t/16, a[1] + (b[1]-a[1]) * t/16]);
+        if(t === 0) ctx.moveTo(p[0], p[1]); else ctx.lineTo(p[0], p[1]);
+      }
+      ctx.stroke();
+    }
+  }
   const radius = Math.max(9, S.W / 110);
   for(const anchor of confirmAnchorPoints()){
     ctx.beginPath();
@@ -2043,11 +2073,59 @@ function buildConfirmView(){
     ? 'Detected, but some court markings did not line up.'
     : 'Court detected — the overlay should sit on the real lines.';
   $('confirmSummary').className = 'status' + (off.length ? ' warn' : ' ok');
-  $('confirmWarn').innerHTML = off.length
-    ? `Off: ${off.map(check => check.id.replace(/_/g, ' ')).join(', ')}. Drag the nearest anchor, or tap it manually.`
-    : '&nbsp;';
-  $('confirmWarn').className = 'status' + (off.length ? ' warn' : '');
+  const diverged = confirmDivergence();
+  const messages = [];
+  if(off.length)
+    messages.push(`Off: ${off.map(check => check.id.replace(/_/g, ' ')).join(', ')}.`);
+  if(diverged.length)
+    messages.push(`${diverged.join(' and ')} no longer sits on the fitted out line — tap that line manually if the fit is wrong.`);
+  $('confirmWarn').innerHTML = messages.length ? messages.join(' ') : '&nbsp;';
+  $('confirmWarn').className = 'status' + (messages.length ? ' warn' : '');
   render();
+}
+
+/* Dragging an anchor moves that anchor and refits the homographies. It never
+   refits S.lines: those come from hundreds of detected edge pixels, and
+   rebuilding a line from two dragged corners would be strictly less accurate
+   than what detection already found (spec §8.1). Where a dragged corner ends
+   up far from its line, we say so rather than silently picking a winner. */
+const CONFIRM_DIVERGE_PX = 6;
+
+function confirmDragHitTest(x, y){
+  const radius = Math.max(18, S.W / 60);
+  let best = null, bestDist = radius * radius;
+  for(const anchor of confirmAnchorPoints()){
+    const dx = anchor.xy[0] - x, dy = anchor.xy[1] - y;
+    const dist = dx * dx + dy * dy;
+    if(dist <= bestDist){ bestDist = dist; best = anchor.key; }
+  }
+  return best;
+}
+
+function moveConfirmAnchor(key, x, y){
+  const [kind, id] = key.split(':');
+  if(kind === 'wall' && S.wall) S.wall.points[+id] = [x, y];
+  if(kind === 'floor' && S.floor){
+    const landmark = S.floor.landmarks.find(l => l.id === id);
+    if(landmark){ landmark.tap_px = [x, y]; landmark.refined_px = [x, y]; }
+  }
+  if(S.wall && S.floor) seedFrontSeamFromWall(S.floor);   // the seam is shared
+  refitFloor();
+}
+
+/* Which fitted lines a dragged corner has walked away from. */
+function confirmDivergence(){
+  if(!S.wall || S.wall.points.length !== WALL_CORNERS.length) return [];
+  const out = S.lines.out && S.lines.out.fit;
+  if(!out) return [];
+  const names = [];
+  for(const index of [0, 1]){          // top_left, top_right sit on the out line
+    const [x, y] = S.wall.points[index];
+    if(Math.abs(out.m * x + out.b - y) > CONFIRM_DIVERGE_PX){
+      names.push(WALL_CORNERS[index].label);
+    }
+  }
+  return names;
 }
 
 $('hdrBack').onclick = () => {
@@ -2171,9 +2249,15 @@ const pointers = new Map();
 let pinch = null;
 
 canvas.addEventListener('pointerdown', e => {
-  if(S.phase !== 'tap_out' && S.phase !== 'tap_tin' && S.phase !== 'tap_service' && S.phase !== 'tap_wall' && S.phase !== 'tap_floor') return;
+  if(S.phase !== 'tap_out' && S.phase !== 'tap_tin' && S.phase !== 'tap_service' && S.phase !== 'tap_wall' && S.phase !== 'tap_floor' && S.phase !== 'confirm') return;
   e.preventDefault();
   canvas.setPointerCapture(e.pointerId);
+  if(S.phase === 'confirm' && pointers.size === 0){
+    const r = canvas.getBoundingClientRect();
+    const x = Math.round((e.clientX - r.left) * S.W / r.width);
+    const y = Math.round((e.clientY - r.top) * S.H / r.height);
+    S.confirmDrag = confirmDragHitTest(x, y);
+  }
   pointers.set(e.pointerId, { x:e.clientX, y:e.clientY, startX:e.clientX, startY:e.clientY, moved:false, multi:false });
 
   if(pointers.size >= 2){
@@ -2195,6 +2279,15 @@ canvas.addEventListener('pointermove', e => {
   if(Math.hypot(e.clientX - p.startX, e.clientY - p.startY) > TAP_MOVE_PX) p.moved = true;
   const dx = e.clientX - p.x, dy = e.clientY - p.y;
   p.x = e.clientX; p.y = e.clientY;
+
+  if(S.confirmDrag && pointers.size === 1){
+    const r = canvas.getBoundingClientRect();
+    moveConfirmAnchor(S.confirmDrag,
+      Math.min(S.W - 1, Math.max(0, Math.round((e.clientX - r.left) * S.W / r.width))),
+      Math.min(S.H - 1, Math.max(0, Math.round((e.clientY - r.top) * S.H / r.height))));
+    buildConfirmView();
+    return;
+  }
 
   if(pointers.size === 2 && pinch){
     const pts = [...pointers.values()];
@@ -2221,6 +2314,11 @@ function endPointer(e){
   const p = pointers.get(e.pointerId);
   pointers.delete(e.pointerId);
   if(pointers.size < 2) pinch = null;
+  if(S.confirmDrag && pointers.size === 0){
+    S.confirmDrag = null;
+    buildConfirmView();
+    return;
+  }
   if(!p) return;
   const tapPhase = S.phase === 'tap_out' || S.phase === 'tap_tin' || S.phase === 'tap_service' || S.phase === 'tap_wall' || S.phase === 'tap_floor';
   if(tapPhase && !p.moved && !p.multi && pointers.size === 0){

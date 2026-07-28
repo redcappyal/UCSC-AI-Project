@@ -675,8 +675,29 @@ draggable anchor pucks at the four wall corners and the two short-line ends.
   the self-verification checks agree, `#f5c518` when one is off. **Never red**
   — §0.3 reserves red for OUT verdicts. Colour is never the only carrier: the
   status line names every anchor the checks flagged.
-- Both status lines reserve their height with `&nbsp;` (§0.9) so a warning
-  appearing after a drag never pushes the buttons around.
+- The floor wireframe on *this* screen shares that same two-colour ok/warn
+  signal rather than the floor wizard's own per-landmark residual palette
+  (§8.10's `#floorDiagram`/`drawFloorOverlay`, dim → active → done → warned,
+  which turns a marker red past a 4 px residual). This screen has no red to
+  spend — it is not a wizard tracking individual landmark quality, it is one
+  fitted picture the player either accepts or corrects — so the wireframe and
+  the anchor pucks always agree on a single colour.
+- Anchors are draggable: a drag moves that anchor and refits the wall/floor
+  homographies live, so the wireframe and pucks update as the finger moves.
+  A drag never touches the fitted line overlays (`#35e0ff`/`#ff9f43`/`#b4ff3a`
+  above) — those come from a detected fit through hundreds of edge pixels,
+  authoritative over any two-point fit a dragged corner could produce (spec
+  §8.1). If a dragged wall corner walks more than a few pixels off the fitted
+  out line, the status line names it rather than silently trusting either the
+  drag or the fit.
+- Both status lines default to `&nbsp;` so they never collapse to zero height,
+  but `#confirmWarn`'s text is no longer bounded to one line now that a
+  divergence sentence can stack onto the "Off:" list — up to ~4 lines in the
+  worst case. It carries its own `min-height:80px` (§0.9) sized for that
+  worst case, not the shared `.status` class's one-line minimum, because this
+  paragraph sits below a canvas that's vertically centered in a flex-grow
+  stage (§7): letting its height change while a drag is in progress reflows
+  the stage and re-centers the canvas out from under the finger mid-gesture.
 - Detection runs behind the sanctioned analyzing scrim (§8.12).
 - Primary is the proxied `USE THIS CALIBRATION` (§3.4); the manual wizard is
   always one tap away via the secondary `TAP IT MANUALLY`.
