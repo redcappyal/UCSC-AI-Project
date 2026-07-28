@@ -17,9 +17,10 @@ final class OrientationLockTests: XCTestCase {
     }
 
     func testWebTabsRotateFreely() {
-        // Matches and Coach are portrait mobile web UI.
+        // Analysis, Training, and Progress are portrait mobile web UI.
         XCTAssertEqual(OrientationLock.mask(for: .matches), .all)
         XCTAssertEqual(OrientationLock.mask(for: .coach), .all)
+        XCTAssertEqual(OrientationLock.mask(for: .progress), .all)
     }
 
     func testPinnedMaskNarrowsToTheResolvedMount() {

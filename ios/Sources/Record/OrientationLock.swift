@@ -3,7 +3,7 @@ import UIKit
 
 /// Which tab is showing, and therefore which orientations the app permits.
 enum RootTab: Hashable, CaseIterable {
-    case play, matches, coach
+    case play, matches, coach, progress
 
     /// The tab the app opens into. `RootTabView`'s initial `@State` and
     /// `OrientationPolicy`'s seeded mask both read this one literal, so the
@@ -17,14 +17,14 @@ enum RootTab: Hashable, CaseIterable {
 /// Capture is always landscape (`CaptureSettings`), so the Play tab is
 /// landscape too — not just while recording. The camera preview is live while
 /// the operator aims the phone in its back-wall mount, which is exactly when a
-/// sideways preview costs the most. Matches and Coach are portrait mobile web
-/// UI and keep rotating freely.
+/// sideways preview costs the most. The web tabs (Analysis, Training,
+/// Progress) are portrait mobile web UI and keep rotating freely.
 enum OrientationLock {
     /// Orientations permitted while `tab` is showing, before capture pins.
     static func mask(for tab: RootTab) -> UIInterfaceOrientationMask {
         switch tab {
         case .play: return .landscape
-        case .matches, .coach: return .all
+        case .matches, .coach, .progress: return .all
         }
     }
 
@@ -194,7 +194,7 @@ final class OrientationPolicy {
         currentTab = tab
         switch tab {
         case .play: apply(capturePin ?? OrientationLock.mask(for: .play))
-        case .matches, .coach: apply(OrientationLock.mask(for: tab))
+        case .matches, .coach, .progress: apply(OrientationLock.mask(for: tab))
         }
     }
 }

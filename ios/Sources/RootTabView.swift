@@ -25,14 +25,21 @@ struct RootTabView: View {
             RecordView()
                 .tabItem { Label("Play", systemImage: "record.circle") }
                 .tag(RootTab.play)
+            // Labels track the web app's section roots (design-lab IA,
+            // DESIGN.md §8.3): the `matches`/`coach` cases and their #tab
+            // fragments are the stable internal names those roots kept.
             WebScreen(url: URL(string: Config.baseURL.absoluteString + "/#tab=matches&shell=1")!)
                 .id("matches-\(serverBase)")
-                .tabItem { Label("Matches", systemImage: "square.stack") }
+                .tabItem { Label("Analysis", systemImage: "play.rectangle") }
                 .tag(RootTab.matches)
             WebScreen(url: URL(string: Config.baseURL.absoluteString + "/#tab=coach&shell=1")!)
                 .id("coach-\(serverBase)")
-                .tabItem { Label("Coach", systemImage: "figure.tennis") }
+                .tabItem { Label("Training", systemImage: "target") }
                 .tag(RootTab.coach)
+            WebScreen(url: URL(string: Config.baseURL.absoluteString + "/#tab=progress&shell=1")!)
+                .id("progress-\(serverBase)")
+                .tabItem { Label("Progress", systemImage: "chart.line.uptrend.xyaxis") }
+                .tag(RootTab.progress)
         }
         .tint(Theme.accentBg)
         .background(Theme.bg)
