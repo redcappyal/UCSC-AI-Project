@@ -1,0 +1,1104 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CrossCourt — Design Lab</title>
+<style>
+:root{
+  --canvas:#F1F2F4; --card:#FFFFFF; --ink:#141517; --dim:#8E9199;
+  --accent:#D9F04A; --accent-soft:#ECF3C6;
+  --tile:#26272B; --hairline:#EFF0F3;
+  --tint-good-bg:#E7F4E9; --tint-good-fg:#2E7D3E;
+  --tint-avg-bg:#FCF3DC;  --tint-avg-fg:#A06E00;
+  --tint-poor-bg:#FBE7E4; --tint-poor-fg:#B3402F;
+  --shadow-card:0 1px 2px rgba(16,17,20,.03), 0 10px 30px rgba(16,17,20,.05);
+  --shadow-btn:0 1px 2px rgba(16,17,20,.04), 0 4px 14px rgba(16,17,20,.06);
+}
+*{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+body{background:#E3E4E8;font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",Roboto,sans-serif;
+  color:var(--ink);display:flex;justify-content:center;min-height:100vh;padding:24px 0;
+  -webkit-font-smoothing:antialiased}
+.phone{width:390px;background:var(--canvas);border-radius:44px;overflow:hidden;
+  box-shadow:0 12px 48px rgba(16,17,20,.2);display:flex;flex-direction:column;
+  height:844px;position:relative}
+/* status bar */
+.statusbar{flex:none;display:flex;align-items:center;justify-content:space-between;
+  padding:14px 26px 4px;font-size:14px;font-weight:600;
+  font-variant-numeric:tabular-nums;letter-spacing:.01em}
+.statusbar .sicons{display:flex;align-items:center;gap:6px}
+.statusbar svg{display:block}
+.screen{flex:1;overflow-y:auto;padding:8px 16px 110px;scrollbar-width:none}
+.screen::-webkit-scrollbar{display:none}
+.view{display:none;flex-direction:column;gap:14px}
+.view.active{display:flex}
+/* primitives */
+.card{background:var(--card);border-radius:24px;box-shadow:var(--shadow-card);padding:16px}
+.cardtitle{font-size:15px;font-weight:600;letter-spacing:-.01em}
+.pill{border:0;border-radius:999px;min-height:46px;padding:0 16px;font-size:14px;font-weight:600;
+  font-family:inherit;letter-spacing:-.01em;display:flex;align-items:center;justify-content:center;gap:8px;
+  cursor:pointer;color:var(--ink);background:var(--card);box-shadow:var(--shadow-btn)}
+.pill.accent{background:var(--accent);box-shadow:none;font-weight:600}
+.pill:active{filter:brightness(.97)}
+.pill svg{width:18px;height:18px}
+.iconcircle{width:40px;height:40px;border-radius:50%;background:var(--canvas);display:flex;
+  align-items:center;justify-content:center;flex:none;color:var(--ink)}
+.iconcircle svg{width:18px;height:18px}
+.chip{display:inline-flex;align-items:center;border-radius:999px;padding:4px 10px;
+  font-size:11px;font-weight:600}
+.chip.good{background:var(--tint-good-bg);color:var(--tint-good-fg)}
+.chip.avg{background:var(--tint-avg-bg);color:var(--tint-avg-fg)}
+.chip.poor{background:var(--tint-poor-bg);color:var(--tint-poor-fg)}
+.num{font-variant-numeric:tabular-nums;font-weight:700}
+h2{font-size:20px;font-weight:700;letter-spacing:-.02em}
+.dim{color:var(--dim)}
+.metaline{display:flex;align-items:center;gap:5px;font-size:12px;color:var(--dim)}
+.metaline svg{width:12px;height:12px;flex:none}
+/* app header */
+.apphead{display:flex;align-items:center;justify-content:space-between;min-height:40px;padding:2px 2px 0}
+.wordmark{font-size:17px;font-weight:700;letter-spacing:-.02em;display:flex;align-items:center;gap:7px}
+.wordmark svg{width:20px;height:20px}
+.bellbtn{width:40px;height:40px;border:0;background:none;display:flex;align-items:center;
+  justify-content:center;color:var(--ink);cursor:pointer;margin-right:-8px}
+.bellbtn svg{width:21px;height:21px}
+/* hero (dark card) */
+.hero{background:var(--ink);border-radius:24px;color:#fff;padding:16px;display:flex;
+  flex-direction:column;gap:14px}
+.herotop{display:flex;align-items:center;gap:11px}
+.heroicon{width:38px;height:38px;border-radius:50%;background:rgba(255,255,255,.09);
+  display:flex;align-items:center;justify-content:center;flex:none;color:var(--accent)}
+.heroicon svg{width:18px;height:18px}
+.herotitles{display:flex;flex-direction:column;gap:1px;min-width:0}
+.herotitles .ht{font-size:15px;font-weight:600;letter-spacing:-.01em}
+.herotitles .hs{font-size:12px;color:rgba(255,255,255,.55)}
+.ringbadge{position:relative;width:40px;height:40px;flex:none;margin-left:auto}
+.ringbadge svg{width:40px;height:40px;transform:rotate(-90deg);display:block}
+.ringbadge .rv{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
+  font-size:11px;font-weight:700;color:#fff;font-variant-numeric:tabular-nums}
+.statgrid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px}
+.stattile{background:var(--tile);border-radius:14px;padding:10px 12px 12px;display:flex;
+  flex-direction:column;gap:4px}
+.stattile .sl{font-size:11px;color:rgba(255,255,255,.5);font-weight:500}
+.stattile .sv{font-size:22px;font-weight:700;font-variant-numeric:tabular-nums;line-height:1;
+  display:flex;align-items:baseline;gap:1px}
+.stattile .ss{font-size:11px;font-weight:600;color:rgba(255,255,255,.45)}
+.heronote{font-size:12px;line-height:1.5;color:rgba(255,255,255,.55)}
+.heronote b{color:#fff;font-weight:600}
+/* button row */
+.btnrow{display:flex;gap:10px}
+.btnrow .pill{flex:1}
+/* list rows */
+.listrows{display:flex;flex-direction:column}
+.lrow{display:flex;align-items:center;gap:12px;padding:11px 0}
+.lrow:first-of-type{padding-top:14px}
+.lrow:last-of-type{padding-bottom:2px}
+.lrow .info{display:flex;flex-direction:column;gap:3px;min-width:0}
+.lrow .name{font-size:14px;font-weight:600;letter-spacing:-.01em}
+.startchip{border:0;background:var(--accent);border-radius:999px;min-height:32px;
+  padding:6px 16px;font-size:12px;font-weight:600;font-family:inherit;cursor:pointer;
+  margin-left:auto;color:var(--ink);flex:none}
+.startchip:active{filter:brightness(.97)}
+/* nav (dark, icon-only) */
+nav{position:absolute;left:50%;bottom:18px;transform:translateX(-50%);display:flex;gap:2px;
+  padding:7px;border-radius:999px;background:#1B1C1F;
+  box-shadow:0 18px 36px rgba(16,17,20,.28)}
+nav button{border:0;background:none;width:46px;height:46px;border-radius:50%;
+  display:flex;align-items:center;justify-content:center;color:rgba(255,255,255,.5);
+  cursor:pointer;font-family:inherit}
+nav button.active{background:var(--accent);color:var(--ink)}
+nav button svg{width:20px;height:20px}
+/* weekly report bars */
+.weekly svg{display:block;width:100%;height:auto;margin-top:8px}
+/* section head + AI recommendation rail */
+.sectionhead{display:flex;align-items:baseline;justify-content:space-between;padding:4px 2px 0}
+.airow{display:flex;gap:10px;overflow-x:auto;scrollbar-width:none;margin:-4px -16px 0;padding:4px 16px 6px}
+.airow::-webkit-scrollbar{display:none}
+.aicard{flex:none;width:212px;background:var(--card);border-radius:18px;box-shadow:var(--shadow-card);
+  padding:12px 14px;display:flex;flex-direction:column;gap:7px}
+.aicard .top{display:flex;align-items:center;gap:8px}
+.aicard .ic{width:28px;height:28px;border-radius:50%;background:var(--accent-soft);display:flex;
+  align-items:center;justify-content:center;color:var(--ink);flex:none}
+.aicard .ic svg{width:14px;height:14px}
+.aicard .t{font-size:13px;font-weight:600;letter-spacing:-.01em}
+.aicard .s{font-size:12px;color:var(--dim);line-height:1.45}
+/* report segmented control */
+.seg{display:flex;background:#E7E8EC;border-radius:999px;padding:4px;gap:2px}
+.seg button{flex:1;border:0;background:none;border-radius:999px;min-height:34px;font-size:12px;
+  font-weight:600;font-family:inherit;color:var(--dim);cursor:pointer}
+.seg button.active{background:var(--card);color:var(--ink);
+  box-shadow:0 1px 2px rgba(16,17,20,.06), 0 3px 8px rgba(16,17,20,.06)}
+/* movement analysis tiles */
+.mvgrid{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.mvtile{border:1px solid var(--hairline);border-radius:14px;padding:11px 12px;display:flex;
+  flex-direction:column;gap:6px}
+.mvtile .top{display:flex;align-items:center;justify-content:space-between}
+.mvtile .sl{font-size:11px;color:var(--dim);font-weight:500}
+.mvtile .ic{width:22px;height:22px;border-radius:50%;background:var(--accent-soft);display:flex;
+  align-items:center;justify-content:center;color:var(--ink)}
+.mvtile .ic svg{width:12px;height:12px}
+.mvtile .sv{font-size:18px;font-weight:700;font-variant-numeric:tabular-nums;line-height:1;
+  display:flex;align-items:baseline;gap:2px}
+.mvtile .ss{font-size:11px;color:var(--dim);font-weight:600}
+.mvtile .spark{display:block;margin-top:2px}
+/* rally replay thumb */
+.replay{position:relative;height:96px;border-radius:14px;overflow:hidden;display:flex;align-items:center;
+  justify-content:center;cursor:pointer;border:0;width:100%;padding:0;font-family:inherit}
+.replay .court{position:absolute;inset:0;width:100%;height:100%;opacity:.5}
+.replay .pb{position:relative;width:40px;height:40px;border-radius:50%;background:rgba(255,255,255,.92);
+  display:flex;align-items:center;justify-content:center;color:var(--ink)}
+.replay .pb svg{width:15px;height:15px;margin-left:2px}
+/* training AI dock */
+.dock{display:flex;gap:6px;background:#1B1C1F;border-radius:999px;padding:8px;overflow-x:auto;
+  scrollbar-width:none;box-shadow:var(--shadow-card)}
+.dock::-webkit-scrollbar{display:none}
+.dock button{flex:none;width:44px;height:44px;border-radius:50%;border:0;background:none;
+  color:rgba(255,255,255,.55);display:flex;align-items:center;justify-content:center;cursor:pointer}
+.dock button.active{background:var(--accent);color:var(--ink)}
+.dock button svg{width:19px;height:19px}
+/* camera overlay */
+#camview{position:absolute;inset:0;z-index:30;display:flex;flex-direction:column}
+#camview.hidden{display:none}
+.camstage{position:absolute;inset:0;
+  background:linear-gradient(180deg,#E2DDD2 0%,#D8D2C5 57%,#C09A6B 57.4%,#A9825389 100%),#C09A6B}
+.camstage svg{position:absolute;inset:0;width:100%;height:100%}
+.camstatus{position:relative;display:flex;align-items:center;justify-content:space-between;
+  padding:14px 26px 4px;font-size:14px;font-weight:600;color:var(--ink);
+  font-variant-numeric:tabular-nums}
+.camstatus .sicons{display:flex;align-items:center;gap:6px}
+.camtop{position:relative;display:flex;align-items:center;justify-content:space-between;padding:10px 16px}
+.camglass{width:42px;height:42px;border-radius:50%;border:0;background:rgba(20,21,23,.42);
+  backdrop-filter:blur(8px);color:#fff;display:flex;align-items:center;justify-content:center;
+  cursor:pointer;flex:none}
+.camglass svg{width:18px;height:18px}
+.recpill{display:flex;align-items:center;gap:7px;background:rgba(20,21,23,.42);backdrop-filter:blur(8px);
+  border-radius:999px;padding:10px 15px;color:#fff;font-size:13px;font-weight:600;
+  font-variant-numeric:tabular-nums}
+.recdot{width:8px;height:8px;border-radius:50%;background:#FF453A}
+.camside{position:absolute;right:14px;top:210px;display:flex;flex-direction:column;gap:10px}
+.camchip{position:absolute;left:50%;transform:translateX(-50%);bottom:206px;background:var(--accent);
+  color:var(--ink);font-size:12px;font-weight:700;border-radius:999px;padding:9px 14px;border:0;
+  cursor:pointer;display:flex;align-items:center;gap:6px;font-family:inherit;white-space:nowrap}
+.camchip svg{width:13px;height:13px}
+.shotpills{position:absolute;left:50%;transform:translateX(-50%);bottom:148px;display:flex;gap:4px;
+  background:rgba(20,21,23,.42);backdrop-filter:blur(8px);border-radius:999px;padding:5px}
+.shotpills button{border:0;border-radius:999px;min-height:34px;padding:0 17px;font-size:13px;
+  font-weight:600;font-family:inherit;color:#fff;background:none;cursor:pointer}
+.shotpills button.active{background:var(--accent);color:var(--ink);font-weight:700}
+.cambottom{position:absolute;left:0;right:0;bottom:36px;display:flex;align-items:center;
+  justify-content:center;gap:36px}
+.shutter{width:74px;height:74px;border-radius:50%;border:4px solid #fff;background:rgba(20,21,23,.18);
+  display:flex;align-items:center;justify-content:center;cursor:pointer;
+  box-shadow:0 4px 20px rgba(0,0,0,.25)}
+.shutter .sq{width:28px;height:28px;border-radius:8px;background:#fff}
+/* live badge */
+.livetag{background:var(--accent);border-radius:999px;padding:3px 8px;font-size:10px;
+  font-weight:700;letter-spacing:.05em;vertical-align:3px;margin-left:6px}
+.livetag.hidden{display:none}
+/* toast */
+#toast{position:absolute;left:50%;bottom:92px;transform:translateX(-50%);background:var(--ink);
+  color:#fff;font-size:13px;font-weight:600;padding:10px 16px;border-radius:999px;
+  opacity:0;transition:opacity .18s ease;pointer-events:none;white-space:nowrap;z-index:5}
+#toast.show{opacity:1}
+/* view header */
+.viewhead{display:flex;align-items:baseline;justify-content:space-between;min-height:32px;padding:2px 2px 0}
+.viewhead .dim{font-size:12px}
+/* analysis */
+.clipcard{padding:0;overflow:hidden}
+.cliptop{display:flex;align-items:center;gap:12px;padding:14px 16px;cursor:pointer}
+.thumb{width:62px;height:46px;border-radius:14px;flex:none;display:flex;align-items:center;
+  justify-content:center;color:#fff;position:relative;overflow:hidden}
+.thumb svg{width:15px;height:15px;filter:drop-shadow(0 1px 2px rgba(0,0,0,.25))}
+.thumb .court{position:absolute;inset:0;width:100%;height:100%;opacity:.55;filter:none}
+.cliptop .info{display:flex;flex-direction:column;gap:3px;min-width:0}
+.cliptop .name{font-size:14px;font-weight:600;letter-spacing:-.01em}
+.statechip{margin-left:auto;flex:none;border-radius:999px;padding:6px 11px;font-size:10px;
+  font-weight:700;letter-spacing:.04em;display:inline-flex;gap:5px;align-items:center}
+.statechip.done{background:var(--accent);color:var(--ink)}
+.statechip.todo{background:var(--canvas);color:var(--dim)}
+.clipbody{max-height:0;overflow:hidden;transition:max-height .28s ease}
+.clipcard.open .clipbody{max-height:1200px}
+.clipbody .inner{padding:14px 16px 16px;display:flex;flex-direction:column;gap:14px;
+  border-top:1px solid var(--hairline)}
+.analyzebtn{width:100%}
+.analyzebtn:disabled{opacity:.75;cursor:default}
+/* gauge */
+.gauge{display:flex;justify-content:center;padding:2px 0 0}
+.gauge svg{display:block}
+/* score columns */
+.scorecols{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px}
+.scol{border:1px solid var(--hairline);border-radius:14px;padding:10px 12px;display:flex;
+  flex-direction:column;gap:3px;align-items:flex-start}
+.scol .sl{font-size:11px;color:var(--dim);font-weight:500}
+.scol .sv{font-size:20px;font-weight:700;font-variant-numeric:tabular-nums;line-height:1.1;
+  display:flex;align-items:baseline;gap:1px}
+.scol .ss{font-size:11px;font-weight:600;color:var(--dim)}
+/* feedback rows */
+.fbrow{display:flex;align-items:center;gap:12px}
+.fbrow .iconcircle{width:36px;height:36px}
+.fbrow .iconcircle svg{width:16px;height:16px}
+.fbrow .info{display:flex;flex-direction:column;gap:2px;min-width:0}
+.fbrow .t{font-size:13px;font-weight:600;letter-spacing:-.01em}
+.fbrow .s{font-size:12px;color:var(--dim);line-height:1.4}
+.fbrow .chip{margin-left:auto;flex:none}
+.ghostbtn{border:1px solid #E4E5E9;background:transparent;border-radius:999px;
+  min-height:36px;padding:0 16px;font-size:12px;font-weight:600;font-family:inherit;
+  color:var(--ink);cursor:pointer;align-self:flex-start}
+/* training */
+.ringbadge.lime svg circle.arc{stroke:var(--accent)}
+.exrow{display:flex;align-items:center;gap:12px;padding:11px 0}
+.exrow:first-of-type{padding-top:14px}
+.exrow:last-of-type{padding-bottom:2px}
+.exthumb{width:54px;height:54px;border-radius:14px;flex:none;display:flex;
+  align-items:center;justify-content:center;overflow:hidden}
+.exthumb svg{width:100%;height:100%;display:block}
+.exrow .info{display:flex;flex-direction:column;gap:5px;min-width:0}
+.exrow .name{font-size:14px;font-weight:600;letter-spacing:-.01em}
+.exrow .meta{display:flex;align-items:center;gap:8px}
+.playbtn{width:38px;height:38px;border-radius:50%;border:0;background:var(--accent);
+  color:var(--ink);display:flex;align-items:center;justify-content:center;cursor:pointer;
+  margin-left:auto;flex:none}
+.playbtn svg{width:14px;height:14px}
+.playbtn:active{filter:brightness(.97)}
+/* progress */
+#rangeseg{display:flex;background:#E7E8EC;border-radius:999px;padding:4px;gap:2px}
+#rangeseg button{flex:1;border:0;background:none;border-radius:999px;min-height:36px;
+  font-size:13px;font-weight:600;font-family:inherit;color:var(--dim);cursor:pointer}
+#rangeseg button.active{background:var(--card);color:var(--ink);
+  box-shadow:0 1px 2px rgba(16,17,20,.06), 0 3px 8px rgba(16,17,20,.06)}
+#deltastrip{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px}
+.delta{background:var(--card);border-radius:18px;box-shadow:var(--shadow-card);padding:12px 13px;
+  display:flex;flex-direction:column;gap:6px}
+.delta .lbl{font-size:11px;color:var(--dim);font-weight:500}
+.delta .valrow{display:flex;align-items:center;gap:6px}
+.delta .val{font-size:20px;line-height:1}
+.delta .chip{padding:3px 7px;font-size:10px}
+.delta .chip.flat{background:var(--canvas);color:var(--dim)}
+.trend .lbl{font-size:15px;font-weight:600;letter-spacing:-.01em}
+.trend .valrow{display:flex;align-items:baseline;gap:8px;margin:6px 0 8px}
+.trend .val{font-size:26px;line-height:1}
+.trend .unit{font-size:13px;color:var(--dim);font-weight:600}
+.trend .vsbase{font-size:12px;font-weight:600}
+.trend .vsbase.up{color:var(--tint-good-fg)}
+.trend .vsbase.down{color:var(--tint-poor-fg)}
+.trend svg{display:block;width:100%;height:auto}
+.bestrow{display:flex;align-items:center;gap:12px}
+.bestrow .info{display:flex;flex-direction:column;gap:2px}
+.bestrow .name{font-size:14px;font-weight:600;letter-spacing:-.01em}
+.bestrow .meta{font-size:12px;color:var(--dim)}
+</style>
+</head>
+<body>
+<div class="phone">
+  <div class="statusbar">
+    <span>9:41</span>
+    <span class="sicons">
+      <svg width="17" height="11" viewBox="0 0 17 11" fill="currentColor"><rect x="0" y="7" width="3" height="4" rx="1"/><rect x="4.5" y="5" width="3" height="6" rx="1"/><rect x="9" y="2.5" width="3" height="8.5" rx="1"/><rect x="13.5" y="0" width="3" height="11" rx="1"/></svg>
+      <svg width="15" height="11" viewBox="0 0 15 11" fill="currentColor"><path d="M7.5 9.2a1.4 1.4 0 1 0 0 2.8 1.4 1.4 0 0 0 0-2.8zM7.5 5.4c1.5 0 2.9.6 3.9 1.6l-1.4 1.4a3.6 3.6 0 0 0-5 0L3.6 7a5.5 5.5 0 0 1 3.9-1.6zM7.5 1.3c2.6 0 5 1 6.8 2.8l-1.4 1.4a7.7 7.7 0 0 0-10.8 0L.7 4.1A9.6 9.6 0 0 1 7.5 1.3z" transform="translate(0 -1.3)"/></svg>
+      <svg width="25" height="12" viewBox="0 0 25 12" fill="none"><rect x="0.5" y="0.5" width="21" height="11" rx="3.5" stroke="currentColor" opacity=".4"/><rect x="2" y="2" width="18" height="8" rx="2" fill="currentColor"/><path d="M23 4v4c1-.2 1.6-1 1.6-2S24 4.2 23 4z" fill="currentColor" opacity=".4"/></svg>
+    </span>
+  </div>
+  <div class="screen">
+    <section class="view active" id="view-dashboard">
+      <div class="apphead">
+        <div class="wordmark">
+          <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle cx="12" cy="12" r="9" fill="#141517"/><circle cx="10.2" cy="10.4" r="1.7" fill="#D9F04A"/><circle cx="14.3" cy="13.4" r="1.7" fill="#D9F04A"/></svg>
+          CrossCourt
+        </div>
+        <button class="bellbtn" aria-label="Notifications" onclick="toast('No notifications')">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 0 1-3.4 0"/></svg>
+        </button>
+      </div>
+      <div class="hero">
+        <div class="herotop">
+          <div class="heroicon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="8.5"/><circle cx="12" cy="12" r="4"/><circle cx="12" cy="12" r=".8" fill="currentColor"/></svg>
+          </div>
+          <div class="herotitles">
+            <span class="ht">Today&#8217;s Focus</span>
+            <span class="hs" id="herosub">Straight-drive depth</span>
+          </div>
+          <div class="ringbadge" role="img" aria-label="4 of 5 sessions this week">
+            <svg viewBox="0 0 40 40" fill="none">
+              <circle cx="20" cy="20" r="16.5" stroke="rgba(255,255,255,.14)" stroke-width="3.5"/>
+              <circle class="arc" id="ringarc" cx="20" cy="20" r="16.5" stroke="#D9F04A" stroke-width="3.5" stroke-linecap="round" stroke-dasharray="82.9 103.7"/>
+            </svg>
+            <span class="rv" id="ringval">4/5</span>
+          </div>
+        </div>
+        <div class="statgrid">
+          <div class="stattile"><span class="sl" id="t1l">Sessions</span><span class="sv" id="t1v">4<span class="ss">/5</span></span></div>
+          <div class="stattile"><span class="sl" id="t2l">Front-wall IN</span><span class="sv" id="t2v">78<span class="ss">%</span></span></div>
+          <div class="stattile"><span class="sl" id="t3l">Avg. Score</span><span class="sv" id="t3v">84<span class="ss">/100</span></span></div>
+        </div>
+        <div class="heronote" id="heronote">Drives are landing <b>short of the service box</b> in 3 of your last 4 sessions.</div>
+      </div>
+      <div class="btnrow">
+        <button class="pill accent" onclick="openCam()">
+          <svg viewBox="0 0 24 24" fill="currentColor"><path d="M4 6.5A2.5 2.5 0 0 1 6.5 4h6A2.5 2.5 0 0 1 15 6.5v11a2.5 2.5 0 0 1-2.5 2.5h-6A2.5 2.5 0 0 1 4 17.5z"/><path d="M16.5 10l4.2-2.8a.8.8 0 0 1 1.3.7v8.2a.8.8 0 0 1-1.3.7L16.5 14z"/></svg>
+          Start Recording
+        </button>
+        <button class="pill" onclick="toast('Upload is a lab stub')">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 15V4"/><path d="M7 8l5-5 5 5"/><path d="M4 16v2.5A1.5 1.5 0 0 0 5.5 20h13a1.5 1.5 0 0 0 1.5-1.5V16"/></svg>
+          Upload Video
+        </button>
+      </div>
+      <div class="card" style="padding-top:14px;padding-bottom:12px">
+        <div class="cardtitle">Today Missions</div>
+        <div class="listrows">
+          <div class="lrow">
+            <div class="iconcircle">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="12" r="8.5"/><circle cx="12" cy="12" r="4"/><circle cx="12" cy="12" r=".8" fill="currentColor"/></svg>
+            </div>
+            <div class="info">
+              <span class="name">Straight-drive depth</span>
+              <span class="metaline">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
+                20 min
+              </span>
+            </div>
+            <button class="startchip" onclick="switchTab('training')">Start</button>
+          </div>
+          <div class="lrow">
+            <div class="iconcircle">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 19L19 5"/><path d="M5 19h5.5"/><path d="M5 19v-5.5"/></svg>
+            </div>
+            <div class="info">
+              <span class="name">Boast accuracy</span>
+              <span class="metaline">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
+                15 min
+              </span>
+            </div>
+            <button class="startchip" onclick="switchTab('training')">Start</button>
+          </div>
+        </div>
+      </div>
+      <div class="card weekly" style="padding-top:14px;padding-bottom:12px">
+        <div class="cardtitle">Weekly Report</div>
+        <div class="dim" style="font-size:12px;margin-top:2px">Active minutes</div>
+        <svg viewBox="0 0 326 150" id="weeklysvg" aria-label="Active minutes by day, Wednesday highlighted">
+          <text x="26" y="15" text-anchor="end" font-size="10" fill="#B4B6BC">120</text>
+          <text x="26" y="50" text-anchor="end" font-size="10" fill="#B4B6BC">80</text>
+          <text x="26" y="88" text-anchor="end" font-size="10" fill="#B4B6BC">40</text>
+          <text x="26" y="127" text-anchor="end" font-size="10" fill="#B4B6BC">0</text>
+          <rect x="42.5" y="93" width="24" height="31" rx="7" fill="#ECEDF0"/>
+          <rect x="83.5" y="71.8" width="24" height="52.2" rx="7" fill="#ECEDF0"/>
+          <rect x="124.5" y="48.6" width="24" height="75.4" rx="7" fill="#D9F04A"/>
+          <rect x="165.5" y="84.4" width="24" height="39.6" rx="7" fill="#ECEDF0"/>
+          <rect x="206.5" y="60.2" width="24" height="63.8" rx="7" fill="#ECEDF0"/>
+          <rect x="247.5" y="99.8" width="24" height="24.2" rx="7" fill="#ECEDF0"/>
+          <rect x="288.5" y="81.5" width="24" height="42.5" rx="7" fill="#ECEDF0"/>
+          <text x="54.5" y="142" text-anchor="middle" font-size="10" fill="#B4B6BC">Mon</text>
+          <text x="95.5" y="142" text-anchor="middle" font-size="10" fill="#B4B6BC">Tue</text>
+          <text x="136.5" y="142" text-anchor="middle" font-size="10" fill="#8E9199" font-weight="600">Wed</text>
+          <text x="177.5" y="142" text-anchor="middle" font-size="10" fill="#B4B6BC">Thu</text>
+          <text x="218.5" y="142" text-anchor="middle" font-size="10" fill="#B4B6BC">Fri</text>
+          <text x="259.5" y="142" text-anchor="middle" font-size="10" fill="#B4B6BC">Sat</text>
+          <text x="300.5" y="142" text-anchor="middle" font-size="10" fill="#B4B6BC">Sun</text>
+        </svg>
+      </div>
+      <div class="sectionhead"><span class="cardtitle">AI Recommendations</span></div>
+      <div class="airow">
+        <div class="aicard">
+          <div class="top">
+            <span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="8.5"/><circle cx="12" cy="12" r="4"/><circle cx="12" cy="12" r=".8" fill="currentColor"/></svg></span>
+            <span class="t">Lift serve targets</span>
+          </div>
+          <span class="s">Aim above the service line when returns come under pressure.</span>
+        </div>
+        <div class="aicard">
+          <div class="top">
+            <span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 19L19 5"/><path d="M5 19h5.5"/><path d="M5 19v-5.5"/></svg></span>
+            <span class="t">Shorten your boasts</span>
+          </div>
+          <span class="s">Two racket-lengths off the front wall keeps them dying in the nick.</span>
+        </div>
+        <div class="aicard">
+          <div class="top">
+            <span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg></span>
+            <span class="t">Hold the T</span>
+          </div>
+          <span class="s">Recover to the T before your opponent strikes the ball.</span>
+        </div>
+      </div>
+    </section>
+
+    <section class="view" id="view-analysis">
+      <div class="viewhead">
+        <h2>Analysis<span class="livetag hidden">LIVE</span></h2>
+        <span class="dim" id="clipmeta"></span>
+      </div>
+      <div id="cliplist" style="display:flex;flex-direction:column;gap:12px"></div>
+    </section>
+
+    <section class="view" id="view-training">
+      <div class="viewhead"><h2>Training</h2></div>
+      <div class="hero">
+        <div class="herotop">
+          <div class="heroicon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 3L5 13.5h5.5L11 21l8-10.5h-5.5z"/></svg>
+          </div>
+          <div class="herotitles">
+            <span class="ht">Intermediate Program</span>
+            <span class="hs">Level 4 &#183; Week 3 of 8</span>
+          </div>
+          <div class="ringbadge" role="img" aria-label="Program 75% complete">
+            <svg viewBox="0 0 40 40" fill="none">
+              <circle cx="20" cy="20" r="16.5" stroke="rgba(255,255,255,.14)" stroke-width="3.5"/>
+              <circle cx="20" cy="20" r="16.5" stroke="#D9F04A" stroke-width="3.5" stroke-linecap="round" stroke-dasharray="77.8 103.7"/>
+            </svg>
+            <span class="rv">75%</span>
+          </div>
+        </div>
+      </div>
+      <div class="card" style="padding-top:14px;padding-bottom:12px">
+        <div class="cardtitle">Today Missions</div>
+        <div class="listrows">
+          <div class="lrow">
+            <div class="iconcircle">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M13 3L5 13.5h5.5L11 21l8-10.5h-5.5z"/></svg>
+            </div>
+            <div class="info">
+              <span class="name">Power drives</span>
+              <span class="metaline">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
+                60 min
+              </span>
+            </div>
+            <button class="startchip" onclick="toast('Mission start is a lab stub')">Start</button>
+          </div>
+          <div class="lrow">
+            <div class="iconcircle">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="12" r="8.5"/><circle cx="12" cy="12" r="4"/><circle cx="12" cy="12" r=".8" fill="currentColor"/></svg>
+            </div>
+            <div class="info">
+              <span class="name">Lob serve targets</span>
+              <span class="metaline">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
+                30 min
+              </span>
+            </div>
+            <button class="startchip" onclick="toast('Mission start is a lab stub')">Start</button>
+          </div>
+        </div>
+      </div>
+      <div class="card" style="padding-top:14px;padding-bottom:12px">
+        <div class="cardtitle">Exercises</div>
+        <div class="listrows">
+          <div class="exrow">
+            <div class="exthumb" style="background:linear-gradient(140deg, hsl(210 28% 80%), hsl(215 30% 55%))" aria-hidden="true"><svg viewBox="0 0 54 54" fill="none" stroke="rgba(255,255,255,.85)" stroke-width="1.6" stroke-linecap="round"><rect x="9" y="12" width="36" height="31" rx="1.5"/><path d="M9 27h36"/><path d="M9 37h36"/></svg></div>
+            <div class="info">
+              <span class="name">Ghosting &#8212; six corners</span>
+              <span class="meta">
+                <span class="chip good">Easy</span>
+                <span class="metaline"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg><span class="num" style="font-weight:500">2 min</span></span>
+                <span class="metaline"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 2l4 4-4 4"/><path d="M3 11v-1a4 4 0 0 1 4-4h14"/><path d="M7 22l-4-4 4-4"/><path d="M21 13v1a4 4 0 0 1-4 4H3"/></svg><span class="num" style="font-weight:500">3 sets</span></span>
+              </span>
+            </div>
+            <button class="playbtn" aria-label="Play ghosting exercise" onclick="toast('Player is a lab stub')">
+              <svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
+            </button>
+          </div>
+          <div class="exrow">
+            <div class="exthumb" style="background:linear-gradient(140deg, hsl(155 25% 76%), hsl(160 28% 48%))" aria-hidden="true"><svg viewBox="0 0 54 54" fill="none" stroke="rgba(255,255,255,.85)" stroke-width="1.6" stroke-linecap="round"><rect x="9" y="12" width="36" height="31" rx="1.5"/><path d="M9 27h36"/><path d="M9 37h36"/></svg></div>
+            <div class="info">
+              <span class="name">Boast accuracy ladder</span>
+              <span class="meta">
+                <span class="chip avg">Medium</span>
+                <span class="metaline"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg><span class="num" style="font-weight:500">5 min</span></span>
+                <span class="metaline"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 2l4 4-4 4"/><path d="M3 11v-1a4 4 0 0 1 4-4h14"/><path d="M7 22l-4-4 4-4"/><path d="M21 13v1a4 4 0 0 1-4 4H3"/></svg><span class="num" style="font-weight:500">4 sets</span></span>
+              </span>
+            </div>
+            <button class="playbtn" aria-label="Play boast ladder exercise" onclick="toast('Player is a lab stub')">
+              <svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
+            </button>
+          </div>
+          <div class="exrow">
+            <div class="exthumb" style="background:linear-gradient(140deg, hsl(22 32% 78%), hsl(18 30% 52%))" aria-hidden="true"><svg viewBox="0 0 54 54" fill="none" stroke="rgba(255,255,255,.85)" stroke-width="1.6" stroke-linecap="round"><rect x="9" y="12" width="36" height="31" rx="1.5"/><path d="M9 27h36"/><path d="M9 37h36"/></svg></div>
+            <div class="info">
+              <span class="name">Tin-margin pressure drill</span>
+              <span class="meta">
+                <span class="chip poor">Hard</span>
+                <span class="metaline"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg><span class="num" style="font-weight:500">10 min</span></span>
+                <span class="metaline"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 2l4 4-4 4"/><path d="M3 11v-1a4 4 0 0 1 4-4h14"/><path d="M7 22l-4-4 4-4"/><path d="M21 13v1a4 4 0 0 1-4 4H3"/></svg><span class="num" style="font-weight:500">4 sets</span></span>
+              </span>
+            </div>
+            <button class="playbtn" aria-label="Play tin-margin drill" onclick="toast('Player is a lab stub')">
+              <svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
+            </button>
+          </div>
+        </div>
+      </div>
+      <div class="sectionhead"><span class="cardtitle">AI Recommendations</span></div>
+      <div class="dock" role="group" aria-label="Recommended quick actions">
+        <button aria-label="Recording setup" onclick="toast('Setup tips are a lab stub')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.87l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.7 1.7 0 0 0-1.87-.34 1.7 1.7 0 0 0-1 1.55V21a2 2 0 1 1-4 0v-.09a1.7 1.7 0 0 0-1-1.55 1.7 1.7 0 0 0-1.87.34l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.7 1.7 0 0 0 .34-1.87 1.7 1.7 0 0 0-1.55-1H3a2 2 0 1 1 0-4h.09a1.7 1.7 0 0 0 1.55-1 1.7 1.7 0 0 0-.34-1.87l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.7 1.7 0 0 0 1.87.34h.09a1.7 1.7 0 0 0 1-1.55V3a2 2 0 1 1 4 0v.09a1.7 1.7 0 0 0 1 1.55 1.7 1.7 0 0 0 1.87-.34l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.7 1.7 0 0 0-.34 1.87v.09a1.7 1.7 0 0 0 1.55 1H21a2 2 0 1 1 0 4h-.09a1.7 1.7 0 0 0-1.55 1z"/></svg></button>
+        <button aria-label="Solo drills" onclick="toast('Drill picks are a lab stub')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10.5l9-7.5 9 7.5V20a1 1 0 0 1-1 1h-5.5v-6h-5v6H4a1 1 0 0 1-1-1z"/></svg></button>
+        <button class="active" aria-label="Today's focus drill" onclick="toast('Focus drill is a lab stub')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="12" r="8.5"/><circle cx="12" cy="12" r="4"/><circle cx="12" cy="12" r=".8" fill="currentColor"/></svg></button>
+        <button aria-label="Session history" onclick="toast('History picks are a lab stub')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg></button>
+        <button aria-label="Coach profile" onclick="toast('Coach profile is a lab stub')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="8" r="4"/><path d="M4 21c.8-4 4-6 8-6s7.2 2 8 6"/></svg></button>
+      </div>
+    </section>
+
+    <section class="view" id="view-progress">
+      <div class="viewhead"><h2>Progress<span class="livetag hidden">LIVE</span></h2></div>
+      <div id="rangeseg"></div>
+      <div id="deltastrip">
+        <div class="delta" id="delta1"><span class="lbl">Front-wall IN</span>
+          <span class="valrow"><span class="val num">78%</span><span class="chip good">&#9650;3</span></span></div>
+        <div class="delta" id="delta2"><span class="lbl">Session score</span>
+          <span class="valrow"><span class="val num">84</span><span class="chip good">&#9650;5</span></span></div>
+        <div class="delta" id="delta3"><span class="lbl">Rallies</span>
+          <span class="valrow"><span class="val num">42</span><span class="chip flat">&#8212;</span></span></div>
+      </div>
+      <div id="trendcards" style="display:flex;flex-direction:column;gap:12px"></div>
+      <div class="card bestrow">
+        <div class="iconcircle">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M8 21h8"/><path d="M12 17v4"/><path d="M7 4h10v6a5 5 0 0 1-10 0z"/><path d="M7 6H4a1 1 0 0 0-1 1c0 2.2 1.8 4 4 4"/><path d="M17 6h3a1 1 0 0 1 1 1c0 2.2-1.8 4-4 4"/></svg>
+        </div>
+        <div class="info">
+          <span class="name" id="bestname">Best IN% to date &#8212; <span class="num">84%</span></span>
+          <span class="meta" id="bestmeta">Jul 22 &#183; beat it to set a new mark</span>
+        </div>
+      </div>
+    </section>
+  </div>
+  <div id="camview" class="hidden">
+    <div class="camstage">
+      <svg viewBox="0 0 390 780" preserveAspectRatio="xMidYMid slice" aria-label="Live court view with pose overlay">
+        <!-- front-wall + floor lines -->
+        <g stroke="rgba(205,62,50,.55)" stroke-width="3" fill="none">
+          <path d="M0 208 H390"/>
+          <path d="M0 402 H390"/>
+          <path d="M0 444 H390" stroke-width="4"/>
+        </g>
+        <g stroke="rgba(255,255,255,.5)" stroke-width="3" fill="none">
+          <path d="M195 446 V640"/>
+          <path d="M40 640 H350"/>
+          <path d="M40 640 V740 M350 640 V740"/>
+        </g>
+        <!-- pose skeleton -->
+        <g transform="translate(88,240) scale(1.05)" stroke="#D9F04A" stroke-width="3.5" fill="none" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="118" cy="38" r="13"/>
+          <path d="M114 52 L102 112"/>
+          <path d="M112 60 L140 46 L163 22"/>
+          <path d="M110 64 L84 86 L64 76"/>
+          <path d="M102 112 L130 152 L136 198 L148 202"/>
+          <path d="M102 112 L74 154 L58 198 L46 198"/>
+          <circle cx="178" cy="9" r="11"/>
+          <path d="M163 22 L170 16"/>
+          <g fill="#D9F04A" stroke="rgba(20,21,23,.55)" stroke-width="1.5">
+            <circle cx="114" cy="52" r="4"/><circle cx="112" cy="60" r="4"/>
+            <circle cx="140" cy="46" r="4"/><circle cx="163" cy="22" r="4"/>
+            <circle cx="84" cy="86" r="4"/><circle cx="64" cy="76" r="4"/>
+            <circle cx="102" cy="112" r="4.5"/>
+            <circle cx="130" cy="152" r="4"/><circle cx="136" cy="198" r="4"/>
+            <circle cx="74" cy="154" r="4"/><circle cx="58" cy="198" r="4"/>
+          </g>
+        </g>
+      </svg>
+    </div>
+    <div class="camstatus">
+      <span>9:41</span>
+      <span class="sicons">
+        <svg width="17" height="11" viewBox="0 0 17 11" fill="currentColor"><rect x="0" y="7" width="3" height="4" rx="1"/><rect x="4.5" y="5" width="3" height="6" rx="1"/><rect x="9" y="2.5" width="3" height="8.5" rx="1"/><rect x="13.5" y="0" width="3" height="11" rx="1"/></svg>
+        <svg width="25" height="12" viewBox="0 0 25 12" fill="none"><rect x="0.5" y="0.5" width="21" height="11" rx="3.5" stroke="currentColor" opacity=".5"/><rect x="2" y="2" width="18" height="8" rx="2" fill="currentColor"/></svg>
+      </span>
+    </div>
+    <div class="camtop">
+      <button class="camglass" aria-label="Close camera" onclick="closeCam()">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
+      </button>
+      <span class="recpill"><span class="recdot"></span>14:20</span>
+      <button class="camglass" aria-label="Flash" onclick="toast('Flash is a lab stub')">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 3L5 13.5h5.5L11 21l8-10.5h-5.5z"/></svg>
+      </button>
+    </div>
+    <div class="camside">
+      <button class="camglass" aria-label="Pose overlay" onclick="toast('Pose overlay is a lab stub')">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="5" r="2.5"/><path d="M12 8v5"/><path d="M12 10l-4.5 2M12 10l4.5 2"/><path d="M12 13l-3 7M12 13l3 7"/></svg>
+      </button>
+      <button class="camglass" aria-label="Mute" onclick="toast('Mute is a lab stub')">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 9v3a3 3 0 0 0 5.1 2.1M15 9.3V5a3 3 0 0 0-5.9-.7"/><path d="M17 12a5 5 0 0 1-7.6 4.3M7 12v0a5 5 0 0 0 .3 1.7"/><path d="M12 17v4"/><path d="M4 4l16 16"/></svg>
+      </button>
+      <button class="camglass" aria-label="Ball tracking" onclick="toast('Ball tracking is a lab stub')">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3.5 19.5l5.5-7 4 3.5 7.5-9.5"/></svg>
+      </button>
+    </div>
+    <button class="camchip" onclick="toast('Shot analysis is a lab stub')">
+      <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2l2.1 5.7L20 10l-5.9 2.3L12 18l-2.1-5.7L4 10l5.9-2.3z"/></svg>
+      AI analyze shot
+    </button>
+    <div class="shotpills">
+      <button class="active">Drive</button>
+      <button onclick="toast('Shot type is a lab stub')">Serve</button>
+    </div>
+    <div class="cambottom">
+      <button class="camglass" aria-label="Clip gallery" onclick="toast('Gallery is a lab stub')">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="4"/><circle cx="9" cy="9" r="2"/><path d="M21 15.5l-4.5-4.5L6 21.5"/></svg>
+      </button>
+      <button class="shutter" aria-label="Stop recording" onclick="closeCam();toast('Clip saved — find it in Analysis')"><span class="sq"></span></button>
+      <button class="camglass" aria-label="Confirm" onclick="closeCam()">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg>
+      </button>
+    </div>
+  </div>
+  <nav id="nav"></nav>
+  <div id="toast"></div>
+</div>
+<script>
+const TABS = [
+  {id:'dashboard', label:'Dashboard', icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10.5l9-7.5 9 7.5V20a1 1 0 0 1-1 1h-5.5v-6h-5v6H4a1 1 0 0 1-1-1z"/></svg>'},
+  {id:'analysis',  label:'Analysis',  icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="4.5" width="19" height="15" rx="4"/><path d="M10 9.2l4.5 2.8L10 14.8z" fill="currentColor" stroke="none"/></svg>'},
+  {id:'training',  label:'Training',  icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="12" r="8.5"/><circle cx="12" cy="12" r="4"/><circle cx="12" cy="12" r=".8" fill="currentColor"/></svg>'},
+  {id:'progress',  label:'Progress',  icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 19.5l5.5-7 4 3.5 7.5-9.5"/><path d="M16 6.5h4.5V11"/></svg>'}
+];
+function switchTab(name){
+  document.querySelectorAll('.view').forEach(v=>v.classList.toggle('active', v.id==='view-'+name));
+  document.querySelectorAll('nav button').forEach(b=>b.classList.toggle('active', b.dataset.tab===name));
+  document.querySelector('.screen').scrollTop = 0;
+}
+function openCam(){ document.getElementById('camview').classList.remove('hidden'); }
+function closeCam(){ document.getElementById('camview').classList.add('hidden'); }
+let toastTimer;
+function toast(msg){
+  const t = document.getElementById('toast');
+  t.textContent = msg; t.classList.add('show');
+  clearTimeout(toastTimer); toastTimer = setTimeout(()=>t.classList.remove('show'), 1600);
+}
+document.getElementById('nav').innerHTML = TABS.map(t=>
+  `<button data-tab="${t.id}" aria-label="${t.label}" onclick="switchTab('${t.id}')">${t.icon}</button>`).join('');
+
+/* ---------- analysis ---------- */
+const CLIPS = [
+  {id:1, date:'Today, 9:41', dur:'12:24', analyzed:true,  score:84,
+   scores:{Accuracy:82, Placement:71, Consistency:68},
+   feedback:[
+     {t:'Great length!', s2:'74% of straight drives past the service box.', s:'good', l:'Good'},
+     {t:'Boasts sitting mid-court', s2:'Aim shorter — two racket-lengths off the front wall.', s:'avg', l:'Average'},
+     {t:'Returns catching the tin', s2:'Lift your target above the service line under pressure.', s:'poor', l:'Poor'}],
+   hue:205},
+  {id:2, date:'Jul 25, 18:02', dur:'08:51', analyzed:true, score:79,
+   scores:{Accuracy:77, Placement:69, Consistency:64},
+   feedback:[
+     {t:'Rally length up', s2:'Averaging 9 shots — your best this month.', s:'good', l:'Good'},
+     {t:'Cross-courts drifting middle', s2:'Width first: hit the side wall behind the service box.', s:'avg', l:'Average'}],
+   hue:150},
+  {id:3, date:'Jul 22, 17:30', dur:'15:07', analyzed:false, hue:30},
+  {id:4, date:'Jul 19, 19:12', dur:'06:40', analyzed:false, hue:280}
+];
+let openClip = null;
+const PLAY_SVG = '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>';
+const FB_ICONS = {
+  good:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg>',
+  avg:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 8v5"/><circle cx="12" cy="16.5" r=".5" fill="currentColor"/><circle cx="12" cy="12" r="9"/></svg>',
+  poor:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 7v6"/><circle cx="12" cy="16.8" r=".6" fill="currentColor"/><path d="M10.3 3.6L2.6 17a2 2 0 0 0 1.7 3h15.4a2 2 0 0 0 1.7-3L13.7 3.6a2 2 0 0 0-3.4 0z"/></svg>'
+};
+function gaugeSVG(score, label){
+  label = label || 'Overall';
+  const N = 13, cx = 105, cy = 84, r = 64, tick = 19, w = 9;
+  const start = 205, sweep = 230;
+  const filled = Math.round(score/100*N);
+  let ticks = '';
+  for(let i=0;i<N;i++){
+    const a = (start - i*(sweep/(N-1))) * Math.PI/180;
+    const x1 = cx + Math.cos(a)*(r-tick/2), y1 = cy - Math.sin(a)*(r-tick/2);
+    const x2 = cx + Math.cos(a)*(r+tick/2), y2 = cy - Math.sin(a)*(r+tick/2);
+    const on = i < filled;
+    const op = on ? (0.45 + 0.55*((i+1)/filled)) : 1;
+    const col = on ? '#D9F04A' : '#ECEDE3';
+    ticks += `<line x1="${x1.toFixed(1)}" y1="${y1.toFixed(1)}" x2="${x2.toFixed(1)}" y2="${y2.toFixed(1)}" stroke="${col}" stroke-opacity="${op.toFixed(2)}" stroke-width="${w}" stroke-linecap="round"/>`;
+  }
+  return `<svg width="210" height="126" viewBox="0 0 210 126" aria-label="Overall score ${score} out of 100">
+    ${ticks}
+    <text x="${cx}" y="${cy-8}" text-anchor="middle" font-size="11" fill="#8E9199" font-weight="500">${label}</text>
+    <text x="${cx}" y="${cy+22}" text-anchor="middle" font-size="30" font-weight="800" fill="#141517">${score}%</text>
+  </svg>`;
+}
+function renderClips(){
+  const n = CLIPS.filter(c=>c.analyzed).length;
+  document.getElementById('clipmeta').textContent = `${CLIPS.length} clips · ${n} analyzed`;
+  document.getElementById('cliplist').innerHTML = CLIPS.map(c=>{
+    const grad = `linear-gradient(140deg, hsl(${c.hue} 28% 80%), hsl(${c.hue} 26% 56%))`;
+    let state = c.analyzed
+      ? `<span class="statechip done">ANALYZED <span class="num">${c.score}</span></span>`
+      : `<span class="statechip todo">NOT ANALYZED</span>`;
+    let body;
+    if(c.live){
+      const m = liveMetrics(c.id);
+      state = m.inPct != null
+        ? `<span class="statechip done">IN <span class="num">${m.inPct}%</span></span>`
+        : `<span class="statechip done">ANALYZED</span>`;
+      const sentences = splitSentences(LIVE.coach[c.id].feedback).slice(0,3);
+      const fb = sentences.map(s=>
+        `<div class="fbrow">
+           <div class="iconcircle">${FB_ICONS.avg}</div>
+           <div class="info"><span class="s" style="color:var(--ink)">${s}</span></div>
+         </div>`).join('');
+      const fmt = (v,d)=> v==null ? '&#8212;' : (Math.round(v*10)/10).toFixed(d);
+      body = `
+        <div class="gauge">${m.inPct != null ? gaugeSVG(m.inPct,'Front-wall IN')
+          : `<div class="metaline">No judged front-wall calls in this clip.</div>`}</div>
+        <div class="scorecols">
+          <div class="scol"><span class="sl">Avg height</span><span class="sv">${fmt(m.height,1)}<span class="ss">ft</span></span></div>
+          <div class="scol"><span class="sl">Avg pace</span><span class="sv">${fmt(m.pace,0)}<span class="ss">mph</span></span></div>
+          <div class="scol"><span class="sl">Width</span><span class="sv">${fmt(m.side,0)}<span class="ss">%</span></span></div>
+        </div>
+        ${fb}
+        <div class="cardtitle" style="font-size:14px">Ball metrics</div>
+        <div class="mvgrid">
+          <div class="mvtile">
+            <div class="top"><span class="sl">Top pace</span>
+              <span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 3L5 13.5h5.5L11 21l8-10.5h-5.5z"/></svg></span></div>
+            <span class="sv num">${fmt(m.top,0)}<span class="ss">mph</span></span>
+          </div>
+          <div class="mvtile">
+            <div class="top"><span class="sl">Floor bounces</span>
+              <span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="3.2"/><path d="M4 20c2-3 4-4.5 8-4.5s6 1.5 8 4.5"/></svg></span></div>
+            <span class="sv num">${m.bounces==null?'&#8212;':m.bounces}<span class="ss"></span></span>
+          </div>
+        </div>
+        <button class="replay" style="background:linear-gradient(140deg, hsl(${c.hue} 28% 74%), hsl(${c.hue} 26% 48%))" onclick="window.open('/api/runs/${c.id}/source_video')" aria-label="Watch source video">
+          <svg class="court" viewBox="0 0 300 96" preserveAspectRatio="none" fill="none" stroke="#fff" stroke-width="1.4"><rect x="30" y="12" width="240" height="58" rx="1"/><path d="M30 42h240"/><path d="M30 58h240"/></svg>
+          <span class="pb"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg></span>
+        </button>
+        <div class="metaline">${m.hits} front-wall hits &#183; ${m.calls} judged &#183; run ${c.id}</div>`;
+    } else if(!c.analyzed){
+      body = `
+        <div class="metaline"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="2" y="6" width="13" height="12" rx="3"/><path d="M15 10.5l7-4v11l-7-4"/></svg>Recorded on court &#183; phone on fin</div>
+        <div class="metaline"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg>Calibration attached</div>
+        <button class="pill accent analyzebtn" onclick="event.stopPropagation();analyzeClip(${c.id})">Analyze</button>`;
+    } else {
+      const cols = Object.entries(c.scores).map(([k,v])=>
+        `<div class="scol"><span class="sl">${k}</span><span class="sv">${v}<span class="ss">/100</span></span></div>`).join('');
+      const fb = c.feedback.map(f=>
+        `<div class="fbrow">
+           <div class="iconcircle">${FB_ICONS[f.s]}</div>
+           <div class="info"><span class="t">${f.t}</span><span class="s">${f.s2}</span></div>
+           <span class="chip ${f.s}">${f.l}</span>
+         </div>`).join('');
+      const grad2 = `linear-gradient(140deg, hsl(${c.hue} 28% 74%), hsl(${c.hue} 26% 48%))`;
+      body = `
+        <div class="seg">
+          <button class="active">Overview</button>
+          <button onclick="toast('Comparison is a lab stub')">Comparison</button>
+          <button onclick="toast('Detail is a lab stub')">Detail</button>
+        </div>
+        <div class="gauge">${gaugeSVG(c.score)}</div>
+        <div class="scorecols">${cols}</div>
+        ${fb}
+        <div class="cardtitle" style="font-size:14px">Movement Analysis</div>
+        <div class="mvgrid">
+          <div class="mvtile">
+            <div class="top"><span class="sl">Swing angle</span>
+              <span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 20L16 8"/><circle cx="18.5" cy="5.5" r="3"/></svg></span></div>
+            <span class="sv num">82<span class="ss">&#176;</span></span>
+            <svg class="spark" width="92" height="20" viewBox="0 0 92 20" fill="none"><path d="M2 15 L15 11 L28 13 L41 8 L54 10 L67 5 L80 7 L90 3" stroke="#BCD437" stroke-width="2" stroke-linecap="round"/></svg>
+          </div>
+          <div class="mvtile">
+            <div class="top"><span class="sl">T recovery</span>
+              <span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg></span></div>
+            <span class="sv num">1.9<span class="ss">s</span></span>
+            <svg class="spark" width="92" height="20" viewBox="0 0 92 20" fill="none"><path d="M2 5 L15 8 L28 6 L41 11 L54 9 L67 14 L80 12 L90 16" stroke="#BCD437" stroke-width="2" stroke-linecap="round"/></svg>
+          </div>
+        </div>
+        <button class="replay" style="background:${grad2}" onclick="toast('Replay is a lab stub')" aria-label="Watch rally replay">
+          <svg class="court" viewBox="0 0 300 96" preserveAspectRatio="none" fill="none" stroke="#fff" stroke-width="1.4"><rect x="30" y="12" width="240" height="58" rx="1"/><path d="M30 42h240"/><path d="M30 58h240"/></svg>
+          <span class="pb"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg></span>
+        </button>
+        <button class="ghostbtn" onclick="event.stopPropagation();toast('Re-analysis is a lab stub')">Re-analyze</button>`;
+    }
+    return `
+      <div class="card clipcard ${openClip===c.id?'open':''}" id="clip-${c.id}">
+        <div class="cliptop" onclick="toggleClip(${c.id})">
+          <div class="thumb" style="background:${grad}"><svg class="court" viewBox="0 0 62 46" fill="none" stroke="#fff" stroke-width="1.2" aria-hidden="true"><rect x="9" y="8" width="44" height="26" rx="1"/><path d="M9 21h44"/><path d="M9 28h44"/></svg>${PLAY_SVG}</div>
+          <div class="info">
+            <span class="name">${c.date}</span>
+            <span class="metaline"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg><span class="num" style="font-weight:500">${c.dur}</span>&#183; rally clip</span>
+          </div>
+          ${state}
+        </div>
+        <div class="clipbody"><div class="inner">${body}</div></div>
+      </div>`;
+  }).join('');
+}
+function toggleClip(id){
+  openClip = (openClip === id) ? null : id;
+  renderClips();
+}
+function analyzeClip(id){
+  const btn = document.querySelector(`#clip-${id} .analyzebtn`);
+  btn.disabled = true;
+  let pct = 0;
+  const iv = setInterval(()=>{
+    pct += 4 + Math.floor(Math.random()*7);
+    if(pct >= 100){
+      clearInterval(iv);
+      const c = CLIPS.find(c=>c.id===id);
+      c.analyzed = true; c.score = 76;
+      c.scores = {Accuracy:74, Placement:70, Consistency:65};
+      c.feedback = [
+        {t:'Good width on drives', s2:'Holding the side wall well down the backhand.', s:'good', l:'Good'},
+        {t:'Length fading late', s2:'Short of length in the final third — fatigue pattern.', s:'avg', l:'Average'}];
+      renderClips();
+      toast('Analysis complete — in the app this runs the real pipeline');
+    } else {
+      btn.textContent = `Analyzing… ${pct}%`;
+    }
+  }, 120);
+}
+renderClips();
+
+/* ---------- progress ---------- */
+const TRENDS = {
+  ranges:['1W','1M','3M','6M'],
+  metrics:[
+    {key:'score',   label:'Session score', unit:'', baseline:[70,80],
+     data:{ '1W':[76,81,79,84], '1M':[68,74,71,76,73,79,81,79,84],
+            '3M':[62,66,71,68,74,70,76,73,79,84], '6M':[55,58,63,61,66,71,68,74,79,84] }},
+    {key:'inpct',   label:'Front-wall IN %', unit:'%', baseline:[68,78],
+     data:{ '1W':[74,76,73,78], '1M':[66,70,68,73,71,74,76,73,78],
+            '3M':[60,64,66,63,70,68,73,74,76,78], '6M':[54,58,60,64,66,70,68,73,76,78] }},
+    {key:'minutes', label:'Active minutes', unit:'m', baseline:[25,45],
+     data:{ '1W':[32,41,28,44], '1M':[22,30,26,35,32,41,28,38,44],
+            '3M':[18,24,28,22,30,35,32,41,38,44], '6M':[15,18,24,28,30,35,32,41,38,44] }}
+  ]
+};
+let currentRange = '1M';
+
+function splinePath(pts){ // pts: [{x,y}] — Catmull-Rom → cubic bezier
+  if(pts.length < 2) return '';
+  let d = `M ${pts[0].x} ${pts[0].y}`;
+  for(let i=0;i<pts.length-1;i++){
+    const p0 = pts[Math.max(0,i-1)], p1 = pts[i], p2 = pts[i+1],
+          p3 = pts[Math.min(pts.length-1,i+2)];
+    const c1x = p1.x + (p2.x-p0.x)/6, c1y = p1.y + (p2.y-p0.y)/6;
+    const c2x = p2.x - (p3.x-p1.x)/6, c2y = p2.y - (p3.y-p1.y)/6;
+    d += ` C ${c1x.toFixed(2)} ${c1y.toFixed(2)}, ${c2x.toFixed(2)} ${c2y.toFixed(2)}, ${p2.x.toFixed(2)} ${p2.y.toFixed(2)}`;
+  }
+  return d;
+}
+
+function setRange(r){
+  currentRange = r;
+  renderProgress();
+}
+
+function renderProgress(){
+  document.getElementById('rangeseg').innerHTML = TRENDS.ranges.map(r=>
+    `<button class="${r===currentRange?'active':''}" onclick="setRange('${r}')">${r}</button>`).join('');
+  const W = 326, H = 118, PADL = 30, PADR = 12, PADY = 10;
+  document.getElementById('trendcards').innerHTML = TRENDS.metrics.map(m=>{
+    const vals = m.data[currentRange];
+    const lo = Math.min(...vals, m.baseline[0]), hi = Math.max(...vals, m.baseline[1]);
+    const span = (hi - lo) || 1, pad = span * 0.12;
+    const y = v => H - PADY - ((v - (lo - pad)) / (span + 2*pad)) * (H - 2*PADY);
+    const x = i => PADL + i * ((W - PADL - PADR) / (vals.length - 1));
+    const pts = vals.map((v,i)=>({x:x(i), y:y(v)}));
+    const line = splinePath(pts);
+    const area = `${line} L ${pts[pts.length-1].x.toFixed(2)} ${H-2} L ${pts[0].x} ${H-2} Z`;
+    const bandTop = y(m.baseline[1]), bandBot = y(m.baseline[0]);
+    const mid = y((m.baseline[0]+m.baseline[1])/2);
+    const last = pts[pts.length-1], lastVal = vals[vals.length-1];
+    const baseMid = (m.baseline[0]+m.baseline[1])/2;
+    const diff = lastVal - baseMid;
+    const vs = diff >= 0 ? `+${Math.round(diff)} vs typical` : `${Math.round(diff)} vs typical`;
+    const yLabels = [hi, Math.round((hi+lo)/2), lo].map(v=>
+      `<text x="${PADL-8}" y="${(y(v)+3).toFixed(1)}" text-anchor="end" font-size="10" fill="#B4B6BC" font-variant-numeric="tabular-nums">${v}</text>`).join('');
+    return `
+      <div class="card trend">
+        <div class="lbl">${m.label}</div>
+        <div class="valrow">
+          <span class="val num">${lastVal}</span><span class="unit">${m.unit}</span>
+          <span class="vsbase ${diff>=0?'up':'down'}">${vs}</span>
+        </div>
+        <svg viewBox="0 0 ${W} ${H}" aria-label="${m.label} trend">
+          ${yLabels}
+          <rect x="${PADL}" y="${bandTop.toFixed(2)}" width="${W-PADL-PADR}" height="${(bandBot-bandTop).toFixed(2)}" rx="6" fill="#F0F1F4"/>
+          <line x1="${PADL}" x2="${W-PADR}" y1="${mid.toFixed(2)}" y2="${mid.toFixed(2)}" stroke="#DADCE1" stroke-dasharray="2 4"/>
+          <path d="${area}" fill="rgba(217,240,74,.22)"/>
+          <path d="${line}" fill="none" stroke="#BCD437" stroke-width="2.5" stroke-linecap="round"/>
+          <circle cx="${last.x.toFixed(2)}" cy="${last.y.toFixed(2)}" r="4.5" fill="#D9F04A" stroke="#141517" stroke-width="2"/>
+          <text x="${Math.min(last.x, W-14).toFixed(2)}" y="${Math.max(last.y-11, 11).toFixed(2)}" text-anchor="end" font-size="11" font-weight="700" fill="#141517">${lastVal}${m.unit}</text>
+        </svg>
+      </div>`;
+  }).join('');
+}
+renderProgress();
+switchTab('dashboard');
+
+/* ---------- live pipeline data ----------
+   When served by the Flask app (same origin), the lab replaces its sample
+   data with real end-of-pipeline analytics: /api/runs (index) and
+   /api/runs/<id>/coach (analytics + feedback). Anywhere the fetch fails,
+   the sample data simply stays and no LIVE badge is shown. */
+const LIVE = { on:false, runs:[], coach:{} };
+const MONTH_NAMES = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+const DAY_NAMES = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+function fmtDate(ts){
+  const d = new Date(ts*1000), now = new Date();
+  const hm = d.getHours() + ':' + String(d.getMinutes()).padStart(2,'0');
+  return d.toDateString() === now.toDateString()
+    ? `Today, ${hm}` : `${MONTH_NAMES[d.getMonth()]} ${d.getDate()}, ${hm}`;
+}
+function fmtDur(sec){
+  if(sec == null) return '&#8212;';
+  const m = Math.floor(sec/60), s = Math.round(sec%60);
+  return `${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
+}
+function splitSentences(text){
+  return (text||'').split(/(?<=\.)\s+/).map(s=>s.trim()).filter(Boolean);
+}
+function liveMetrics(id){
+  const a = (LIVE.coach[id]||{}).analytics || {};
+  const calls = (a.in_count||0) + (a.out_count||0);
+  return {
+    inPct: calls ? Math.round(100*(a.in_count||0)/calls) : null,
+    height: a.average_wall_height_ft, pace: a.average_incoming_speed_mph,
+    top: a.max_incoming_speed_mph, side: a.side_target_rate,
+    bounces: a.total_floor_bounces, hits: a.total_wall_hits||0, calls
+  };
+}
+async function fetchJSON(url){
+  const r = await fetch(url);
+  if(!r.ok) throw new Error(url);
+  return r.json();
+}
+async function loadLive(){
+  try{
+    const idx = await fetchJSON('/api/runs');
+    const candidates = (idx.runs||[]).filter(r=>r.has_analytics && r.status==='complete').slice(0,10);
+    const coaches = await Promise.all(candidates.map(r=>
+      fetchJSON(`/api/runs/${r.run_id}/coach`).catch(()=>null)));
+    const good = [];
+    candidates.forEach((r,i)=>{
+      const c = coaches[i];
+      if(c && c.ok && ((c.analytics||{}).total_wall_hits||0) > 0){
+        LIVE.coach[r.run_id] = c; good.push(r);
+      }
+    });
+    if(!good.length) return;
+    LIVE.runs = good; LIVE.on = true;
+    applyLive();
+  }catch(e){ /* sample mode */ }
+}
+function quantile(sorted, p){
+  if(!sorted.length) return 0;
+  const i = (sorted.length-1)*p, lo = Math.floor(i), hi = Math.ceil(i);
+  return sorted[lo] + (sorted[hi]-sorted[lo])*(i-lo);
+}
+function buildLiveTrends(){
+  const runsAsc = [...LIVE.runs].reverse();
+  const now = Date.now()/1000;
+  const spans = {'1W':7,'1M':30,'3M':90,'6M':180};
+  const defs = [
+    {key:'inpct',  label:'Front-wall IN %', unit:'%',   get:id=>liveMetrics(id).inPct},
+    {key:'height', label:'Avg wall height', unit:'ft',  get:id=>liveMetrics(id).height},
+    {key:'pace',   label:'Avg pace',        unit:'mph', get:id=>liveMetrics(id).pace}
+  ];
+  TRENDS.metrics = defs.map(d=>{
+    const series = runsAsc
+      .map(r=>({t:r.created, v:d.get(r.run_id)}))
+      .filter(p=>p.v != null)
+      .map(p=>({t:p.t, v:Math.round(p.v*10)/10}));
+    const data = {};
+    for(const [k, days] of Object.entries(spans)){
+      let pts = series.filter(p=>now-p.t < days*86400).map(p=>p.v);
+      if(pts.length < 2) pts = series.map(p=>p.v);
+      if(pts.length === 1) pts = [pts[0], pts[0]];
+      if(!pts.length) pts = [0, 0];
+      data[k] = pts;
+    }
+    const sorted = series.map(p=>p.v).sort((a,b)=>a-b);
+    let baseline = [quantile(sorted,.25), quantile(sorted,.75)];
+    if(baseline[0] === baseline[1]) baseline = [baseline[0]-1, baseline[1]+1];
+    return {key:d.key, label:d.label, unit:d.unit, baseline, data};
+  }).filter(m=>m.data['6M'].some(v=>v));
+}
+function renderWeekly(mins, labels, activeIdx){
+  const W=326, top=8, bottom=124, span=bottom-top;
+  const maxV = Math.max(30, Math.ceil(Math.max(...mins)/10)*10);
+  const y = v => bottom - (v/maxV)*span;
+  let out = [maxV, maxV/2, 0].map(v=>
+    `<text x="26" y="${(y(v)+4).toFixed(1)}" text-anchor="end" font-size="10" fill="#B4B6BC">${Math.round(v)}</text>`).join('');
+  mins.forEach((v,i)=>{
+    const x = 34 + i*41 + 8.5;
+    const h = Math.max(4, (v/maxV)*span);
+    out += `<rect x="${x}" y="${(bottom-h).toFixed(1)}" width="24" height="${h.toFixed(1)}" rx="7" fill="${i===activeIdx?'#D9F04A':'#ECEDF0'}"/>`;
+    out += `<text x="${x+12}" y="142" text-anchor="middle" font-size="10" fill="${i===activeIdx?'#8E9199':'#B4B6BC'}"${i===activeIdx?' font-weight="600"':''}>${labels[i]}</text>`;
+  });
+  const svg = document.getElementById('weeklysvg');
+  svg.innerHTML = out;
+  svg.setAttribute('aria-label','Active minutes per day over the last week');
+}
+function applyLive(){
+  document.querySelectorAll('.livetag').forEach(el=>el.classList.remove('hidden'));
+  /* Analysis: real runs replace the sample clips */
+  CLIPS.length = 0;
+  const HUES = [205,150,30,280,110,255,20,180,60,320];
+  LIVE.runs.forEach((r,i)=>CLIPS.push({
+    id:r.run_id, live:true, analyzed:true,
+    date:fmtDate(r.created), dur:fmtDur(r.duration_seconds), hue:HUES[i%HUES.length]
+  }));
+  openClip = null; renderClips();
+  document.getElementById('clipmeta').textContent =
+    `${CLIPS.length} runs · live pipeline`;
+  /* Dashboard hero: latest run + this week's sessions */
+  const latest = LIVE.runs[0], m = liveMetrics(latest.run_id);
+  const weekCount = LIVE.runs.filter(r=>(Date.now()/1000 - r.created) < 7*86400).length;
+  const target = 5, frac = Math.min(1, weekCount/target);
+  document.getElementById('t1l').textContent = 'Sessions';
+  document.getElementById('t1v').innerHTML = `${weekCount}<span class="ss">/${target}</span>`;
+  document.getElementById('t2l').textContent = 'Front-wall IN';
+  document.getElementById('t2v').innerHTML = m.inPct==null ? '&#8212;' : `${m.inPct}<span class="ss">%</span>`;
+  document.getElementById('t3l').textContent = 'Avg pace';
+  document.getElementById('t3v').innerHTML = m.pace==null ? '&#8212;' : `${Math.round(m.pace)}<span class="ss">mph</span>`;
+  document.getElementById('ringval').textContent = `${weekCount}/${target}`;
+  document.getElementById('ringarc').setAttribute('stroke-dasharray', `${(103.7*frac).toFixed(1)} 103.7`);
+  document.getElementById('herosub').textContent = `From your last ${LIVE.runs.length} analyzed clips`;
+  const firstNote = splitSentences(LIVE.coach[latest.run_id].feedback).slice(0,2).join(' ');
+  if(firstNote) document.getElementById('heronote').textContent = firstNote;
+  /* Weekly report: real active minutes per day (clip durations) */
+  const mins = [0,0,0,0,0,0,0], labels = [];
+  const dayStart = new Date(); dayStart.setHours(0,0,0,0);
+  for(let i=6;i>=0;i--){
+    const d = new Date(dayStart); d.setDate(d.getDate()-i);
+    labels.push(DAY_NAMES[d.getDay()]);
+  }
+  LIVE.runs.forEach(r=>{
+    const d = new Date(r.created*1000); d.setHours(0,0,0,0);
+    const slot = 6 - Math.round((dayStart - d)/86400000);
+    if(slot>=0 && slot<7) mins[slot] += (r.duration_seconds||0)/60;
+  });
+  renderWeekly(mins.map(v=>Math.round(v*10)/10), labels, 6);
+  /* Progress: real per-run trends + deltas + personal best */
+  buildLiveTrends(); renderProgress();
+  const prev = LIVE.runs[1] ? liveMetrics(LIVE.runs[1].run_id) : null;
+  const deltaTile = (el, label, val, unit, prevVal) => {
+    let chip = '<span class="chip flat">&#8212;</span>';
+    if(val!=null && prevVal!=null && Math.round(val)!==Math.round(prevVal)){
+      const up = val > prevVal;
+      chip = `<span class="chip ${up?'good':'poor'}">${up?'&#9650;':'&#9660;'}${Math.abs(Math.round(val-prevVal))}</span>`;
+    }
+    document.getElementById(el).innerHTML =
+      `<span class="lbl">${label}</span><span class="valrow"><span class="val num">${val==null?'&#8212;':Math.round(val)+unit}</span>${chip}</span>`;
+  };
+  deltaTile('delta1','Front-wall IN', m.inPct, '%', prev && prev.inPct);
+  deltaTile('delta2','Avg height', m.height, 'ft', prev && prev.height);
+  deltaTile('delta3','Avg pace', m.pace, 'mph', prev && prev.pace);
+  let best = null;
+  LIVE.runs.forEach(r=>{
+    const mm = liveMetrics(r.run_id);
+    if(mm.inPct != null && (!best || mm.inPct > best.v)) best = {v:mm.inPct, t:r.created};
+  });
+  if(best){
+    document.getElementById('bestname').innerHTML =
+      `Best IN% to date &#8212; <span class="num">${best.v}%</span>`;
+    const d = new Date(best.t*1000);
+    document.getElementById('bestmeta').textContent =
+      `${MONTH_NAMES[d.getMonth()]} ${d.getDate()} · beat it to set a new mark`;
+  }
+}
+loadLive();
+</script>
+</body>
+</html>

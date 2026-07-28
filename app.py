@@ -1430,6 +1430,41 @@ def coach_run_llm(run_id):
     ))
 
 
+@app.get("/api/runs")
+def list_runs():
+    """Index of stored runs, newest first — the cheap facts a run list needs."""
+    runs = []
+    if RUNS_DIR.is_dir():
+        for run_dir in RUNS_DIR.iterdir():
+            if not run_dir.is_dir() or run_dir.name == "uploads":
+                continue
+            job_path = run_dir / "job.json"
+            if not job_path.exists():
+                continue
+            try:
+                job = json.loads(job_path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                continue
+            fps = job.get("fps") or 0
+            start = job.get("start_frame")
+            end = job.get("end_frame")
+            duration = None
+            if fps and isinstance(start, int) and isinstance(end, int) and end >= start:
+                duration = round((end - start + 1) / float(fps), 1)
+            created = (
+                int(run_dir.name) / 1000.0 if run_dir.name.isdigit() else job_path.stat().st_mtime
+            )
+            runs.append({
+                "run_id": run_dir.name,
+                "created": created,
+                "duration_seconds": duration,
+                "status": job.get("status"),
+                "has_analytics": (run_dir / "detected_hits.json").exists(),
+            })
+    runs.sort(key=lambda entry: entry["created"], reverse=True)
+    return jsonify({"ok": True, "runs": runs})
+
+
 @app.get("/api/runs/<run_id>/<path:filename>")
 def run_file(run_id, filename):
     run_dir = RUNS_DIR / secure_filename(run_id)
@@ -1713,6 +1748,12 @@ def create_label_run():
 @app.get("/fonts/<path:filename>")
 def font_file(filename):
     return send_from_directory(ROOT / "fonts", filename, max_age=86400)
+
+
+@app.get("/design-lab/<path:filename>")
+def design_lab_file(filename):
+    """Serve the design-lab prototypes same-origin so they can call the API."""
+    return send_from_directory(ROOT / "design-lab", filename)
 
 
 if __name__ == "__main__":
