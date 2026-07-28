@@ -40,23 +40,35 @@ def score_attribution(players_v1, labels):
     }
 
 
-def main():
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--run-dir", type=Path, required=True)
-    parser.add_argument("--labels", type=Path, required=True)
-    parser.add_argument("--output", type=Path, default=None)
-    args = parser.parse_args()
+TEMPLATE_BANNER = (
+    "> ## TEMPLATE LABELS — NOT A REAL ACCURACY\n"
+    ">\n"
+    "> This run was scored against a template / human-gate-pending labels\n"
+    "> file, not human-verified rally labels. The numbers below only show\n"
+    "> what the pipeline produced against placeholder values — they are not\n"
+    "> an accuracy claim (spec §5: `eval_attribution.py` is the only path to\n"
+    "> claiming attribution improved, and a template run doesn't qualify)."
+)
 
-    job = json.loads((args.run_dir / "job.json").read_text(encoding="utf-8"))
-    players_v1 = job.get("players_v1") or {}
-    labels = json.loads(args.labels.read_text(encoding="utf-8"))
-    report = score_attribution(players_v1, labels)
 
-    lines = [
-        "# Serve-attribution baseline",
-        "",
-        f"- Run: `{args.run_dir}`",
-        f"- Labels: `{args.labels}` ({report['labeled_rallies']} rallies)",
+def is_template_labels(labels_path, labels):
+    """True when the labels file is the unverified template: either by
+    filename convention (the human-gate step is copying it off
+    `.template.json`, spec §5) or by the "HUMAN GATE" note the template
+    itself carries, so a copy that kept the note without renaming is still
+    caught."""
+    if ".template." in Path(labels_path).name:
+        return True
+    return str(labels.get("note", "")).startswith("HUMAN GATE")
+
+
+def render_report(run_dir, labels_path, players_v1, labels, report):
+    lines = ["# Serve-attribution baseline", ""]
+    if is_template_labels(labels_path, labels):
+        lines += [TEMPLATE_BANNER, ""]
+    lines += [
+        f"- Run: `{run_dir}`",
+        f"- Labels: `{labels_path}` ({report['labeled_rallies']} rallies)",
         f"- Detector backend: {players_v1.get('detector_backend')}",
         f"- Observed rallies: {report['observed_rallies']}",
         f"- Scored (observed AND labeled): {report['scored_rallies']}",
@@ -69,7 +81,22 @@ def main():
         "coverage reports them honestly (spec §7: no pre-hit ball track ->",
         "`server_track: null`, never a guess).",
     ]
-    output = "\n".join(lines) + "\n"
+    return "\n".join(lines) + "\n"
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--run-dir", type=Path, required=True)
+    parser.add_argument("--labels", type=Path, required=True)
+    parser.add_argument("--output", type=Path, default=None)
+    args = parser.parse_args()
+
+    job = json.loads((args.run_dir / "job.json").read_text(encoding="utf-8"))
+    players_v1 = job.get("players_v1") or {}
+    labels = json.loads(args.labels.read_text(encoding="utf-8"))
+    report = score_attribution(players_v1, labels)
+
+    output = render_report(args.run_dir, args.labels, players_v1, labels, report)
     if args.output:
         args.output.write_text(output, encoding="utf-8")
     print(output)
