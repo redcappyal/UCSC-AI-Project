@@ -672,35 +672,82 @@ service `#ff9f43`, tin `#b4ff3a`) and the floor wireframe on the frame, with
 draggable anchor pucks at the four wall corners and the two short-line ends.
 
 - Anchor pucks use the floor-wizard residual palette (§8.10): `#3ddc84` when
-  the self-verification checks agree, `#f5c518` when one is off. **Never red**
-  — §0.3 reserves red for OUT verdicts. Colour is never the only carrier: the
-  status line names every anchor the checks flagged.
+  the detection is trusted, `#f5c518` otherwise. **Never red** — §0.3 reserves
+  red for OUT verdicts. Colour is never the only carrier: `#confirmWarn` names
+  every reason in words, so the screen reads correctly in greyscale.
+- **Green is earned, never defaulted into.** The `.status ok` line
+  ("Court detected — the overlay should sit on the real lines.") requires all
+  of: a detection is loaded, its `status` is `ok`, its `confidence` is `high`,
+  its `checks_verified` is above zero, no check came back `off`, and all six
+  anchors were derived. `checks_verified` is tested separately from
+  `confidence` deliberately — it is the count of independent evidence behind
+  the verdict, so green never rests on the server's verdict alone. Anything else is
+  the `.status warn` line, and the reasons are listed below it. The earlier
+  version made green the *default* — a screen with no detection at all and
+  zero anchors placed still rendered `class="status ok"`.
 - The floor wireframe on *this* screen shares that same two-colour ok/warn
   signal rather than the floor wizard's own per-landmark residual palette
   (§8.10's `#floorDiagram`/`drawFloorOverlay`, dim → active → done → warned,
   which turns a marker red past a 4 px residual). This screen has no red to
   spend — it is not a wizard tracking individual landmark quality, it is one
   fitted picture the player either accepts or corrects — so the wireframe and
-  the anchor pucks always agree on a single colour.
+  the anchor pucks always agree on a single colour. `drawWallOverlay`'s
+  `#ffd60a` quad and numbered pucks are **phase-guarded off** here for the
+  same reason: unguarded they render under the confirm pucks, putting amber
+  `#f5c518` markers on a `#ffd60a` line.
 - Anchors are draggable: a drag moves that anchor and refits the wall/floor
-  homographies live, so the wireframe and pucks update as the finger moves.
+  homographies live, so the wireframe and pucks follow the finger.
+  **Their colour does not.** The ok/warn verdict comes from the server's
+  self-verification checks, which are distance-to-paint lookups against a mask
+  that only exists on the server, so a drag cannot recompute them. The screen
+  says so in words rather than letting the stale colour imply otherwise:
+  "This verdict is from the original detection; dragging an anchor moves it
+  but does not re-check it." Do not restate this as live re-checking unless
+  the checks actually become client-side.
   A drag never touches the fitted line overlays (`#35e0ff`/`#ff9f43`/`#b4ff3a`
   above) — those come from a detected fit through hundreds of edge pixels,
   authoritative over any two-point fit a dragged corner could produce (spec
   §8.1). If a dragged wall corner walks more than a few pixels off the fitted
-  out line, the status line names it rather than silently trusting either the
+  out line, `#confirmDrift` names it rather than silently trusting either the
   drag or the fit.
-- Both status lines default to `&nbsp;` so they never collapse to zero height,
-  but `#confirmWarn`'s text is no longer bounded to one line now that a
-  divergence sentence can stack onto the "Off:" list — up to ~4 lines in the
-  worst case. It carries its own `min-height:80px` (§0.9) sized for that
-  worst case, not the shared `.status` class's one-line minimum, because this
-  paragraph sits below a canvas that's vertically centered in a flex-grow
-  stage (§7): letting its height change while a drag is in progress reflows
-  the stage and re-centers the canvas out from under the finger mid-gesture.
+- **Drag targets are 44 CSS px** (§0.6), computed from the canvas's *displayed*
+  width, not its pixel buffer: `(44 / 2) * (S.W / canvas.getBoundingClientRect().width)`.
+  `getBoundingClientRect()` already carries the pinch-zoom transform, so the
+  target stays 44 px on the glass at any zoom. A canvas-pixel constant cannot
+  do this — the previous `Math.max(18, S.W/60)` measured 13.0 CSS px at
+  390×844 on a 1080p clip, and its `S.W` terms cancel, so resolution never
+  helped. Because the target is now much larger than the 12 CSS px puck, the
+  grab carries an **offset**: the anchor tracks the finger's movement rather
+  than jumping to it, so the bigger target costs no placement precision.
+- **Drags are undoable.** `UNDO DRAG` sits beside `TAP IT MANUALLY`, matching
+  every other canvas phase (`wallUndoBtn`, `floorUndoLandmarkBtn`,
+  `clearTapsBtn`). It is disabled until a drag has actually moved an anchor —
+  a grab-and-release with no movement pops its own snapshot — so the control
+  never promises an undo that would do nothing. Without it the only escape
+  from a bad drag was `TAP IT MANUALLY`, which discards the whole detection.
+- Three status paragraphs, split by *when* their text can change, which §0.9
+  requires here rather than merely preferring. The canvas above is vertically
+  centered in a flex-grow stage (§7), so any height change reflows the stage
+  and re-centers the canvas — under an in-progress drag that corrupts the
+  pointer math (a steady drag jumped ~50 px the instant a sentence wrapped).
+  - `#confirmSummary` — the one-line verdict. Fixed while on screen.
+  - `#confirmWarn` — every reason: off checks (by human label), anchors not
+    derived, the detector's own warnings verbatim, and the drag caveat above.
+    All come from `S.detect`, which a drag never rewrites, so its height
+    settles on arrival and it needs no reserve beyond `.status`'s one line.
+  - `#confirmDrift` — the only drag-varying text (which dragged corners left
+    the fitted out line). It reserves its worst case with `min-height:60px`.
+  All three default to `&nbsp;` so they never collapse to zero height.
 - Detection runs behind the sanctioned analyzing scrim (§8.12).
 - Primary is the proxied `USE THIS CALIBRATION` (§3.4); the manual wizard is
   always one tap away via the secondary `TAP IT MANUALLY`.
+- Detection failure copy leads with the reason detection actually failed, in
+  human words — `court_detect` orders its warnings so `warnings[0]` is that
+  reason, and the client shows it followed by "Tap the lines instead."
+  Internal entity names (`front_seam`) never reach the screen, and an
+  incidental note like "Camera appears to be moving" must never displace the
+  real cause: on the product's own fin mount that sends the player off to
+  re-mount a phone that was mounted fine.
 
 ---
 
