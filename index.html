@@ -330,6 +330,13 @@
   button.heroCard{background:var(--surface); border:1px solid var(--line)}
   button.heroCard:active{background:var(--line)}   /* instant press fill */
   button.heroCard>svg{color:var(--dim)}
+  /* Solo variant: with recording and live match archived, Judge a clip is the
+     only action on the Play screen, so it carries the weight the three cards
+     used to share. Remove the class if a second card ever returns. */
+  .heroCard.heroSolo{min-height:104px; padding:20px; gap:16px}
+  .heroCard.heroSolo>svg{flex:0 0 36px; width:36px; height:36px}
+  .heroCard.heroSolo .fcBody strong{font-size:19px}
+  .heroCard.heroSolo .fcBody span{font-size:14px}
   /* hint line is empty in judge mode (no guidance copy on the production home) but keeps
      its slot so toggling label mode's dev hint causes no layout shift */
   #loadHint{min-height:1.4em}
@@ -626,7 +633,7 @@
   <section class="hidden" id="p-load">
     <p class="instruction" id="loadHint"></p>
     <p class="hubHead">Play</p>
-    <label class="filebtn heroCard">
+    <label class="filebtn heroCard heroSolo">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
         <circle cx="12" cy="12" r="7.5"/><circle cx="12" cy="12" r="2.4" fill="currentColor" stroke="none"/>
         <path d="M12 1.5v3M12 19.5v3M1.5 12h3M19.5 12h3"/>

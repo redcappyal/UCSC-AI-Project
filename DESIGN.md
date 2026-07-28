@@ -584,6 +584,12 @@ primaries). Two variants:
 Cards sit under a 12/600 uppercase `--dim` "PLAY" heading, order: Judge a clip ·
 Record a clip · Live match.
 
+**Solo variant (`.heroSolo`)** — when only one card is visible, it carries the weight the
+full stack used to share: `min-height:104px`, padding 20, gap 16, 36 px icon, title 19,
+description 14. Applies to "Judge a clip" while recording and live match are archived
+(their cards are `.hidden`, not deleted). Add the class to whichever card is genuinely
+alone; remove it the moment a second card returns, so the stack keeps its normal rhythm.
+
 **Dev row:** bottom of Play, after a `1px --line` hairline: `DEV` micro-label (11/600
 uppercase, `--dim`) + a row of `button.small` utilities — "Debug targets" and the
 "Label mode" toggle (`.active` = accent fill + 700, like correction chips).
