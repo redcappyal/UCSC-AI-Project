@@ -1,5 +1,13 @@
 # Serve-attribution baseline
 
+> ## TEMPLATE LABELS — NOT A REAL ACCURACY
+>
+> This run was scored against a template / human-gate-pending labels
+> file, not human-verified rally labels. The numbers below only show
+> what the pipeline produced against placeholder values — they are not
+> an accuracy claim (spec §5: `eval_attribution.py` is the only path to
+> claiming attribution improved, and a template run doesn't qualify).
+
 - Run: `ui_runs/attr-eval-with-person`
 - Labels: `eval_set/attribution-labels-SquashAnalytics.template.json` (1 rallies)
 - Detector backend: rfdetr
