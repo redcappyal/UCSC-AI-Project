@@ -9,6 +9,7 @@ Pillow
 python-dotenv
 pytest
 scikit-learn
+torch
 
 # hardware/ STL generation (hardware/generate_mount_stls.py)
 trimesh

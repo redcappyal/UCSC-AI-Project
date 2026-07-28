@@ -1,10 +1,4 @@
-"""CLI: run a Roboflow model locally over a video and write annotations.
-
-This mirrors modelEval.py's one-pass video loop, but uses local
-inference.get_model(..., countinference=False) through inference_engine.py.
-That downloads/caches weights locally and avoids the remote serverless
-workflow.
-"""
+"""Run the configured Roboflow model locally over a video."""
 
 import argparse
 import csv
@@ -23,9 +17,6 @@ except ImportError:
 if load_dotenv is not None:
     load_dotenv(Path(__file__).with_name(".env"))
 
-# inference_engine sets model-cache/metrics env defaults before inference loads.
-# Keep this import after .env loading so local eval uses the same configured
-# model/backend as the app process.
 from inference_engine import (  # noqa: E402
     DEFAULT_INFERENCE_WIDTH,
     DEFAULT_MODEL_ID,
@@ -43,7 +34,7 @@ from tracking_common import (  # noqa: E402
 )
 
 
-VIDEO_INPUT_PATH = Path(__file__).with_name("SquashTrain.mp4")
+VIDEO_INPUT_PATH = Path(__file__).with_name("MatchplayEp2Clip.mp4")
 VIDEO_OUTPUT_PATH = Path(__file__).with_name("annotated_output_local.mp4")
 CSV_OUTPUT_PATH = Path(__file__).with_name("ball_coordinates_local.csv")
 
@@ -51,10 +42,11 @@ FRAME_STRIDE = 1
 START_FRAME = None
 END_FRAME = None
 MAX_FRAMES = None
-START_SECONDS = 30
+START_SECONDS = 0
 CONFIDENCE = CONFIDENCE_THRESHOLD
+INFERENCE_CONFIDENCE = 0.10
 INFERENCE_WIDTH = DEFAULT_INFERENCE_WIDTH
-TRAJECTORY_FILL_MAX_GAP = 6
+TRAJECTORY_FILL_MAX_GAP = 8
 TRAJECTORY_FILL_EDGE_MARGIN = 24.0
 ANNOTATION_PROGRESS_INTERVAL_SECONDS = 5.0
 
@@ -69,11 +61,14 @@ def positive_int_or_none(value):
 def parse_args():
     parser = argparse.ArgumentParser(
         description=(
-            "Run a Roboflow model locally with cached weights and write an "
-            "annotated video plus ball-coordinate CSV."
+            "Run the configured Roboflow model locally and write an annotated "
+            "video plus ball-coordinate CSV."
         )
     )
-    parser.add_argument("--model-id", default=os.getenv("ROBOFLOW_MODEL_ID", DEFAULT_MODEL_ID))
+    parser.add_argument(
+        "--model-id",
+        default=os.getenv("ROBOFLOW_MODEL_ID", DEFAULT_MODEL_ID),
+    )
     parser.add_argument("--api-key", default=os.getenv("ROBOFLOW_API_KEY", ""))
     parser.add_argument("--video", type=Path, default=VIDEO_INPUT_PATH)
     parser.add_argument("--output-video", type=Path, default=VIDEO_OUTPUT_PATH)
@@ -84,7 +79,24 @@ def parse_args():
     parser.add_argument("--frame-stride", type=int, default=FRAME_STRIDE)
     parser.add_argument("--inference-width", type=int, default=INFERENCE_WIDTH)
     parser.add_argument("--max-frames", type=positive_int_or_none, default=MAX_FRAMES)
-    parser.add_argument("--confidence", type=float, default=CONFIDENCE)
+    parser.add_argument(
+        "--confidence",
+        type=float,
+        default=CONFIDENCE,
+        help=(
+            "Minimum raw model confidence after stationary filtering and "
+            "track confirmation."
+        ),
+    )
+    parser.add_argument(
+        "--inference-confidence",
+        type=float,
+        default=INFERENCE_CONFIDENCE,
+        help=(
+            "Low raw-confidence floor used to retain evidence for stationary "
+            "and motion analysis."
+        ),
+    )
     parser.add_argument("--metadata-json", type=Path, default=None)
     parser.add_argument(
         "--trajectory-fill-max-gap",
@@ -344,21 +356,12 @@ def iter_video_frames_sequentially(capture, source_frames):
         yield source_frame, frame
 
 
-def api_key_fingerprint(api_key):
-    api_key = api_key.strip()
-    if len(api_key) <= 8:
-        return "(set)" if api_key else "(missing)"
-    return f"{api_key[:4]}...{api_key[-4:]}"
-
-
 def model_config_summary(args):
     return {
         "model_id": args.model_id,
-        "env_model_id": os.getenv("ROBOFLOW_MODEL_ID", ""),
         "workspace": os.getenv("ROBOFLOW_WORKSPACE", ""),
         "project_id": os.getenv("ROBOFLOW_PROJECT_ID", ""),
         "package_name": os.getenv("ROBOFLOW_PACKAGE_NAME", ""),
-        "api_key_fingerprint": api_key_fingerprint(args.api_key),
         "tracking_backend": TRACKING_BACKEND,
         "default_device": os.getenv("DEFAULT_DEVICE", ""),
         "onnx_providers": configured_providers(),
@@ -371,6 +374,12 @@ def main():
 
     if args.frame_stride < 1:
         raise RuntimeError("--frame-stride must be 1 or greater.")
+    if not 0 <= args.inference_confidence <= 1:
+        raise RuntimeError("--inference-confidence must be between 0 and 1.")
+    if not 0 <= args.confidence <= 1:
+        raise RuntimeError("--confidence must be between 0 and 1.")
+    if args.inference_confidence > args.confidence:
+        raise RuntimeError("--inference-confidence cannot exceed --confidence.")
     if args.inference_width < 0:
         raise RuntimeError("--inference-width must be 0 or greater.")
     if args.trajectory_fill_max_gap < 0:
@@ -381,26 +390,25 @@ def main():
         raise RuntimeError("--annotation-progress-interval must be greater than 0.")
     if not args.api_key.strip():
         raise RuntimeError("No Roboflow API key found. Set ROBOFLOW_API_KEY in .env.")
+    if not args.model_id.strip():
+        raise RuntimeError("--model-id cannot be empty.")
 
     config = model_config_summary(args)
-    print(f"Loading local Roboflow model: {args.model_id}")
     print(
-        "Roboflow config: "
-        f"workspace={config['workspace'] or '(unset)'}, "
-        f"project={config['project_id'] or '(unset)'}, "
-        f"package={config['package_name'] or '(unset)'}, "
-        f"api_key={config['api_key_fingerprint']}"
+        "Roboflow model: "
+        f"model_id={config['model_id']}, "
+        f"workspace={config['workspace']}, "
+        f"project={config['project_id']}, "
+        f"package={config['package_name']}"
     )
-    print("Model loading key: inference.get_model uses --model-id / ROBOFLOW_MODEL_ID.")
     print(
-        "Inference config: "
+        "Local inference: "
         f"backend={config['tracking_backend']}, "
-        f"default_device={config['default_device'] or '(unset)'}, "
+        f"device={config['default_device'] or '(unset)'}, "
         f"onnx_providers={config['onnx_providers']}"
     )
-    print("This downloads/caches weights locally with countinference=False.")
     model = load_model(args.model_id, args.api_key)
-    print("Model loaded.")
+    print("Local model loaded.")
 
     cap = cv2.VideoCapture(str(args.video))
     if not cap.isOpened():
@@ -482,7 +490,9 @@ def main():
         )
         selected_by_frame = select_motion_consistent_ball_predictions(
             predictions_by_source_frame,
-            confidence_threshold=args.confidence,
+            confidence_threshold=args.inference_confidence,
+            require_track_support=True,
+            minimum_confidence=args.confidence,
         )
 
         previous_anchor = None
@@ -557,6 +567,11 @@ def main():
         "Inference width: "
         + ("original" if args.inference_width == 0 else f"{args.inference_width}px")
     )
+    print(
+        "Detection thresholds: "
+        f"raw evidence >= {args.inference_confidence:.2f}, "
+        f"confirmed raw confidence >= {args.confidence:.2f}"
+    )
     if not args.no_video:
         print(f"Output video: {args.output_video}")
     print(f"Output CSV: {args.csv}")
@@ -583,9 +598,15 @@ def main():
                 predictions = infer_frame_predictions(
                     model,
                     frame,
-                    args.confidence,
+                    args.inference_confidence,
                     args.inference_width,
                 )
+                predictions = [
+                    prediction
+                    for prediction in predictions
+                    if float(prediction.get("confidence", 1.0))
+                    >= args.inference_confidence
+                ]
                 predictions_by_source_frame[read_count] = predictions
                 processed_source_frames.append(read_count)
                 raw_prediction_count += len(predictions)
@@ -632,6 +653,7 @@ def main():
         "end_frame": end_frame,
         "frame_stride": args.frame_stride,
         "inference_width": args.inference_width,
+        "inference_confidence": args.inference_confidence,
         "confidence": args.confidence,
         "source_fps": source_fps,
         "source_frame_count": source_frame_count,

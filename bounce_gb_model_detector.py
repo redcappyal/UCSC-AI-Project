@@ -1,4 +1,4 @@
-"""Runtime detector for GradientBoostingClassifier bounce artifacts."""
+"""Runtime detector for sklearn-style bounce-classifier artifacts."""
 
 import os
 from pathlib import Path
@@ -7,6 +7,15 @@ import joblib
 import pandas as pd
 
 from judge_call import Point, load_calibration_lines, load_wall_corners
+from tracking_common import (
+    FLOOR_REBOUND_MIN_DETECTIONS_PER_SIDE,
+    FLOOR_REBOUND_MIN_PROMINENCE_PX,
+    FLOOR_REBOUND_MIN_REVERSAL_PX_PER_FRAME,
+    FLOOR_REBOUND_MIN_Y_SPEED_PX_PER_FRAME,
+    FLOOR_REBOUND_SEARCH_FRAMES,
+    FLOOR_REBOUND_WINDOW_FRAMES,
+    detect_floor_rebound,
+)
 from train_bounce_classifier import (
     DEFAULT_MODEL_PATH as TRAIN_DEFAULT_MODEL_PATH,
     build_features_for_frame,
@@ -15,7 +24,7 @@ from train_bounce_classifier import (
 )
 
 
-DEFAULT_MODEL_PATH = TRAIN_DEFAULT_MODEL_PATH
+DEFAULT_MODEL_PATH = Path(os.getenv("BOUNCE_MODEL_PATH", TRAIN_DEFAULT_MODEL_PATH))
 DEFAULT_MIN_GAP_FRAMES = 10
 DEFAULT_THRESHOLD = 0.20
 DEFAULT_WALL_GATE_PAD_PX = 80.0
@@ -501,10 +510,12 @@ def detect_hits_with_gb_model(
     apply_spatial_filter=True,
     spatial_filter_mode="wall",
     apply_stationary_filter=True,
+    apply_floor_rebound_filter=True,
     collapse_wall_area=True,
 ):
     artifact = load_artifact(model_path)
     model = artifact["model"]
+    model_type = str(artifact.get("model_type", "gradient_boosting"))
     feature_columns = list(artifact["feature_columns"])
     threshold = runtime_threshold(artifact, threshold)
     min_gap = env_int("BOUNCE_GB_MIN_GAP_FRAMES", min_gap)
@@ -562,6 +573,40 @@ def detect_hits_with_gb_model(
             stationary, stationary_stats = is_stationary_false_track(parsed_rows, frame)
             if stationary:
                 continue
+        if (
+            apply_floor_rebound_filter
+            and env_int("BOUNCE_GB_FLOOR_REBOUND_FILTER", 1) != 0
+        ):
+            floor_rebound, _ = detect_floor_rebound(
+                parsed_rows,
+                frame,
+                search_frames=env_int(
+                    "BOUNCE_GB_FLOOR_REBOUND_SEARCH_FRAMES",
+                    FLOOR_REBOUND_SEARCH_FRAMES,
+                ),
+                window_frames=env_int(
+                    "BOUNCE_GB_FLOOR_REBOUND_WINDOW_FRAMES",
+                    FLOOR_REBOUND_WINDOW_FRAMES,
+                ),
+                min_detections_per_side=env_int(
+                    "BOUNCE_GB_FLOOR_REBOUND_MIN_DETECTIONS_PER_SIDE",
+                    FLOOR_REBOUND_MIN_DETECTIONS_PER_SIDE,
+                ),
+                min_y_speed_px_per_frame=env_float(
+                    "BOUNCE_GB_FLOOR_REBOUND_MIN_Y_SPEED_PX_PER_FRAME",
+                    FLOOR_REBOUND_MIN_Y_SPEED_PX_PER_FRAME,
+                ),
+                min_reversal_px_per_frame=env_float(
+                    "BOUNCE_GB_FLOOR_REBOUND_MIN_REVERSAL_PX_PER_FRAME",
+                    FLOOR_REBOUND_MIN_REVERSAL_PX_PER_FRAME,
+                ),
+                min_prominence_px=env_float(
+                    "BOUNCE_GB_FLOOR_REBOUND_MIN_PROMINENCE_PX",
+                    FLOOR_REBOUND_MIN_PROMINENCE_PX,
+                ),
+            )
+            if floor_rebound:
+                continue
         if apply_spatial_filter:
             if spatial_filter_mode == "sidewall":
                 inside_gate = inside_lenient_sidewall_gate(
@@ -598,9 +643,9 @@ def detect_hits_with_gb_model(
                 "motion_path_px": (
                     float(stationary_stats["path_px"]) if stationary_stats is not None else None
                 ),
-                "detector": "gradient_boosting",
+                "detector": model_type,
                 "event_type": "wall",
-                "classification_source": "gradient_boosting_model",
+                "classification_source": f"{model_type}_model",
             }
         )
 

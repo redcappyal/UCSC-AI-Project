@@ -55,6 +55,7 @@ venv/
 !requirements.txt
 !requirements-test.txt
 !README.md
+!train_bounce_transformer_all_videos.sh
 # pytest config (marker registration + default -m deselect); needed by
 # everyone running `pytest tests/`, not just CI.
 !pytest.ini

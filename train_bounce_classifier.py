@@ -47,7 +47,14 @@ from judge_call import Point, judge_ball, load_calibration_lines, load_wall_corn
 from tracking_common import (
     CONFIDENCE_THRESHOLD,
     CSV_FIELDNAMES,
+    FLOOR_REBOUND_MIN_DETECTIONS_PER_SIDE,
+    FLOOR_REBOUND_MIN_PROMINENCE_PX,
+    FLOOR_REBOUND_MIN_REVERSAL_PX_PER_FRAME,
+    FLOOR_REBOUND_MIN_Y_SPEED_PX_PER_FRAME,
+    FLOOR_REBOUND_SEARCH_FRAMES,
+    FLOOR_REBOUND_WINDOW_FRAMES,
     ball_csv_row,
+    detect_floor_rebound,
     fill_short_trajectory_gaps,
     select_motion_consistent_ball_predictions,
     TRAJECTORY_FILL_EDGE_MARGIN_PX,
@@ -70,6 +77,7 @@ DEFAULT_FEATURES_PATH = ROOT / "bounce_training_features.csv"
 DEFAULT_MODEL_PATH = ROOT / "bounce_gb_model.pkl"
 
 CONTEXT_FRAMES = 4
+BALL_INFERENCE_CONFIDENCE = 0.10
 NEGATIVE_EXCLUSION_FRAMES = 8
 POSITIVE_WINDOW_FRAMES = 1
 AUDIO_PEAK_WINDOW_FRAMES = 5
@@ -206,6 +214,7 @@ def track_selected_frames(
     video_path,
     frames,
     inference_width,
+    inference_confidence,
     confidence,
     trajectory_fill_max_gap,
     trajectory_fill_edge_margin,
@@ -251,7 +260,7 @@ def track_selected_frames(
             predictions = infer_frame_predictions(
                 model,
                 frame,
-                confidence,
+                inference_confidence,
                 inference_width,
             )
             raw_predictions[frame_idx] = predictions
@@ -270,7 +279,9 @@ def track_selected_frames(
 
     selected_predictions = select_motion_consistent_ball_predictions(
         raw_predictions,
-        confidence,
+        confidence_threshold=inference_confidence,
+        require_track_support=True,
+        minimum_confidence=confidence,
     )
     filled_predictions, trajectory_fill_count = fill_short_trajectory_gaps(
         selected_predictions,
@@ -296,6 +307,7 @@ def ensure_ball_csv(
     csv_path,
     required_frames,
     inference_width,
+    inference_confidence,
     confidence,
     generate_ball_csv,
     force,
@@ -337,6 +349,7 @@ def ensure_ball_csv(
         video_path,
         frames_to_track,
         inference_width,
+        inference_confidence,
         confidence,
         trajectory_fill_max_gap,
         trajectory_fill_edge_margin,
@@ -1186,6 +1199,28 @@ def pick_runtime_eval_probability_peaks(candidates, min_gap):
     return sorted(picked, key=lambda item: item["frame"])
 
 
+def runtime_eval_context_rows(row):
+    """Convert one feature row's t-offset columns into trajectory rows."""
+    context_rows = {}
+    for column in row.index:
+        if not str(column).startswith("t") or not str(column).endswith("_detected"):
+            continue
+        prefix = str(column)[: -len("_detected")]
+        try:
+            offset = int(prefix[1:])
+        except ValueError:
+            continue
+        detected = float(row.get(column, 0.0)) >= 0.5
+        x = float(row.get(f"{prefix}_x", float("nan")))
+        y = float(row.get(f"{prefix}_y", float("nan")))
+        context_rows[offset] = {
+            "detected": detected and math.isfinite(x) and math.isfinite(y),
+            "x": x,
+            "y": y,
+        }
+    return context_rows
+
+
 def app_filtered_eval_predictions(
     eval_features,
     probabilities,
@@ -1195,11 +1230,13 @@ def app_filtered_eval_predictions(
     geometry_by_source=None,
     spatial_filter=True,
     spatial_filter_mode="sidewall",
+    floor_rebound_filter=True,
     collapse_wall_area=True,
     wall_visit_gap=RUNTIME_EVAL_WALL_VISIT_GAP_FRAMES,
     min_gap=RUNTIME_EVAL_MIN_GAP_FRAMES,
 ):
     candidates = []
+    floor_rebound_rejections = 0
     for row_index, (_, row) in enumerate(eval_features.iterrows()):
         probability = float(probabilities[row_index])
         if probability < hit_threshold:
@@ -1211,6 +1248,20 @@ def app_filtered_eval_predictions(
         y = float(row.get("t+0_y", 0.0))
         if not math.isfinite(x) or not math.isfinite(y):
             continue
+        if floor_rebound_filter:
+            floor_rebound, _ = detect_floor_rebound(
+                runtime_eval_context_rows(row),
+                0,
+                search_frames=FLOOR_REBOUND_SEARCH_FRAMES,
+                window_frames=FLOOR_REBOUND_WINDOW_FRAMES,
+                min_detections_per_side=FLOOR_REBOUND_MIN_DETECTIONS_PER_SIDE,
+                min_y_speed_px_per_frame=FLOOR_REBOUND_MIN_Y_SPEED_PX_PER_FRAME,
+                min_reversal_px_per_frame=FLOOR_REBOUND_MIN_REVERSAL_PX_PER_FRAME,
+                min_prominence_px=FLOOR_REBOUND_MIN_PROMINENCE_PX,
+            )
+            if floor_rebound:
+                floor_rebound_rejections += 1
+                continue
         row_geometry = geometry
         if geometry_by_source and "source_video" in row:
             row_geometry = geometry_by_source.get(str(row.get("source_video")), geometry)
@@ -1241,6 +1292,7 @@ def app_filtered_eval_predictions(
     return predictions, {
         "threshold_candidates": int(sum(probabilities >= hit_threshold)),
         "kept_candidates": len(candidates),
+        "floor_rebound_rejections": floor_rebound_rejections,
     }
 
 
@@ -1295,6 +1347,7 @@ def evaluate_model_predictions(
         geometry_by_source=runtime_eval_config.get("geometry_by_source"),
         spatial_filter=runtime_eval_config.get("spatial_filter", True),
         spatial_filter_mode=runtime_eval_config.get("spatial_filter_mode", "sidewall"),
+        floor_rebound_filter=runtime_eval_config.get("floor_rebound_filter", True),
         collapse_wall_area=runtime_eval_config.get("collapse_wall_area", True),
         wall_visit_gap=runtime_eval_config.get(
             "wall_visit_gap",
@@ -1485,6 +1538,7 @@ def train_model(
         print(
             "Using app-style evaluation filters: "
             f"raw threshold hits={runtime_eval['raw_threshold_predictions']}, "
+            f"floor rebounds rejected={runtime_eval.get('floor_rebound_rejections', 0)}, "
             f"after filters/grouping={runtime_eval['kept_candidates']}.",
             flush=True,
         )
@@ -1763,7 +1817,18 @@ def parse_args():
     parser.add_argument("--start-frame", type=int, default=0)
     parser.add_argument("--end-frame", type=int, default=None)
     parser.add_argument("--inference-width", type=int, default=DEFAULT_INFERENCE_WIDTH)
-    parser.add_argument("--confidence", type=float, default=CONFIDENCE_THRESHOLD)
+    parser.add_argument(
+        "--inference-confidence",
+        type=float,
+        default=BALL_INFERENCE_CONFIDENCE,
+        help="Low raw-confidence floor retained for dust and motion analysis.",
+    )
+    parser.add_argument(
+        "--confidence",
+        type=float,
+        default=CONFIDENCE_THRESHOLD,
+        help="Minimum raw confidence after dust filtering and track confirmation.",
+    )
     parser.add_argument(
         "--include-geometry",
         action="store_true",
@@ -1869,6 +1934,11 @@ def parse_args():
         action="store_true",
         help="Load/cache the Roboflow model and exit before tracking or training.",
     )
+    parser.add_argument(
+        "--features-only",
+        action="store_true",
+        help="Generate and save the feature CSV, then exit without fitting a classifier.",
+    )
     return parser.parse_args()
 
 
@@ -1880,6 +1950,7 @@ def runtime_eval_config_from_args(args, geometry):
         "geometry_by_source": geometry_by_source,
         "spatial_filter": True,
         "spatial_filter_mode": args.runtime_eval_spatial_mode,
+        "floor_rebound_filter": True,
         "collapse_wall_area": True,
         "wall_visit_gap": max(0, args.runtime_eval_wall_visit_gap),
         "min_gap": max(0, args.runtime_eval_min_gap),
@@ -1937,6 +2008,14 @@ def main():
         load_dotenv(ROOT / ".env")
 
     args = parse_args()
+    if not 0 <= args.inference_confidence <= 1:
+        raise RuntimeError("--inference-confidence must be between 0 and 1.")
+    if not 0 <= args.confidence <= 1:
+        raise RuntimeError("--confidence must be between 0 and 1.")
+    if args.inference_confidence > args.confidence:
+        raise RuntimeError("--inference-confidence cannot exceed --confidence.")
+    if args.features_only and args.hyperparameter_matrix:
+        raise RuntimeError("--features-only cannot be combined with --hyperparameter-matrix.")
     if args.trajectory_fill_max_gap < 0:
         raise RuntimeError("--trajectory-fill-max-gap must be 0 or greater.")
     if args.trajectory_fill_edge_margin < 0:
@@ -2293,6 +2372,7 @@ def main():
         args.ball_csv,
         required_frames,
         args.inference_width,
+        args.inference_confidence,
         args.confidence,
         args.generate_ball_csv,
         args.force_track,
@@ -2395,6 +2475,18 @@ def main():
                 f"negative_exclusion={params['negative_exclusion']}.",
                 flush=True,
             )
+
+        if args.features_only:
+            args.features_output.parent.mkdir(parents=True, exist_ok=True)
+            features.to_csv(args.features_output, index=False)
+            print(
+                f"Saved training rows: {len(features)} row(s) "
+                f"({int(features['is_wall_hit'].sum())} positive) to "
+                f"{args.features_output}",
+                flush=True,
+            )
+            print("Feature generation complete; classifier fitting was skipped.", flush=True)
+            return
 
         result = train_model(
             features,

@@ -4,6 +4,8 @@ Importing this module has no side effects (no network clients, no model
 loads); anything here is safe for the Flask app, the CLIs, and tests.
 """
 
+import math
+
 import cv2
 
 
@@ -19,6 +21,12 @@ MOTION_TRACK_BONUS = 0.30
 STATIONARY_TRACK_PENALTY = 0.40
 TRAJECTORY_FILL_MAX_GAP_FRAMES = 6
 TRAJECTORY_FILL_EDGE_MARGIN_PX = 24.0
+FLOOR_REBOUND_SEARCH_FRAMES = 4
+FLOOR_REBOUND_WINDOW_FRAMES = 3
+FLOOR_REBOUND_MIN_DETECTIONS_PER_SIDE = 2
+FLOOR_REBOUND_MIN_Y_SPEED_PX_PER_FRAME = 1.25
+FLOOR_REBOUND_MIN_REVERSAL_PX_PER_FRAME = 3.0
+FLOOR_REBOUND_MIN_PROMINENCE_PX = 3.0
 CSV_FIELDNAMES = [
     "source_frame",
     "timestamp_seconds",
@@ -93,6 +101,126 @@ def select_ball_prediction(predictions, confidence_threshold=CONFIDENCE_THRESHOL
 
 def prediction_distance(a, b):
     return ((float(a["x"]) - float(b["x"])) ** 2 + (float(a["y"]) - float(b["y"])) ** 2) ** 0.5
+
+
+def _trajectory_y_point(row):
+    if not row or not row.get("detected"):
+        return None
+    try:
+        y = float(row["y"])
+    except (KeyError, TypeError, ValueError):
+        return None
+    return y if math.isfinite(y) else None
+
+
+def _linear_slope(points):
+    """Least-squares y/frame slope for a short trajectory segment."""
+    if len(points) < 2:
+        return None
+    mean_frame = sum(point[0] for point in points) / len(points)
+    mean_y = sum(point[1] for point in points) / len(points)
+    denominator = sum((point[0] - mean_frame) ** 2 for point in points)
+    if denominator <= 1e-9:
+        return None
+    return sum(
+        (point[0] - mean_frame) * (point[1] - mean_y)
+        for point in points
+    ) / denominator
+
+
+def detect_floor_rebound(
+    rows_by_frame,
+    frame,
+    *,
+    search_frames=FLOOR_REBOUND_SEARCH_FRAMES,
+    window_frames=FLOOR_REBOUND_WINDOW_FRAMES,
+    min_detections_per_side=FLOOR_REBOUND_MIN_DETECTIONS_PER_SIDE,
+    min_y_speed_px_per_frame=FLOOR_REBOUND_MIN_Y_SPEED_PX_PER_FRAME,
+    min_reversal_px_per_frame=FLOOR_REBOUND_MIN_REVERSAL_PX_PER_FRAME,
+    min_prominence_px=FLOOR_REBOUND_MIN_PROMINENCE_PX,
+):
+    """Detect a clear ground-bounce signature near a candidate frame.
+
+    Image y increases downward. A floor rebound therefore has positive y
+    velocity before impact and negative y velocity after impact, forming a
+    local y maximum. Searching a few frames around the model prediction
+    tolerates small timing errors while the speed and prominence gates avoid
+    vetoing noisy or nearly flat front-wall trajectories.
+    """
+    search_frames = max(0, int(search_frames))
+    window_frames = max(1, int(window_frames))
+    min_detections_per_side = max(2, int(min_detections_per_side))
+    best_stats = {
+        "is_floor_rebound": False,
+        "center_frame": None,
+        "vy_before_px_per_frame": None,
+        "vy_after_px_per_frame": None,
+        "reversal_px_per_frame": 0.0,
+        "prominence_px": 0.0,
+    }
+    best_floor_stats = None
+
+    for center in range(int(frame) - search_frames, int(frame) + search_frames + 1):
+        before = []
+        after = []
+        neighborhood = []
+        for sample_frame in range(center - window_frames, center + window_frames + 1):
+            y = _trajectory_y_point(rows_by_frame.get(sample_frame))
+            if y is None:
+                continue
+            point = (sample_frame, y)
+            neighborhood.append(point)
+            if sample_frame < center:
+                before.append(point)
+            elif sample_frame > center:
+                after.append(point)
+
+        if (
+            len(before) < min_detections_per_side
+            or len(after) < min_detections_per_side
+        ):
+            continue
+
+        vy_before = _linear_slope(before)
+        vy_after = _linear_slope(after)
+        if vy_before is None or vy_after is None:
+            continue
+
+        peak_y = max(point[1] for point in neighborhood)
+        shoulder_y = max(before[0][1], after[-1][1])
+        prominence = peak_y - shoulder_y
+        reversal = vy_before - vy_after
+        stats = {
+            "is_floor_rebound": bool(
+                vy_before >= float(min_y_speed_px_per_frame)
+                and vy_after <= -float(min_y_speed_px_per_frame)
+                and reversal >= float(min_reversal_px_per_frame)
+                and prominence >= float(min_prominence_px)
+            ),
+            "center_frame": center,
+            "vy_before_px_per_frame": float(vy_before),
+            "vy_after_px_per_frame": float(vy_after),
+            "reversal_px_per_frame": float(reversal),
+            "prominence_px": float(prominence),
+        }
+        if stats["is_floor_rebound"]:
+            if best_floor_stats is None or (
+                stats["prominence_px"],
+                stats["reversal_px_per_frame"],
+                -abs(center - int(frame)),
+            ) > (
+                best_floor_stats["prominence_px"],
+                best_floor_stats["reversal_px_per_frame"],
+                -abs(best_floor_stats["center_frame"] - int(frame)),
+            ):
+                best_floor_stats = stats
+            continue
+        if stats["reversal_px_per_frame"] > best_stats["reversal_px_per_frame"]:
+            best_stats = stats
+
+    if best_floor_stats is not None:
+        return True, best_floor_stats
+    return False, best_stats
 
 
 def nearest_prediction(point, predictions):
@@ -237,7 +365,17 @@ def select_motion_consistent_ball_predictions(
     predictions_by_frame,
     confidence_threshold=CONFIDENCE_THRESHOLD,
     window_frames=MOTION_TRACK_WINDOW_FRAMES,
+    require_track_support=False,
+    minimum_confidence=None,
 ):
+    """Select at most one non-stationary, motion-consistent candidate per frame.
+
+    ``confidence_threshold`` is the evidence floor applied before stationary
+    and motion analysis. When ``require_track_support`` is true, isolated
+    candidates cannot become anchors. ``minimum_confidence`` is applied to the
+    raw model confidence afterward. Motion consistency only ranks candidates
+    that survive these gates.
+    """
     candidates_by_frame = {
         frame: candidate_ball_predictions(predictions, confidence_threshold)
         for frame, predictions in predictions_by_frame.items()
@@ -260,10 +398,17 @@ def select_motion_consistent_ball_predictions(
             if is_stationary_candidate(stationary_stats):
                 continue
 
+            if require_track_support and stats["detected"] < MOTION_TRACK_MIN_DETECTIONS:
+                continue
+
+            raw_confidence = float(candidate.get("confidence", 1.0))
+            if minimum_confidence is not None and raw_confidence < minimum_confidence:
+                continue
+
+            combined_score = raw_confidence + motion_consistency_score(stats)
             scored_candidates.append(
                 (
-                    float(candidate.get("confidence", 1.0))
-                    + motion_consistency_score(stats),
+                    combined_score,
                     candidate,
                 )
             )

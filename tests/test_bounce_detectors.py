@@ -22,7 +22,7 @@ from train_bounce_classifier import (
     geometry_features,
     load_geometry,
 )
-from tracking_common import select_motion_consistent_ball_predictions
+from tracking_common import detect_floor_rebound, select_motion_consistent_ball_predictions
 from bounce_gb_model_detector import (
     calibrated_wall_gate,
     collapse_front_wall_chunks,
@@ -397,6 +397,39 @@ def test_front_wall_chunk_gate_is_horizontal_and_tin_bounded():
     assert not inside_front_wall_chunk_gate(500, 760, wall_gate, (100, 900))
 
 
+def test_floor_rebound_filter_detects_down_then_up_motion_near_candidate():
+    rows = {
+        frame: {
+            "detected": True,
+            "x": 400.0 + frame * 3.0,
+            "y": 330.0 - abs(frame - 6) * 5.0,
+        }
+        for frame in range(13)
+    }
+
+    is_floor_rebound, stats = detect_floor_rebound(rows, 8)
+
+    assert is_floor_rebound
+    assert stats["center_frame"] == 6
+    assert stats["vy_before_px_per_frame"] > 0
+    assert stats["vy_after_px_per_frame"] < 0
+
+
+def test_floor_rebound_filter_keeps_front_wall_like_up_then_down_turn():
+    rows = {
+        frame: {
+            "detected": True,
+            "x": 400.0 + frame * 3.0,
+            "y": 270.0 + abs(frame - 6) * 5.0,
+        }
+        for frame in range(13)
+    }
+
+    is_floor_rebound, _ = detect_floor_rebound(rows, 6)
+
+    assert not is_floor_rebound
+
+
 def test_stationary_false_track_rejects_dust_like_detection():
     rows = rows_by_frame([
         detector_row(frame, 500 + (frame % 2) * 0.7, 300 + (frame % 3) * 0.5)
@@ -492,6 +525,32 @@ def test_training_runtime_eval_filters_group_app_style_predictions(tmp_path):
     assert stats["kept_candidates"] == 1
 
 
+def test_training_runtime_eval_rejects_floor_rebound_signature():
+    feature_row = {
+        "frame": 100,
+        "t+0_detected": 1.0,
+        "t+0_x": 500.0,
+        "t+0_y": 330.0,
+    }
+    for offset in range(-3, 4):
+        prefix = f"t{offset:+d}"
+        feature_row[f"{prefix}_detected"] = 1.0
+        feature_row[f"{prefix}_x"] = 500.0 + offset * 3.0
+        feature_row[f"{prefix}_y"] = 330.0 - abs(offset) * 10.0
+
+    predictions, stats = app_filtered_eval_predictions(
+        pd.DataFrame([feature_row]),
+        np.array([0.90]),
+        0.25,
+        spatial_filter=False,
+        collapse_wall_area=False,
+        min_gap=0,
+    )
+
+    assert predictions.tolist() == [0]
+    assert stats["floor_rebound_rejections"] == 1
+
+
 def test_geometry_features_include_video_level_calibration_context(tmp_path):
     calibration_path = tmp_path / "calibration.json"
     calibration_path.write_text(
@@ -555,6 +614,47 @@ def test_motion_consistent_selector_falls_back_to_confidence_without_context():
     })
 
     assert selected[100]["confidence"] == 0.75
+
+
+def test_motion_consistent_selector_rejects_isolated_anchor_when_support_required():
+    predictions_by_frame = {
+        0: [pred(100, 300, 0.55)],
+        1: [pred(120, 300, 0.55)],
+        2: [pred(1000, 700, 0.80)],
+        3: [],
+        4: [pred(180, 300, 0.55)],
+        5: [pred(200, 300, 0.55)],
+    }
+
+    selected = select_motion_consistent_ball_predictions(
+        predictions_by_frame,
+        confidence_threshold=0.10,
+        require_track_support=True,
+        minimum_confidence=0.40,
+    )
+
+    assert selected[2] is None
+    assert selected[1]["x"] == 120
+    assert selected[4]["x"] == 180
+
+
+def test_motion_consistent_selector_rejects_supported_below_confidence_candidate():
+    predictions_by_frame = {
+        frame: [
+            pred(500, 300, 0.35),
+            pred(100 + frame * 15, 430 + frame * 3, 0.20),
+        ]
+        for frame in range(8)
+    }
+
+    selected = select_motion_consistent_ball_predictions(
+        predictions_by_frame,
+        confidence_threshold=0.10,
+        require_track_support=True,
+        minimum_confidence=0.40,
+    )
+
+    assert selected[4] is None
 
 
 def test_motion_consistent_selector_does_not_teleport_link_fragmented_dust():
