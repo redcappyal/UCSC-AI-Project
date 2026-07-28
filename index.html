@@ -117,18 +117,23 @@
   .status{font-size:14px; color:var(--dim); min-height:1.2em}
   .status.warn{color:var(--text); font-weight:700}
   .status.ok{color:var(--text)}
-  /* #confirmWarn can now grow to a divergence sentence on top of the "Off:"
-     list (up to ~4 lines in the worst case: 3 self-check names plus both
-     out-line corners diverging). The shared .status min-height only reserves
-     one line, which is fine everywhere else it's used, but here the canvas
-     above is vertically centered in a flex-grow stage (§7) — any change to
-     this paragraph's real height reflows that stage and re-centers the
-     canvas, shifting it under an in-progress drag and corrupting the pointer
-     math (confirmed while verifying dragging: a steady drag jumped ~50px the
-     instant the divergence sentence first wrapped to an extra line). Reserve
-     the worst case up front so the height never changes after landing on
-     this screen, satisfying §0.9 for real rather than only for one-line text. */
-  #confirmWarn{min-height:80px}
+  /* The confirm screen's two status paragraphs are split by WHEN their text
+     can change, which is a §0.9 requirement here rather than a stylistic
+     choice: the canvas above is vertically centered in a flex-grow stage
+     (§7), so any change to a paragraph's real height reflows that stage and
+     re-centers the canvas — shifting it under an in-progress drag and
+     corrupting the pointer math (confirmed while verifying dragging: a steady
+     drag jumped ~50px the instant the divergence sentence first wrapped to an
+     extra line).
+       #confirmWarn holds the detection's own reasons (off checks, unverified
+     note, server warnings, the "dragging doesn't re-check this" note). Every
+     one is fixed for as long as this screen is on screen — S.detect is never
+     rewritten by a drag — so its height settles on arrival and needs no
+     reserve beyond .status's one line.
+       #confirmDrift holds the only text a drag can change: which dragged
+     corners have walked off the fitted out line. Its worst case is both
+     corners named, so it reserves that up front. */
+  #confirmDrift{min-height:60px}
 
   button, label.filebtn{font:inherit; font-size:15px; font-weight:600; letter-spacing:.05em;
     text-transform:uppercase; color:var(--text);
@@ -724,9 +729,11 @@
     </div>
     <button class="primary proxied" id="confirmUseBtn">Use this calibration</button>
     <div class="row">
+      <button class="small" id="confirmUndoBtn" type="button" disabled>Undo drag</button>
       <button class="small" id="confirmManualBtn" type="button">Tap it manually</button>
     </div>
     <p class="status" id="confirmWarn">&nbsp;</p>
+    <p class="status" id="confirmDrift">&nbsp;</p>
   </section>
 
   <!-- PHASE: clip -->
@@ -1224,7 +1231,8 @@ const S = {
   wall:null,                  // front-wall corner taps, clockwise from upper left
   floor:null,                 // floor-homography wizard state (see newFloorState)
   detect:null,                // last /api/detect-court response, kept for the confirm screen
-  confirmDrag:null,           // key of the anchor being dragged on the confirm screen ('wall:0', 'floor:short_line_left', ...)
+  confirmDrag:null,           // {key, dx, dy} while an anchor is being dragged; dx/dy are the grab offset
+  confirmUndo:[],             // stack of {key, xy} snapshots taken when a drag starts
   profile:null,               // {id, name, created_utc} when a saved profile is in play
   run:null,                   // backend tracking result
   coachReports:{},            // run_id -> coaching analytics/feedback response
@@ -1940,6 +1948,20 @@ async function grabDetectionFrames(count = DETECT_FRAME_COUNT){
   return blobs;
 }
 
+/* Every exit from a detection clears the same state. Detection writes S.lines,
+   S.wall and S.floor before the player has agreed to anything, so a path that
+   abandons it and leaves them behind hands the manual wizard a half-filled
+   calibration from a frame the player has already left: confirm -> Back ->
+   re-pick a frame -> detection fails put the wall-corner screen at "All four
+   wall corners are set." with DONE enabled, from the discarded detection. */
+function clearDetectionState(){
+  S.detect = null;
+  S.confirmDrag = null;
+  S.confirmUndo = [];
+  S.lines = {out:null, tin:null, service:null};
+  S.wall = null; S.floor = null; S.work = null;
+}
+
 async function runCourtDetection(){
   $('analyzeOverlay').classList.remove('hidden');
   let result = null;
@@ -1957,10 +1979,16 @@ async function runCourtDetection(){
   S.frameTime = vid.currentTime;
 
   if(!result || result.status !== 'ok'){
+    clearDetectionState();
     setPhase('tap_out');
-    $('tapStatus').textContent = result && result.warnings && result.warnings.length
-      ? `Could not detect the court (${result.warnings[0]}) — tap the lines instead.`
-      : 'Could not detect the court — tap the lines instead.';
+    // warnings[0] is the reason detection actually failed — court_detect's
+    // _failure() puts it first precisely so this line is not the incidental
+    // "Camera appears to be moving" note that used to land here.
+    const reason = result && result.warnings && result.warnings.length
+      ? result.warnings[0] : '';
+    $('tapStatus').textContent = reason
+      ? `${reason} Tap the lines instead.`
+      : 'Could not detect the court. Tap the lines instead.';
     $('tapStatus').className = 'status warn';
     return;
   }
@@ -1973,6 +2001,8 @@ async function runCourtDetection(){
    layer, and nothing downstream can tell the two apart. */
 function applyDetection(result){
   S.detect = result;
+  S.confirmDrag = null;
+  S.confirmUndo = [];
   S.profile = null;
   const byName = {};
   for(const line of result.lines) byName[line.name] = line;
@@ -2009,6 +2039,25 @@ function applyDetection(result){
    anchor the checks flagged. */
 const CONFIRM_OK = '#3ddc84', CONFIRM_WARN = '#f5c518';
 
+/* Four wall corners plus both short-line ends. A detection that produced fewer
+   is not a detection this screen can present as complete. */
+const CONFIRM_ANCHOR_COUNT = 6;
+
+/* Canvas pixels per CSS pixel, from the canvas's DISPLAYED size — not its
+   pixel buffer. getBoundingClientRect() already includes the pinch-zoom
+   transform, so a target sized through this stays the same physical size on
+   the glass at any zoom, which is what §0.6's 44 px is a rule about. */
+function canvasPxPerCssPx(){
+  const rect = canvas.getBoundingClientRect();
+  return rect.width > 0 ? S.W / rect.width : 1;
+}
+
+/* 'short_line_left' -> 'Short line left'. */
+function sentenceCaseId(id){
+  const words = id.replace(/_/g, ' ');
+  return words.charAt(0).toUpperCase() + words.slice(1);
+}
+
 function confirmAnchorPoints(){
   const points = [];
   if(S.wall) WALL_CORNERS.forEach((corner, i) => {
@@ -2018,8 +2067,13 @@ function confirmAnchorPoints(){
   if(S.floor) for(const landmark of S.floor.landmarks){
     if((landmark.id === 'short_line_left' || landmark.id === 'short_line_right')
         && landmark.refined_px)
+      // Sentence case, so "Short line left" sits beside the wall corners'
+      // "Out line · left" in one convention (§0.7) rather than two. NOT
+      // landmark.label — the court model's labels are full tap instructions
+      // ("Where the MIDDLE of the short line's width meets the LEFT side
+      // wall"), written for the floor wizard's prompt line, not for a chip.
       points.push({key:`floor:${landmark.id}`,
-                   label:landmark.id.replace(/_/g, ' '), xy:landmark.refined_px});
+                   label:sentenceCaseId(landmark.id), xy:landmark.refined_px});
   }
   return points;
 }
@@ -2029,9 +2083,32 @@ function confirmOffChecks(){
   return checks.filter(check => check.status === 'off');
 }
 
+/* How many independent court markings the server could actually verify this
+   fit against. Zero is the normal answer today — both independent checks sit
+   below the frame on a back-wall mount — and the screen says so rather than
+   implying the fit was checked. */
+function confirmVerifiedCount(){
+  const count = S.detect && S.detect.checks_verified;
+  return Number.isFinite(count) ? count : 0;
+}
+
+/* The green "detected" line has to be EARNED, not defaulted into. Every one of
+   these is a fact the detector reported; if any is missing the screen is amber
+   (never red — §0.3 reserves red for OUT verdicts) and #confirmWarn names why.
+   checks_verified is tested separately from confidence on purpose: it is the
+   count of real evidence, so green never rests on the server's verdict alone. */
+function confirmIsTrusted(){
+  return !!S.detect
+    && S.detect.status === 'ok'
+    && S.detect.confidence === 'high'
+    && confirmVerifiedCount() > 0
+    && confirmOffChecks().length === 0
+    && confirmAnchorPoints().length === CONFIRM_ANCHOR_COUNT;
+}
+
 function drawConfirmOverlay(){
   if(S.phase !== 'confirm') return;
-  const warned = confirmOffChecks().length > 0;
+  const warned = !confirmIsTrusted();
   ctx.save();
   // Floor wireframe (DESIGN.md §8.19). Deliberately not drawFloorOverlay's
   // palette: that one colors landmarks red past a 4px residual, and red is
@@ -2050,7 +2127,12 @@ function drawConfirmOverlay(){
       ctx.stroke();
     }
   }
-  const radius = Math.max(9, S.W / 110);
+  // Floor the puck at 6 CSS px radius so it is visible on the glass rather
+  // than only in the pixel buffer (S.W/110 alone drew a 7 CSS px dot on a
+  // 1080p clip at 390px wide). Still far smaller than its 44 px hit target —
+  // this screen exists to show whether the overlay sits on the real paint, so
+  // the puck must not cover the paint it is being judged against.
+  const radius = Math.max(9, S.W / 110, 6 * canvasPxPerCssPx());
   for(const anchor of confirmAnchorPoints()){
     ctx.beginPath();
     ctx.arc(anchor.xy[0], anchor.xy[1], radius, 0, Math.PI * 2);
@@ -2064,23 +2146,48 @@ function drawConfirmOverlay(){
 }
 
 function buildConfirmView(){
+  const trusted = confirmIsTrusted();
   const off = confirmOffChecks();
   const anchors = confirmAnchorPoints();
   $('confirmCount').textContent = `${anchors.length} placed`;
   $('confirmAnchorList').innerHTML = anchors.map(anchor =>
     `<span class="done">${anchor.label} set</span>`).join('');
-  $('confirmSummary').textContent = off.length
-    ? 'Detected, but some court markings did not line up.'
-    : 'Court detected — the overlay should sit on the real lines.';
-  $('confirmSummary').className = 'status' + (off.length ? ' warn' : ' ok');
+
+  // The green line is the earned state, not the default. It used to be what
+  // this screen said whenever no check had gone 'off' — which included
+  // S.detect === null with zero anchors placed.
+  $('confirmSummary').textContent = trusted
+    ? 'Court detected — the overlay should sit on the real lines.'
+    : 'Court detected, but the fit could not be confirmed — check the overlay before using it.';
+  $('confirmSummary').className = 'status' + (trusted ? ' ok' : ' warn');
+
+  // Reasons, all of them fixed for as long as this screen is up: they come
+  // from S.detect, which a drag never rewrites. Keeping them out of
+  // #confirmDrift is what lets that paragraph reserve a small worst case (§0.9).
+  const reasons = [];
+  if(!S.detect){
+    reasons.push('No detection is loaded for this frame.');
+  } else {
+    if(off.length)
+      reasons.push(`Off the paint: ${off.map(check => check.label || check.id.replace(/_/g, ' ')).join(', ')}.`);
+    if(anchors.length !== CONFIRM_ANCHOR_COUNT)
+      reasons.push(`Only ${anchors.length} of ${CONFIRM_ANCHOR_COUNT} court anchors were derived.`);
+    for(const warning of S.detect.warnings || []) reasons.push(warning);
+    // Said plainly rather than implied by a colour: the verdict describes the
+    // detection as it arrived. The pucks and wireframe follow a drag, but the
+    // server's checks cannot be recomputed here — the paint mask they measure
+    // against lives on the server — so the ok/warn signal does not.
+    reasons.push('This verdict is from the original detection; dragging an anchor moves it but does not re-check it.');
+  }
+  $('confirmWarn').innerHTML = reasons.length ? reasons.join(' ') : '&nbsp;';
+  $('confirmWarn').className = 'status' + (trusted ? '' : ' warn');
+
   const diverged = confirmDivergence();
-  const messages = [];
-  if(off.length)
-    messages.push(`Off: ${off.map(check => check.id.replace(/_/g, ' ')).join(', ')}.`);
-  if(diverged.length)
-    messages.push(`${diverged.join(' and ')} no longer sits on the fitted out line — tap that line manually if the fit is wrong.`);
-  $('confirmWarn').innerHTML = messages.length ? messages.join(' ') : '&nbsp;';
-  $('confirmWarn').className = 'status' + (messages.length ? ' warn' : '');
+  $('confirmDrift').innerHTML = diverged.length
+    ? `${diverged.join(' and ')} no longer sits on the fitted out line — tap that line manually if the fit is wrong.`
+    : '&nbsp;';
+  $('confirmDrift').className = 'status' + (diverged.length ? ' warn' : '');
+  $('confirmUndoBtn').disabled = S.confirmUndo.length === 0;
   render();
 }
 
@@ -2091,15 +2198,38 @@ function buildConfirmView(){
    up far from its line, we say so rather than silently picking a winner. */
 const CONFIRM_DIVERGE_PX = 6;
 
+/* §0.6's 44 px, as a diameter, measured on the glass. The old rule
+   (Math.max(18, S.W/60) in canvas px) measured 13.0 CSS px on a 1080p clip at
+   390x844 — and the S.W terms cancel, so a higher-resolution clip did not help.
+   Two consequences follow from making it this much bigger:
+     * the grab has to carry an OFFSET rather than teleporting the anchor to
+       the finger, or a grab from 20 px away would jump the anchor 20 px;
+     * a grab in the gap between two anchors resolves to the nearer one, which
+       the loop below already did. */
+const CONFIRM_TOUCH_CSS_PX = 44;
+
 function confirmDragHitTest(x, y){
-  const radius = Math.max(18, S.W / 60);
+  const radius = (CONFIRM_TOUCH_CSS_PX / 2) * canvasPxPerCssPx();
   let best = null, bestDist = radius * radius;
   for(const anchor of confirmAnchorPoints()){
     const dx = anchor.xy[0] - x, dy = anchor.xy[1] - y;
     const dist = dx * dx + dy * dy;
-    if(dist <= bestDist){ bestDist = dist; best = anchor.key; }
+    if(dist <= bestDist){ bestDist = dist; best = {key:anchor.key, dx, dy}; }
   }
   return best;
+}
+
+/* Undo for drags, so a bad drag is recoverable without discarding the whole
+   detection through TAP IT MANUALLY — every neighbouring canvas phase has one
+   (wallUndoBtn, floorUndoLandmarkBtn, clearTapsBtn) and this screen had none.
+   The snapshot is taken on grab; a grab that never moved the anchor pops
+   itself on release so UNDO DRAG always undoes something visible. */
+function confirmAnchorAt(key){
+  return confirmAnchorPoints().find(anchor => anchor.key === key) || null;
+}
+function pushConfirmUndo(key){
+  const anchor = confirmAnchorAt(key);
+  if(anchor) S.confirmUndo.push({key, xy:[anchor.xy[0], anchor.xy[1]]});
 }
 
 function moveConfirmAnchor(key, x, y){
@@ -2138,7 +2268,7 @@ $('hdrBack').onclick = () => {
     if(S.rec.calibrating){ S.rec.calibrating = false; setPhase('record'); }
     else { setPhase('frame'); ctx.drawImage(vid, 0, 0, S.W, S.H); }
   } else if(S.phase === 'confirm'){
-    S.detect = null; setPhase('frame'); ctx.drawImage(vid, 0, 0, S.W, S.H);
+    clearDetectionState(); setPhase('frame'); ctx.drawImage(vid, 0, 0, S.W, S.H);
   } else if(S.phase === 'tap_tin'){
     S.work = null; S.lines.out = null; setPhase('tap_out');
   } else if(S.phase === 'tap_service'){
@@ -2257,6 +2387,7 @@ canvas.addEventListener('pointerdown', e => {
     const x = Math.round((e.clientX - r.left) * S.W / r.width);
     const y = Math.round((e.clientY - r.top) * S.H / r.height);
     S.confirmDrag = confirmDragHitTest(x, y);
+    if(S.confirmDrag) pushConfirmUndo(S.confirmDrag.key);
   }
   pointers.set(e.pointerId, { x:e.clientX, y:e.clientY, startX:e.clientX, startY:e.clientY, moved:false, multi:false });
 
@@ -2282,9 +2413,13 @@ canvas.addEventListener('pointermove', e => {
 
   if(S.confirmDrag && pointers.size === 1){
     const r = canvas.getBoundingClientRect();
-    moveConfirmAnchor(S.confirmDrag,
-      Math.min(S.W - 1, Math.max(0, Math.round((e.clientX - r.left) * S.W / r.width))),
-      Math.min(S.H - 1, Math.max(0, Math.round((e.clientY - r.top) * S.H / r.height))));
+    // + the grab offset: the anchor follows the finger's MOVEMENT rather than
+    // snapping to it, so a 44 px target costs nothing in placement precision.
+    const gx = (e.clientX - r.left) * S.W / r.width + S.confirmDrag.dx;
+    const gy = (e.clientY - r.top) * S.H / r.height + S.confirmDrag.dy;
+    moveConfirmAnchor(S.confirmDrag.key,
+      Math.min(S.W - 1, Math.max(0, Math.round(gx))),
+      Math.min(S.H - 1, Math.max(0, Math.round(gy))));
     buildConfirmView();
     return;
   }
@@ -2315,6 +2450,12 @@ function endPointer(e){
   pointers.delete(e.pointerId);
   if(pointers.size < 2) pinch = null;
   if(S.confirmDrag && pointers.size === 0){
+    // A grab that never moved the anchor leaves no undo entry behind.
+    const snapshot = S.confirmUndo[S.confirmUndo.length - 1];
+    const anchor = confirmAnchorAt(S.confirmDrag.key);
+    if(snapshot && anchor && snapshot.key === S.confirmDrag.key
+       && snapshot.xy[0] === anchor.xy[0] && snapshot.xy[1] === anchor.xy[1])
+      S.confirmUndo.pop();
     S.confirmDrag = null;
     buildConfirmView();
     return;
@@ -2767,6 +2908,13 @@ function buildWallCornerView(){
 
 function drawWallOverlay(){
   if(!S.wall || !S.wall.points.length) return;
+  // The confirm screen draws its own pucks over these same four corners, in
+  // its own ok/warn palette. Without this guard the yellow #ffd60a quad and
+  // numbered pucks render UNDER them — two colour languages for one geometry
+  // on a screen DESIGN.md §8.19 justifies as "one fitted picture", with
+  // amber #f5c518 pucks sitting on a #ffd60a line in the warned state.
+  // drawFloorOverlay is already guarded this way; this one was not.
+  if(S.phase === 'confirm') return;
   ctx.save();
   ctx.strokeStyle = '#ffd60a';
   ctx.fillStyle = '#ffd60a';
@@ -3417,12 +3565,13 @@ $('floorDoneBtn').onclick = () => {
 };
 
 $('confirmUseBtn').onclick = () => { finishCalWizard(); };
-$('confirmManualBtn').onclick = () => {
-  S.detect = null;
-  S.lines = {out:null, tin:null, service:null};
-  S.wall = null; S.floor = null; S.work = null;
-  setPhase('tap_out');
+$('confirmUndoBtn').onclick = () => {
+  const last = S.confirmUndo.pop();
+  if(!last) return;
+  moveConfirmAnchor(last.key, last.xy[0], last.xy[1]);
+  buildConfirmView();
 };
+$('confirmManualBtn').onclick = () => { clearDetectionState(); setPhase('tap_out'); };
 
 function drawFloorOverlay(){
   const F = S.floor;
