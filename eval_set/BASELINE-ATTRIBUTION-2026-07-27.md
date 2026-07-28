@@ -176,3 +176,13 @@ Reproduce this whole run:
 .venv/bin/python eval_line_calls.py --eval-set eval_set/cases.jsonl
 .venv/bin/python -m pytest tests/ -q
 ```
+
+## Measurement note (added post-review)
+
+The `wallclock_end*.txt` sentinel files in the (gitignored) run dirs lag the
+times above — run 1's sentinel says 02:10:03Z vs the documented 02:04:21Z.
+The documented numbers are taken from job completion (identical mtimes on
+`job.json`, `ball_coordinates.csv`, `detected_hits.json`, `run.log`,
+`players/`); the sentinel lag is process teardown after MPS model unload,
+not pipeline time. The job-completion numbers are the ones that matter for
+the PERSON_DETECT_HZ tuning decision (human gate #3).
