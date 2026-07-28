@@ -190,6 +190,10 @@ nav button svg{width:20px;height:20px}
   display:flex;align-items:center;justify-content:center;cursor:pointer;
   box-shadow:0 4px 20px rgba(0,0,0,.25)}
 .shutter .sq{width:28px;height:28px;border-radius:8px;background:#fff}
+/* live badge */
+.livetag{background:var(--accent);border-radius:999px;padding:3px 8px;font-size:10px;
+  font-weight:700;letter-spacing:.05em;vertical-align:3px;margin-left:6px}
+.livetag.hidden{display:none}
 /* toast */
 #toast{position:absolute;left:50%;bottom:92px;transform:translateX(-50%);background:var(--ink);
   color:#fff;font-size:13px;font-weight:600;padding:10px 16px;border-radius:999px;
@@ -311,22 +315,22 @@ nav button svg{width:20px;height:20px}
           </div>
           <div class="herotitles">
             <span class="ht">Today&#8217;s Focus</span>
-            <span class="hs">Straight-drive depth</span>
+            <span class="hs" id="herosub">Straight-drive depth</span>
           </div>
           <div class="ringbadge" role="img" aria-label="4 of 5 sessions this week">
             <svg viewBox="0 0 40 40" fill="none">
               <circle cx="20" cy="20" r="16.5" stroke="rgba(255,255,255,.14)" stroke-width="3.5"/>
-              <circle class="arc" cx="20" cy="20" r="16.5" stroke="#D9F04A" stroke-width="3.5" stroke-linecap="round" stroke-dasharray="82.9 103.7"/>
+              <circle class="arc" id="ringarc" cx="20" cy="20" r="16.5" stroke="#D9F04A" stroke-width="3.5" stroke-linecap="round" stroke-dasharray="82.9 103.7"/>
             </svg>
-            <span class="rv">4/5</span>
+            <span class="rv" id="ringval">4/5</span>
           </div>
         </div>
         <div class="statgrid">
-          <div class="stattile"><span class="sl">Sessions</span><span class="sv">4<span class="ss">/5</span></span></div>
-          <div class="stattile"><span class="sl">Front-wall IN</span><span class="sv">78<span class="ss">%</span></span></div>
-          <div class="stattile"><span class="sl">Avg. Score</span><span class="sv">84<span class="ss">/100</span></span></div>
+          <div class="stattile"><span class="sl" id="t1l">Sessions</span><span class="sv" id="t1v">4<span class="ss">/5</span></span></div>
+          <div class="stattile"><span class="sl" id="t2l">Front-wall IN</span><span class="sv" id="t2v">78<span class="ss">%</span></span></div>
+          <div class="stattile"><span class="sl" id="t3l">Avg. Score</span><span class="sv" id="t3v">84<span class="ss">/100</span></span></div>
         </div>
-        <div class="heronote">Drives are landing <b>short of the service box</b> in 3 of your last 4 sessions.</div>
+        <div class="heronote" id="heronote">Drives are landing <b>short of the service box</b> in 3 of your last 4 sessions.</div>
       </div>
       <div class="btnrow">
         <button class="pill accent" onclick="openCam()">
@@ -372,7 +376,7 @@ nav button svg{width:20px;height:20px}
       <div class="card weekly" style="padding-top:14px;padding-bottom:12px">
         <div class="cardtitle">Weekly Report</div>
         <div class="dim" style="font-size:12px;margin-top:2px">Active minutes</div>
-        <svg viewBox="0 0 326 150" aria-label="Active minutes by day, Wednesday highlighted">
+        <svg viewBox="0 0 326 150" id="weeklysvg" aria-label="Active minutes by day, Wednesday highlighted">
           <text x="26" y="15" text-anchor="end" font-size="10" fill="#B4B6BC">120</text>
           <text x="26" y="50" text-anchor="end" font-size="10" fill="#B4B6BC">80</text>
           <text x="26" y="88" text-anchor="end" font-size="10" fill="#B4B6BC">40</text>
@@ -421,7 +425,7 @@ nav button svg{width:20px;height:20px}
 
     <section class="view" id="view-analysis">
       <div class="viewhead">
-        <h2>Analysis</h2>
+        <h2>Analysis<span class="livetag hidden">LIVE</span></h2>
         <span class="dim" id="clipmeta"></span>
       </div>
       <div id="cliplist" style="display:flex;flex-direction:column;gap:12px"></div>
@@ -536,14 +540,14 @@ nav button svg{width:20px;height:20px}
     </section>
 
     <section class="view" id="view-progress">
-      <div class="viewhead"><h2>Progress</h2></div>
+      <div class="viewhead"><h2>Progress<span class="livetag hidden">LIVE</span></h2></div>
       <div id="rangeseg"></div>
       <div id="deltastrip">
-        <div class="delta"><span class="lbl">Front-wall IN</span>
+        <div class="delta" id="delta1"><span class="lbl">Front-wall IN</span>
           <span class="valrow"><span class="val num">78%</span><span class="chip good">&#9650;3</span></span></div>
-        <div class="delta"><span class="lbl">Session score</span>
+        <div class="delta" id="delta2"><span class="lbl">Session score</span>
           <span class="valrow"><span class="val num">84</span><span class="chip good">&#9650;5</span></span></div>
-        <div class="delta"><span class="lbl">Rallies</span>
+        <div class="delta" id="delta3"><span class="lbl">Rallies</span>
           <span class="valrow"><span class="val num">42</span><span class="chip flat">&#8212;</span></span></div>
       </div>
       <div id="trendcards" style="display:flex;flex-direction:column;gap:12px"></div>
@@ -552,8 +556,8 @@ nav button svg{width:20px;height:20px}
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M8 21h8"/><path d="M12 17v4"/><path d="M7 4h10v6a5 5 0 0 1-10 0z"/><path d="M7 6H4a1 1 0 0 0-1 1c0 2.2 1.8 4 4 4"/><path d="M17 6h3a1 1 0 0 1 1 1c0 2.2-1.8 4-4 4"/></svg>
         </div>
         <div class="info">
-          <span class="name">Best IN% to date &#8212; <span class="num">84%</span></span>
-          <span class="meta">Jul 22 &#183; beat it to set a new mark</span>
+          <span class="name" id="bestname">Best IN% to date &#8212; <span class="num">84%</span></span>
+          <span class="meta" id="bestmeta">Jul 22 &#183; beat it to set a new mark</span>
         </div>
       </div>
     </section>
@@ -689,7 +693,8 @@ const FB_ICONS = {
   avg:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 8v5"/><circle cx="12" cy="16.5" r=".5" fill="currentColor"/><circle cx="12" cy="12" r="9"/></svg>',
   poor:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 7v6"/><circle cx="12" cy="16.8" r=".6" fill="currentColor"/><path d="M10.3 3.6L2.6 17a2 2 0 0 0 1.7 3h15.4a2 2 0 0 0 1.7-3L13.7 3.6a2 2 0 0 0-3.4 0z"/></svg>'
 };
-function gaugeSVG(score){
+function gaugeSVG(score, label){
+  label = label || 'Overall';
   const N = 13, cx = 105, cy = 84, r = 64, tick = 19, w = 9;
   const start = 205, sweep = 230;
   const filled = Math.round(score/100*N);
@@ -705,7 +710,7 @@ function gaugeSVG(score){
   }
   return `<svg width="210" height="126" viewBox="0 0 210 126" aria-label="Overall score ${score} out of 100">
     ${ticks}
-    <text x="${cx}" y="${cy-8}" text-anchor="middle" font-size="11" fill="#8E9199" font-weight="500">Overall</text>
+    <text x="${cx}" y="${cy-8}" text-anchor="middle" font-size="11" fill="#8E9199" font-weight="500">${label}</text>
     <text x="${cx}" y="${cy+22}" text-anchor="middle" font-size="30" font-weight="800" fill="#141517">${score}%</text>
   </svg>`;
 }
@@ -714,11 +719,50 @@ function renderClips(){
   document.getElementById('clipmeta').textContent = `${CLIPS.length} clips · ${n} analyzed`;
   document.getElementById('cliplist').innerHTML = CLIPS.map(c=>{
     const grad = `linear-gradient(140deg, hsl(${c.hue} 28% 80%), hsl(${c.hue} 26% 56%))`;
-    const state = c.analyzed
+    let state = c.analyzed
       ? `<span class="statechip done">ANALYZED <span class="num">${c.score}</span></span>`
       : `<span class="statechip todo">NOT ANALYZED</span>`;
     let body;
-    if(!c.analyzed){
+    if(c.live){
+      const m = liveMetrics(c.id);
+      state = m.inPct != null
+        ? `<span class="statechip done">IN <span class="num">${m.inPct}%</span></span>`
+        : `<span class="statechip done">ANALYZED</span>`;
+      const sentences = splitSentences(LIVE.coach[c.id].feedback).slice(0,3);
+      const fb = sentences.map(s=>
+        `<div class="fbrow">
+           <div class="iconcircle">${FB_ICONS.avg}</div>
+           <div class="info"><span class="s" style="color:var(--ink)">${s}</span></div>
+         </div>`).join('');
+      const fmt = (v,d)=> v==null ? '&#8212;' : (Math.round(v*10)/10).toFixed(d);
+      body = `
+        <div class="gauge">${m.inPct != null ? gaugeSVG(m.inPct,'Front-wall IN')
+          : `<div class="metaline">No judged front-wall calls in this clip.</div>`}</div>
+        <div class="scorecols">
+          <div class="scol"><span class="sl">Avg height</span><span class="sv">${fmt(m.height,1)}<span class="ss">ft</span></span></div>
+          <div class="scol"><span class="sl">Avg pace</span><span class="sv">${fmt(m.pace,0)}<span class="ss">mph</span></span></div>
+          <div class="scol"><span class="sl">Width</span><span class="sv">${fmt(m.side,0)}<span class="ss">%</span></span></div>
+        </div>
+        ${fb}
+        <div class="cardtitle" style="font-size:14px">Ball metrics</div>
+        <div class="mvgrid">
+          <div class="mvtile">
+            <div class="top"><span class="sl">Top pace</span>
+              <span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 3L5 13.5h5.5L11 21l8-10.5h-5.5z"/></svg></span></div>
+            <span class="sv num">${fmt(m.top,0)}<span class="ss">mph</span></span>
+          </div>
+          <div class="mvtile">
+            <div class="top"><span class="sl">Floor bounces</span>
+              <span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="3.2"/><path d="M4 20c2-3 4-4.5 8-4.5s6 1.5 8 4.5"/></svg></span></div>
+            <span class="sv num">${m.bounces==null?'&#8212;':m.bounces}<span class="ss"></span></span>
+          </div>
+        </div>
+        <button class="replay" style="background:linear-gradient(140deg, hsl(${c.hue} 28% 74%), hsl(${c.hue} 26% 48%))" onclick="window.open('/api/runs/${c.id}/source_video')" aria-label="Watch source video">
+          <svg class="court" viewBox="0 0 300 96" preserveAspectRatio="none" fill="none" stroke="#fff" stroke-width="1.4"><rect x="30" y="12" width="240" height="58" rx="1"/><path d="M30 42h240"/><path d="M30 58h240"/></svg>
+          <span class="pb"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg></span>
+        </button>
+        <div class="metaline">${m.hits} front-wall hits &#183; ${m.calls} judged &#183; run ${c.id}</div>`;
+    } else if(!c.analyzed){
       body = `
         <div class="metaline"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="2" y="6" width="13" height="12" rx="3"/><path d="M15 10.5l7-4v11l-7-4"/></svg>Recorded on court &#183; phone on fin</div>
         <div class="metaline"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg>Calibration attached</div>
@@ -881,6 +925,180 @@ function renderProgress(){
 }
 renderProgress();
 switchTab('dashboard');
+
+/* ---------- live pipeline data ----------
+   When served by the Flask app (same origin), the lab replaces its sample
+   data with real end-of-pipeline analytics: /api/runs (index) and
+   /api/runs/<id>/coach (analytics + feedback). Anywhere the fetch fails,
+   the sample data simply stays and no LIVE badge is shown. */
+const LIVE = { on:false, runs:[], coach:{} };
+const MONTH_NAMES = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+const DAY_NAMES = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+function fmtDate(ts){
+  const d = new Date(ts*1000), now = new Date();
+  const hm = d.getHours() + ':' + String(d.getMinutes()).padStart(2,'0');
+  return d.toDateString() === now.toDateString()
+    ? `Today, ${hm}` : `${MONTH_NAMES[d.getMonth()]} ${d.getDate()}, ${hm}`;
+}
+function fmtDur(sec){
+  if(sec == null) return '&#8212;';
+  const m = Math.floor(sec/60), s = Math.round(sec%60);
+  return `${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
+}
+function splitSentences(text){
+  return (text||'').split(/(?<=\.)\s+/).map(s=>s.trim()).filter(Boolean);
+}
+function liveMetrics(id){
+  const a = (LIVE.coach[id]||{}).analytics || {};
+  const calls = (a.in_count||0) + (a.out_count||0);
+  return {
+    inPct: calls ? Math.round(100*(a.in_count||0)/calls) : null,
+    height: a.average_wall_height_ft, pace: a.average_incoming_speed_mph,
+    top: a.max_incoming_speed_mph, side: a.side_target_rate,
+    bounces: a.total_floor_bounces, hits: a.total_wall_hits||0, calls
+  };
+}
+async function fetchJSON(url){
+  const r = await fetch(url);
+  if(!r.ok) throw new Error(url);
+  return r.json();
+}
+async function loadLive(){
+  try{
+    const idx = await fetchJSON('/api/runs');
+    const candidates = (idx.runs||[]).filter(r=>r.has_analytics && r.status==='complete').slice(0,10);
+    const coaches = await Promise.all(candidates.map(r=>
+      fetchJSON(`/api/runs/${r.run_id}/coach`).catch(()=>null)));
+    const good = [];
+    candidates.forEach((r,i)=>{
+      const c = coaches[i];
+      if(c && c.ok && ((c.analytics||{}).total_wall_hits||0) > 0){
+        LIVE.coach[r.run_id] = c; good.push(r);
+      }
+    });
+    if(!good.length) return;
+    LIVE.runs = good; LIVE.on = true;
+    applyLive();
+  }catch(e){ /* sample mode */ }
+}
+function quantile(sorted, p){
+  if(!sorted.length) return 0;
+  const i = (sorted.length-1)*p, lo = Math.floor(i), hi = Math.ceil(i);
+  return sorted[lo] + (sorted[hi]-sorted[lo])*(i-lo);
+}
+function buildLiveTrends(){
+  const runsAsc = [...LIVE.runs].reverse();
+  const now = Date.now()/1000;
+  const spans = {'1W':7,'1M':30,'3M':90,'6M':180};
+  const defs = [
+    {key:'inpct',  label:'Front-wall IN %', unit:'%',   get:id=>liveMetrics(id).inPct},
+    {key:'height', label:'Avg wall height', unit:'ft',  get:id=>liveMetrics(id).height},
+    {key:'pace',   label:'Avg pace',        unit:'mph', get:id=>liveMetrics(id).pace}
+  ];
+  TRENDS.metrics = defs.map(d=>{
+    const series = runsAsc
+      .map(r=>({t:r.created, v:d.get(r.run_id)}))
+      .filter(p=>p.v != null)
+      .map(p=>({t:p.t, v:Math.round(p.v*10)/10}));
+    const data = {};
+    for(const [k, days] of Object.entries(spans)){
+      let pts = series.filter(p=>now-p.t < days*86400).map(p=>p.v);
+      if(pts.length < 2) pts = series.map(p=>p.v);
+      if(pts.length === 1) pts = [pts[0], pts[0]];
+      if(!pts.length) pts = [0, 0];
+      data[k] = pts;
+    }
+    const sorted = series.map(p=>p.v).sort((a,b)=>a-b);
+    let baseline = [quantile(sorted,.25), quantile(sorted,.75)];
+    if(baseline[0] === baseline[1]) baseline = [baseline[0]-1, baseline[1]+1];
+    return {key:d.key, label:d.label, unit:d.unit, baseline, data};
+  }).filter(m=>m.data['6M'].some(v=>v));
+}
+function renderWeekly(mins, labels, activeIdx){
+  const W=326, top=8, bottom=124, span=bottom-top;
+  const maxV = Math.max(30, Math.ceil(Math.max(...mins)/10)*10);
+  const y = v => bottom - (v/maxV)*span;
+  let out = [maxV, maxV/2, 0].map(v=>
+    `<text x="26" y="${(y(v)+4).toFixed(1)}" text-anchor="end" font-size="10" fill="#B4B6BC">${Math.round(v)}</text>`).join('');
+  mins.forEach((v,i)=>{
+    const x = 34 + i*41 + 8.5;
+    const h = Math.max(4, (v/maxV)*span);
+    out += `<rect x="${x}" y="${(bottom-h).toFixed(1)}" width="24" height="${h.toFixed(1)}" rx="7" fill="${i===activeIdx?'#D9F04A':'#ECEDF0'}"/>`;
+    out += `<text x="${x+12}" y="142" text-anchor="middle" font-size="10" fill="${i===activeIdx?'#8E9199':'#B4B6BC'}"${i===activeIdx?' font-weight="600"':''}>${labels[i]}</text>`;
+  });
+  const svg = document.getElementById('weeklysvg');
+  svg.innerHTML = out;
+  svg.setAttribute('aria-label','Active minutes per day over the last week');
+}
+function applyLive(){
+  document.querySelectorAll('.livetag').forEach(el=>el.classList.remove('hidden'));
+  /* Analysis: real runs replace the sample clips */
+  CLIPS.length = 0;
+  const HUES = [205,150,30,280,110,255,20,180,60,320];
+  LIVE.runs.forEach((r,i)=>CLIPS.push({
+    id:r.run_id, live:true, analyzed:true,
+    date:fmtDate(r.created), dur:fmtDur(r.duration_seconds), hue:HUES[i%HUES.length]
+  }));
+  openClip = null; renderClips();
+  document.getElementById('clipmeta').textContent =
+    `${CLIPS.length} runs · live pipeline`;
+  /* Dashboard hero: latest run + this week's sessions */
+  const latest = LIVE.runs[0], m = liveMetrics(latest.run_id);
+  const weekCount = LIVE.runs.filter(r=>(Date.now()/1000 - r.created) < 7*86400).length;
+  const target = 5, frac = Math.min(1, weekCount/target);
+  document.getElementById('t1l').textContent = 'Sessions';
+  document.getElementById('t1v').innerHTML = `${weekCount}<span class="ss">/${target}</span>`;
+  document.getElementById('t2l').textContent = 'Front-wall IN';
+  document.getElementById('t2v').innerHTML = m.inPct==null ? '&#8212;' : `${m.inPct}<span class="ss">%</span>`;
+  document.getElementById('t3l').textContent = 'Avg pace';
+  document.getElementById('t3v').innerHTML = m.pace==null ? '&#8212;' : `${Math.round(m.pace)}<span class="ss">mph</span>`;
+  document.getElementById('ringval').textContent = `${weekCount}/${target}`;
+  document.getElementById('ringarc').setAttribute('stroke-dasharray', `${(103.7*frac).toFixed(1)} 103.7`);
+  document.getElementById('herosub').textContent = `From your last ${LIVE.runs.length} analyzed clips`;
+  const firstNote = splitSentences(LIVE.coach[latest.run_id].feedback).slice(0,2).join(' ');
+  if(firstNote) document.getElementById('heronote').textContent = firstNote;
+  /* Weekly report: real active minutes per day (clip durations) */
+  const mins = [0,0,0,0,0,0,0], labels = [];
+  const dayStart = new Date(); dayStart.setHours(0,0,0,0);
+  for(let i=6;i>=0;i--){
+    const d = new Date(dayStart); d.setDate(d.getDate()-i);
+    labels.push(DAY_NAMES[d.getDay()]);
+  }
+  LIVE.runs.forEach(r=>{
+    const d = new Date(r.created*1000); d.setHours(0,0,0,0);
+    const slot = 6 - Math.round((dayStart - d)/86400000);
+    if(slot>=0 && slot<7) mins[slot] += (r.duration_seconds||0)/60;
+  });
+  renderWeekly(mins.map(v=>Math.round(v*10)/10), labels, 6);
+  /* Progress: real per-run trends + deltas + personal best */
+  buildLiveTrends(); renderProgress();
+  const prev = LIVE.runs[1] ? liveMetrics(LIVE.runs[1].run_id) : null;
+  const deltaTile = (el, label, val, unit, prevVal) => {
+    let chip = '<span class="chip flat">&#8212;</span>';
+    if(val!=null && prevVal!=null && Math.round(val)!==Math.round(prevVal)){
+      const up = val > prevVal;
+      chip = `<span class="chip ${up?'good':'poor'}">${up?'&#9650;':'&#9660;'}${Math.abs(Math.round(val-prevVal))}</span>`;
+    }
+    document.getElementById(el).innerHTML =
+      `<span class="lbl">${label}</span><span class="valrow"><span class="val num">${val==null?'&#8212;':Math.round(val)+unit}</span>${chip}</span>`;
+  };
+  deltaTile('delta1','Front-wall IN', m.inPct, '%', prev && prev.inPct);
+  deltaTile('delta2','Avg height', m.height, 'ft', prev && prev.height);
+  deltaTile('delta3','Avg pace', m.pace, 'mph', prev && prev.pace);
+  let best = null;
+  LIVE.runs.forEach(r=>{
+    const mm = liveMetrics(r.run_id);
+    if(mm.inPct != null && (!best || mm.inPct > best.v)) best = {v:mm.inPct, t:r.created};
+  });
+  if(best){
+    document.getElementById('bestname').innerHTML =
+      `Best IN% to date &#8212; <span class="num">${best.v}%</span>`;
+    const d = new Date(best.t*1000);
+    document.getElementById('bestmeta').textContent =
+      `${MONTH_NAMES[d.getMonth()]} ${d.getDate()} · beat it to set a new mark`;
+  }
+}
+loadLive();
 </script>
 </body>
 </html>
