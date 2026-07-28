@@ -22,7 +22,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import court_detect
 import court_model
 from court_model import LEFT_BOX_INNER_CENTER_X_FT, LINE_WIDTH_FT
-from judge_call import load_calibration_lines
+from judge_call import (
+    load_calibration_lines,
+    load_service_line,
+    load_wall_corners,
+)
 from synthetic_court import FLOOR_BGR, LINE_BGR, WALL_BGR, court_camera, render_court
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -699,6 +703,12 @@ def test_detect_court_output_parses_with_the_existing_consumers():
 
     top, bottom = load_calibration_lines(calibration)
     assert top.left.x < top.right.x
+
+    # Every v2 consumer, unmodified, against the same payload -- the nulls and
+    # the new checks_verified/label/independent fields must not disturb any of
+    # them.
+    assert load_service_line(calibration) is not None
+    assert load_wall_corners(calibration) is not None
 
     floor_map = court_model.load_floor_calibration(calibration)
     assert floor_map is not None
