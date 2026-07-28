@@ -12,7 +12,7 @@ settings:
     MARKETING_VERSION: "1.0"
     # Date-based so every day's upload outranks the last; bump the trailing
     # digit for a second same-day TestFlight build.
-    CURRENT_PROJECT_VERSION: "202607241"
+    CURRENT_PROJECT_VERSION: "202607281"
 targets:
   SquashLineCalling:
     type: application
