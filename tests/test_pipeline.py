@@ -669,6 +669,31 @@ def test_assign_with_partial_resolver_falls_back_to_propagation():
     assert assignment["observed_serve_count"] == 1
 
 
+def test_safe_resolver_swallows_exceptions_and_falls_back_to_propagation():
+    """job_runner._safe_resolver is the one hole review found left in the
+    person-layer degradation invariant: build_person_pass already swallows
+    detector-load failures and PersonFramePass.observe already swallows
+    detect() failures, but a resolver built from their output (samples_by_
+    track, ball rows) ran unguarded inside assign_front_wall_hit_players --
+    an exception there would fail the whole tracking job. Wrapping it must
+    make assign_front_wall_hit_players behave exactly as if no resolver had
+    been supplied at all: every rally propagated, nothing observed."""
+    hits = _three_rally_hits()
+
+    def raising_resolver(rally_hits):
+        raise RuntimeError("boom")
+
+    safe_resolver = job_runner._safe_resolver(raising_resolver)
+    assignment = job_runner.assign_front_wall_hit_players(
+        hits, serve_resolver=safe_resolver
+    )
+    assert assignment["method"] == "rally_gap_server_alternation"
+    assert assignment["observed_serve_count"] == 0
+    for rally in assignment["rallies"]:
+        assert rally["server_track"] is None
+        assert rally["server_source"] == "propagated"
+
+
 def test_judge_hits_threads_resolver_through_unconditional_assign_without_service_line(tmp_path):
     # Regression: judge_hits calls assign_front_wall_hit_players twice — an
     # unconditional call whose result seeds player_assignment, and a second

@@ -1026,6 +1026,23 @@ def sorted_rows(results):
     return [results[frame_idx] for frame_idx in sorted(results)]
 
 
+def _safe_resolver(resolver):
+    """Wrap a serve resolver so an exception inside it resolves to None
+    instead of propagating. assign_front_wall_hit_players calls resolver(...)
+    once per rally on both the try and except paths of the hit-judging block
+    below -- an uncaught exception there would fail the whole tracking job,
+    which is the one hole left in the person-layer degradation invariant
+    (build_person_pass already swallows detector-load failures,
+    PersonFramePass.observe already swallows detect() failures; this
+    resolver is built from *their* output and was the last uncaught path)."""
+    def wrapped(rally_hits):
+        try:
+            return resolver(rally_hits)
+        except Exception:
+            return None
+    return wrapped
+
+
 def run_tracking_job(run_id):
     job = get_job(run_id)
     run_dir = Path(job["run_dir"])
@@ -1190,9 +1207,9 @@ def run_tracking_job(run_id):
             if person_pass is not None:
                 samples_by_track = person_pass.tracker.samples()
                 ambiguity_times = person_pass.tracker.ambiguity_times()
-                serve_resolver = player_attribution.build_serve_resolver(
+                serve_resolver = _safe_resolver(player_attribution.build_serve_resolver(
                     samples_by_track, sorted_rows(results)
-                )
+                ))
 
             hits = []
             hits_error = None
