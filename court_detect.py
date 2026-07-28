@@ -232,7 +232,10 @@ def find_lines(response, min_length_px):
         return []
 
     groups = []
-    for raw in found[:, 0, :]:
+    # OpenCV 4 returns HoughLinesP segments as (N, 1, 4), while OpenCV 5
+    # returns the same x1/y1/x2/y2 values as (N, 4). Flatten only the wrapper
+    # dimensions so the detector remains compatible with both versions.
+    for raw in np.asarray(found).reshape(-1, 4):
         segment = [float(value) for value in raw]
         direction = _segment_direction(segment)
         if direction is None:

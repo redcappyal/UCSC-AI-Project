@@ -266,6 +266,29 @@ def test_find_lines_recovers_the_front_wall_paint():
         assert abs(found.y_at(start[0]) - start[1]) < 6, name
 
 
+@pytest.mark.parametrize(
+    "hough_shape",
+    [
+        (2, 1, 4),  # OpenCV 4
+        (2, 4),     # OpenCV 5
+    ],
+)
+def test_find_lines_accepts_opencv_4_and_5_hough_shapes(monkeypatch, hough_shape):
+    raw_segments = np.asarray([
+        [20, 40, 180, 40],
+        [20, 120, 180, 120],
+    ], dtype=np.int32).reshape(hough_shape)
+    monkeypatch.setattr(cv2, "HoughLinesP", lambda *args, **kwargs: raw_segments)
+
+    lines = court_detect.find_lines(
+        np.zeros((160, 200), dtype=np.uint8),
+        min_length_px=20,
+    )
+
+    assert len(lines) == 2
+    assert sorted(round(line.y_at(100)) for line in lines) == [40, 120]
+
+
 def test_edge_response_finds_the_wall_floor_seams():
     camera = court_camera()
     image, truth = render_court(camera, noise_sigma=2.0)

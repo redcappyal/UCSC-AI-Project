@@ -7,7 +7,10 @@
 # that test belongs behind a marker, not in the default CI job.
 flask
 numpy
-opencv-python-headless
+# Court-line Hough thresholds are validated against 4.10. Later releases
+# change both HoughLinesP's wrapper shape and which marginal segments it
+# returns, making the synthetic detector fixtures nondeterministic.
+opencv-python-headless==4.10.0.84
 pandas
 python-dotenv
 pytest
