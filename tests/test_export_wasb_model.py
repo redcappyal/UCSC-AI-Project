@@ -85,7 +85,9 @@ def test_derive_heatmap_stride_handles_wasb_default_stride_one():
 
 
 def test_derive_heatmap_stride_rejects_frame_count_mismatch():
-    with pytest.raises(ValueError, match=r"(?i)frames_per_input.*3.*(?:got|shape).*1|1.*3"):
+    with pytest.raises(
+            ValueError,
+            match=r"traced output has 1 frame channels but --frames-per-input=3"):
         export_wasb_model.derive_heatmap_stride(
             (1, 1, 208, 208), frames_per_input=3, input_size=416)
 
@@ -131,3 +133,72 @@ def test_derive_heatmap_stride_cross_check_mismatch_is_fatal_naming_both():
     message = str(excinfo.value)
     assert "2" in message  # measured
     assert "4" in message  # operator-supplied
+
+
+def test_derive_heatmap_stride_rejects_batch_dim_not_one():
+    # Export always traces a single-example input; a batch dim other than 1
+    # means the traced graph itself is wrong, not something to shrug past.
+    with pytest.raises(ValueError, match=r"(?i)batch"):
+        export_wasb_model.derive_heatmap_stride(
+            (2, 3, 208, 208), frames_per_input=3, input_size=416)
+
+
+def test_derive_heatmap_stride_names_actual_shape_on_batch_mismatch():
+    with pytest.raises(ValueError) as excinfo:
+        export_wasb_model.derive_heatmap_stride(
+            (2, 3, 208, 208), frames_per_input=3, input_size=416)
+    assert "(2, 3, 208, 208)" in str(excinfo.value)
+
+
+# -- validate_export_inputs: pre-write fatal checks needing no torch --------
+
+
+def test_validate_export_inputs_rejects_even_frames_per_input():
+    with pytest.raises(ValueError, match=r"(?i)odd"):
+        export_wasb_model.validate_export_inputs(4, 12.0)
+
+
+def test_validate_export_inputs_rejects_non_positive_nominal_ball_px():
+    with pytest.raises(ValueError, match=r"(?i)nominal-ball-px"):
+        export_wasb_model.validate_export_inputs(3, 0.0)
+
+
+def test_validate_export_inputs_rejects_negative_nominal_ball_px():
+    with pytest.raises(ValueError, match=r"(?i)nominal-ball-px"):
+        export_wasb_model.validate_export_inputs(3, -1.0)
+
+
+def test_validate_export_inputs_accepts_valid_values():
+    export_wasb_model.validate_export_inputs(3, 12.0)   # must not raise
+
+
+# -- validate_traced_output_is_probabilities: the logits-vs-probabilities ---
+# export boundary (docs/WASB-TRAIN.md §6) -- pure over a numpy array so it's
+# testable without torch, same as derive_heatmap_stride.
+
+
+def test_validate_traced_output_is_probabilities_passes_in_range():
+    np = pytest.importorskip("numpy")
+    # Must not raise.
+    export_wasb_model.validate_traced_output_is_probabilities(
+        np.array([0.0, 0.1, 0.5, 1.0], dtype="float32"))
+
+
+def test_validate_traced_output_rejects_out_of_range_naming_min_max():
+    np = pytest.importorskip("numpy")
+    with pytest.raises(ValueError) as excinfo:
+        export_wasb_model.validate_traced_output_is_probabilities(
+            np.array([-2.5, 0.5, 3.7], dtype="float32"))
+    message = str(excinfo.value)
+    assert "-2.5" in message
+    assert "3.7" in message
+
+
+def test_validate_traced_output_rejects_bare_logits_shape():
+    # A raw (un-sigmoided) HRNet output routinely lands outside [0, 1] --
+    # this is the exact failure this check exists to catch before any file
+    # is written.
+    np = pytest.importorskip("numpy")
+    with pytest.raises(ValueError, match=r"(?i)\[0, 1\]"):
+        export_wasb_model.validate_traced_output_is_probabilities(
+            np.array([-4.2, 0.0, 6.8], dtype="float32"))

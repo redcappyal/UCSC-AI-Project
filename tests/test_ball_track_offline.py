@@ -168,6 +168,9 @@ def test_centered_windows_empty_clip():
 
 
 def test_temporal_manifest_routes_through_centered_windows(monkeypatch):
+    # Ambient BALL_DETECTOR must not change this test's outcome -- see
+    # test_build_infer_defaults_to_yolox's comment on the same gotcha.
+    monkeypatch.delenv("BALL_DETECTOR", raising=False)
     calls = []
 
     def fake_detect_stack(runner, frames, manifest):
@@ -192,6 +195,7 @@ def test_temporal_manifest_routes_through_centered_windows(monkeypatch):
 
 
 def test_temporal_manifest_rejects_stride(monkeypatch):
+    monkeypatch.delenv("BALL_DETECTOR", raising=False)
     runner = SimpleNamespace(manifest=SimpleNamespace(
         conf_threshold=0.1, frames_per_input=3))
     monkeypatch.setattr(ball_track_offline, "_video_fps", lambda path: 60.0)
@@ -218,6 +222,7 @@ def test_temporal_routing_rejects_model_without_manifest(monkeypatch):
 
 def test_single_frame_manifest_keeps_v1_path(monkeypatch):
     # frames_per_input == 1 must keep going through _detect_frame per frame
+    monkeypatch.delenv("BALL_DETECTOR", raising=False)
     seen = []
     monkeypatch.setattr(ball_track_offline, "_detect_frame",
                         lambda runner, frame, manifest: seen.append(1) or [])

@@ -162,7 +162,10 @@ Each sample is one anchor annotation's 3-frame sequence, oldest-first:
 
 One Gaussian heatmap per input frame (3 target channels, matching the MIMO
 output `[frames_out=3, Hh, Wh]`), at `heatmap_stride` resolution, σ = 2.0
-heatmap px. (WASB's own default is σ = 2.5, from
+heatmap px. The forward transform placing a Gaussian is the exact inverse of
+`ball_model.decode_heatmap`'s `k * stride` peak-to-pixel scaling: heatmap
+coords `x / stride, y / stride` from the pixel-space label, with no
+half-pixel center-alignment offset. (WASB's own default is σ = 2.5, from
 `configs/dataloader/default.yaml: heatmap.sigmas: [2.5]` — 2.0 is this
 project's deliberate choice for a ~7–24 px ball, tighter than WASB's broadcast
 targets; if you change `heatmap_stride` from whatever the exported config
@@ -388,6 +391,15 @@ today (`name`, `version`, `nms_iou`, `class_names`, `tile_overlap_px`,
 `ModelManifest` loader raises `KeyError` on any missing field, v1 or v2, so
 `export_wasb_model.py` must populate the full set, not just the new ones
 listed here):
+
+**Output-activation contract**: the checkpoint is logits-native (§3's loss is
+BCE over `sigmoid(logits)`), but the **traced graph the manifest points at
+must emit probabilities**, not logits — `export_wasb_model.py` traces
+`_SigmoidWrapper(model)` (sigmoid folded into the graph at export time), and
+asserts the traced output lands in `[0, 1]` before writing anything to disk.
+Nothing about training changes: the checkpoint itself, and `train_wasb.py`'s
+loss, stay logits-native throughout §3. Only the exported TorchScript artifact
+differs from the checkpoint's raw forward pass.
 
 - `schema_version`: `"ball-model-v2"`
 - `input_size`: `[416, 416]`

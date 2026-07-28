@@ -581,3 +581,97 @@ def test_sequence_alignment_detects_and_applies_a_consistent_offset(tmp_path, mo
     # = 100 instead -- the corrected values below are not those.
     assert _imread_unicode(train_dir / tm1_name).mean() == pytest.approx(80, abs=5)
     assert _imread_unicode(train_dir / tp1_name).mean() == pytest.approx(120, abs=5)
+
+
+def test_resolve_clip_offset_argmin_beats_first_pass_wins():
+    # Offset 0 is under tolerance (5 < 12) but offset +1 is a strictly
+    # better fit for every record -- argmin must prefer +1, not stop at the
+    # first offset that merely clears the tolerance bar. This is the
+    # discriminability gap IMPORTANT-3 exists to close: on static-camera
+    # footage adjacent frames are near-duplicates, so a first-pass-wins rule
+    # would silently keep offset 0 forever.
+    np = pytest.importorskip("numpy")
+
+    def solid(value):
+        return np.full((4, 4, 3), value, dtype="uint8")
+
+    export_images = {"a": solid(100), "b": solid(100)}
+    decoded = {
+        4: solid(93),    # offset -1 candidate for frame 5 -> diff 7
+        5: solid(95),    # offset  0 candidate -> diff 5 (under tolerance=12)
+        6: solid(99),    # offset +1 candidate -> diff 1 (best fit)
+    }
+    clip_records = [{"frame": 5, "path": "a"}, {"frame": 5, "path": "b"}]
+
+    offset = prepare_ball_dataset._resolve_clip_offset(
+        "clip", clip_records, decoded, export_images, last_frame=None,
+        tolerance=12.0)
+    assert offset == 1
+
+
+def test_resolve_clip_offset_still_fails_loudly_when_every_candidate_is_bad():
+    # argmin must not turn "best of three bad options" into a silent pass --
+    # the winning candidate still has to clear `tolerance`.
+    np = pytest.importorskip("numpy")
+
+    def solid(value):
+        return np.full((4, 4, 3), value, dtype="uint8")
+
+    export_images = {"a": solid(100)}
+    decoded = {4: solid(0), 5: solid(0), 6: solid(0)}
+    clip_records = [{"frame": 5, "path": "a"}]
+
+    with pytest.raises(SystemExit, match="clip-x"):
+        prepare_ball_dataset._resolve_clip_offset(
+            "clip-x", clip_records, decoded, export_images, last_frame=None,
+            tolerance=12.0)
+
+
+def test_sequence_edge_padding_stays_anchor_repeat_under_positive_offset(
+        tmp_path, monkeypatch):
+    # Bug: with a detected +1 offset, the max-labelled record's tp1 used to
+    # clamp in UNSHIFTED index space, producing [t-1, t, t-1] (a past frame
+    # repeated into the future slot) instead of the repeat-ANCHOR convention
+    # every other edge case follows ([t-1, t, t]). Offset detection itself is
+    # orthogonal to this -- force it via monkeypatch -- and prove tm1 and tp1
+    # land on distinct decoded frames, with tp1 repeating the (clamped)
+    # anchor rather than collapsing onto tm1's value.
+    cv2 = pytest.importorskip("cv2")
+    np = pytest.importorskip("numpy")
+
+    def fake_decode(video_path, indices):
+        return {i: _solid_frame(np, i * 10) for i in indices}
+    monkeypatch.setattr(prepare_ball_dataset, "decode_frames", fake_decode)
+    monkeypatch.setattr(prepare_ball_dataset, "_resolve_clip_offset",
+                        lambda *a, **k: 1)
+
+    train_dir = tmp_path / "train"
+    train_dir.mkdir()
+    path = train_dir / "Bay_mov-0008_jpg.jpg"
+    _imwrite_unicode(path, _solid_frame(np, 999),
+                     [int(cv2.IMWRITE_JPEG_QUALITY), 95])
+    # record["frame"] == clip_last_frame: the max-labelled/edge record.
+    record = {"path": path, "clip": "Bay", "frame": 8, "width": 64, "height": 64,
+              "balls": [{"bbox": [24, 24, 8, 8], "streak": None}]}
+    plans = plan_crops(record, crop=16, scale=1.0, rng=random.Random(0),
+                       positives=1, negatives=0, jitter=0.0, min_visible=0.5)
+    plans_by_record = {path: plans}
+
+    render_split([record], plans_by_record, tmp_path, "train", 16, 95,
+                 seq_frames=3, clip_videos={"Bay": Path("fake.mp4")},
+                 clip_last_frame={"Bay": 8})
+
+    anchor_name = crop_file_name(path.stem, 0)
+    stem = anchor_name[:-len(".jpg")]
+    tm1_name, tp1_name = f"{stem}.tm1.jpg", f"{stem}.tp1.jpg"
+
+    tm1_mean = _imread_unicode(train_dir / tm1_name).mean()
+    tp1_mean = _imread_unicode(train_dir / tp1_name).mean()
+    # true_t clamps to 8 (last_frame): tm1 = decoded[7] = 70, tp1 =
+    # decoded[8] = 80 -- distinct values, tp1 repeating the clamped anchor
+    # rather than collapsing onto tm1's (the pre-fix code produced 80 for
+    # BOTH slots, since it clamped true_t=9 away only *after* computing
+    # tm1/tp1 from it, landing both on decoded[8]).
+    assert tm1_mean == pytest.approx(70, abs=5)
+    assert tp1_mean == pytest.approx(80, abs=5)
+    assert tm1_mean != pytest.approx(tp1_mean, abs=5)

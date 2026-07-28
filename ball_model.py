@@ -281,6 +281,11 @@ class HeatmapRunner:
     Input stacks are BGR frames concatenated oldest-first along the channel
     axis, raw 0-255, matching the training adapter in docs/WASB-TRAIN.md. No
     mean/std, consistent with TorchScriptRunner's BGR-raw convention.
+
+    run_batch expects the traced graph to emit sigmoid PROBABILITIES in
+    [0, 1], not raw logits -- export_wasb_model.py wraps sigmoid in-graph at
+    trace time (docs/WASB-TRAIN.md §6), so a checkpoint being logits-native
+    is invisible here.
     """
 
     def __init__(self, module, manifest, torch_module):

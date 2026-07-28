@@ -88,6 +88,64 @@ def _git_commit():
         return "unknown"
 
 
+def validate_export_inputs(frames_per_input, nominal_ball_px):
+    """Fatal pre-write checks that need no torch, tracing, or I/O.
+
+    `frames_per_input` must be odd -- heatmap_peak decode centers the
+    detected frame in the window, and ball_model.py's v2 manifest loader
+    rejects an even value outright (see ball_model.load_manifest). Kept as a
+    standalone pure function (mirrored by `nominal_ball_px`'s check below)
+    so both are unit-testable in the torch-free app venv, same as
+    `derive_heatmap_stride` -- main() itself needs torch and a WASB-SBDT
+    checkout and can't run there.
+
+    `nominal_ball_px` sizes every reported detection box
+    (ball_model.py:HeatmapRunner._decode_output uses it verbatim as width and
+    height); a non-positive value would silently corrupt every box the
+    exported model reports, so it is checked here, before any file is
+    written, not left to fail later inside HeatmapRunner.
+    """
+    if frames_per_input % 2 == 0:
+        raise ValueError(
+            f"--frames-per-input must be odd (heatmap_peak decode centers "
+            f"the detected frame in the window), got {frames_per_input}")
+    if nominal_ball_px <= 0:
+        raise ValueError(
+            f"--nominal-ball-px must be > 0, got {nominal_ball_px}")
+
+
+def validate_traced_output_is_probabilities(output):
+    """Fatal check that a traced module's output lies in [0, 1].
+
+    Pure over a numpy array (or anything numpy can wrap), no torch needed --
+    testable in the torch-free app venv, like `derive_heatmap_stride`.
+
+    Training's loss (docs/WASB-TRAIN.md §3/§6) is BCE over sigmoid(logits),
+    so the raw HRNet forward pass emits LOGITS, not probabilities.
+    `ball_model.py`'s HeatmapRunner treats the traced graph's output as a
+    probability: thresholded at `conf_threshold`, used as the
+    centre-of-mass weight in `decode_heatmap`, and reported as the detection
+    confidence. A logits export would silently miscalibrate all three, so
+    `main()` traces `_SigmoidWrapper(model)` (sigmoid folded into the traced
+    graph) instead of the bare model, and this is the assert that catches a
+    stray double-sigmoid or an accidentally-untraced bare-logits graph
+    before any file reaches disk.
+    """
+    import numpy as np
+
+    arr = np.asarray(output)
+    lo, hi = float(arr.min()), float(arr.max())
+    if lo < 0.0 or hi > 1.0:
+        raise ValueError(
+            f"traced output is not in [0, 1] (min={lo}, max={hi}); the "
+            f"traced graph must emit sigmoid probabilities, not raw HRNet "
+            f"logits. Check that _SigmoidWrapper actually wraps the model "
+            f"passed to torch.jit.trace -- ball_model.py's HeatmapRunner "
+            f"treats this output as a probability (threshold, CoM weight, "
+            f"reported confidence), and a logits export would silently "
+            f"miscalibrate all three.")
+
+
 def derive_heatmap_stride(output_shape, *, frames_per_input, input_size,
                            cli_heatmap_stride=None):
     """Measure heatmap_stride from a traced model's real output shape.
@@ -107,7 +165,13 @@ def derive_heatmap_stride(output_shape, *, frames_per_input, input_size,
             f"expected a rank-4 traced output shape [N, frames, Hh, Wh], got "
             f"{tuple(output_shape)} (rank {len(output_shape)})")
 
-    _n, frames, hh, wh = output_shape
+    n, frames, hh, wh = output_shape
+    if n != 1:
+        raise ValueError(
+            f"expected a traced output batch dimension of 1, got N={n} "
+            f"(full output shape {tuple(output_shape)}); export always "
+            f"traces a single-example input, so any other batch size means "
+            f"the traced graph itself is wrong.")
     if frames != frames_per_input:
         raise ValueError(
             f"traced output has {frames} frame channels but "
@@ -183,10 +247,25 @@ def main():
     sys.path.insert(0, str(Path(args.wasb_repo) / "src"))
     from models.hrnet import HRNet  # WASB-SBDT, training-env only
 
-    if args.frames_per_input % 2 == 0:
-        raise ValueError(
-            f"--frames-per-input must be odd (heatmap_peak decode centers "
-            f"the detected frame in the window), got {args.frames_per_input}")
+    validate_export_inputs(args.frames_per_input, args.nominal_ball_px)
+
+    class _SigmoidWrapper(torch.nn.Module):
+        """Wraps the bare HRNet so the TRACED graph emits sigmoid
+        probabilities, never raw logits.
+
+        Training's loss (docs/WASB-TRAIN.md §3/§6) is BCE over
+        sigmoid(logits), so `model` itself -- and the checkpoint it loaded --
+        stays logits-native; this sigmoid exists only in the traced graph,
+        which is what `ball_model.py`'s HeatmapRunner actually consumes at
+        serving time.
+        """
+
+        def __init__(self, wrapped):
+            super().__init__()
+            self.wrapped = wrapped
+
+        def forward(self, x):
+            return torch.sigmoid(self.wrapped(x))
 
     cfg = yaml.safe_load(Path(args.wasb_cfg).read_text(encoding="utf-8"))
     model = HRNet(cfg)
@@ -200,14 +279,18 @@ def main():
     model.load_state_dict(state_dict)
     model.eval()
 
+    wrapped_model = _SigmoidWrapper(model)
+    wrapped_model.eval()
+
     size = args.input_size
     channels = 3 * args.frames_per_input
     example = torch.randn(1, channels, size, size)
-    traced = torch.jit.trace(model, example)
+    traced = torch.jit.trace(wrapped_model, example)
 
     with torch.no_grad():
         output = traced(example)
     output_shape = tuple(output.shape)
+    validate_traced_output_is_probabilities(output.detach().cpu().numpy())
     heatmap_stride = derive_heatmap_stride(
         output_shape, frames_per_input=args.frames_per_input,
         input_size=size, cli_heatmap_stride=args.heatmap_stride)
