@@ -349,7 +349,6 @@ def assign_lines(paint_lines, edge_lines, frame_shape):
 DATUM_BAND_PX = 6          # how far either side of the fitted line to look
 MIN_DATUM_COLUMNS = 40     # mirrors index.html's MIN_COLS
 CHECK_OK_PX = 4.0          # a self-verification prediction this close is "ok"
-HOMOGRAPHY_RMS_OK_PX = 3.0
 
 
 @dataclass(frozen=True)
@@ -457,12 +456,12 @@ def _fit_as_line(fit):
 
 
 # --- the whole detection -----------------------------------------------------
-_WALL_CORNER_COURT_FT = {
-    "top_left": (0.0, court_model.OUT_LINE_HEIGHT_FT),
-    "top_right": (court_model.COURT_WIDTH_FT, court_model.OUT_LINE_HEIGHT_FT),
-    "bottom_left": (0.0, 0.0),
-    "bottom_right": (court_model.COURT_WIDTH_FT, 0.0),
-}
+# Only the corner IDS live here. Their court placements are datum values and
+# belong to court_model (CLAUDE.md: "Court datum values live in court_model.py
+# and must never be redefined") -- court_model._camera_correspondences owns the
+# id -> court_ft mapping, and nothing in this module needs the feet, only the
+# names and their order in the emitted wall plane.
+_WALL_CORNER_IDS = ("top_left", "top_right", "bottom_left", "bottom_right")
 
 _FLOOR_ANCHORS = (
     ("front_seam_left", (0.0, 0.0)),
@@ -472,24 +471,74 @@ _FLOOR_ANCHORS = (
                           court_model.SHORT_LINE_CENTER_Y_FT)),
 )
 
-# Court points that no anchor was fitted to. Their distance from real paint is
-# free evidence the two homographies are right, at zero human cost.
+# A plane homography has 8 degrees of freedom, so the 4 correspondences above
+# determine it EXACTLY: the fit reproduces its own input points to ~1e-13 px
+# whatever those points are. Measured 2026-07-27 by corrupting the anchors --
+# swapping left for right, i.e. a fully mirrored court, still fitted to ~2e-13
+# px RMS. A residual number here would therefore be a fabricated precision
+# signal rather than a measurement, so the payload reports null instead. If a
+# 5th anchor is ever added the fit becomes over-determined and the residuals
+# start carrying information again, which is what this constant tracks.
+_FLOOR_FIT_IS_EXACT = len(_FLOOR_ANCHORS) <= 4
+
+# Court points that no anchor was fitted to. The third element says whether the
+# point is INDEPENDENT evidence, i.e. whether its position is pinned by the
+# anchors regardless of whether the fit is right.
+#
+# `t_point` is not: it lies on the segment joining short_line_left and
+# short_line_right, which were themselves fitted onto real short-line paint, so
+# a projective map sends it somewhere on that same painted line no matter how
+# wrong everything else is. distanceTransform duly reads ~0 px for it even on a
+# mirrored court. It stays in the payload -- a gross failure can still move it,
+# and the UI lists it when it goes off -- but it can never be the thing that
+# earns a confident verdict, so it does not count toward checks_verified.
 _FLOOR_CHECKS = (
-    ("t_point", (court_model.HALF_COURT_X_FT,
-                 court_model.SHORT_LINE_CENTER_Y_FT)),
-    ("left_box_inner_back", (court_model.LEFT_BOX_INNER_CENTER_X_FT,
-                             court_model.BOX_BACK_CENTER_Y_FT)),
-    ("right_box_inner_back", (court_model.RIGHT_BOX_INNER_CENTER_X_FT,
-                              court_model.BOX_BACK_CENTER_Y_FT)),
+    ("t_point", "the T", (court_model.HALF_COURT_X_FT,
+                          court_model.SHORT_LINE_CENTER_Y_FT), False),
+    ("left_box_inner_back", "the left service box's back inner corner",
+     (court_model.LEFT_BOX_INNER_CENTER_X_FT,
+      court_model.BOX_BACK_CENTER_Y_FT), True),
+    ("right_box_inner_back", "the right service box's back inner corner",
+     (court_model.RIGHT_BOX_INNER_CENTER_X_FT,
+      court_model.BOX_BACK_CENTER_Y_FT), True),
 )
 
+# Human words for the entities assign_lines names. The failure reason reaches
+# the player verbatim, and "Could not find: front_seam." is an internal
+# identifier, not user copy (DESIGN.md §0.7: sentence case, plain language).
+_ENTITY_LABELS = {
+    "out": "the out line",
+    "service": "the service line",
+    "tin": "the tin",
+    "front_seam": "the front wall's floor line",
+    "left_seam": "the left wall's floor line",
+    "right_seam": "the right wall's floor line",
+    "short_line": "the short line",
+}
 
-def _failure(status, frame_shape, warnings):
+
+def _readable_list(labels):
+    """'a', 'a and b', or 'a, b, and c'."""
+    labels = list(labels)
+    if len(labels) <= 1:
+        return "".join(labels)
+    if len(labels) == 2:
+        return f"{labels[0]} and {labels[1]}"
+    return f"{', '.join(labels[:-1])}, and {labels[-1]}"
+
+
+def _failure(status, frame_shape, reason, warnings=()):
+    """A non-'ok' reply whose FIRST warning is why detection actually failed.
+
+    The client shows warnings[0]. Appending the reason after the incidental
+    ones (e.g. "Camera appears to be moving") sent the player off to re-mount a
+    phone that was mounted fine, so the reason leads and the rest follow.
+    """
     height, width = (frame_shape[:2] if frame_shape is not None else (0, 0))
     return {"ok": True, "status": status,
             "frame_width": int(width), "frame_height": int(height),
-            "lines": [], "planes": {}, "checks": [],
-            "confidence": "low", "warnings": warnings}
+            "lines": [], "planes": {}, "checks": [], "checks_verified": 0,
+            "confidence": "low", "warnings": [reason] + list(warnings)}
 
 
 def detect_court(frames):
@@ -499,7 +548,7 @@ def detect_court(frames):
     wizard falls back to manual taps on any non-'ok' status.
     """
     if not len(frames):
-        return _failure("no_frames", None, ["No frames were supplied."])
+        return _failure("no_frames", None, "No frames were supplied.")
 
     warnings = []
     image, moved = median_frame(frames)
@@ -514,11 +563,22 @@ def detect_court(frames):
                             find_lines(edge_response(image), minimum),
                             image.shape)
 
-    required = ("out", "front_seam", "left_seam", "right_seam", "short_line")
+    # All three front-wall lines are REQUIRED, not optional. A calibration
+    # without them is unusable by construction: judge_call.load_calibration_
+    # lines rejects any calibration missing tin_top_edge, and index.html's
+    # buildJson() dereferences S.lines[k].fit for all three -- so a "successful"
+    # detection missing one presents as green on the confirm screen and then
+    # throws a TypeError two screens later at TRACK BALL. Failing here instead
+    # drops the player into the manual wizard, which is the working fallback.
+    required = ("out", "service", "tin", "front_seam",
+                "left_seam", "right_seam", "short_line")
     missing = [name for name in required if assigned.get(name) is None]
     if missing:
-        return _failure("insufficient_lines", image.shape,
-                        warnings + [f"Could not find: {', '.join(missing)}."])
+        return _failure(
+            "insufficient_lines", image.shape,
+            "Could not find "
+            f"{_readable_list(_ENTITY_LABELS[name] for name in missing)}.",
+            warnings)
 
     # Front-wall lines, each pulled onto its own stored datum (spec §5).
     lines = []
@@ -526,20 +586,15 @@ def detect_court(frames):
             ("out_line_lower_edge", "out", "max"),
             ("service_line_top_edge", "service", "min"),
             ("tin_top_edge", "tin", "min")):
-        if assigned.get(key) is None:
-            warnings.append(f"{name} was not detected.")
-            continue
         fit = refit_to_datum(mask, assigned[key], mode)
         if fit is None:
-            warnings.append(f"{name} had too little clean paint to fit.")
-            continue
+            return _failure(
+                "insufficient_lines", image.shape,
+                f"There was too little clean paint on {_ENTITY_LABELS[key]} "
+                "to fit it.", warnings)
         lines.append(_line_payload(name, fit, "detected"))
 
-    out_fit = next((line for line in lines
-                    if line["name"] == "out_line_lower_edge"), None)
-    if out_fit is None:
-        return _failure("insufficient_lines", image.shape,
-                        warnings + ["The out line could not be fitted."])
+    out_fit = lines[0]
 
     # Anchors as intersections of long lines.
     out_line = DetectedLine(*out_fit["endpoints"][0], *out_fit["endpoints"][1],
@@ -574,7 +629,8 @@ def detect_court(frames):
     }
     if any(point is None for point in anchors.values()):
         return _failure("insufficient_lines", image.shape,
-                        warnings + ["Court lines did not intersect."])
+                        "The court lines found did not cross where a court's "
+                        "corners should be.", warnings)
 
     floor_pixels = {
         "front_seam_left": anchors["bottom_left"],
@@ -589,36 +645,73 @@ def detect_court(frames):
                                                            image_points)
     except (ValueError, np.linalg.LinAlgError):
         return _failure("insufficient_lines", image.shape,
-                        warnings + ["The floor homography was degenerate."])
+                        "The court lines found do not describe a flat court "
+                        "floor.", warnings)
 
     # Self-verification: how far predictions of UNUSED court points fall from
     # real paint. distanceTransform turns that into a lookup.
     distance = cv2.distanceTransform(255 - mask, cv2.DIST_L2, 3)
     checks = []
-    for check_id, court_ft in _FLOOR_CHECKS:
-        px, py = court_model.apply_homography(homography, court_ft)
+    for check_id, check_label, court_ft, independent in _FLOOR_CHECKS:
+        # apply_homography raises when a point maps to infinity -- a check
+        # point on the horizon of a shallow fit does exactly that. This
+        # function's contract is that it never raises (the wizard's whole
+        # fallback design rests on a status field, not an exception), and the
+        # endpoint would otherwise answer 500 instead of falling back, so a
+        # check we cannot place is simply a check we cannot verify.
+        try:
+            px, py = court_model.apply_homography(homography, court_ft)
+            if not (math.isfinite(px) and math.isfinite(py)):
+                raise ValueError("Check point is not finite.")
+        except (ValueError, np.linalg.LinAlgError, OverflowError):
+            checks.append({"id": check_id, "label": check_label,
+                           "independent": independent, "predicted_px": None,
+                           "residual_px": None, "status": "unverified"})
+            continue
         inside = 0 <= int(py) < height and 0 <= int(px) < width
         residual = float(distance[int(py), int(px)]) if inside else None
         checks.append({
             "id": check_id,
+            "label": check_label,
+            "independent": independent,
             "predicted_px": [round(px, 2), round(py, 2)],
             "residual_px": None if residual is None else round(residual, 2),
             "status": ("unverified" if residual is None
                        else "ok" if residual <= CHECK_OK_PX else "off"),
         })
 
-    floor_rms = float(np.sqrt(np.mean(residuals ** 2)))
-    worst_check = max((check["residual_px"] for check in checks
-                       if check["residual_px"] is not None), default=None)
-    confidence = "high"
-    if len(lines) < 3:
-        confidence = "low"
-    elif floor_rms > HOMOGRAPHY_RMS_OK_PX:
-        confidence = "low"
-        warnings.append(f"Floor fit RMS {floor_rms:.1f} px.")
-    elif worst_check is None or worst_check > CHECK_OK_PX:
-        confidence = "low"
-        warnings.append("Predicted court markings did not land on real paint.")
+    # What is actually knowable at this point:
+    #   * all three front-wall lines are present -- guaranteed above, since a
+    #     detection missing one now fails rather than reaching here;
+    #   * all six anchors were derived -- guaranteed by the intersection check;
+    #   * whether any check landed off real paint;
+    #   * how many checks were INDEPENDENTLY verifiable at all.
+    # The floor fit's own residuals are deliberately not an input: they are ~0
+    # by construction (see _FLOOR_FIT_IS_EXACT) and would only launder an exact
+    # fit into a quality claim.
+    off_checks = [check for check in checks if check["status"] == "off"]
+    checks_verified = sum(1 for check in checks
+                          if check["independent"] and check["status"] != "unverified")
+
+    reasons = []
+    if off_checks:
+        reasons.append(
+            "Predicted court markings did not land on real paint: "
+            f"{_readable_list(check['label'] for check in off_checks)}.")
+    if not checks_verified:
+        # No independent evidence at all: the fit reproduces the four points it
+        # was built from and nothing else was in frame to contradict it. That
+        # is not a reason to call the detection wrong, but it is a reason not
+        # to call it confident.
+        reasons.append("No independent court marking was in frame to check "
+                       "this fit against.")
+    confidence = "low" if reasons else "high"
+    warnings.extend(reasons)
+
+    floor_rms = (None if _FLOOR_FIT_IS_EXACT
+                 else round(float(np.sqrt(np.mean(residuals ** 2))), 2))
+    floor_worst = (None if _FLOOR_FIT_IS_EXACT
+                   else round(float(residuals.max()), 2))
 
     return {
         "ok": True,
@@ -637,7 +730,7 @@ def detect_court(frames):
                      # intersection like the other two.
                      "source": ("line_extent" if corner_id.startswith("top_")
                                 else "intersection")}
-                    for corner_id in _WALL_CORNER_COURT_FT
+                    for corner_id in _WALL_CORNER_IDS
                 ],
                 "fitted_by": "auto_detect",
             },
@@ -650,19 +743,31 @@ def detect_court(frames):
                      "refined_px": [round(floor_pixels[name][0], 2),
                                     round(floor_pixels[name][1], 2)],
                      "method": "intersection",
-                     "residual_px": round(float(residuals[index]), 2),
+                     # null, not 0.0: an exact fit has no residual to report
+                     # (see _FLOOR_FIT_IS_EXACT). court_model.load_floor_
+                     # calibration re-fits from these landmark points and never
+                     # reads the stored numbers on that path, and index.html's
+                     # applyDetection reads only tap_px/refined_px/method, so
+                     # both consumers are unaffected by the null.
+                     "residual_px": (None if _FLOOR_FIT_IS_EXACT
+                                     else round(float(residuals[index]), 2)),
                      "skipped": False,
                      "source": "intersection"}
                     for index, (name, court_ft) in enumerate(_FLOOR_ANCHORS)
                 ],
                 "homography_image_from_court": [
                     [float(value) for value in row] for row in homography],
-                "fit_rms_px": round(floor_rms, 2),
-                "max_residual_px": round(float(residuals.max()), 2),
+                "fit_rms_px": floor_rms,
+                "max_residual_px": floor_worst,
                 "fitted_by": "auto_detect",
             },
         },
         "checks": checks,
+        # How many of `checks` were independent AND actually placeable in this
+        # frame -- i.e. how much real evidence stands behind `confidence`. The
+        # confirm screen says so out loud rather than implying the fit was
+        # checked when nothing could be.
+        "checks_verified": checks_verified,
         "confidence": confidence,
         "warnings": warnings,
     }

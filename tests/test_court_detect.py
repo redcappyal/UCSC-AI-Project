@@ -620,7 +620,30 @@ def test_detect_court_recovers_the_camera_that_drew_the_court():
     result = court_detect.detect_court([image])
 
     assert result["status"] == "ok"
-    assert result["confidence"] == "high", result["warnings"]
+
+    # NOT "high". The geometry below is recovered correctly, but confidence is
+    # a claim about EVIDENCE, not about geometry, and at this framing there is
+    # none: both independent self-checks (the service boxes' back inner
+    # corners, court y = 23.33 ft) project to row ~1250 of a 1080-row frame,
+    # so they report "unverified". The only in-frame check is `t_point`, which
+    # is circular by construction (it lies on the segment joining two fitted
+    # anchors, so it lands on the short line's paint whatever the fit did) and
+    # therefore does not count. See _FLOOR_CHECKS.
+    #
+    # A wider framing does not rescue this: measured 2026-07-27 at
+    # focal_px=500/360, and at focal_px=700 with 1440- and 1600-row frames,
+    # bringing the box-back paint into view also makes assign_lines pick that
+    # merged box-back line as the "short line" (the trap documented in
+    # test_assign_lines_names_every_required_entity), which throws the floor
+    # homography off by thousands of pixels. So "high" is genuinely unreachable
+    # on this fixture today, which is the honest answer -- the confidence rule
+    # itself is exercised in
+    # test_detect_court_confidence_needs_an_independent_check_to_verify below.
+    assert result["confidence"] == "low"
+    assert result["checks_verified"] == 0
+    assert result["warnings"] == [
+        "No independent court marking was in frame to check this fit against."
+    ]
 
     # Front-wall lines land on their true datums.
     by_name = {line["name"]: line for line in result["lines"]}
@@ -688,3 +711,295 @@ def test_detect_court_reports_failure_rather_than_guessing():
     result = court_detect.detect_court([blank])
     assert result["status"] == "insufficient_lines"
     assert result["confidence"] == "low"
+    assert result["checks_verified"] == 0
+
+
+# --- honest reporting -------------------------------------------------------
+
+
+def test_four_anchors_fit_an_eight_dof_homography_exactly_even_when_wrong():
+    """Why the emitted floor residuals are null rather than 0.0.
+
+    A plane homography has 8 degrees of freedom and detect_court supplies 4
+    correspondences, so the fit is exactly determined: it reproduces its own
+    input points to floating-point noise WHATEVER those points are. This test
+    shows the failure mode directly -- feeding a fully mirrored court (left and
+    right anchors swapped, i.e. a calibration that is as wrong as it is
+    possible to be while staying a valid quadrilateral) still fits to ~1e-13 px
+    RMS. A number derived from those residuals is therefore not a quality
+    signal, which is why detect_court reports null.
+    """
+    court_points = [court_ft for _, court_ft in court_detect._FLOOR_ANCHORS]
+    truthful = [(400.0, 700.0), (1500.0, 700.0), (250.0, 1000.0),
+                (1650.0, 1000.0)]
+    mirrored = [truthful[1], truthful[0], truthful[3], truthful[2]]
+
+    for image_points in (truthful, mirrored):
+        _, residuals = court_model.fit_homography(court_points, image_points)
+        assert float(np.sqrt(np.mean(residuals ** 2))) < 1e-9
+
+
+def test_detect_court_reports_no_residual_for_an_exactly_determined_fit():
+    camera = court_camera(focal_px=700.0)
+    image, _ = render_court(camera, noise_sigma=2.0)
+
+    result = court_detect.detect_court([image])
+    floor = result["planes"]["floor"]
+
+    assert result["status"] == "ok"
+    assert floor["fit_rms_px"] is None
+    assert floor["max_residual_px"] is None
+    assert [landmark["residual_px"] for landmark in floor["landmarks"]] \
+        == [None, None, None, None]
+
+    # The null must not break the two consumers that read this plane.
+    calibration = {
+        "schema": "squash-calibration-v2",
+        "frame_width": result["frame_width"],
+        "frame_height": result["frame_height"],
+        "lines": result["lines"],
+        "planes": result["planes"],
+        "distortion": None,
+    }
+    floor_map = court_model.load_floor_calibration(calibration)
+    assert floor_map is not None
+    # The refit path recomputes its own residuals from the landmark points and
+    # never reads the stored nulls.
+    assert floor_map.source == "refit"
+
+
+def test_t_point_check_cannot_tell_a_mirrored_court_from_a_correct_one():
+    """Why `t_point` is marked non-independent.
+
+    It sits on the segment joining short_line_left and short_line_right, both
+    of which are fitted onto real short-line paint, so a projective map sends
+    it to a point on that same painted line however wrong the fit is. Mirroring
+    the court leaves its distance-to-paint unchanged at ~0 px, so it can never
+    be the evidence behind a confident verdict.
+    """
+    camera = court_camera(focal_px=700.0)
+    image, _ = render_court(camera, noise_sigma=2.0)
+    mask = court_detect.paint_mask(image)
+    distance = cv2.distanceTransform(255 - mask, cv2.DIST_L2, 3)
+
+    result = court_detect.detect_court([image])
+    pixels = {landmark["id"]: landmark["refined_px"]
+              for landmark in result["planes"]["floor"]["landmarks"]}
+    court_points = [court_ft for _, court_ft in court_detect._FLOOR_ANCHORS]
+    order = [name for name, _ in court_detect._FLOOR_ANCHORS]
+    truthful = [pixels[name] for name in order]
+    mirrored = [truthful[1], truthful[0], truthful[3], truthful[2]]
+
+    t_point = (court_model.HALF_COURT_X_FT, court_model.SHORT_LINE_CENTER_Y_FT)
+    for image_points in (truthful, mirrored):
+        homography, _ = court_model.fit_homography(court_points, image_points)
+        px, py = court_model.apply_homography(homography, t_point)
+        assert distance[int(py), int(px)] <= court_detect.CHECK_OK_PX
+
+    # And the flag in the table says so, so the confidence rule can act on it.
+    by_id = {check["id"]: check for check in result["checks"]}
+    assert by_id["t_point"]["independent"] is False
+    assert by_id["left_box_inner_back"]["independent"] is True
+    assert by_id["right_box_inner_back"]["independent"] is True
+
+
+def test_detect_court_confidence_needs_an_independent_check_to_verify(monkeypatch):
+    """The confidence rule: an in-frame INDEPENDENT check that lands on paint
+    is what earns "high"; without one the verdict stays "low".
+
+    Exercised by substituting the check table, because no framing of this
+    fixture puts a shipped independent check in view (see the note in
+    test_detect_court_recovers_the_camera_that_drew_the_court). The substitute
+    is a real point on the half-court line, one foot behind the short line: it
+    is painted in the render, it projects to row ~966 of the 1080-row frame,
+    and -- unlike t_point -- it does not lie on any line joining two fitted
+    anchors, so it is genuine evidence. This test does not sanction adding it
+    to _FLOOR_CHECKS; a real verification scheme is a deliberate follow-up.
+    """
+    camera = court_camera(focal_px=700.0)
+    image, _ = render_court(camera, noise_sigma=2.0)
+    probe = (court_model.HALF_COURT_X_FT,
+             court_model.SHORT_LINE_CENTER_Y_FT + 1.0)
+
+    monkeypatch.setattr(court_detect, "_FLOOR_CHECKS",
+                        (("half_court_probe", "the half-court line", probe, True),))
+    verified = court_detect.detect_court([image])
+
+    assert verified["status"] == "ok"
+    assert verified["checks"][0]["status"] == "ok"
+    assert verified["checks_verified"] == 1
+    assert verified["confidence"] == "high", verified["warnings"]
+    assert verified["warnings"] == []
+
+    # Same point, same frame, flagged as non-independent: nothing changes about
+    # the geometry, only about what the result is allowed to claim.
+    monkeypatch.setattr(court_detect, "_FLOOR_CHECKS",
+                        (("half_court_probe", "the half-court line", probe, False),))
+    unverified = court_detect.detect_court([image])
+
+    assert unverified["checks"][0]["status"] == "ok"
+    assert unverified["checks_verified"] == 0
+    assert unverified["confidence"] == "low"
+    assert unverified["warnings"] == [
+        "No independent court marking was in frame to check this fit against."
+    ]
+
+
+def test_detect_court_confidence_drops_when_a_check_misses_the_paint(monkeypatch):
+    """The other half of the rule: an independent check that lands on bare
+    floor names itself in the warnings and forces "low"."""
+    camera = court_camera(focal_px=700.0)
+    image, _ = render_court(camera, noise_sigma=2.0)
+    # Bare maple inside the left service box, clear of every painted line:
+    # measured 75 px from the nearest paint at this framing, well past
+    # CHECK_OK_PX. (x = HALF_COURT_X_FT / 2 would NOT do -- 5.25 ft is within a
+    # line width of LEFT_BOX_INNER_CENTER_X_FT's paint at 5.33 ft.)
+    bare = (2.5, 20.0)
+
+    monkeypatch.setattr(court_detect, "_FLOOR_CHECKS",
+                        (("bare_floor_probe", "the left service box", bare, True),))
+    result = court_detect.detect_court([image])
+
+    assert result["checks"][0]["status"] == "off"
+    assert result["checks_verified"] == 1
+    assert result["confidence"] == "low"
+    assert result["warnings"] == [
+        "Predicted court markings did not land on real paint: "
+        "the left service box."
+    ]
+
+
+def test_detect_court_survives_a_check_point_that_maps_to_infinity(monkeypatch):
+    """court_model.apply_homography raises for a point on the fit's horizon.
+
+    Unguarded that is a Flask 500 from /api/detect-court instead of the
+    graceful non-'ok' status the whole fallback design rests on. The horizon
+    point is solved from the detector's OWN fitted homography (the row where
+    the projective denominator is zero), so this is the real failure mode
+    rather than a hand-built matrix.
+    """
+    camera = court_camera(focal_px=700.0)
+    image, _ = render_court(camera, noise_sigma=2.0)
+
+    homography = np.asarray(
+        court_detect.detect_court([image])["planes"]["floor"]
+        ["homography_image_from_court"])
+    x_ft = court_model.HALF_COURT_X_FT
+    y_ft = -(homography[2, 0] * x_ft + homography[2, 2]) / homography[2, 1]
+
+    # The premise: this point really does blow up.
+    with pytest.raises(ValueError):
+        court_model.apply_homography(homography, (x_ft, y_ft))
+
+    monkeypatch.setattr(court_detect, "_FLOOR_CHECKS",
+                        (("horizon_probe", "the horizon", (x_ft, y_ft), True),))
+    result = court_detect.detect_court([image])
+
+    assert result["status"] == "ok"
+    assert result["checks"][0]["status"] == "unverified"
+    assert result["checks"][0]["predicted_px"] is None
+    assert result["checks_verified"] == 0
+    assert result["confidence"] == "low"
+
+
+# --- failing cleanly --------------------------------------------------------
+
+
+def _erase_front_wall_band(image, truth, key):
+    """Paint over one front-wall line, leaving the rest of the court intact."""
+    painted = image.copy()
+    (x1, y1), (x2, y2) = truth[key]
+    for x in range(painted.shape[1]):
+        along = (x - x1) / (x2 - x1) if x2 != x1 else 0.0
+        y = int(round(y1 + (y2 - y1) * along))
+        low = max(0, y - 12)
+        high = min(painted.shape[0], y + 12)
+        painted[low:high, x] = WALL_BGR
+    return painted
+
+
+@pytest.mark.parametrize("key", ["tin_top_edge", "service_line_top_edge"])
+def test_detect_court_fails_when_a_front_wall_line_is_missing(key):
+    """A detection missing the tin or the service line used to return
+    status "ok" with a warning nobody read, and index.html then set
+    S.lines.tin = null -- which throws `Cannot read properties of null
+    (reading 'fit')` in buildJson() two screens later, at TRACK BALL.
+    judge_call.load_calibration_lines rejects such a calibration anyway, so it
+    is unusable by construction and must fail into the manual wizard here.
+
+    Both cases report "the tin" missing, including the one where the SERVICE
+    line was erased: assign_lines takes the horizontals below the out line and
+    fills rest[0] -> service, rest[-1] -> tin, so a single survivor always
+    lands in the service slot and leaves tin empty. That mislabelling is the
+    known, user-accepted assign_lines defect, not something this test is
+    asserting is correct -- what it asserts is that either way the detection
+    FAILS cleanly into the manual wizard instead of presenting as success.
+    """
+    camera = court_camera(focal_px=700.0)
+    image, truth = render_court(camera, noise_sigma=2.0)
+
+    result = court_detect.detect_court([_erase_front_wall_band(image, truth, key)])
+
+    assert result["status"] == "insufficient_lines"
+    assert result["confidence"] == "low"
+    assert result["lines"] == []
+    assert result["planes"] == {}
+    assert result["warnings"][0] == "Could not find the tin."
+
+
+def test_detect_court_leads_with_the_real_reason_not_the_camera_motion_note():
+    """Warning order, which is the only thing the client shows.
+
+    _failure used to append the actual reason LAST, so a panning clip that also
+    failed to find a line reported "Camera appears to be moving; used a single
+    frame." -- sending a player on a fin mount off to re-mount a phone that was
+    mounted fine. The reason leads now; the incidental note follows.
+    """
+    camera = court_camera(focal_px=700.0)
+    base, _ = render_court(camera, noise_sigma=40.0, seed=0)
+    panning = [np.roll(base, shift * 90, axis=1) for shift in range(5)]
+
+    result = court_detect.detect_court(panning)
+
+    assert result["status"] == "insufficient_lines"
+    assert result["warnings"][0].startswith("Could not find ")
+    assert "Camera appears to be moving" in result["warnings"][1]
+
+
+def test_detect_court_failure_copy_never_leaks_internal_identifiers():
+    """"Could not find: front_seam." is an internal name shown as user copy
+    (this is what the Bay Club clip actually produced). Every entity the
+    failure path can name has a human label, and the sentence reads as one.
+    """
+    blank = np.full((1080, 1920, 3), 220, dtype=np.uint8)
+
+    reason = court_detect.detect_court([blank])["warnings"][0]
+
+    assert reason == ("Could not find the out line, the service line, the tin, "
+                      "the front wall's floor line, the left wall's floor "
+                      "line, the right wall's floor line, and the short line.")
+    # No snake_case identifier survives into the copy. ("out" and "tin" are
+    # checked by the exact sentence above instead -- they are ordinary English
+    # words as well as keys, so a substring test on them proves nothing.)
+    assert "_" not in reason
+    for identifier in court_detect._ENTITY_LABELS:
+        if "_" in identifier:
+            assert identifier not in reason
+
+
+def test_readable_list_reads_as_a_sentence():
+    assert court_detect._readable_list([]) == ""
+    assert court_detect._readable_list(["the tin"]) == "the tin"
+    assert court_detect._readable_list(["the tin", "the out line"]) \
+        == "the tin and the out line"
+    assert court_detect._readable_list(["a", "b", "c"]) == "a, b, and c"
+
+
+def test_wall_corner_ids_do_not_redefine_court_datum_values():
+    """CLAUDE.md: court datum values live in court_model.py and must never be
+    redefined. The corner placements belong to court_model's own
+    id -> court_ft table; this module needs only the ids.
+    """
+    assert court_detect._WALL_CORNER_IDS == (
+        "top_left", "top_right", "bottom_left", "bottom_right")
+    assert not hasattr(court_detect, "_WALL_CORNER_COURT_FT")
