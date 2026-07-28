@@ -117,6 +117,23 @@
   .status{font-size:14px; color:var(--dim); min-height:1.2em}
   .status.warn{color:var(--text); font-weight:700}
   .status.ok{color:var(--text)}
+  /* The confirm screen's two status paragraphs are split by WHEN their text
+     can change, which is a §0.9 requirement here rather than a stylistic
+     choice: the canvas above is vertically centered in a flex-grow stage
+     (§7), so any change to a paragraph's real height reflows that stage and
+     re-centers the canvas — shifting it under an in-progress drag and
+     corrupting the pointer math (confirmed while verifying dragging: a steady
+     drag jumped ~50px the instant the divergence sentence first wrapped to an
+     extra line).
+       #confirmWarn holds the detection's own reasons (off checks, unverified
+     note, server warnings, the "dragging doesn't re-check this" note). Every
+     one is fixed for as long as this screen is on screen — S.detect is never
+     rewritten by a drag — so its height settles on arrival and needs no
+     reserve beyond .status's one line.
+       #confirmDrift holds the only text a drag can change: which dragged
+     corners have walked off the fitted out line. Its worst case is both
+     corners named, so it reserves that up front. */
+  #confirmDrift{min-height:60px}
 
   button, label.filebtn{font:inherit; font-size:15px; font-weight:600; letter-spacing:.05em;
     text-transform:uppercase; color:var(--text);
@@ -442,6 +459,22 @@
   .coachOutcomeSection .coachMetrics{grid-template-columns:1fr; padding:10px}
   .coachOutcomeEmpty{padding:14px 12px; color:var(--dim); font-size:13px; line-height:1.4}
   .coachFeedback{padding:12px 14px; border-top:1px solid var(--line); font-size:16px; line-height:1.45; white-space:pre-wrap}
+  /* Drill progressions: one card per weakness, four ordered stages inside. */
+  .coachDrills{padding:0 14px 14px}
+  .coachDrills:empty{display:none}
+  .drillNote{color:var(--dim); font-size:13px; line-height:1.4; margin:0 0 10px}
+  .drillCard{border:1px solid var(--line); border-radius:8px;
+    background:color-mix(in srgb, var(--surface) 86%, var(--bg));
+    padding:10px 12px; margin-bottom:10px}
+  .drillCard:last-child{margin-bottom:0}
+  .drillIssue{margin:0 0 8px; font-size:14px; font-weight:700; line-height:1.35}
+  .drillSteps{list-style:none; margin:0; padding:0; display:grid; gap:9px}
+  .drillSteps li{font-size:13px; line-height:1.4; color:var(--dim)}
+  /* Stage label stacked above its text: the labels vary in width
+     ("Solo" vs "Conditioned games"), so a side column would leave the copy
+     ragged. Same label-over-value shape as .coachMetric. */
+  .drillStage{display:block; font-style:normal; font-size:11px; font-weight:700;
+    letter-spacing:.05em; text-transform:uppercase; color:var(--text); margin-bottom:2px}
 
   /* Post-hoc player naming (spec §4.6): backend note, the two name fields, the
      optional rally-1 serve identification crop, and the save action. */
@@ -597,13 +630,17 @@
       <span class="fcBody"><strong>Judge a clip</strong><span>Call a rally from a clip on this phone</span></span>
       <input type="file" id="fileIn" accept="video/*">
     </label>
-    <button class="heroCard" type="button" data-phase="record">
+    <!-- ARCHIVED: in-app recording and live match are shelved. The phases,
+         handlers, and camera/MediaRecorder code all remain intact and working —
+         only these entry points are hidden, so restoring the feature means
+         un-hiding these two cards. -->
+    <button class="heroCard hidden" type="button" data-phase="record">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
         <rect x="2.5" y="6.5" width="13" height="11" rx="2.5"/><path d="M15.5 10.5l6-3.5v10l-6-3.5"/>
       </svg>
       <span class="fcBody"><strong>Record a clip</strong><span>Film a rally with this phone's camera</span></span>
     </button>
-    <button class="heroCard" type="button" data-phase="live">
+    <button class="heroCard hidden" type="button" data-phase="live">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
         <circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="3.5" fill="currentColor" stroke="none"/>
       </svg>
@@ -717,6 +754,22 @@
     </div>
     <p class="status" id="floorStatus"></p>
     <p class="status" id="camHealthFloor"></p>
+  </section>
+
+  <!-- PHASE: confirm (auto-detected court, review before use) -->
+  <section class="hidden" id="p-confirm">
+    <p class="status" id="confirmSummary">&nbsp;</p>
+    <div class="targetZones">
+      <div class="targetHead"><strong>Court anchors</strong><span id="confirmCount"></span></div>
+      <div class="wallCornerList" id="confirmAnchorList"></div>
+    </div>
+    <button class="primary proxied" id="confirmUseBtn">Use this calibration</button>
+    <div class="row">
+      <button class="small" id="confirmUndoBtn" type="button" disabled>Undo drag</button>
+      <button class="small" id="confirmManualBtn" type="button">Tap it manually</button>
+    </div>
+    <p class="status" id="confirmWarn">&nbsp;</p>
+    <p class="status" id="confirmDrift">&nbsp;</p>
   </section>
 
   <!-- PHASE: clip -->
@@ -1017,6 +1070,7 @@
       <div class="coachMetrics" id="coachMetricsP1"></div>
       <div class="coachOutcomeComparison" id="coachOutcomesP1"></div>
       <div class="coachFeedback" id="coachFeedbackP1"></div>
+      <div class="coachDrills" id="coachDrillsP1"></div>
     </div>
     <div class="row">
       <button id="player2NextBtn" type="button">Player 2 report</button>
@@ -1058,6 +1112,7 @@
       <div class="coachMetrics" id="coachMetricsP2"></div>
       <div class="coachOutcomeComparison" id="coachOutcomesP2"></div>
       <div class="coachFeedback" id="coachFeedbackP2"></div>
+      <div class="coachDrills" id="coachDrillsP2"></div>
     </div>
   </section>
 
@@ -1253,6 +1308,9 @@ const S = {
   lines:{out:null, tin:null, service:null}, // committed: {seeds, maskCanvas, fit}
   wall:null,                  // front-wall corner taps, clockwise from upper left
   floor:null,                 // floor-homography wizard state (see newFloorState)
+  detect:null,                // last /api/detect-court response, kept for the confirm screen
+  confirmDrag:null,           // {key, dx, dy} while an anchor is being dragged; dx/dy are the grab offset
+  confirmUndo:[],             // stack of {key, xy} snapshots taken when a drag starts
   profile:null,               // {id, name, created_utc} when a saved profile is in play
   run:null,                   // backend tracking result
   coachReports:{},            // run_id -> coaching analytics/feedback response
@@ -1279,6 +1337,7 @@ const S = {
   rec:{stream:null, recorder:null, chunks:[], startedAt:0, timer:null,
     calibration:null, calibrating:false, mime:''},   // record phase: camera + capture state
   pendingRecCal:null,         // a recording's on-site calibration riding into the judge flow
+  pendingRunId:null,          // in-flight tracking run, so backing out can cancel it
 };
 
 /* ---------- phase / UI ---------- */
@@ -1294,6 +1353,8 @@ const STEP_META = {
            action:{btn:'chooseClipBtn', label:'Use lines'}},
   tap_wall:{label:'Wall corners', instr:'', action:{btn:'wallDoneBtn', label:'Use corners'}},
   tap_floor:{label:'Floor map', instr:'', action:{btn:'floorDoneBtn', label:'Use floor map'}},
+  confirm:{label:'Confirm court', instr:'Check the overlay hugs the real court. Drag any anchor that sits off the line.',
+           action:{btn:'confirmUseBtn', label:'Use calibration'}},
   clip:   {label:'Clip', instr:'Drag the top strip to slide the clip along the video, then drag the handles to trim it tight around the shot.',
            action:{btn:'runTrackBtn', label:'Track ball'}},
   analyze:{label:'Analyzing', instr:''},
@@ -1425,7 +1486,7 @@ function setPhase(p){
   document.body.classList.toggle('phase-load', p === 'load');
   document.body.classList.toggle('phase-target', reportPhase);
   document.body.classList.toggle('phase-track', p === 'track');
-  for(const id of ['p-load','p-record','p-frame','p-tap','p-review','p-wall-corners','p-tap-floor','p-clip','p-analyze','p-track','p-label','p-target',
+  for(const id of ['p-load','p-record','p-frame','p-tap','p-review','p-wall-corners','p-tap-floor','p-confirm','p-clip','p-analyze','p-track','p-label','p-target',
                    'p-player1-report','p-player2-report',
                    'p-live','p-matches','p-coach','p-stats','p-shot-bot','p-sharing']) $(id).classList.add('hidden');
   $('camVid').classList.toggle('hidden', p !== 'record');   // live preview only on the record screen
@@ -1456,7 +1517,7 @@ function setPhase(p){
     $('confirmBtn').disabled = !(S.work && S.work.fit);
     $('zoomCtrl').classList.remove('hidden');
     updateTapStatus();
-  } else if(p === 'tap_wall' || p === 'tap_floor'){
+  } else if(p === 'tap_wall' || p === 'tap_floor' || p === 'confirm'){
     $('zoomCtrl').classList.remove('hidden');
   } else {
     $('zoomCtrl').classList.add('hidden');
@@ -1464,6 +1525,7 @@ function setPhase(p){
   if(p === 'review'){ $('p-review').classList.remove('hidden'); buildReview(); }
   if(p === 'tap_wall'){ $('p-wall-corners').classList.remove('hidden'); buildWallCornerView(); scheduleCameraCheck(); }
   if(p === 'tap_floor'){ $('p-tap-floor').classList.remove('hidden'); buildFloorView(); }
+  if(p === 'confirm'){ $('p-confirm').classList.remove('hidden'); buildConfirmView(); }
   if(p === 'clip'){ $('p-clip').classList.remove('hidden'); $('runTrackBtn').disabled = false; setupClipControls(); }   // never leave Track ball stuck disabled from a prior/aborted run
   if(p === 'analyze'){ $('p-analyze').classList.remove('hidden'); startAnalyzePreview(); }
   else { stopAnalyzePreview(); }
@@ -1590,7 +1652,7 @@ $('useFrame').onclick = async () => {
   ctx.drawImage(vid, 0, 0, S.W, S.H);
   S.base = ctx.getImageData(0, 0, S.W, S.H);
   S.frameTime = S.frameView.cursor;
-  setPhase('tap_out');
+  await runCourtDetection();
 };
 function showError(message){
   $('errText').textContent = message;
@@ -2000,6 +2062,343 @@ function finishCalWizard(){
   setPhase('record');
 }
 
+/* ---------- automatic court detection ----------
+   Posts a handful of frames so the server can take a temporal median (which
+   deletes the players) and detect the court's lines. The reply arrives in the
+   same shapes buildJson() writes, so it drops straight into wizard state and
+   every downstream consumer is unchanged. */
+const DETECT_FRAME_COUNT = 5;
+
+async function grabDetectionFrames(count = DETECT_FRAME_COUNT){
+  const scratch = document.createElement('canvas');
+  scratch.width = S.W; scratch.height = S.H;
+  const scratchCtx = scratch.getContext('2d');
+  const wasAt = vid.currentTime;
+  const duration = clipDuration();
+  const blobs = [];
+  for(let i = 0; i < count; i++){
+    // seekVideo, not a raw currentTime assignment: WebKit fires 'seeked'
+    // before the new frame is presented, so a hand-rolled seek captures a
+    // stale or black frame and the median would be built from nothing.
+    await seekVideo(duration * (i + 0.5) / count);
+    scratchCtx.drawImage(vid, 0, 0, S.W, S.H);
+    const blob = await new Promise(r => scratch.toBlob(r, 'image/jpeg', 0.92));
+    if(blob) blobs.push(blob);
+  }
+  await seekVideo(wasAt);
+  return blobs;
+}
+
+/* Every exit from a detection clears the same state. Detection writes S.lines,
+   S.wall and S.floor before the player has agreed to anything, so a path that
+   abandons it and leaves them behind hands the manual wizard a half-filled
+   calibration from a frame the player has already left: confirm -> Back ->
+   re-pick a frame -> detection fails put the wall-corner screen at "All four
+   wall corners are set." with DONE enabled, from the discarded detection. */
+function clearDetectionState(){
+  S.detect = null;
+  S.confirmDrag = null;
+  S.confirmUndo = [];
+  S.lines = {out:null, tin:null, service:null};
+  S.wall = null; S.floor = null; S.work = null;
+}
+
+async function runCourtDetection(){
+  $('analyzeOverlay').classList.remove('hidden');
+  let result = null;
+  try{
+    const form = new FormData();
+    for(const [i, blob] of (await grabDetectionFrames()).entries())
+      form.append('frames', blob, `frame${i}.jpg`);
+    const response = await fetch('/api/detect-court', {method:'POST', body:form});
+    if(response.ok) result = await response.json();
+  } catch(_){ /* offline or decode failure: fall through to the manual wizard */ }
+  $('analyzeOverlay').classList.add('hidden');
+
+  ctx.drawImage(vid, 0, 0, S.W, S.H);
+  S.base = ctx.getImageData(0, 0, S.W, S.H);
+  S.frameTime = vid.currentTime;
+
+  if(!result || result.status !== 'ok'){
+    clearDetectionState();
+    setPhase('tap_out');
+    // warnings[0] is the reason detection actually failed — court_detect's
+    // _failure() puts it first precisely so this line is not the incidental
+    // "Camera appears to be moving" note that used to land here.
+    const reason = result && result.warnings && result.warnings.length
+      ? result.warnings[0] : '';
+    $('tapStatus').textContent = reason
+      ? `${reason} Tap the lines instead.`
+      : 'Could not detect the court. Tap the lines instead.';
+    $('tapStatus').className = 'status warn';
+    return;
+  }
+  applyDetection(result);
+  setPhase('confirm');
+}
+
+/* The detector's reply uses buildJson()'s own shapes, so applying it is a
+   direct fill of the same state the tap wizard produces — no translation
+   layer, and nothing downstream can tell the two apart. */
+function applyDetection(result){
+  S.detect = result;
+  S.confirmDrag = null;
+  S.confirmUndo = [];
+  S.profile = null;
+  const byName = {};
+  for(const line of result.lines) byName[line.name] = line;
+  for(const key of ORDER){
+    const stored = byName[CFG[key].edgeName];
+    S.lines[key] = stored
+      ? { seeds:[], maskCanvas:null, fit:fitFromStoredLine(stored) }
+      : null;
+  }
+  S.wall = wallFromCalibration(result);
+  S.floor = null;
+  const floorPlane = result.planes && result.planes.floor;
+  if(COURT && floorPlane && Array.isArray(floorPlane.landmarks)){
+    S.floor = newFloorState();
+    const byId = {};
+    for(const landmark of floorPlane.landmarks) byId[landmark.id] = landmark;
+    for(const landmark of S.floor.landmarks){
+      const stored = byId[landmark.id];
+      if(!stored) continue;
+      landmark.tap_px = stored.tap_px || null;
+      landmark.refined_px = stored.refined_px || null;
+      landmark.method = stored.method || 'intersection';
+      landmark.skipped = false;
+    }
+    S.floor.activeIdx = -1;
+    refitFloor();
+    if(!S.floor.H) S.floor = null;
+  }
+}
+
+/* Anchor colours follow the floor wizard's sanctioned palette (DESIGN.md
+   §8.10): dim -> green done -> amber warned. Never red — §0.3 reserves red
+   for OUT verdicts — and never colour alone, so the list below names every
+   anchor the checks flagged. */
+const CONFIRM_OK = '#3ddc84', CONFIRM_WARN = '#f5c518';
+
+/* Four wall corners plus both short-line ends. A detection that produced fewer
+   is not a detection this screen can present as complete. */
+const CONFIRM_ANCHOR_COUNT = 6;
+
+/* Canvas pixels per CSS pixel, from the canvas's DISPLAYED size — not its
+   pixel buffer. getBoundingClientRect() already includes the pinch-zoom
+   transform, so a target sized through this stays the same physical size on
+   the glass at any zoom, which is what §0.6's 44 px is a rule about. */
+function canvasPxPerCssPx(){
+  const rect = canvas.getBoundingClientRect();
+  return rect.width > 0 ? S.W / rect.width : 1;
+}
+
+/* 'short_line_left' -> 'Short line left'. */
+function sentenceCaseId(id){
+  const words = id.replace(/_/g, ' ');
+  return words.charAt(0).toUpperCase() + words.slice(1);
+}
+
+function confirmAnchorPoints(){
+  const points = [];
+  if(S.wall) WALL_CORNERS.forEach((corner, i) => {
+    if(S.wall.points[i]) points.push({key:`wall:${i}`, label:corner.label,
+                                      xy:S.wall.points[i]});
+  });
+  if(S.floor) for(const landmark of S.floor.landmarks){
+    if((landmark.id === 'short_line_left' || landmark.id === 'short_line_right')
+        && landmark.refined_px)
+      // Sentence case, so "Short line left" sits beside the wall corners'
+      // "Out line · left" in one convention (§0.7) rather than two. NOT
+      // landmark.label — the court model's labels are full tap instructions
+      // ("Where the MIDDLE of the short line's width meets the LEFT side
+      // wall"), written for the floor wizard's prompt line, not for a chip.
+      points.push({key:`floor:${landmark.id}`,
+                   label:sentenceCaseId(landmark.id), xy:landmark.refined_px});
+  }
+  return points;
+}
+
+function confirmOffChecks(){
+  const checks = (S.detect && S.detect.checks) || [];
+  return checks.filter(check => check.status === 'off');
+}
+
+/* How many independent court markings the server could actually verify this
+   fit against. Zero is the normal answer today — both independent checks sit
+   below the frame on a back-wall mount — and the screen says so rather than
+   implying the fit was checked. */
+function confirmVerifiedCount(){
+  const count = S.detect && S.detect.checks_verified;
+  return Number.isFinite(count) ? count : 0;
+}
+
+/* The green "detected" line has to be EARNED, not defaulted into. Every one of
+   these is a fact the detector reported; if any is missing the screen is amber
+   (never red — §0.3 reserves red for OUT verdicts) and #confirmWarn names why.
+   checks_verified is tested separately from confidence on purpose: it is the
+   count of real evidence, so green never rests on the server's verdict alone. */
+function confirmIsTrusted(){
+  return !!S.detect
+    && S.detect.status === 'ok'
+    && S.detect.confidence === 'high'
+    && confirmVerifiedCount() > 0
+    && confirmOffChecks().length === 0
+    && confirmAnchorPoints().length === CONFIRM_ANCHOR_COUNT;
+}
+
+function drawConfirmOverlay(){
+  if(S.phase !== 'confirm') return;
+  const warned = !confirmIsTrusted();
+  ctx.save();
+  // Floor wireframe (DESIGN.md §8.19). Deliberately not drawFloorOverlay's
+  // palette: that one colors landmarks red past a 4px residual, and red is
+  // reserved for OUT verdicts (§0.3). Here the whole wireframe just tracks
+  // the same ok/warn signal as the anchor pucks below, so the screen reads
+  // as one picture instead of two different color languages.
+  if(S.floor && S.floor.H && COURT){
+    ctx.strokeStyle = warned ? CONFIRM_WARN : CONFIRM_OK;
+    ctx.lineWidth = Math.max(2, S.W / 900);
+    for(const [a, b] of COURT.wireframe){
+      ctx.beginPath();
+      for(let t = 0; t <= 16; t++){
+        const p = applyH(S.floor.H, [a[0] + (b[0]-a[0]) * t/16, a[1] + (b[1]-a[1]) * t/16]);
+        if(t === 0) ctx.moveTo(p[0], p[1]); else ctx.lineTo(p[0], p[1]);
+      }
+      ctx.stroke();
+    }
+  }
+  // Floor the puck at 6 CSS px radius so it is visible on the glass rather
+  // than only in the pixel buffer (S.W/110 alone drew a 7 CSS px dot on a
+  // 1080p clip at 390px wide). Still far smaller than its 44 px hit target —
+  // this screen exists to show whether the overlay sits on the real paint, so
+  // the puck must not cover the paint it is being judged against.
+  const radius = Math.max(9, S.W / 110, 6 * canvasPxPerCssPx());
+  for(const anchor of confirmAnchorPoints()){
+    ctx.beginPath();
+    ctx.arc(anchor.xy[0], anchor.xy[1], radius, 0, Math.PI * 2);
+    ctx.fillStyle = warned ? CONFIRM_WARN : CONFIRM_OK;
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(0,0,0,.6)';
+    ctx.lineWidth = Math.max(1.5, S.W / 1400);
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
+function buildConfirmView(){
+  const trusted = confirmIsTrusted();
+  const off = confirmOffChecks();
+  const anchors = confirmAnchorPoints();
+  $('confirmCount').textContent = `${anchors.length} placed`;
+  $('confirmAnchorList').innerHTML = anchors.map(anchor =>
+    `<span class="done">${anchor.label} set</span>`).join('');
+
+  // The green line is the earned state, not the default. It used to be what
+  // this screen said whenever no check had gone 'off' — which included
+  // S.detect === null with zero anchors placed.
+  $('confirmSummary').textContent = trusted
+    ? 'Court detected — the overlay should sit on the real lines.'
+    : 'Court detected, but the fit could not be confirmed — check the overlay before using it.';
+  $('confirmSummary').className = 'status' + (trusted ? ' ok' : ' warn');
+
+  // Reasons, all of them fixed for as long as this screen is up: they come
+  // from S.detect, which a drag never rewrites. Keeping them out of
+  // #confirmDrift is what lets that paragraph reserve a small worst case (§0.9).
+  const reasons = [];
+  if(!S.detect){
+    reasons.push('No detection is loaded for this frame.');
+  } else {
+    if(off.length)
+      reasons.push(`Off the paint: ${off.map(check => check.label || check.id.replace(/_/g, ' ')).join(', ')}.`);
+    if(anchors.length !== CONFIRM_ANCHOR_COUNT)
+      reasons.push(`Only ${anchors.length} of ${CONFIRM_ANCHOR_COUNT} court anchors were derived.`);
+    for(const warning of S.detect.warnings || []) reasons.push(warning);
+    // Said plainly rather than implied by a colour: the verdict describes the
+    // detection as it arrived. The pucks and wireframe follow a drag, but the
+    // server's checks cannot be recomputed here — the paint mask they measure
+    // against lives on the server — so the ok/warn signal does not.
+    reasons.push('This verdict is from the original detection; dragging an anchor moves it but does not re-check it.');
+  }
+  $('confirmWarn').innerHTML = reasons.length ? reasons.join(' ') : '&nbsp;';
+  $('confirmWarn').className = 'status' + (trusted ? '' : ' warn');
+
+  const diverged = confirmDivergence();
+  $('confirmDrift').innerHTML = diverged.length
+    ? `${diverged.join(' and ')} no longer sits on the fitted out line — tap that line manually if the fit is wrong.`
+    : '&nbsp;';
+  $('confirmDrift').className = 'status' + (diverged.length ? ' warn' : '');
+  $('confirmUndoBtn').disabled = S.confirmUndo.length === 0;
+  render();
+}
+
+/* Dragging an anchor moves that anchor and refits the homographies. It never
+   refits S.lines: those come from hundreds of detected edge pixels, and
+   rebuilding a line from two dragged corners would be strictly less accurate
+   than what detection already found (spec §8.1). Where a dragged corner ends
+   up far from its line, we say so rather than silently picking a winner. */
+const CONFIRM_DIVERGE_PX = 6;
+
+/* §0.6's 44 px, as a diameter, measured on the glass. The old rule
+   (Math.max(18, S.W/60) in canvas px) measured 13.0 CSS px on a 1080p clip at
+   390x844 — and the S.W terms cancel, so a higher-resolution clip did not help.
+   Two consequences follow from making it this much bigger:
+     * the grab has to carry an OFFSET rather than teleporting the anchor to
+       the finger, or a grab from 20 px away would jump the anchor 20 px;
+     * a grab in the gap between two anchors resolves to the nearer one, which
+       the loop below already did. */
+const CONFIRM_TOUCH_CSS_PX = 44;
+
+function confirmDragHitTest(x, y){
+  const radius = (CONFIRM_TOUCH_CSS_PX / 2) * canvasPxPerCssPx();
+  let best = null, bestDist = radius * radius;
+  for(const anchor of confirmAnchorPoints()){
+    const dx = anchor.xy[0] - x, dy = anchor.xy[1] - y;
+    const dist = dx * dx + dy * dy;
+    if(dist <= bestDist){ bestDist = dist; best = {key:anchor.key, dx, dy}; }
+  }
+  return best;
+}
+
+/* Undo for drags, so a bad drag is recoverable without discarding the whole
+   detection through TAP IT MANUALLY — every neighbouring canvas phase has one
+   (wallUndoBtn, floorUndoLandmarkBtn, clearTapsBtn) and this screen had none.
+   The snapshot is taken on grab; a grab that never moved the anchor pops
+   itself on release so UNDO DRAG always undoes something visible. */
+function confirmAnchorAt(key){
+  return confirmAnchorPoints().find(anchor => anchor.key === key) || null;
+}
+function pushConfirmUndo(key){
+  const anchor = confirmAnchorAt(key);
+  if(anchor) S.confirmUndo.push({key, xy:[anchor.xy[0], anchor.xy[1]]});
+}
+
+function moveConfirmAnchor(key, x, y){
+  const [kind, id] = key.split(':');
+  if(kind === 'wall' && S.wall) S.wall.points[+id] = [x, y];
+  if(kind === 'floor' && S.floor){
+    const landmark = S.floor.landmarks.find(l => l.id === id);
+    if(landmark){ landmark.tap_px = [x, y]; landmark.refined_px = [x, y]; }
+  }
+  if(S.wall && S.floor) seedFrontSeamFromWall(S.floor);   // the seam is shared
+  refitFloor();
+}
+
+/* Which fitted lines a dragged corner has walked away from. */
+function confirmDivergence(){
+  if(!S.wall || S.wall.points.length !== WALL_CORNERS.length) return [];
+  const out = S.lines.out && S.lines.out.fit;
+  if(!out) return [];
+  const names = [];
+  for(const index of [0, 1]){          // top_left, top_right sit on the out line
+    const [x, y] = S.wall.points[index];
+    if(Math.abs(out.m * x + out.b - y) > CONFIRM_DIVERGE_PX){
+      names.push(WALL_CORNERS[index].label);
+    }
+  }
+  return names;
+}
+
 $('hdrBack').onclick = () => {
   if(S.phase === 'frame'){
     vid.pause(); S.base = null; $('fileIn').value = ''; setPhase('load');
@@ -2009,6 +2408,8 @@ $('hdrBack').onclick = () => {
     S.work = null; S.base = null;
     if(S.rec.calibrating){ S.rec.calibrating = false; setPhase('record'); }
     else { setPhase('frame'); ctx.drawImage(vid, 0, 0, S.W, S.H); }
+  } else if(S.phase === 'confirm'){
+    clearDetectionState(); setPhase('frame'); ctx.drawImage(vid, 0, 0, S.W, S.H);
   } else if(S.phase === 'tap_tin'){
     S.work = null; S.lines.out = null; setPhase('tap_out');
   } else if(S.phase === 'tap_service'){
@@ -2022,7 +2423,8 @@ $('hdrBack').onclick = () => {
   } else if(S.phase === 'clip'){
     setPhase(COURT ? 'tap_floor' : 'tap_wall');
   } else if(S.phase === 'analyze'){
-    setPhase('clip');   // abandon the in-flight run and return to the clip editor
+    cancelPendingTrack();   // stop the job, not just its screen
+    setPhase('clip');
   } else if(S.phase === 'track'){
     if(S.restoredSession){
       // A restored session has no calibration/clip state behind it — exit to
@@ -2119,9 +2521,16 @@ const pointers = new Map();
 let pinch = null;
 
 canvas.addEventListener('pointerdown', e => {
-  if(S.phase !== 'tap_out' && S.phase !== 'tap_tin' && S.phase !== 'tap_service' && S.phase !== 'tap_wall' && S.phase !== 'tap_floor') return;
+  if(S.phase !== 'tap_out' && S.phase !== 'tap_tin' && S.phase !== 'tap_service' && S.phase !== 'tap_wall' && S.phase !== 'tap_floor' && S.phase !== 'confirm') return;
   e.preventDefault();
   canvas.setPointerCapture(e.pointerId);
+  if(S.phase === 'confirm' && pointers.size === 0){
+    const r = canvas.getBoundingClientRect();
+    const x = Math.round((e.clientX - r.left) * S.W / r.width);
+    const y = Math.round((e.clientY - r.top) * S.H / r.height);
+    S.confirmDrag = confirmDragHitTest(x, y);
+    if(S.confirmDrag) pushConfirmUndo(S.confirmDrag.key);
+  }
   pointers.set(e.pointerId, { x:e.clientX, y:e.clientY, startX:e.clientX, startY:e.clientY, moved:false, multi:false });
 
   if(pointers.size >= 2){
@@ -2143,6 +2552,19 @@ canvas.addEventListener('pointermove', e => {
   if(Math.hypot(e.clientX - p.startX, e.clientY - p.startY) > TAP_MOVE_PX) p.moved = true;
   const dx = e.clientX - p.x, dy = e.clientY - p.y;
   p.x = e.clientX; p.y = e.clientY;
+
+  if(S.confirmDrag && pointers.size === 1){
+    const r = canvas.getBoundingClientRect();
+    // + the grab offset: the anchor follows the finger's MOVEMENT rather than
+    // snapping to it, so a 44 px target costs nothing in placement precision.
+    const gx = (e.clientX - r.left) * S.W / r.width + S.confirmDrag.dx;
+    const gy = (e.clientY - r.top) * S.H / r.height + S.confirmDrag.dy;
+    moveConfirmAnchor(S.confirmDrag.key,
+      Math.min(S.W - 1, Math.max(0, Math.round(gx))),
+      Math.min(S.H - 1, Math.max(0, Math.round(gy))));
+    buildConfirmView();
+    return;
+  }
 
   if(pointers.size === 2 && pinch){
     const pts = [...pointers.values()];
@@ -2169,6 +2591,17 @@ function endPointer(e){
   const p = pointers.get(e.pointerId);
   pointers.delete(e.pointerId);
   if(pointers.size < 2) pinch = null;
+  if(S.confirmDrag && pointers.size === 0){
+    // A grab that never moved the anchor leaves no undo entry behind.
+    const snapshot = S.confirmUndo[S.confirmUndo.length - 1];
+    const anchor = confirmAnchorAt(S.confirmDrag.key);
+    if(snapshot && anchor && snapshot.key === S.confirmDrag.key
+       && snapshot.xy[0] === anchor.xy[0] && snapshot.xy[1] === anchor.xy[1])
+      S.confirmUndo.pop();
+    S.confirmDrag = null;
+    buildConfirmView();
+    return;
+  }
   if(!p) return;
   const tapPhase = S.phase === 'tap_out' || S.phase === 'tap_tin' || S.phase === 'tap_service' || S.phase === 'tap_wall' || S.phase === 'tap_floor';
   if(tapPhase && !p.moved && !p.multi && pointers.size === 0){
@@ -2617,6 +3050,13 @@ function buildWallCornerView(){
 
 function drawWallOverlay(){
   if(!S.wall || !S.wall.points.length) return;
+  // The confirm screen draws its own pucks over these same four corners, in
+  // its own ok/warn palette. Without this guard the yellow #ffd60a quad and
+  // numbered pucks render UNDER them — two colour languages for one geometry
+  // on a screen DESIGN.md §8.19 justifies as "one fitted picture", with
+  // amber #f5c518 pucks sitting on a #ffd60a line in the warned state.
+  // drawFloorOverlay is already guarded this way; this one was not.
+  if(S.phase === 'confirm') return;
   ctx.save();
   ctx.strokeStyle = '#ffd60a';
   ctx.fillStyle = '#ffd60a';
@@ -2662,6 +3102,7 @@ function render(){
   }
   drawWallOverlay();
   drawFloorOverlay();
+  drawConfirmOverlay();
   if(S.work){
     ctx.drawImage(S.work.maskCanvas, 0, 0);
     if(S.work.fit) drawFitLine(S.work.fit, CFG[S.work.key].hex);
@@ -3265,6 +3706,15 @@ $('floorDoneBtn').onclick = () => {
   finishCalWizard();
 };
 
+$('confirmUseBtn').onclick = () => { finishCalWizard(); };
+$('confirmUndoBtn').onclick = () => {
+  const last = S.confirmUndo.pop();
+  if(!last) return;
+  moveConfirmAnchor(last.key, last.xy[0], last.xy[1]);
+  buildConfirmView();
+};
+$('confirmManualBtn').onclick = () => { clearDetectionState(); setPhase('tap_out'); };
+
 function drawFloorOverlay(){
   const F = S.floor;
   if(!F || S.phase !== 'tap_floor') return;
@@ -3538,6 +3988,12 @@ function syncClipView(){
 
 function drawClipPreview(time){
   if(!S.W || !S.H) return;
+  // requestPreviewFrame's seek is fire-and-forget, shared by the frame-picker
+  // and the clip editor; it can still be settling when the user has already
+  // moved on (e.g. USE FRAME landed on 'confirm' before the frame-picker's own
+  // background thumbnail fill finished). A late resolution must not stomp a
+  // later phase's render() output with a bare video-frame-plus-lines repaint.
+  if(S.phase !== 'frame' && S.phase !== 'clip') return;
   ctx.drawImage(vid, 0, 0, S.W, S.H);
   for(const k of ORDER){
     const L = S.lines[k];
@@ -4446,6 +4902,23 @@ function ensureVideoUploaded(progressLabel = 'Uploading video'){
   return S.uploadPromise;
 }
 
+/* Thrown when the user backs out of a run: an expected exit, not an error, so
+   it must not raise the error banner. */
+class TrackingCancelled extends Error {
+  constructor(){ super('Tracking cancelled.'); this.name = 'TrackingCancelled'; }
+}
+
+/* Backing out of the analyze screen has to stop the job server-side. Only one
+   job holds the tracking semaphore, so an abandoned run would otherwise block
+   every later track until it finished on its own. */
+function cancelPendingTrack(){
+  const runId = S.pendingRunId;
+  if(!runId) return;
+  S.pendingRunId = null;
+  fetch(`/api/track/cancel/${encodeURIComponent(runId)}`, {method:'POST'})
+    .catch(() => { /* best effort: the run is abandoned either way */ });
+}
+
 async function waitForTracking(runId){
   while(true){
     const response = await fetch(`/api/track/status/${encodeURIComponent(runId)}`, {cache:'no-store'});
@@ -4464,6 +4937,7 @@ async function waitForTracking(runId){
     if(data.status === 'running') analyzeSeekTo(analyzeFrameTime(data.processed_frames));
 
     if(data.status === 'complete') return data;
+    if(data.status === 'cancelled') throw new TrackingCancelled();
     if(data.status === 'failed') throw new Error(data.error || 'Tracking failed.');
     await new Promise(resolve => setTimeout(resolve, 500));
   }
@@ -4502,7 +4976,8 @@ $('runTrackBtn').onclick = async () => {
     form.append('inference_width', S.clip.inferenceWidth.toString());
 
     const started = await postFormRequest('/api/track', form);
-    if(S.phase !== 'analyze') return;
+    S.pendingRunId = started.run_id;
+    if(S.phase !== 'analyze'){ cancelPendingTrack(); return; }   // backed out during upload
     setTrackProgress('Analyzing frame 0/' + started.total_frames, 0);
     $('trackStatus').textContent = 'Running local model on the selected clip…';
     const data = await waitForTracking(started.run_id);
@@ -4517,10 +4992,12 @@ $('runTrackBtn').onclick = async () => {
     setPhase('track');
   } catch(error){
     if(S.phase === 'analyze') setPhase('clip');   // return to the clip editor to show the error
-    showError(error.message);
+    // Cancelling is a deliberate exit, not a failure — no error banner.
+    if(!(error instanceof TrackingCancelled)) showError(error.message);
     $('trackStatus').textContent = '';
     $('trackStatus').className = 'status';
   } finally {
+    S.pendingRunId = null;
     $('runTrackBtn').disabled = false;
     setTimeout(hideTrackProgress, 700);
   }
@@ -4539,23 +5016,6 @@ function targetZoneFill(percentage){
   return `rgba(245,197,24,${alpha.toFixed(3)})`;
 }
 
-function makeDebugTargetZones(){
-  const counts = Array.from({length: 8}, () => 3 + Math.floor(Math.random() * 24));
-  const total = counts.reduce((sum, n) => sum + n, 0);
-  const zones = counts.map((count, idx) => ({
-    zone: idx + 1,
-    count,
-    percentage: total ? count / total * 100 : 0,
-  }));
-  const used = zones.filter(zone => zone.count > 0).sort((a, b) => b.count - a.count);
-  return {
-    layout: 'front_wall_8_target_debug',
-    total_wall_hits: total,
-    zones,
-    common_zones: used.slice(0, 3),
-    missing_zones: zones.filter(zone => zone.count === 0),
-  };
-}
 
 const TARGET_LAYOUT = {
   sideW: 21,
@@ -4563,25 +5023,27 @@ const TARGET_LAYOUT = {
   centerW: 58,
   serviceY: 61.1,
   tinY: 89.5,
-  sideBands: [
-    {leftZone:1, rightZone:6, top:0, height:29},
-    {leftZone:2, rightZone:7, top:29, height:32.1},
-    {leftZone:3, rightZone:8, top:61.1, height:28.4},
+  // Every column uses the same three height bands (lob / normal / low), so a
+  // given contact height reads the same wherever it landed across the wall.
+  bands: [
+    {top:0, height:29},        // lob: out line down to ~10.6 ft
+    {top:29, height:32.1},     // normal driving height, down to the service line
+    {top:61.1, height:28.4},   // low: service line down to the tin
   ],
 };
 
+/* 3x3 grid: zone = column*3 + row + 1, columns left/center/right, rows
+   lob/normal/low. */
 function targetCellPlacements(zone){
   const z = Number(zone.zone);
-  if(z === 4){
-    return [{left:TARGET_LAYOUT.centerLeft, top:0, width:TARGET_LAYOUT.centerW, height:TARGET_LAYOUT.serviceY}];
-  }
-  if(z === 5){
-    return [{left:TARGET_LAYOUT.centerLeft, top:TARGET_LAYOUT.serviceY, width:TARGET_LAYOUT.centerW, height:TARGET_LAYOUT.tinY - TARGET_LAYOUT.serviceY}];
-  }
-  const band = TARGET_LAYOUT.sideBands.find(item => item.leftZone === z || item.rightZone === z);
-  if(!band) return [];
-  const left = band.leftZone === z ? 0 : TARGET_LAYOUT.centerLeft + TARGET_LAYOUT.centerW;
-  return [{left, top:band.top, width:TARGET_LAYOUT.sideW, height:band.height}];
+  if(!Number.isInteger(z) || z < 1 || z > 9) return [];
+  const column = Math.floor((z - 1) / 3);
+  const band = TARGET_LAYOUT.bands[(z - 1) % 3];
+  const left = column === 0 ? 0
+    : column === 1 ? TARGET_LAYOUT.centerLeft
+    : TARGET_LAYOUT.centerLeft + TARGET_LAYOUT.centerW;
+  const width = column === 1 ? TARGET_LAYOUT.centerW : TARGET_LAYOUT.sideW;
+  return [{left, top:band.top, width, height:band.height}];
 }
 
 function placeTargetCell(cell, placement){
@@ -4627,7 +5089,7 @@ function renderTargetZones(summary, ids = TARGET_MAP_IDS.aggregate){
   panel.classList.remove('hidden');
   $(ids.total).textContent = `${summary.total_wall_hits} wall hit${summary.total_wall_hits === 1 ? '' : 's'}`;
   $(ids.common).textContent = formatZoneList(summary.common_zones, 3);
-  $(ids.missing).textContent = formatZoneList(summary.missing_zones, 8);
+  $(ids.missing).textContent = formatZoneList(summary.missing_zones, 9);
 
   const grid = $(ids.grid);
   grid.innerHTML = '';
@@ -4675,7 +5137,7 @@ function summaryFromPlayerAnalytics(player){
     percentage: Number(zone.percentage || 0),
   }));
   return {
-    layout: 'front_wall_8_target_player',
+    layout: 'front_wall_9_target_player',
     total_wall_hits: Number(player.total_wall_hits || 0),
     zones,
     common_zones: player.common_target_zones || zones.filter(zone => zone.count > 0),
@@ -4749,6 +5211,7 @@ function hidePlayerCoachPanels(){
     $(`coachMetricsP${num}`).innerHTML = '';
     $(`coachOutcomesP${num}`).innerHTML = '';
     $(`coachFeedbackP${num}`).textContent = '';
+    $(`coachDrillsP${num}`).innerHTML = '';
   }
 }
 
@@ -4936,7 +5399,17 @@ function renderPlayerCoachPanel(data, playerNumber, sourceText){
     coachMetric(
       'Low attacking rate',
       metricValue(player.low_target_rate, '%'),
-      `How often ${player.labelHtml} hit lower front-wall targets.`
+      `How often ${player.labelHtml} hit the bottom band, between the service line and the tin.`
+    ),
+    coachMetric(
+      'Driving height',
+      metricValue(player.mid_target_rate, '%'),
+      `How often ${player.labelHtml} struck the middle band, from the service line up to about 10.6 ft — the height that builds length.`
+    ),
+    coachMetric(
+      'Lob height',
+      metricValue(player.high_target_rate, '%'),
+      `How often ${player.labelHtml} lifted above about 10.6 ft, to escape pressure or move the opponent back.`
     ),
   ].join('');
   $(`coachOutcomesP${playerNumber}`).innerHTML =
@@ -4945,6 +5418,47 @@ function renderPlayerCoachPanel(data, playerNumber, sourceText){
   const feedback = data.player_feedback && data.player_feedback[String(playerNumber)];
   $(`coachFeedbackP${playerNumber}`).textContent =
     feedback || `${player.label}: no player-specific coaching feedback is available yet.`;
+  renderCoachDrills(data.player_drills && data.player_drills[String(playerNumber)], playerNumber);
+}
+
+/* Drill progressions under the metrics: one card per weakness, each walking
+   solo -> drills -> conditioned games -> matchplay. Built as DOM nodes so
+   the coaching text is never parsed as markup. */
+function renderCoachDrills(advice, playerNumber){
+  const host = $(`coachDrillsP${playerNumber}`);
+  host.innerHTML = '';
+  if(!advice) return;
+
+  if(advice.note){
+    const note = document.createElement('p');
+    note.className = 'drillNote';
+    note.textContent = advice.note;
+    host.appendChild(note);
+  }
+  for(const item of advice.items || []){
+    const card = document.createElement('div');
+    card.className = 'drillCard';
+
+    const issue = document.createElement('p');
+    issue.className = 'drillIssue';
+    issue.textContent = item.issue;
+    card.appendChild(issue);
+
+    const steps = document.createElement('ol');
+    steps.className = 'drillSteps';
+    for(const step of item.progression || []){
+      const li = document.createElement('li');
+      const stage = document.createElement('i');
+      stage.className = 'drillStage';
+      stage.textContent = step.stage;
+      const text = document.createElement('span');
+      text.textContent = step.text;
+      li.append(stage, text);
+      steps.appendChild(li);
+    }
+    card.appendChild(steps);
+    host.appendChild(card);
+  }
 }
 
 function renderCoachReport(data, playerNumber){

@@ -55,6 +55,40 @@ JOBS_LOCK = threading.Lock()
 # per-frame lock would only block preprocessing for no benefit.
 TRACKING_JOB_SEMAPHORE = threading.Semaphore(1)
 
+# Abandoned runs. Because only one job holds the semaphore at a time, a run the
+# user walked away from would otherwise block every later track until it
+# finished on its own — so a cancel has to actually stop the work, not just
+# hide its UI. Flags are set here and observed by the running job.
+JOB_CANCELS = {}
+JOB_CANCELS_LOCK = threading.Lock()
+
+
+class JobCancelled(Exception):
+    """Raised inside a tracking job once its run has been cancelled."""
+
+
+def request_cancel(run_id):
+    """Flag a run as cancelled. Safe to call before the job starts: a queued
+    job checks the flag as soon as it takes the semaphore."""
+    with JOB_CANCELS_LOCK:
+        JOB_CANCELS.setdefault(run_id, threading.Event()).set()
+
+
+def cancel_requested(run_id):
+    with JOB_CANCELS_LOCK:
+        event = JOB_CANCELS.get(run_id)
+    return event is not None and event.is_set()
+
+
+def clear_cancel(run_id):
+    with JOB_CANCELS_LOCK:
+        JOB_CANCELS.pop(run_id, None)
+
+
+def raise_if_cancelled(run_id):
+    if cancel_requested(run_id):
+        raise JobCancelled(run_id)
+
 DECODE_QUEUE_SIZE = 8
 PROGRESS_UPDATE_FRAMES = 10
 PROGRESS_UPDATE_SECONDS = 0.5
@@ -72,9 +106,17 @@ TARGET_CENTER_LEFT = 0.21
 TARGET_CENTER_RIGHT = 0.79
 TARGET_SERVICE_Y = (4.57 - 1.78) / (4.57 - 0.48)
 TARGET_TIN_Y = 1.0
-TARGET_SIDE_ZONE_BOUNDS = (0.0, 0.324, TARGET_SERVICE_Y, TARGET_TIN_Y)
-TARGET_CENTER_ZONE_BOUNDS = (0.0, TARGET_SERVICE_Y, TARGET_TIN_Y)
-TARGET_ZONE_IDS = (1, 2, 3, 4, 5, 6, 7, 8)
+# Height bands, top of the wall downward, shared by all three columns:
+#   lob    out line -> ~10.6 ft   (lifting, defensive rescue, moving them back)
+#   normal ~10.6 ft -> service line ~5.8 ft   (driving height, builds length)
+#   low    service line -> tin ~1.6 ft        (attacking, kills and drops)
+# The lob/normal split is not a painted court line, just where a lifted ball
+# stops being a drive; the lower two are datumed to the service line and tin.
+TARGET_LOB_Y = 0.324
+TARGET_ROW_BOUNDS = (0.0, TARGET_LOB_Y, TARGET_SERVICE_Y, TARGET_TIN_Y)
+# 3x3 grid numbered by column then row: 1-3 left, 4-6 center, 7-9 right, each
+# running lob -> normal -> low.
+TARGET_ZONE_IDS = tuple(range(1, 10))
 DEFAULT_RALLY_GAP_SECONDS = 5.0
 DEFAULT_FIRST_SERVER_PLAYER = 1
 RALLY_GAP_MIN_SPLIT_SECONDS = 4.0
@@ -536,24 +578,31 @@ def infer_rally_gap_seconds(front_wall_hits):
 
 
 def target_zone_for_diagram(diagram):
+    """Front-wall contact -> one cell of the 3x3 target grid.
+
+    Column comes from x, row from the shared height bands, so "high" means the
+    same contact height wherever across the wall the ball landed.
+    """
     x = clamp(diagram["x"])
     y = clamp(diagram["y"])
 
-    if TARGET_CENTER_LEFT <= x <= TARGET_CENTER_RIGHT:
-        zone = 4 if y < TARGET_CENTER_ZONE_BOUNDS[1] else 5
-        side = "center"
+    if x < TARGET_CENTER_LEFT:
+        column, side = 0, "left"
+    elif x <= TARGET_CENTER_RIGHT:
+        column, side = 1, "center"
     else:
-        side_offset = 0 if x < TARGET_CENTER_LEFT else 5
-        zone = side_offset + 3
-        for index in range(3):
-            if TARGET_SIDE_ZONE_BOUNDS[index] <= y < TARGET_SIDE_ZONE_BOUNDS[index + 1]:
-                zone = side_offset + index + 1
-                break
-        side = "left" if x < TARGET_CENTER_LEFT else "right"
+        column, side = 2, "right"
+
+    row = len(TARGET_ROW_BOUNDS) - 2          # default to the lowest band
+    for index in range(len(TARGET_ROW_BOUNDS) - 1):
+        if TARGET_ROW_BOUNDS[index] <= y < TARGET_ROW_BOUNDS[index + 1]:
+            row = index
+            break
 
     return {
-        "zone": zone,
+        "zone": column * 3 + row + 1,
         "side": side,
+        "band": ("lob", "normal", "low")[row],
         "x": float(diagram["x"]),
         "y": float(diagram["y"]),
     }
@@ -595,7 +644,7 @@ def build_target_zone_summary(hits):
     ][:3]
     missing = [dict(zone) for zone in zones if zone["count"] == 0]
     return {
-        "layout": "front_wall_8_target",
+        "layout": "front_wall_9_target",
         "rows": 3,
         "columns": 3,
         "total_wall_hits": total,
@@ -1053,6 +1102,13 @@ def run_tracking_job(run_id):
     frame_stride = int(job["frame_stride"])
     inference_width = int(job["inference_width"])
     source_fps = float(job["fps"]) or 30.0
+    # Cancelled while queued behind another job: never start the work.
+    if cancel_requested(run_id):
+        clear_cancel(run_id)
+        update_job(run_id, status="cancelled", stage="cancelled",
+                   message="Tracking cancelled.")
+        return
+
     with TRACKING_JOB_SEMAPHORE:
         processed_frames = 0
         last_update = time.monotonic()
@@ -1060,6 +1116,9 @@ def run_tracking_job(run_id):
         def make_progress_callback(label):
             def on_frame(frame_idx):
                 nonlocal processed_frames, last_update
+                # Checked per frame so an abandoned run releases the semaphore
+                # promptly instead of holding up the next track.
+                raise_if_cancelled(run_id)
                 processed_frames += 1
                 now = time.monotonic()
                 if (
@@ -1311,6 +1370,13 @@ def run_tracking_job(run_id):
                 message="Tracking complete.",
                 **extra_fields,
             )
+        except JobCancelled:
+            update_job(
+                run_id,
+                status="cancelled",
+                stage="cancelled",
+                message="Tracking cancelled.",
+            )
         except Exception as error:
             update_job(
                 run_id,
@@ -1318,6 +1384,8 @@ def run_tracking_job(run_id):
                 error=f"Tracking failed.\n\n{error}",
                 message="Tracking failed.",
             )
+        finally:
+            clear_cancel(run_id)
 
 
 def main():

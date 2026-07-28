@@ -123,7 +123,7 @@ def test_judge_hits_wall_events_judged_as_before(tmp_path):
     # This is the rally's first front-wall contact, so it remains judgeable
     # but is excluded from coaching target metrics as a serve.
     assert payload["target_zones"]["total_wall_hits"] == 0
-    assert payload["target_zones"]["layout"] == "front_wall_8_target"
+    assert payload["target_zones"]["layout"] == "front_wall_9_target"
     assert payload["target_zones"]["zones"][3]["count"] == 0
     assert payload["target_zones"]["common_zones"] == []
 
@@ -278,16 +278,36 @@ def test_judge_hits_does_not_call_horizontal_sidewall_out(tmp_path):
 
 
 def test_target_zone_layout_matches_front_wall_sketch():
+    """3x3 grid: columns left/center/right are 1-3, 4-6, 7-9; within a column
+    the rows run lob, driving height, low."""
     from job_runner import target_zone_for_diagram
 
+    # left column
     assert target_zone_for_diagram({"x": 0.08, "y": 0.10})["zone"] == 1
     assert target_zone_for_diagram({"x": 0.08, "y": 0.50})["zone"] == 2
     assert target_zone_for_diagram({"x": 0.08, "y": 0.76})["zone"] == 3
-    assert target_zone_for_diagram({"x": 0.50, "y": 0.30})["zone"] == 4
-    assert target_zone_for_diagram({"x": 0.50, "y": 0.80})["zone"] == 5
-    assert target_zone_for_diagram({"x": 0.92, "y": 0.10})["zone"] == 6
-    assert target_zone_for_diagram({"x": 0.92, "y": 0.50})["zone"] == 7
-    assert target_zone_for_diagram({"x": 0.92, "y": 0.95})["zone"] == 8
+    # center column — the lob/normal split now applies here too
+    assert target_zone_for_diagram({"x": 0.50, "y": 0.10})["zone"] == 4
+    assert target_zone_for_diagram({"x": 0.50, "y": 0.50})["zone"] == 5
+    assert target_zone_for_diagram({"x": 0.50, "y": 0.80})["zone"] == 6
+    # right column
+    assert target_zone_for_diagram({"x": 0.92, "y": 0.10})["zone"] == 7
+    assert target_zone_for_diagram({"x": 0.92, "y": 0.50})["zone"] == 8
+    assert target_zone_for_diagram({"x": 0.92, "y": 0.95})["zone"] == 9
+
+
+def test_target_zone_bands_are_the_same_height_in_every_column():
+    """The old layout gave the center one tall band while the sides had two,
+    so "high" meant a different contact height depending on where it landed."""
+    from job_runner import target_zone_for_diagram
+
+    for y, row in ((0.10, 0), (0.50, 1), (0.90, 2)):
+        bands = {target_zone_for_diagram({"x": x, "y": y})["band"]
+                 for x in (0.08, 0.50, 0.92)}
+        assert len(bands) == 1, f"row {row} disagreed across columns: {bands}"
+    assert target_zone_for_diagram({"x": 0.5, "y": 0.10})["band"] == "lob"
+    assert target_zone_for_diagram({"x": 0.5, "y": 0.50})["band"] == "normal"
+    assert target_zone_for_diagram({"x": 0.5, "y": 0.90})["band"] == "low"
 
 
 def test_target_zone_summary_excludes_serves_from_metrics():

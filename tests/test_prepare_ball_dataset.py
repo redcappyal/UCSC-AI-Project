@@ -1,5 +1,6 @@
 """prepare_ball_dataset: geometry, splitting and crop planning (no cv2 needed)."""
 
+import json
 import random
 import re
 import sys
@@ -9,6 +10,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+import prepare_ball_dataset
 from prepare_ball_dataset import (
     _clip_box, _imread_unicode, _imwrite_unicode, ascii_slug, burst_count,
     clip_and_frame, clip_scale_factors, crop_file_name, plan_crops,
@@ -325,3 +327,401 @@ def test_render_split_raises_on_a_filename_collision_across_source_dirs(tmp_path
 
     with pytest.raises(SystemExit):
         render_split([record_a, record_b], plans_by_record, tmp_path, "train", 16, 95)
+
+
+# --- Sequence crops (--seq-frames > 1) ---------------------------------
+
+def _solid_frame(np_, value, size=64):
+    return np_.full((size, size, 3), min(max(value, 0), 255), dtype="uint8")
+
+
+def test_seq_frames_requires_clips_dir(tmp_path):
+    with pytest.raises(SystemExit, match="clips-dir"):
+        prepare_ball_dataset.build(
+            source=tmp_path / "missing-source", out=tmp_path / "out", crop=416,
+            positives=1, negatives=0, jitter=0.3, min_visible=0.5,
+            min_source_width=0, min_frame_gap=1, target_ball_px=0,
+            val_clips=[], test_clips=[], seed=0, quality=95,
+            seq_frames=3, clips_dir=None)
+
+
+def test_seq_frames_must_be_odd(tmp_path):
+    with pytest.raises(SystemExit, match="odd"):
+        prepare_ball_dataset.build(
+            source=tmp_path / "missing-source", out=tmp_path / "out", crop=416,
+            positives=1, negatives=0, jitter=0.3, min_visible=0.5,
+            min_source_width=0, min_frame_gap=1, target_ball_px=0,
+            val_clips=[], test_clips=[], seed=0, quality=95,
+            seq_frames=2, clips_dir=tmp_path)
+
+
+def test_find_clip_videos_matches_by_ascii_slug(tmp_path):
+    # record["clip"] is the readable name load_export produces (spaces and
+    # all), never a pre-slugged value -- matching has to slug both sides.
+    (tmp_path / "Bay Club Rally 1.mp4").write_bytes(b"")
+    records = [{"clip": "Bay Club Rally 1"}]
+    found = prepare_ball_dataset.find_clip_videos(tmp_path, records)
+    assert set(found) == {"Bay Club Rally 1"}
+    assert found["Bay Club Rally 1"] == tmp_path / "Bay Club Rally 1.mp4"
+
+
+def test_find_clip_videos_matches_non_ascii_clip_names(tmp_path):
+    # The production case ascii_slug itself documents: a YouTube title
+    # carrying a fullwidth bar. The video stem and the clip name are the
+    # same non-ASCII string; the match must survive slugging both.
+    (tmp_path / "Rally ｜ One.mp4").write_bytes(b"")
+    records = [{"clip": "Rally ｜ One"}]
+    found = prepare_ball_dataset.find_clip_videos(tmp_path, records)
+    assert found["Rally ｜ One"] == tmp_path / "Rally ｜ One.mp4"
+
+
+def test_find_clip_videos_missing_clip_is_fatal(tmp_path):
+    records = [{"clip": "nonexistent-clip"}]
+    with pytest.raises(SystemExit, match="nonexistent-clip"):
+        prepare_ball_dataset.find_clip_videos(tmp_path, records)
+
+
+def test_find_clip_videos_missing_clips_dir_is_fatal(tmp_path):
+    # A raw FileNotFoundError from Path.iterdir() would be unreadable next
+    # to this module's other loud, path-naming SystemExits.
+    missing_dir = tmp_path / "does-not-exist"
+    with pytest.raises(SystemExit) as excinfo:
+        prepare_ball_dataset.find_clip_videos(missing_dir, [{"clip": "Bay"}])
+    assert str(missing_dir) in str(excinfo.value)
+
+
+def test_sequence_render_writes_three_aligned_crops(tmp_path, monkeypatch):
+    # monkeypatch decode_frames to return synthetic frames whose pixel values
+    # encode the frame index; assert the .tm1/.tp1 files land beside the
+    # anchor crop, contain the right frame's pixels (t-1 and t+1), and the
+    # COCO "sequence" lists [tm1, anchor, tp1] oldest-first.
+    cv2 = pytest.importorskip("cv2")
+    np = pytest.importorskip("numpy")
+
+    def fake_decode(video_path, indices):
+        return {i: _solid_frame(np, i * 20) for i in indices}
+    monkeypatch.setattr(prepare_ball_dataset, "decode_frames", fake_decode)
+
+    train_dir = tmp_path / "train"
+    train_dir.mkdir()
+    path = train_dir / "Bay_mov-0005_jpg.jpg"
+    _imwrite_unicode(path, _solid_frame(np, 5 * 20),
+                     [int(cv2.IMWRITE_JPEG_QUALITY), 95])
+    record = {"path": path, "clip": "Bay", "frame": 5, "width": 64, "height": 64,
+              "balls": [{"bbox": [24, 24, 8, 8], "streak": None}]}
+    plans = plan_crops(record, crop=16, scale=1.0, rng=random.Random(0),
+                       positives=1, negatives=0, jitter=0.0, min_visible=0.5)
+    plans_by_record = {path: plans}
+
+    render_split([record], plans_by_record, tmp_path, "train", 16, 95,
+                 seq_frames=3, clip_videos={"Bay": Path("fake.mp4")},
+                 clip_last_frame={"Bay": 20})
+
+    anchor_name = crop_file_name(path.stem, 0)
+    stem = anchor_name[:-len(".jpg")]
+    tm1_name, tp1_name = f"{stem}.tm1.jpg", f"{stem}.tp1.jpg"
+
+    assert (train_dir / anchor_name).exists()
+    assert (train_dir / tm1_name).exists()
+    assert (train_dir / tp1_name).exists()
+
+    # frame 4's pixels (t-1), not frame 5's or frame 6's.
+    assert _imread_unicode(train_dir / tm1_name).mean() == pytest.approx(80, abs=5)
+    # frame 6's pixels (t+1).
+    assert _imread_unicode(train_dir / tp1_name).mean() == pytest.approx(120, abs=5)
+
+    coco = json.loads((tmp_path / "annotations" / "instances_train.json").read_text())
+    image = next(i for i in coco["images"] if i["file_name"] == anchor_name)
+    assert image["sequence"] == [tm1_name, anchor_name, tp1_name]
+
+
+def test_sequence_pads_at_clip_start(tmp_path, monkeypatch):
+    # labeled frame index 0: tm1 must repeat frame 0 (matches the runtime
+    # edge padding in ball_track_offline._centered_windows), not crash or
+    # go negative; tp1 is the real frame 1.
+    cv2 = pytest.importorskip("cv2")
+    np = pytest.importorskip("numpy")
+
+    def fake_decode(video_path, indices):
+        return {i: _solid_frame(np, i * 20) for i in indices}
+    monkeypatch.setattr(prepare_ball_dataset, "decode_frames", fake_decode)
+
+    train_dir = tmp_path / "train"
+    train_dir.mkdir()
+    path = train_dir / "Bay_mov-0000_jpg.jpg"
+    _imwrite_unicode(path, _solid_frame(np, 0),
+                     [int(cv2.IMWRITE_JPEG_QUALITY), 95])
+    record = {"path": path, "clip": "Bay", "frame": 0, "width": 64, "height": 64,
+              "balls": [{"bbox": [24, 24, 8, 8], "streak": None}]}
+    plans = plan_crops(record, crop=16, scale=1.0, rng=random.Random(0),
+                       positives=1, negatives=0, jitter=0.0, min_visible=0.5)
+    plans_by_record = {path: plans}
+
+    render_split([record], plans_by_record, tmp_path, "train", 16, 95,
+                 seq_frames=3, clip_videos={"Bay": Path("fake.mp4")},
+                 clip_last_frame={"Bay": 20})
+
+    anchor_name = crop_file_name(path.stem, 0)
+    stem = anchor_name[:-len(".jpg")]
+    tm1_name = f"{stem}.tm1.jpg"
+    tp1_name = f"{stem}.tp1.jpg"
+
+    # tm1 repeats frame 0 -- same content as the anchor.
+    assert (_imread_unicode(train_dir / tm1_name).mean()
+            == pytest.approx(_imread_unicode(train_dir / anchor_name).mean(), abs=2))
+    # tp1 is the real frame 1.
+    assert _imread_unicode(train_dir / tp1_name).mean() == pytest.approx(20, abs=5)
+
+
+def test_sequence_pads_at_clip_end(tmp_path, monkeypatch):
+    # labeled frame == last frame of the clip: tp1 repeats the last frame
+    # (decode_frames raising "ended at frame N" must not happen for this).
+    cv2 = pytest.importorskip("cv2")
+    np = pytest.importorskip("numpy")
+
+    def fake_decode(video_path, indices):
+        for i in indices:
+            if i > 8:
+                raise SystemExit(f"{video_path} ended at frame 9; needed {i}")
+        return {i: _solid_frame(np, i * 20) for i in indices}
+    monkeypatch.setattr(prepare_ball_dataset, "decode_frames", fake_decode)
+
+    train_dir = tmp_path / "train"
+    train_dir.mkdir()
+    path = train_dir / "Bay_mov-0008_jpg.jpg"
+    _imwrite_unicode(path, _solid_frame(np, 8 * 20),
+                     [int(cv2.IMWRITE_JPEG_QUALITY), 95])
+    record = {"path": path, "clip": "Bay", "frame": 8, "width": 64, "height": 64,
+              "balls": [{"bbox": [24, 24, 8, 8], "streak": None}]}
+    plans = plan_crops(record, crop=16, scale=1.0, rng=random.Random(0),
+                       positives=1, negatives=0, jitter=0.0, min_visible=0.5)
+    plans_by_record = {path: plans}
+
+    render_split([record], plans_by_record, tmp_path, "train", 16, 95,
+                 seq_frames=3, clip_videos={"Bay": Path("fake.mp4")},
+                 clip_last_frame={"Bay": 8})
+
+    anchor_name = crop_file_name(path.stem, 0)
+    stem = anchor_name[:-len(".jpg")]
+    tp1_name = f"{stem}.tp1.jpg"
+
+    # tp1 repeats the last frame -- same content as the anchor.
+    assert (_imread_unicode(train_dir / tp1_name).mean()
+            == pytest.approx(_imread_unicode(train_dir / anchor_name).mean(), abs=2))
+
+
+def test_alignment_failure_is_fatal(tmp_path, monkeypatch):
+    # decode_frames returns a frame that does NOT match the export image ->
+    # SystemExit naming the clip; a silently shifted sequence poisons training.
+    np = pytest.importorskip("numpy")
+    cv2 = pytest.importorskip("cv2")
+
+    def fake_decode(video_path, indices):
+        # Every decoded frame is far from the export image, at every offset.
+        return {i: _solid_frame(np, 250) for i in indices}
+    monkeypatch.setattr(prepare_ball_dataset, "decode_frames", fake_decode)
+
+    train_dir = tmp_path / "train"
+    train_dir.mkdir()
+    path = train_dir / "Bay_mov-0005_jpg.jpg"
+    _imwrite_unicode(path, _solid_frame(np, 5 * 20),
+                     [int(cv2.IMWRITE_JPEG_QUALITY), 95])
+    record = {"path": path, "clip": "Bay", "frame": 5, "width": 64, "height": 64,
+              "balls": [{"bbox": [24, 24, 8, 8], "streak": None}]}
+    plans = plan_crops(record, crop=16, scale=1.0, rng=random.Random(0),
+                       positives=1, negatives=0, jitter=0.0, min_visible=0.5)
+    plans_by_record = {path: plans}
+
+    with pytest.raises(SystemExit, match="Bay"):
+        render_split([record], plans_by_record, tmp_path, "train", 16, 95,
+                     seq_frames=3, clip_videos={"Bay": Path("fake.mp4")},
+                     clip_last_frame={"Bay": 20})
+
+
+def test_sequence_alignment_detects_and_applies_a_consistent_offset(tmp_path, monkeypatch):
+    # A clip-uniform off-by-one in the export (every label's export image
+    # actually holds the video's *next* frame) must be both detected AND
+    # propagated into which neighbour frames get decoded -- not just used to
+    # pass the alignment check and then discarded.
+    cv2 = pytest.importorskip("cv2")
+    np = pytest.importorskip("numpy")
+
+    # decoded index i holds the content of true frame (i - 1): content(t)
+    # therefore lives one index ahead of where a naive (offset=0) read would
+    # look for it.
+    def fake_decode(video_path, indices):
+        return {i: _solid_frame(np, (i - 1) * 20) for i in indices}
+    monkeypatch.setattr(prepare_ball_dataset, "decode_frames", fake_decode)
+
+    train_dir = tmp_path / "train"
+    train_dir.mkdir()
+    path = train_dir / "Bay_mov-0005_jpg.jpg"
+    # Export image for label 5 holds true frame 5's content (100) -- which
+    # decode_frames only serves back at index 6 (offset +1).
+    _imwrite_unicode(path, _solid_frame(np, 5 * 20),
+                     [int(cv2.IMWRITE_JPEG_QUALITY), 95])
+    record = {"path": path, "clip": "Bay", "frame": 5, "width": 64, "height": 64,
+              "balls": [{"bbox": [24, 24, 8, 8], "streak": None}]}
+    plans = plan_crops(record, crop=16, scale=1.0, rng=random.Random(0),
+                       positives=1, negatives=0, jitter=0.0, min_visible=0.5)
+    plans_by_record = {path: plans}
+
+    # Must not raise: a consistent offset across the clip is recoverable.
+    render_split([record], plans_by_record, tmp_path, "train", 16, 95,
+                 seq_frames=3, clip_videos={"Bay": Path("fake.mp4")},
+                 clip_last_frame={"Bay": 20})
+
+    anchor_name = crop_file_name(path.stem, 0)
+    stem = anchor_name[:-len(".jpg")]
+    tm1_name, tp1_name = f"{stem}.tm1.jpg", f"{stem}.tp1.jpg"
+
+    # true_t = 5 + 1 = 6, so the window is (5, 6, 7): tm1 = content(5) = 80,
+    # tp1 = content(7) = 120. An unshifted (offset=0) read would have used
+    # window (4, 5, 6) and written tm1 = content(3) = 60, tp1 = content(5)
+    # = 100 instead -- the corrected values below are not those.
+    assert _imread_unicode(train_dir / tm1_name).mean() == pytest.approx(80, abs=5)
+    assert _imread_unicode(train_dir / tp1_name).mean() == pytest.approx(120, abs=5)
+
+
+def test_resolve_clip_offset_argmin_beats_first_pass_wins():
+    # Offset 0 is under tolerance (5 < 12) but offset +1 is a strictly
+    # better fit for every record -- argmin must prefer +1, not stop at the
+    # first offset that merely clears the tolerance bar. This is the
+    # discriminability gap IMPORTANT-3 exists to close: on static-camera
+    # footage adjacent frames are near-duplicates, so a first-pass-wins rule
+    # would silently keep offset 0 forever.
+    np = pytest.importorskip("numpy")
+
+    def solid(value):
+        return np.full((4, 4, 3), value, dtype="uint8")
+
+    export_images = {"a": solid(100), "b": solid(100)}
+    decoded = {
+        4: solid(93),    # offset -1 candidate for frame 5 -> diff 7
+        5: solid(95),    # offset  0 candidate -> diff 5 (under tolerance=12)
+        6: solid(99),    # offset +1 candidate -> diff 1 (best fit)
+    }
+    clip_records = [{"frame": 5, "path": "a"}, {"frame": 5, "path": "b"}]
+
+    offset = prepare_ball_dataset._resolve_clip_offset(
+        "clip", clip_records, decoded, export_images, last_frame=None,
+        tolerance=12.0)
+    assert offset == 1
+
+
+def test_resolve_clip_offset_still_fails_loudly_when_every_candidate_is_bad():
+    # argmin must not turn "best of three bad options" into a silent pass --
+    # the winning candidate still has to clear `tolerance`.
+    np = pytest.importorskip("numpy")
+
+    def solid(value):
+        return np.full((4, 4, 3), value, dtype="uint8")
+
+    export_images = {"a": solid(100)}
+    decoded = {4: solid(0), 5: solid(0), 6: solid(0)}
+    clip_records = [{"frame": 5, "path": "a"}]
+
+    with pytest.raises(SystemExit, match="clip-x"):
+        prepare_ball_dataset._resolve_clip_offset(
+            "clip-x", clip_records, decoded, export_images, last_frame=None,
+            tolerance=12.0)
+
+
+def test_sequence_edge_padding_repeats_anchor_under_positive_offset(
+        tmp_path, monkeypatch):
+    # With a detected +1 offset, the max-labelled record's true VIDEO-space
+    # anchor index is last_frame + 1 -- one past anything `_needed_indices`
+    # actually fetched. tp1 must repeat the ANCHOR (the record's own export
+    # image, scaled/windowed exactly like every other frame) -- not some
+    # other decoded frame, and not collapse onto tm1's value. tm1 is the
+    # real predecessor, since decode index (true_t - 1) genuinely was
+    # fetched. Offset detection itself is orthogonal to this -- forced via
+    # monkeypatch.
+    cv2 = pytest.importorskip("cv2")
+    np = pytest.importorskip("numpy")
+
+    def fake_decode(video_path, indices):
+        return {i: _solid_frame(np, i * 10) for i in indices}
+    monkeypatch.setattr(prepare_ball_dataset, "decode_frames", fake_decode)
+    monkeypatch.setattr(prepare_ball_dataset, "_resolve_clip_offset",
+                        lambda *a, **k: 1)
+
+    train_dir = tmp_path / "train"
+    train_dir.mkdir()
+    path = train_dir / "Bay_mov-0008_jpg.jpg"
+    _imwrite_unicode(path, _solid_frame(np, 200),
+                     [int(cv2.IMWRITE_JPEG_QUALITY), 95])
+    # record["frame"] == clip_last_frame: the max-labelled/edge record.
+    record = {"path": path, "clip": "Bay", "frame": 8, "width": 64, "height": 64,
+              "balls": [{"bbox": [24, 24, 8, 8], "streak": None}]}
+    plans = plan_crops(record, crop=16, scale=1.0, rng=random.Random(0),
+                       positives=1, negatives=0, jitter=0.0, min_visible=0.5)
+    plans_by_record = {path: plans}
+
+    render_split([record], plans_by_record, tmp_path, "train", 16, 95,
+                 seq_frames=3, clip_videos={"Bay": Path("fake.mp4")},
+                 clip_last_frame={"Bay": 8})
+
+    anchor_name = crop_file_name(path.stem, 0)
+    stem = anchor_name[:-len(".jpg")]
+    tm1_name, tp1_name = f"{stem}.tm1.jpg", f"{stem}.tp1.jpg"
+
+    anchor_tile = _imread_unicode(train_dir / anchor_name)
+    tm1_tile = _imread_unicode(train_dir / tm1_name)
+    tp1_tile = _imread_unicode(train_dir / tp1_name)
+
+    # true_t = 8 + 1 = 9: tm1's target (8) was actually fetched -> real
+    # decoded content (content(8) = 80).
+    assert tm1_tile.mean() == pytest.approx(80, abs=5)
+    # tp1's target (10) was never fetched -- repeat-ANCHOR: tp1 must equal
+    # the anchor crop itself.
+    assert tp1_tile.mean() == pytest.approx(anchor_tile.mean(), abs=2)
+    assert tm1_tile.mean() != pytest.approx(tp1_tile.mean(), abs=5)
+
+
+def test_sequence_edge_padding_repeats_anchor_under_negative_offset(
+        tmp_path, monkeypatch):
+    # Mirror of the above at the opposite corner: frame 0 under a detected
+    # -1 offset. true_t = -1 -- there is no video frame before the clip's
+    # start -- so tm1 must repeat the ANCHOR; tp1 is the real successor
+    # since decode index 0 genuinely was fetched.
+    cv2 = pytest.importorskip("cv2")
+    np = pytest.importorskip("numpy")
+
+    def fake_decode(video_path, indices):
+        return {i: _solid_frame(np, i * 10) for i in indices}
+    monkeypatch.setattr(prepare_ball_dataset, "decode_frames", fake_decode)
+    monkeypatch.setattr(prepare_ball_dataset, "_resolve_clip_offset",
+                        lambda *a, **k: -1)
+
+    train_dir = tmp_path / "train"
+    train_dir.mkdir()
+    path = train_dir / "Bay_mov-0000_jpg.jpg"
+    _imwrite_unicode(path, _solid_frame(np, 200),
+                     [int(cv2.IMWRITE_JPEG_QUALITY), 95])
+    # record["frame"] == 0: the min-labelled/edge record.
+    record = {"path": path, "clip": "Bay", "frame": 0, "width": 64, "height": 64,
+              "balls": [{"bbox": [24, 24, 8, 8], "streak": None}]}
+    plans = plan_crops(record, crop=16, scale=1.0, rng=random.Random(0),
+                       positives=1, negatives=0, jitter=0.0, min_visible=0.5)
+    plans_by_record = {path: plans}
+
+    render_split([record], plans_by_record, tmp_path, "train", 16, 95,
+                 seq_frames=3, clip_videos={"Bay": Path("fake.mp4")},
+                 clip_last_frame={"Bay": 8})
+
+    anchor_name = crop_file_name(path.stem, 0)
+    stem = anchor_name[:-len(".jpg")]
+    tm1_name, tp1_name = f"{stem}.tm1.jpg", f"{stem}.tp1.jpg"
+
+    anchor_tile = _imread_unicode(train_dir / anchor_name)
+    tm1_tile = _imread_unicode(train_dir / tm1_name)
+    tp1_tile = _imread_unicode(train_dir / tp1_name)
+
+    # tm1's target (-2) was never fetched -- repeat-ANCHOR: tm1 must equal
+    # the anchor crop itself.
+    assert tm1_tile.mean() == pytest.approx(anchor_tile.mean(), abs=2)
+    # true_t = 0 - 1 = -1: tp1's target (0) was actually fetched -> real
+    # decoded content (content(0) = 0).
+    assert tp1_tile.mean() == pytest.approx(0, abs=5)
+    assert tm1_tile.mean() != pytest.approx(tp1_tile.mean(), abs=5)

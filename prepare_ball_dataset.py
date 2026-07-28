@@ -41,7 +41,17 @@ from collections import defaultdict
 from pathlib import Path
 
 SCHEMA_VERSION = "ball-crops-v1"
+# Schema used once any image entry carries a "sequence" field (--seq-frames >
+# 1): consumers that don't understand 3-frame sequences can key off this to
+# fall back to the anchor-only crop rather than choking on the extra field.
+SCHEMA_VERSION_SEQ = "ball-crops-v2"
 CLASS_NAME = "ball"
+
+# Mean |pixel diff| tolerance for verify_frame_alignment: JPEG recompression
+# of the export image plus a decode of the same source frame should land well
+# under this; a genuine off-by-N frame mismatch does not.
+ALIGNMENT_MAX_ABS_DIFF = 12.0
+VIDEO_EXTENSIONS = (".mp4", ".mov", ".MP4", ".MOV")
 
 # Roboflow names frames "<clip>_mov-0042_jpg.rf.<hash>.jpg"; the clip prefix is
 # the split unit, and the frame number is what reveals burst structure.
@@ -392,7 +402,282 @@ def _imwrite_unicode(path, image, params=None):
     buffer.tofile(str(path))
 
 
-def render_split(records, plans_by_record, out_dir, split, crop, quality):
+def find_clip_videos(clips_dir, records):
+    """{record["clip"]: source video Path} for every clip a record needs.
+
+    `record["clip"]` (from `clip_and_frame`) is the readable source name --
+    spaces, unicode, whatever the export carried -- not a slug. Matching it
+    against a video filename therefore has to slug *both* sides through
+    `ascii_slug` (the same transform crop filenames go through), not just
+    the video's: comparing a raw readable clip name against an already-
+    slugged video stem never matches, which would make every video look
+    missing. The returned dict is still keyed by the readable name, since
+    that's what callers already have on hand as `record["clip"]`.
+
+    Dies listing every missing clip by its readable name (so an operator can
+    act on it) at once rather than one-by-one, so a --clips-dir pointed at
+    the wrong folder fails in a single readable message. Also dies loudly if
+    --clips-dir itself doesn't exist or isn't a directory, rather than
+    leaking a raw FileNotFoundError.
+    """
+    clips_dir = Path(clips_dir)
+    try:
+        candidates = sorted(clips_dir.iterdir())
+    except FileNotFoundError:
+        raise SystemExit(f"--clips-dir {clips_dir} does not exist.")
+    except NotADirectoryError:
+        raise SystemExit(f"--clips-dir {clips_dir} is not a directory.")
+
+    by_slug = {}
+    for path in candidates:
+        if path.suffix in VIDEO_EXTENSIONS:
+            by_slug.setdefault(ascii_slug(path.stem), path)
+    needed = sorted({r["clip"] for r in records})
+    missing = [clip for clip in needed if ascii_slug(clip) not in by_slug]
+    if missing:
+        raise SystemExit(
+            f"--clips-dir {clips_dir} has no video for clip(s): {missing}. "
+            f"Sequence crops need the source footage for neighbour frames.")
+    return {clip: by_slug[ascii_slug(clip)] for clip in needed}
+
+
+def decode_frames(video_path, indices):
+    """{index: frame_bgr} for the requested frame indices, one sequential pass.
+
+    Sequential read only, never a CAP_PROP_POS_FRAMES seek: HEVC seeking
+    lands on the nearest keyframe unreliably across OpenCV builds, and a
+    silently wrong frame is exactly the poison sequence crops must not
+    produce. Fatal if the video ends before a requested index is reached --
+    callers are expected to have already clamped indices to the clip's known
+    frame range (see `_clamp_frame`), so hitting this means the clip is
+    shorter than the export claims, which is worth stopping for.
+    """
+    import cv2
+
+    wanted = sorted(set(indices))
+    out = {}
+    cap = cv2.VideoCapture(str(video_path))
+    try:
+        if not cap.isOpened():
+            raise SystemExit(f"Could not open video: {video_path}")
+        index = 0
+        current = None
+        for target in wanted:
+            while index <= target:
+                ok, decoded = cap.read()
+                if not ok:
+                    raise SystemExit(
+                        f"{video_path} ended at frame {index}; needed {target}")
+                current, index = decoded, index + 1
+            out[target] = current
+    finally:
+        cap.release()
+    return out
+
+
+def verify_frame_alignment(video_frame, export_image):
+    """Mean absolute per-pixel difference between a decoded video frame and
+    the export image it should match. Resizes the export image first if the
+    export was scaled down from the source resolution, since a resolution
+    mismatch would otherwise swamp a genuine content mismatch."""
+    import cv2
+    import numpy as np
+
+    if video_frame.shape[:2] != export_image.shape[:2]:
+        export_image = cv2.resize(
+            export_image, (video_frame.shape[1], video_frame.shape[0]))
+    return float(np.mean(np.abs(
+        video_frame.astype(np.int16) - export_image.astype(np.int16))))
+
+
+def _clamp_frame(index, last):
+    """Keep a frame index inside [0, last] (no upper clamp if last is None).
+
+    This is the dataset-side counterpart of ball_track_offline's
+    `_centered_windows`, which pads a clip's edges by repeating the first/
+    last frame rather than reaching outside the clip; using the same clamp
+    here keeps training aligned with what the runtime model actually sees.
+
+    `last` (`clip_last_frame` in callers) is the *max labelled* frame in the
+    clip, not the video's real frame count -- the dataset side has no other
+    signal for where a clip ends. That means the highest-labelled record in
+    every clip gets a padded (repeated-last-frame) tp1 even when real footage
+    exists beyond it. Deliberate: a slightly duller tp1 for one record per
+    clip is a small, known density cost, versus needing extra video-metadata
+    plumbing just to avoid it.
+    """
+    index = max(index, 0)
+    if last is not None:
+        index = min(index, last)
+    return index
+
+
+def _needed_indices(clip_records, last_frame):
+    """Every index that could be needed to resolve alignment at offset
+    -1/0/+1 and then build the resulting window, for one clip's records --
+    the ±2 span around each labelled frame covers every offset's window."""
+    wanted = set()
+    for record in clip_records:
+        for delta in (-2, -1, 0, 1, 2):
+            wanted.add(_clamp_frame(record["frame"] + delta, last_frame))
+    return sorted(wanted)
+
+
+def _resolve_clip_offset(clip, clip_records, decoded, export_images, last_frame,
+                         tolerance):
+    """0, -1, or +1: the single frame-index shift whose whole-clip alignment
+    is best, among candidates under `tolerance`.
+
+    Selection is argmin, not first-pass-wins. On static-camera footage the
+    whole-frame mean|diff| between adjacent frames is usually already under
+    `tolerance` at offset 0 -- two near-duplicate frames just don't differ by
+    much -- so a first-offset-that-passes rule would silently keep offset 0
+    even when +1 or -1 is a strictly better fit. That is exactly the silent
+    poison this check exists to prevent: it would keep passing the tolerance
+    gate while quietly aligning every sequence one frame off. Each
+    candidate's score is the WORST (max) per-record diff, which is what
+    preserves the "a single offset aligns every record in the clip"
+    requirement -- a candidate is only picked if it is both the best of the
+    three AND still under tolerance. `export_images` is precomputed once per
+    record by the caller so this reads each export JPEG once, not once per
+    candidate offset.
+
+    Residual limitation: a genuinely ambiguous clip whose diffs tie across
+    offsets resolves to whichever candidate is listed first in `(0, -1, 1)`
+    -- ties are not this check's problem to solve, only misalignment is.
+    """
+    scores = {}
+    for offset in (0, -1, 1):
+        diffs = []
+        for record in clip_records:
+            idx = _clamp_frame(record["frame"] + offset, last_frame)
+            frame = decoded.get(idx)
+            export_image = export_images.get(record["path"])
+            if frame is None or export_image is None:
+                diffs = None
+                break
+            diffs.append(verify_frame_alignment(frame, export_image))
+        scores[offset] = max(diffs) if diffs else float("inf")
+
+    best_offset = min(scores, key=lambda o: scores[o])
+    if scores[best_offset] <= tolerance:
+        return best_offset
+    raise SystemExit(
+        f"sequence alignment failed for clip {clip!r}: no single frame offset "
+        f"(0, -1, +1) aligns every export image in this clip to its decoded "
+        f"video frame -- the clip's video and export are out of sync.")
+
+
+def _decode_sequences(records, plans_by_record, clip_videos, clip_last_frame, crop,
+                      tolerance=ALIGNMENT_MAX_ABS_DIFF):
+    """{(record.path, plan_index): (tm1_tile, tp1_tile)} cropped-to-window
+    neighbour-frame patches for every planned crop of every record with a
+    matched video.
+
+    Decoded and cropped one clip at a time -- peak memory is bounded by a
+    single clip's native-resolution frames, not the whole split's. The naive
+    version of this function decoded every clip in the split up front and
+    stored two full native-resolution frames per record before any cropping
+    happened, which is multiple GB at 1080p and tens of GB at 4K on the real
+    dataset. Cropping to the planned window immediately, inside this
+    per-clip loop, means only tiny tiles (`crop`x`crop`) survive past a
+    clip's iteration -- the full decoded frames for one clip are eligible
+    for garbage collection as soon as the loop moves to the next clip.
+    """
+    import cv2                            # lazy: geometry is testable without it
+
+    def _prepare(native_frame, native_shape, scale, interp):
+        """Resize-to-export-native-shape then apply the dataset scale --
+        the one path every neighbour frame (real or anchor-repeat) goes
+        through, so a crop window means the same thing regardless of which
+        pixel source filled it."""
+        if native_frame.shape[:2] != native_shape:
+            native_frame = cv2.resize(native_frame, (native_shape[1], native_shape[0]))
+        if scale != 1.0:
+            native_frame = cv2.resize(native_frame, None, fx=scale, fy=scale,
+                                      interpolation=interp)
+        return native_frame
+
+    by_clip = defaultdict(list)
+    for record in records:
+        if (record["path"] in plans_by_record and record["frame"] is not None
+                and record["clip"] in clip_videos):
+            by_clip[record["clip"]].append(record)
+
+    tiles = {}
+    for clip, clip_records in sorted(by_clip.items()):
+        video = clip_videos[clip]
+        last_frame = clip_last_frame.get(clip)
+        decoded = decode_frames(video, _needed_indices(clip_records, last_frame))
+        # Read each record's export image once here -- shared by the offset
+        # probe below, the anchor-repeat fallback, and the native-shape
+        # resize -- rather than once per candidate offset (up to 3x the
+        # same JPEG).
+        export_images = {record["path"]: _imread_unicode(record["path"])
+                         for record in clip_records}
+        offset = _resolve_clip_offset(
+            clip, clip_records, decoded, export_images, last_frame, tolerance)
+        for record in clip_records:
+            # true_t is the anchor's real VIDEO-space decode index -- left
+            # UNCLAMPED. Clamping it against `last_frame` (label/unshifted
+            # space) while true_t and `decoded`'s keys live in shifted
+            # (video) space was the bug: for the max-labelled record under a
+            # detected +1 offset, true_t = last_frame + 1 clamped down to
+            # last_frame, which then made tm1 and tp1 both resolve to
+            # last_frame - 1 -- [t-2, t, t-1] relative to the real anchor,
+            # not the repeat-ANCHOR convention every edge case must follow.
+            #
+            # Instead: compute tm1/tp1's target indices unclamped, and look
+            # each one up in `decoded` (whatever `_needed_indices` actually
+            # fetched, in UNSHIFTED/label space, clamped to
+            # [0, last_frame]). A target outside that range -- clip start,
+            # clip end, or a nonzero offset pushing past either edge -- is
+            # never a key in `decoded`, and is padded with the record's OWN
+            # export image instead, run through the identical scale-then-
+            # window path as a real neighbour. The export image IS the
+            # anchor frame, so this is exactly repeat-ANCHOR: [t-1, t, t] at
+            # a clip's end, [t, t, t+1] at its start, symmetric under either
+            # sign of offset. This intentionally does not widen
+            # `_needed_indices` to chase every real frame a nonzero offset
+            # could reach -- same "duller edge, no extra video-metadata
+            # plumbing" trade-off `_clamp_frame` already documents for the
+            # offset=0 case.
+            true_t = record["frame"] + offset
+            export_image = export_images[record["path"]]
+            native_shape = export_image.shape[:2]
+            plans = plans_by_record[record["path"]]
+            scale = plans[0]["scale"]
+            interp = cv2.INTER_AREA if scale < 1 else cv2.INTER_CUBIC
+
+            tm1_raw = decoded.get(true_t - 1)
+            tp1_raw = decoded.get(true_t + 1)
+            tm1_frame = _prepare(
+                tm1_raw if tm1_raw is not None else export_image,
+                native_shape, scale, interp)
+            tp1_frame = _prepare(
+                tp1_raw if tp1_raw is not None else export_image,
+                native_shape, scale, interp)
+
+            for index, plan in enumerate(plans):
+                ox, oy = plan["origin"]
+                # .copy(): a bare slice is a numpy VIEW, which keeps the
+                # full-resolution tm1_frame/tp1_frame array alive in memory
+                # for as long as the tile survives -- i.e. for the rest of
+                # this function, defeating the whole point of cropping early.
+                # The copy is what actually lets the full frame be collected
+                # once this clip's iteration ends.
+                tiles[(record["path"], index)] = (
+                    tm1_frame[oy:oy + crop, ox:ox + crop].copy(),
+                    tp1_frame[oy:oy + crop, ox:ox + crop].copy())
+        # `decoded`, `export_images`, and every tm1_frame/tp1_frame above go
+        # out of scope here as the loop advances to the next clip -- nothing
+        # from this clip is retained past this point except the small tiles
+        # already copied into `tiles`.
+    return tiles
+
+
+def render_split(records, plans_by_record, out_dir, split, crop, quality,
+                 *, seq_frames=1, clip_videos=None, clip_last_frame=None):
     """Write crop JPEGs and the split's COCO json. Returns the manifest slice.
 
     `crop_file_name` keys off `record["path"].stem`, dropping the parent
@@ -401,6 +686,12 @@ def render_split(records, plans_by_record, out_dir, split, crop, quality):
     second write would silently overwrite the first's pixels while the COCO
     json still carried two distinct `images` entries. `emitted` below turns
     that into a loud failure instead.
+
+    `seq_frames=1` (the default) is byte-identical to the original single-
+    frame behaviour. `seq_frames > 1` also cuts `<stem>.tm1.jpg` /
+    `<stem>.tp1.jpg` beside each anchor crop from `clip_videos`' source
+    footage, and records `"sequence": [tm1, anchor, tp1]` on the image entry
+    -- see `_decode_sequences` for the decode/alignment work.
     """
     import cv2                            # lazy: geometry is testable without it
 
@@ -408,6 +699,16 @@ def render_split(records, plans_by_record, out_dir, split, crop, quality):
     images_dir.mkdir(parents=True, exist_ok=True)
     images, annotations = [], []
     emitted = {}                           # crop filename -> source path
+
+    # {(record.path, plan_index): (tm1_tile, tp1_tile)} -- already cropped to
+    # the planned window and dataset-scale by _decode_sequences, one clip's
+    # native frames at a time, so this dict holds only small tiles rather
+    # than full-resolution frames for the whole split.
+    tiles = {}
+    if seq_frames > 1 and clip_videos:
+        tiles = _decode_sequences(
+            records, plans_by_record, clip_videos, clip_last_frame or {}, crop)
+
     for record in records:
         plans = plans_by_record.get(record["path"])
         if not plans:
@@ -416,9 +717,11 @@ def render_split(records, plans_by_record, out_dir, split, crop, quality):
         if frame is None:
             continue
         scale = plans[0]["scale"]
+
         if scale != 1.0:
-            frame = cv2.resize(frame, None, fx=scale, fy=scale,
-                               interpolation=cv2.INTER_AREA if scale < 1 else cv2.INTER_CUBIC)
+            interp = cv2.INTER_AREA if scale < 1 else cv2.INTER_CUBIC
+            frame = cv2.resize(frame, None, fx=scale, fy=scale, interpolation=interp)
+
         for index, plan in enumerate(plans):
             ox, oy = plan["origin"]
             tile = frame[oy:oy + crop, ox:ox + crop]
@@ -433,10 +736,28 @@ def render_split(records, plans_by_record, out_dir, split, crop, quality):
             emitted[name] = record["path"]
             _imwrite_unicode(images_dir / name, tile,
                              [int(cv2.IMWRITE_JPEG_QUALITY), quality])
+
+            sequence_names = None
+            tm1_tp1 = tiles.get((record["path"], index))
+            if tm1_tp1 is not None:
+                tm1_tile, tp1_tile = tm1_tp1
+                stem = name[:-len(".jpg")] if name.endswith(".jpg") else name
+                tm1_name, tp1_name = f"{stem}.tm1.jpg", f"{stem}.tp1.jpg"
+                _imwrite_unicode(images_dir / tm1_name, tm1_tile,
+                                 [int(cv2.IMWRITE_JPEG_QUALITY), quality])
+                _imwrite_unicode(images_dir / tp1_name, tp1_tile,
+                                 [int(cv2.IMWRITE_JPEG_QUALITY), quality])
+                # Oldest-first, labelled frame in the middle -- the centred-
+                # window convention _centered_windows also serves at runtime.
+                sequence_names = [tm1_name, name, tp1_name]
+
             image_id = len(images) + 1
-            images.append({"id": image_id, "file_name": name,
+            image_entry = {"id": image_id, "file_name": name,
                            "width": crop, "height": crop,
-                           "clip": record["clip"], "source_frame": record["frame"]})
+                           "clip": record["clip"], "source_frame": record["frame"]}
+            if sequence_names:
+                image_entry["sequence"] = sequence_names
+            images.append(image_entry)
             for box in plan["boxes"]:
                 annotations.append({
                     "id": len(annotations) + 1,
@@ -469,7 +790,17 @@ def render_split(records, plans_by_record, out_dir, split, crop, quality):
 
 def build(source, out, crop, positives, negatives, jitter, min_visible,
           min_source_width, min_frame_gap, target_ball_px, val_clips, test_clips,
-          seed, quality):
+          seed, quality, *, seq_frames=1, clips_dir=None):
+    if seq_frames % 2 == 0:
+        raise SystemExit(
+            f"--seq-frames must be odd (got {seq_frames}): sequence length "
+            f"must be odd -- the labeled frame sits in the middle of a "
+            f"centered window.")
+    if seq_frames > 1 and not clips_dir:
+        raise SystemExit(
+            f"--seq-frames {seq_frames} needs --clips-dir pointing at the "
+            f"source videos, to decode the t-1/t+1 neighbour frames.")
+
     records, categories = load_export(source)
     total_frames = len(records)
 
@@ -482,6 +813,14 @@ def build(source, out, crop, positives, negatives, jitter, min_visible,
     kept, thinned = thin_bursts(kept, min_frame_gap)
     scales = clip_scale_factors(kept, target_ball_px)
     splits = split_by_clip(kept, val_clips, test_clips)
+
+    clip_videos = find_clip_videos(clips_dir, kept) if seq_frames > 1 else None
+    clip_last_frame = {}
+    if seq_frames > 1:
+        for record in kept:
+            if record["frame"] is not None:
+                clip_last_frame[record["clip"]] = max(
+                    clip_last_frame.get(record["clip"], record["frame"]), record["frame"])
 
     rng = random.Random(seed)
     plans_by_record, per_split = {}, {}
@@ -504,11 +843,12 @@ def build(source, out, crop, positives, negatives, jitter, min_visible,
     manifest_splits = {}
     for split in ("train", "val", "test"):
         manifest_splits[split] = render_split(
-            splits.get(split, []), plans_by_record, out, split, crop, quality)
+            splits.get(split, []), plans_by_record, out, split, crop, quality,
+            seq_frames=seq_frames, clip_videos=clip_videos, clip_last_frame=clip_last_frame)
 
     ball_widths = sorted(b["bbox"][2] for r in kept for b in r["balls"])
     manifest = {
-        "schema_version": SCHEMA_VERSION,
+        "schema_version": SCHEMA_VERSION_SEQ if seq_frames > 1 else SCHEMA_VERSION,
         "source": str(source),
         "source_categories": categories,
         "crop": crop,
@@ -570,6 +910,13 @@ def parse_args():
     parser.add_argument("--test-clips", nargs="*", default=[])
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--jpeg-quality", type=int, default=95)
+    parser.add_argument("--clips-dir", type=Path, default=None,
+                        help="Source video folder, for decoding sequence "
+                             "neighbour frames. Required if --seq-frames > 1.")
+    parser.add_argument("--seq-frames", type=int, default=1,
+                        help="1 = today's single-frame crops (default). >1 "
+                             "(must be odd) also cuts t-1/t+1 crops from "
+                             "--clips-dir, aligned to the labelled frame.")
     return parser.parse_args()
 
 
@@ -579,7 +926,9 @@ def main():
         args.source.expanduser(), args.out, args.crop, args.positives_per_ball,
         args.negatives_per_frame, args.jitter, args.min_visible,
         args.min_source_width, args.min_frame_gap, args.target_ball_px,
-        args.val_clips, args.test_clips, args.seed, args.jpeg_quality)
+        args.val_clips, args.test_clips, args.seed, args.jpeg_quality,
+        seq_frames=args.seq_frames,
+        clips_dir=args.clips_dir.expanduser() if args.clips_dir else None)
 
     print(f"{manifest['source_frames_kept']}/{manifest['source_frames_seen']} "
           f"source frames kept -> {args.out}")

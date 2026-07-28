@@ -97,3 +97,51 @@ def test_calibration_latest_500_on_unreadable_newest(runs_dir):
     response = client.get("/api/calibration/latest")
     assert response.status_code == 500
     assert response.get_json()["ok"] is False
+
+
+import cv2
+
+import court_model
+from judge_call import load_calibration_lines
+from synthetic_court import court_camera, render_court
+
+
+def _jpeg(image):
+    ok, buffer = cv2.imencode(".jpg", image, [int(cv2.IMWRITE_JPEG_QUALITY), 92])
+    assert ok
+    return buffer.tobytes()
+
+
+def test_detect_court_endpoint_returns_usable_calibration_structures():
+    import io
+
+    client = _client()
+    # focal_px=700 keeps the short line inside the frame (the default focal
+    # pushes it below frame) without swinging so wide it fabricates a
+    # phantom line that outranks the real one (focal_px=500 does that) --
+    # see synthetic_court.court_camera and tests/synthetic3d.make_camera.
+    image, _ = render_court(court_camera(focal_px=700.0), noise_sigma=2.0)
+    payload = {"frames": [(io.BytesIO(_jpeg(image)), f"frame{index}.jpg")
+                          for index in range(3)]}
+
+    body = client.post("/api/detect-court", data=payload,
+                       content_type="multipart/form-data").get_json()
+
+    assert body["ok"] is True and body["status"] == "ok"
+    calibration = {
+        "schema": "squash-calibration-v2",
+        "frame_width": body["frame_width"],
+        "frame_height": body["frame_height"],
+        "lines": body["lines"],
+        "planes": body["planes"],
+        "distortion": None,
+    }
+    assert load_calibration_lines(calibration) is not None
+    assert court_model.load_floor_calibration(calibration) is not None
+
+
+def test_detect_court_endpoint_is_200_with_a_status_when_given_nothing():
+    client = _client()
+    body = client.post("/api/detect-court", data={},
+                       content_type="multipart/form-data").get_json()
+    assert body["ok"] is True and body["status"] == "no_frames"
