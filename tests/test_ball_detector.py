@@ -292,3 +292,103 @@ def test_detect_frame_pads_frame_smaller_than_tile():
     assert len(detections) == 1
     assert detections[0]["x"] == pytest.approx(100.0)
     assert detections[0]["y"] == pytest.approx(100.0)
+
+
+# -- detect_frame_stack ------------------------------------------------------
+#
+# Same tile-local -> full-frame mapping and cross-tile merge as detect_frame,
+# but the runner is handed co-located crops from every frame in the stack,
+# concatenated oldest-first along the channel axis. Detections locate the
+# ball in the MIDDLE frame -- the runner decodes the centre MIMO channel.
+
+
+def _stack_manifest(tmp_path=None, **overrides):
+    values = dict(frames_per_input=3, decode="heatmap_peak",
+                  heatmap_stride=2, nominal_ball_px=12.0)
+    values.update(overrides)
+    return _manifest(tmp_path, **values)
+
+
+class _StackShortRunner:
+    """Returns one result fewer than it was handed -- the stack-path analogue
+    of _ShortRunner."""
+
+    def run_batch(self, stacks):
+        return [[] for _ in stacks[:-1]]
+
+
+def test_detect_frame_stack_concatenates_frames_oldest_first():
+    manifest = _stack_manifest()
+    frames = [np.full((416, 416, 3), fill, dtype=np.uint8) for fill in (10, 20, 30)]
+
+    class Probe:
+        def run_batch(self, stacks):
+            (stack,) = stacks
+            assert stack.shape[2] == 9, stack.shape
+            assert stack[0, 0, 0] == 10 and stack[0, 0, 3] == 20 and stack[0, 0, 6] == 30
+            return [[(100.0, 50.0, 12.0, 12.0, 0.9, 0)]]
+
+    detections = ball_detector.detect_frame_stack(Probe(), frames, manifest)
+
+    assert len(detections) == 1
+    assert detections[0]["x"] == pytest.approx(100.0)
+    assert detections[0]["y"] == pytest.approx(50.0)
+    assert detections[0]["class"] == "ball"
+
+
+def test_detect_frame_stack_rejects_wrong_frame_count():
+    manifest = _stack_manifest()
+    frames = [np.zeros((416, 416, 3), dtype=np.uint8)] * 2
+
+    with pytest.raises(ValueError, match="frames_per_input"):
+        ball_detector.detect_frame_stack(_StackShortRunner(), frames, manifest)
+
+
+def test_detect_frame_stack_rejects_mismatched_frame_shapes():
+    manifest = _stack_manifest()
+    frames = [np.zeros((416, 416, 3), dtype=np.uint8),
+              np.zeros((416, 416, 3), dtype=np.uint8),
+              np.zeros((832, 416, 3), dtype=np.uint8)]
+
+    with pytest.raises(ValueError, match="shape"):
+        ball_detector.detect_frame_stack(_StackShortRunner(), frames, manifest)
+
+
+def test_detect_frame_stack_maps_tile_local_peak_to_full_frame():
+    # 4K stack, peak in a non-first tile -- port of the v1 mapping test. Batch
+    # covers all 66 tiles so the fake stays simple (index 0 == first window).
+    manifest = _stack_manifest(max_batch_tiles=66)
+    frames = [np.zeros((2160, 3840, 3), dtype=np.uint8)] * 3
+
+    class OneHit:
+        def run_batch(self, stacks):
+            out = [[] for _ in stacks]
+            out[0] = [(10.0, 20.0, 12.0, 12.0, 0.9, 0)]
+            return out
+
+    detections = ball_detector.detect_frame_stack(OneHit(), frames, manifest)
+
+    assert len(detections) == 1
+    assert detections[0]["x"] == pytest.approx(10.0)
+    assert detections[0]["y"] == pytest.approx(20.0)
+
+
+def test_detect_frame_stack_rejects_a_runner_returning_fewer_results_than_crops():
+    # Without strict zip this truncates in silence, and every box after the
+    # gap is added to the wrong tile origin.
+    manifest = _stack_manifest()
+    frames = [np.zeros((2160, 3840, 3), dtype=np.uint8)] * 3
+
+    with pytest.raises(ValueError, match="shorter"):
+        ball_detector.detect_frame_stack(_StackShortRunner(), frames, manifest)
+
+
+def test_detect_frame_stack_drops_boxes_below_manifest_conf_threshold():
+    manifest = _stack_manifest(conf_threshold=0.5)
+    frames = [np.zeros((416, 416, 3), dtype=np.uint8)] * 3
+
+    class LowScore:
+        def run_batch(self, stacks):
+            return [[(200.0, 200.0, 12.0, 12.0, 0.4, 0)] for _ in stacks]
+
+    assert ball_detector.detect_frame_stack(LowScore(), frames, manifest) == []
