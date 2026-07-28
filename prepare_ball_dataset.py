@@ -512,13 +512,6 @@ def _clamp_frame(index, last):
     return index
 
 
-def _sequence_targets(frame_index, last_frame):
-    """(tm1, t, tp1) indices for a centred window around `frame_index`,
-    clamped into the clip so the first/last frame repeats at the edges."""
-    return (_clamp_frame(frame_index - 1, last_frame), frame_index,
-            _clamp_frame(frame_index + 1, last_frame))
-
-
 def _needed_indices(clip_records, last_frame):
     """Every index that could be needed to resolve alignment at offset
     -1/0/+1 and then build the resulting window, for one clip's records --
@@ -593,6 +586,18 @@ def _decode_sequences(records, plans_by_record, clip_videos, clip_last_frame, cr
     """
     import cv2                            # lazy: geometry is testable without it
 
+    def _prepare(native_frame, native_shape, scale, interp):
+        """Resize-to-export-native-shape then apply the dataset scale --
+        the one path every neighbour frame (real or anchor-repeat) goes
+        through, so a crop window means the same thing regardless of which
+        pixel source filled it."""
+        if native_frame.shape[:2] != native_shape:
+            native_frame = cv2.resize(native_frame, (native_shape[1], native_shape[0]))
+        if scale != 1.0:
+            native_frame = cv2.resize(native_frame, None, fx=scale, fy=scale,
+                                      interpolation=interp)
+        return native_frame
+
     by_clip = defaultdict(list)
     for record in records:
         if (record["path"] in plans_by_record and record["frame"] is not None
@@ -605,44 +610,53 @@ def _decode_sequences(records, plans_by_record, clip_videos, clip_last_frame, cr
         last_frame = clip_last_frame.get(clip)
         decoded = decode_frames(video, _needed_indices(clip_records, last_frame))
         # Read each record's export image once here -- shared by the offset
-        # probe below and the native-shape resize that follows -- rather
-        # than once per candidate offset (up to 3x the same JPEG).
+        # probe below, the anchor-repeat fallback, and the native-shape
+        # resize -- rather than once per candidate offset (up to 3x the
+        # same JPEG).
         export_images = {record["path"]: _imread_unicode(record["path"])
                          for record in clip_records}
         offset = _resolve_clip_offset(
             clip, clip_records, decoded, export_images, last_frame, tolerance)
         for record in clip_records:
-            # Clamp the shifted anchor into the clip before deriving tm1/tp1
-            # from it: without this, a record at the max-labelled edge plus
-            # a nonzero offset computes an anchor past `last_frame`, and the
-            # tp1 clamp (below, against the unshifted `last_frame`) silently
-            # collapses onto tm1's index instead of repeating the anchor --
-            # [t-1, t, t-1] instead of the intended edge-padding convention
-            # [t-1, t, t].
-            true_t = _clamp_frame(record["frame"] + offset, last_frame)
-            tm1, _, tp1 = _sequence_targets(true_t, last_frame)
-            tm1_frame, tp1_frame = decoded[tm1], decoded[tp1]
-
+            # true_t is the anchor's real VIDEO-space decode index -- left
+            # UNCLAMPED. Clamping it against `last_frame` (label/unshifted
+            # space) while true_t and `decoded`'s keys live in shifted
+            # (video) space was the bug: for the max-labelled record under a
+            # detected +1 offset, true_t = last_frame + 1 clamped down to
+            # last_frame, which then made tm1 and tp1 both resolve to
+            # last_frame - 1 -- [t-2, t, t-1] relative to the real anchor,
+            # not the repeat-ANCHOR convention every edge case must follow.
+            #
+            # Instead: compute tm1/tp1's target indices unclamped, and look
+            # each one up in `decoded` (whatever `_needed_indices` actually
+            # fetched, in UNSHIFTED/label space, clamped to
+            # [0, last_frame]). A target outside that range -- clip start,
+            # clip end, or a nonzero offset pushing past either edge -- is
+            # never a key in `decoded`, and is padded with the record's OWN
+            # export image instead, run through the identical scale-then-
+            # window path as a real neighbour. The export image IS the
+            # anchor frame, so this is exactly repeat-ANCHOR: [t-1, t, t] at
+            # a clip's end, [t, t, t+1] at its start, symmetric under either
+            # sign of offset. This intentionally does not widen
+            # `_needed_indices` to chase every real frame a nonzero offset
+            # could reach -- same "duller edge, no extra video-metadata
+            # plumbing" trade-off `_clamp_frame` already documents for the
+            # offset=0 case.
+            true_t = record["frame"] + offset
             export_image = export_images[record["path"]]
-            # The decoded video frame and the export image are both meant to
-            # be the same source pixels, but the export may have been
-            # resized on the way out of Roboflow; match the export's native
-            # size before the dataset-level `scale` (below) is applied, same
-            # as the anchor frame gets in render_split.
             native_shape = export_image.shape[:2]
-            if tm1_frame.shape[:2] != native_shape:
-                tm1_frame = cv2.resize(tm1_frame, (native_shape[1], native_shape[0]))
-            if tp1_frame.shape[:2] != native_shape:
-                tp1_frame = cv2.resize(tp1_frame, (native_shape[1], native_shape[0]))
-
             plans = plans_by_record[record["path"]]
             scale = plans[0]["scale"]
-            if scale != 1.0:
-                interp = cv2.INTER_AREA if scale < 1 else cv2.INTER_CUBIC
-                tm1_frame = cv2.resize(tm1_frame, None, fx=scale, fy=scale,
-                                       interpolation=interp)
-                tp1_frame = cv2.resize(tp1_frame, None, fx=scale, fy=scale,
-                                       interpolation=interp)
+            interp = cv2.INTER_AREA if scale < 1 else cv2.INTER_CUBIC
+
+            tm1_raw = decoded.get(true_t - 1)
+            tp1_raw = decoded.get(true_t + 1)
+            tm1_frame = _prepare(
+                tm1_raw if tm1_raw is not None else export_image,
+                native_shape, scale, interp)
+            tp1_frame = _prepare(
+                tp1_raw if tp1_raw is not None else export_image,
+                native_shape, scale, interp)
 
             for index, plan in enumerate(plans):
                 ox, oy = plan["origin"]

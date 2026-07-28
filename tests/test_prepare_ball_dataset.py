@@ -627,15 +627,16 @@ def test_resolve_clip_offset_still_fails_loudly_when_every_candidate_is_bad():
             tolerance=12.0)
 
 
-def test_sequence_edge_padding_stays_anchor_repeat_under_positive_offset(
+def test_sequence_edge_padding_repeats_anchor_under_positive_offset(
         tmp_path, monkeypatch):
-    # Bug: with a detected +1 offset, the max-labelled record's tp1 used to
-    # clamp in UNSHIFTED index space, producing [t-1, t, t-1] (a past frame
-    # repeated into the future slot) instead of the repeat-ANCHOR convention
-    # every other edge case follows ([t-1, t, t]). Offset detection itself is
-    # orthogonal to this -- force it via monkeypatch -- and prove tm1 and tp1
-    # land on distinct decoded frames, with tp1 repeating the (clamped)
-    # anchor rather than collapsing onto tm1's value.
+    # With a detected +1 offset, the max-labelled record's true VIDEO-space
+    # anchor index is last_frame + 1 -- one past anything `_needed_indices`
+    # actually fetched. tp1 must repeat the ANCHOR (the record's own export
+    # image, scaled/windowed exactly like every other frame) -- not some
+    # other decoded frame, and not collapse onto tm1's value. tm1 is the
+    # real predecessor, since decode index (true_t - 1) genuinely was
+    # fetched. Offset detection itself is orthogonal to this -- forced via
+    # monkeypatch.
     cv2 = pytest.importorskip("cv2")
     np = pytest.importorskip("numpy")
 
@@ -648,7 +649,7 @@ def test_sequence_edge_padding_stays_anchor_repeat_under_positive_offset(
     train_dir = tmp_path / "train"
     train_dir.mkdir()
     path = train_dir / "Bay_mov-0008_jpg.jpg"
-    _imwrite_unicode(path, _solid_frame(np, 999),
+    _imwrite_unicode(path, _solid_frame(np, 200),
                      [int(cv2.IMWRITE_JPEG_QUALITY), 95])
     # record["frame"] == clip_last_frame: the max-labelled/edge record.
     record = {"path": path, "clip": "Bay", "frame": 8, "width": 64, "height": 64,
@@ -665,13 +666,62 @@ def test_sequence_edge_padding_stays_anchor_repeat_under_positive_offset(
     stem = anchor_name[:-len(".jpg")]
     tm1_name, tp1_name = f"{stem}.tm1.jpg", f"{stem}.tp1.jpg"
 
-    tm1_mean = _imread_unicode(train_dir / tm1_name).mean()
-    tp1_mean = _imread_unicode(train_dir / tp1_name).mean()
-    # true_t clamps to 8 (last_frame): tm1 = decoded[7] = 70, tp1 =
-    # decoded[8] = 80 -- distinct values, tp1 repeating the clamped anchor
-    # rather than collapsing onto tm1's (the pre-fix code produced 80 for
-    # BOTH slots, since it clamped true_t=9 away only *after* computing
-    # tm1/tp1 from it, landing both on decoded[8]).
-    assert tm1_mean == pytest.approx(70, abs=5)
-    assert tp1_mean == pytest.approx(80, abs=5)
-    assert tm1_mean != pytest.approx(tp1_mean, abs=5)
+    anchor_tile = _imread_unicode(train_dir / anchor_name)
+    tm1_tile = _imread_unicode(train_dir / tm1_name)
+    tp1_tile = _imread_unicode(train_dir / tp1_name)
+
+    # true_t = 8 + 1 = 9: tm1's target (8) was actually fetched -> real
+    # decoded content (content(8) = 80).
+    assert tm1_tile.mean() == pytest.approx(80, abs=5)
+    # tp1's target (10) was never fetched -- repeat-ANCHOR: tp1 must equal
+    # the anchor crop itself.
+    assert tp1_tile.mean() == pytest.approx(anchor_tile.mean(), abs=2)
+    assert tm1_tile.mean() != pytest.approx(tp1_tile.mean(), abs=5)
+
+
+def test_sequence_edge_padding_repeats_anchor_under_negative_offset(
+        tmp_path, monkeypatch):
+    # Mirror of the above at the opposite corner: frame 0 under a detected
+    # -1 offset. true_t = -1 -- there is no video frame before the clip's
+    # start -- so tm1 must repeat the ANCHOR; tp1 is the real successor
+    # since decode index 0 genuinely was fetched.
+    cv2 = pytest.importorskip("cv2")
+    np = pytest.importorskip("numpy")
+
+    def fake_decode(video_path, indices):
+        return {i: _solid_frame(np, i * 10) for i in indices}
+    monkeypatch.setattr(prepare_ball_dataset, "decode_frames", fake_decode)
+    monkeypatch.setattr(prepare_ball_dataset, "_resolve_clip_offset",
+                        lambda *a, **k: -1)
+
+    train_dir = tmp_path / "train"
+    train_dir.mkdir()
+    path = train_dir / "Bay_mov-0000_jpg.jpg"
+    _imwrite_unicode(path, _solid_frame(np, 200),
+                     [int(cv2.IMWRITE_JPEG_QUALITY), 95])
+    # record["frame"] == 0: the min-labelled/edge record.
+    record = {"path": path, "clip": "Bay", "frame": 0, "width": 64, "height": 64,
+              "balls": [{"bbox": [24, 24, 8, 8], "streak": None}]}
+    plans = plan_crops(record, crop=16, scale=1.0, rng=random.Random(0),
+                       positives=1, negatives=0, jitter=0.0, min_visible=0.5)
+    plans_by_record = {path: plans}
+
+    render_split([record], plans_by_record, tmp_path, "train", 16, 95,
+                 seq_frames=3, clip_videos={"Bay": Path("fake.mp4")},
+                 clip_last_frame={"Bay": 8})
+
+    anchor_name = crop_file_name(path.stem, 0)
+    stem = anchor_name[:-len(".jpg")]
+    tm1_name, tp1_name = f"{stem}.tm1.jpg", f"{stem}.tp1.jpg"
+
+    anchor_tile = _imread_unicode(train_dir / anchor_name)
+    tm1_tile = _imread_unicode(train_dir / tm1_name)
+    tp1_tile = _imread_unicode(train_dir / tp1_name)
+
+    # tm1's target (-2) was never fetched -- repeat-ANCHOR: tm1 must equal
+    # the anchor crop itself.
+    assert tm1_tile.mean() == pytest.approx(anchor_tile.mean(), abs=2)
+    # true_t = 0 - 1 = -1: tp1's target (0) was actually fetched -> real
+    # decoded content (content(0) = 0).
+    assert tp1_tile.mean() == pytest.approx(0, abs=5)
+    assert tm1_tile.mean() != pytest.approx(tp1_tile.mean(), abs=5)
