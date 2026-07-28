@@ -309,6 +309,21 @@ this model and the YOLOX baseline meaningless. Output `manifest.json` will
 carry `"schema_version": "ball-crops-v2"` once any image has a `"sequence"`
 field (verified: `SCHEMA_VERSION_SEQ` is set exactly when `seq_frames > 1`).
 
+**If a clip fails the 0/±1 offset alignment** ("no single frame offset ...
+aligns every export image"), its Roboflow upload was not sampled 1:1 with
+video frames — measured on `Bay Club Clip Compilation 1.mov` (60 fps
+variable-frame-rate iPhone footage: export index 96 is video frame 163, 290
+is 516, non-uniformly). For such clips, pass `--frame-map <json>` mapping
+each export index to its true video frame:
+`{clip: {"video_frame_count": N, "frames": {"<export_index>": video_frame}}}`.
+Build the map by brute-force matching every export image against every
+decoded frame at thumbnail size (argmin of mean |diff|), and only trust it
+when every match is unambiguous (clear margin over the best frame outside
+the ±2 neighbourhood) and the mapping is strictly increasing in export
+order. Mapped anchors are still alignment-verified per frame under the same
+tolerance — the map changes where to look, never whether alignment is
+checked.
+
 ### 4b. Box: environment + checkpoint (see §1 for the reasoning)
 
 ```

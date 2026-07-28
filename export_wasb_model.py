@@ -34,6 +34,23 @@ from pathlib import Path
 SCHEMA_VERSION = "ball-model-v2"
 
 
+class AttrDict(dict):
+    """Dict allowing both cfg['MODEL'] and cfg.MODEL access.
+
+    HRNet.__init__ reads its config dict-style everywhere except
+    _make_deconv_layers, which does `cfg.MODEL.EXTRA` -- upstream feeds it an
+    OmegaConf node, so a plain yaml.safe_load dict crashes there (verified on
+    the pinned clone, 2026-07-28). Minimal bridge; values stay plain dicts.
+    """
+
+    def __getattr__(self, name):
+        try:
+            value = self[name]
+        except KeyError:
+            raise AttributeError(name)
+        return AttrDict(value) if isinstance(value, dict) else value
+
+
 def parse_args():
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -267,7 +284,7 @@ def main():
         def forward(self, x):
             return torch.sigmoid(self.wrapped(x))
 
-    cfg = yaml.safe_load(Path(args.wasb_cfg).read_text(encoding="utf-8"))
+    cfg = AttrDict(yaml.safe_load(Path(args.wasb_cfg).read_text(encoding="utf-8")))
     model = HRNet(cfg)
 
     ckpt = torch.load(args.ckpt, map_location="cpu")
