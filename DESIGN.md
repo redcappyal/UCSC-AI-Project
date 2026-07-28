@@ -664,6 +664,23 @@ above — two equal-width pills, one selected, no third state — but at the ful
 44 px minimum, so it meets §0.6 outright. New native work is not inheriting the
 web control's shortfall.
 
+### 8.19 Auto-detect confirm screen (`#p-confirm`)
+
+The single review surface for an automatically detected court. Overlays the
+fitted calibration edges (their existing reserved hues — out `#35e0ff`,
+service `#ff9f43`, tin `#b4ff3a`) and the floor wireframe on the frame, with
+draggable anchor pucks at the four wall corners and the two short-line ends.
+
+- Anchor pucks use the floor-wizard residual palette (§8.10): `#3ddc84` when
+  the self-verification checks agree, `#f5c518` when one is off. **Never red**
+  — §0.3 reserves red for OUT verdicts. Colour is never the only carrier: the
+  status line names every anchor the checks flagged.
+- Both status lines reserve their height with `&nbsp;` (§0.9) so a warning
+  appearing after a drag never pushes the buttons around.
+- Detection runs behind the sanctioned analyzing scrim (§8.12).
+- Primary is the proxied `USE THIS CALIBRATION` (§3.4); the manual wizard is
+  always one tap away via the secondary `TAP IT MANUALLY`.
+
 ---
 
 ## 9. Iconography

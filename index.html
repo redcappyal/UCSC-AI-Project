@@ -703,6 +703,20 @@
     <p class="status" id="camHealthFloor"></p>
   </section>
 
+  <!-- PHASE: confirm (auto-detected court, review before use) -->
+  <section class="hidden" id="p-confirm">
+    <p class="status" id="confirmSummary">&nbsp;</p>
+    <div class="targetZones">
+      <div class="targetHead"><strong>Court anchors</strong><span id="confirmCount"></span></div>
+      <div class="wallCornerList" id="confirmAnchorList"></div>
+    </div>
+    <button class="primary proxied" id="confirmUseBtn">Use this calibration</button>
+    <div class="row">
+      <button class="small" id="confirmManualBtn" type="button">Tap it manually</button>
+    </div>
+    <p class="status" id="confirmWarn">&nbsp;</p>
+  </section>
+
   <!-- PHASE: clip -->
   <section class="hidden" id="p-clip">
     <div class="clipOverview" id="clipOverview">
@@ -1197,6 +1211,7 @@ const S = {
   lines:{out:null, tin:null, service:null}, // committed: {seeds, maskCanvas, fit}
   wall:null,                  // front-wall corner taps, clockwise from upper left
   floor:null,                 // floor-homography wizard state (see newFloorState)
+  detect:null,                // last /api/detect-court response, kept for the confirm screen
   profile:null,               // {id, name, created_utc} when a saved profile is in play
   run:null,                   // backend tracking result
   coachReports:{},            // run_id -> coaching analytics/feedback response
@@ -1238,6 +1253,8 @@ const STEP_META = {
            action:{btn:'chooseClipBtn', label:'Use lines'}},
   tap_wall:{label:'Wall corners', instr:'', action:{btn:'wallDoneBtn', label:'Use corners'}},
   tap_floor:{label:'Floor map', instr:'', action:{btn:'floorDoneBtn', label:'Use floor map'}},
+  confirm:{label:'Confirm court', instr:'Check the overlay hugs the real court. Drag any anchor that sits off the line.',
+           action:{btn:'confirmUseBtn', label:'Use calibration'}},
   clip:   {label:'Clip', instr:'Drag the top strip to slide the clip along the video, then drag the handles to trim it tight around the shot.',
            action:{btn:'runTrackBtn', label:'Track ball'}},
   analyze:{label:'Analyzing', instr:''},
@@ -1307,7 +1324,7 @@ function setPhase(p){
   document.body.classList.toggle('phase-load', p === 'load');
   document.body.classList.toggle('phase-target', reportPhase);
   document.body.classList.toggle('phase-track', p === 'track');
-  for(const id of ['p-load','p-record','p-frame','p-tap','p-review','p-wall-corners','p-tap-floor','p-clip','p-analyze','p-track','p-label','p-target',
+  for(const id of ['p-load','p-record','p-frame','p-tap','p-review','p-wall-corners','p-tap-floor','p-confirm','p-clip','p-analyze','p-track','p-label','p-target',
                    'p-player1-report','p-player2-report',
                    'p-live','p-matches','p-coach','p-stats','p-shot-bot','p-sharing']) $(id).classList.add('hidden');
   $('camVid').classList.toggle('hidden', p !== 'record');   // live preview only on the record screen
@@ -1338,7 +1355,7 @@ function setPhase(p){
     $('confirmBtn').disabled = !(S.work && S.work.fit);
     $('zoomCtrl').classList.remove('hidden');
     updateTapStatus();
-  } else if(p === 'tap_wall' || p === 'tap_floor'){
+  } else if(p === 'tap_wall' || p === 'tap_floor' || p === 'confirm'){
     $('zoomCtrl').classList.remove('hidden');
   } else {
     $('zoomCtrl').classList.add('hidden');
@@ -1346,6 +1363,7 @@ function setPhase(p){
   if(p === 'review'){ $('p-review').classList.remove('hidden'); buildReview(); }
   if(p === 'tap_wall'){ $('p-wall-corners').classList.remove('hidden'); buildWallCornerView(); scheduleCameraCheck(); }
   if(p === 'tap_floor'){ $('p-tap-floor').classList.remove('hidden'); buildFloorView(); }
+  if(p === 'confirm'){ $('p-confirm').classList.remove('hidden'); buildConfirmView(); }
   if(p === 'clip'){ $('p-clip').classList.remove('hidden'); $('runTrackBtn').disabled = false; setupClipControls(); }   // never leave Track ball stuck disabled from a prior/aborted run
   if(p === 'analyze'){ $('p-analyze').classList.remove('hidden'); startAnalyzePreview(); }
   else { stopAnalyzePreview(); }
@@ -1472,7 +1490,7 @@ $('useFrame').onclick = async () => {
   ctx.drawImage(vid, 0, 0, S.W, S.H);
   S.base = ctx.getImageData(0, 0, S.W, S.H);
   S.frameTime = S.frameView.cursor;
-  setPhase('tap_out');
+  await runCourtDetection();
 };
 function showError(message){
   $('errText').textContent = message;
@@ -1882,6 +1900,156 @@ function finishCalWizard(){
   setPhase('record');
 }
 
+/* ---------- automatic court detection ----------
+   Posts a handful of frames so the server can take a temporal median (which
+   deletes the players) and detect the court's lines. The reply arrives in the
+   same shapes buildJson() writes, so it drops straight into wizard state and
+   every downstream consumer is unchanged. */
+const DETECT_FRAME_COUNT = 5;
+
+async function grabDetectionFrames(count = DETECT_FRAME_COUNT){
+  const scratch = document.createElement('canvas');
+  scratch.width = S.W; scratch.height = S.H;
+  const scratchCtx = scratch.getContext('2d');
+  const wasAt = vid.currentTime;
+  const duration = clipDuration();
+  const blobs = [];
+  for(let i = 0; i < count; i++){
+    // seekVideo, not a raw currentTime assignment: WebKit fires 'seeked'
+    // before the new frame is presented, so a hand-rolled seek captures a
+    // stale or black frame and the median would be built from nothing.
+    await seekVideo(duration * (i + 0.5) / count);
+    scratchCtx.drawImage(vid, 0, 0, S.W, S.H);
+    const blob = await new Promise(r => scratch.toBlob(r, 'image/jpeg', 0.92));
+    if(blob) blobs.push(blob);
+  }
+  await seekVideo(wasAt);
+  return blobs;
+}
+
+async function runCourtDetection(){
+  $('analyzeOverlay').classList.remove('hidden');
+  let result = null;
+  try{
+    const form = new FormData();
+    for(const [i, blob] of (await grabDetectionFrames()).entries())
+      form.append('frames', blob, `frame${i}.jpg`);
+    const response = await fetch('/api/detect-court', {method:'POST', body:form});
+    if(response.ok) result = await response.json();
+  } catch(_){ /* offline or decode failure: fall through to the manual wizard */ }
+  $('analyzeOverlay').classList.add('hidden');
+
+  ctx.drawImage(vid, 0, 0, S.W, S.H);
+  S.base = ctx.getImageData(0, 0, S.W, S.H);
+  S.frameTime = vid.currentTime;
+
+  if(!result || result.status !== 'ok'){
+    setPhase('tap_out');
+    $('tapStatus').textContent = result && result.warnings && result.warnings.length
+      ? `Could not detect the court (${result.warnings[0]}) — tap the lines instead.`
+      : 'Could not detect the court — tap the lines instead.';
+    $('tapStatus').className = 'status warn';
+    return;
+  }
+  applyDetection(result);
+  setPhase('confirm');
+}
+
+/* The detector's reply uses buildJson()'s own shapes, so applying it is a
+   direct fill of the same state the tap wizard produces — no translation
+   layer, and nothing downstream can tell the two apart. */
+function applyDetection(result){
+  S.detect = result;
+  S.profile = null;
+  const byName = {};
+  for(const line of result.lines) byName[line.name] = line;
+  for(const key of ORDER){
+    const stored = byName[CFG[key].edgeName];
+    S.lines[key] = stored
+      ? { seeds:[], maskCanvas:null, fit:fitFromStoredLine(stored) }
+      : null;
+  }
+  S.wall = wallFromCalibration(result);
+  S.floor = null;
+  const floorPlane = result.planes && result.planes.floor;
+  if(COURT && floorPlane && Array.isArray(floorPlane.landmarks)){
+    S.floor = newFloorState();
+    const byId = {};
+    for(const landmark of floorPlane.landmarks) byId[landmark.id] = landmark;
+    for(const landmark of S.floor.landmarks){
+      const stored = byId[landmark.id];
+      if(!stored) continue;
+      landmark.tap_px = stored.tap_px || null;
+      landmark.refined_px = stored.refined_px || null;
+      landmark.method = stored.method || 'intersection';
+      landmark.skipped = false;
+    }
+    S.floor.activeIdx = -1;
+    refitFloor();
+    if(!S.floor.H) S.floor = null;
+  }
+}
+
+/* Anchor colours follow the floor wizard's sanctioned palette (DESIGN.md
+   §8.10): dim -> green done -> amber warned. Never red — §0.3 reserves red
+   for OUT verdicts — and never colour alone, so the list below names every
+   anchor the checks flagged. */
+const CONFIRM_OK = '#3ddc84', CONFIRM_WARN = '#f5c518';
+
+function confirmAnchorPoints(){
+  const points = [];
+  if(S.wall) WALL_CORNERS.forEach((corner, i) => {
+    if(S.wall.points[i]) points.push({key:`wall:${i}`, label:corner.label,
+                                      xy:S.wall.points[i]});
+  });
+  if(S.floor) for(const landmark of S.floor.landmarks){
+    if((landmark.id === 'short_line_left' || landmark.id === 'short_line_right')
+        && landmark.refined_px)
+      points.push({key:`floor:${landmark.id}`,
+                   label:landmark.id.replace(/_/g, ' '), xy:landmark.refined_px});
+  }
+  return points;
+}
+
+function confirmOffChecks(){
+  const checks = (S.detect && S.detect.checks) || [];
+  return checks.filter(check => check.status === 'off');
+}
+
+function drawConfirmOverlay(){
+  if(S.phase !== 'confirm') return;
+  const warned = confirmOffChecks().length > 0;
+  ctx.save();
+  const radius = Math.max(9, S.W / 110);
+  for(const anchor of confirmAnchorPoints()){
+    ctx.beginPath();
+    ctx.arc(anchor.xy[0], anchor.xy[1], radius, 0, Math.PI * 2);
+    ctx.fillStyle = warned ? CONFIRM_WARN : CONFIRM_OK;
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(0,0,0,.6)';
+    ctx.lineWidth = Math.max(1.5, S.W / 1400);
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
+function buildConfirmView(){
+  const off = confirmOffChecks();
+  const anchors = confirmAnchorPoints();
+  $('confirmCount').textContent = `${anchors.length} placed`;
+  $('confirmAnchorList').innerHTML = anchors.map(anchor =>
+    `<span class="done">${anchor.label} set</span>`).join('');
+  $('confirmSummary').textContent = off.length
+    ? 'Detected, but some court markings did not line up.'
+    : 'Court detected — the overlay should sit on the real lines.';
+  $('confirmSummary').className = 'status' + (off.length ? ' warn' : ' ok');
+  $('confirmWarn').innerHTML = off.length
+    ? `Off: ${off.map(check => check.id.replace(/_/g, ' ')).join(', ')}. Drag the nearest anchor, or tap it manually.`
+    : '&nbsp;';
+  $('confirmWarn').className = 'status' + (off.length ? ' warn' : '');
+  render();
+}
+
 $('hdrBack').onclick = () => {
   if(S.phase === 'frame'){
     vid.pause(); S.base = null; $('fileIn').value = ''; setPhase('load');
@@ -1891,6 +2059,8 @@ $('hdrBack').onclick = () => {
     S.work = null; S.base = null;
     if(S.rec.calibrating){ S.rec.calibrating = false; setPhase('record'); }
     else { setPhase('frame'); ctx.drawImage(vid, 0, 0, S.W, S.H); }
+  } else if(S.phase === 'confirm'){
+    S.detect = null; setPhase('frame'); ctx.drawImage(vid, 0, 0, S.W, S.H);
   } else if(S.phase === 'tap_tin'){
     S.work = null; S.lines.out = null; setPhase('tap_out');
   } else if(S.phase === 'tap_service'){
@@ -2544,6 +2714,7 @@ function render(){
   }
   drawWallOverlay();
   drawFloorOverlay();
+  drawConfirmOverlay();
   if(S.work){
     ctx.drawImage(S.work.maskCanvas, 0, 0);
     if(S.work.fit) drawFitLine(S.work.fit, CFG[S.work.key].hex);
@@ -3147,6 +3318,14 @@ $('floorDoneBtn').onclick = () => {
   finishCalWizard();
 };
 
+$('confirmUseBtn').onclick = () => { finishCalWizard(); };
+$('confirmManualBtn').onclick = () => {
+  S.detect = null;
+  S.lines = {out:null, tin:null, service:null};
+  S.wall = null; S.floor = null; S.work = null;
+  setPhase('tap_out');
+};
+
 function drawFloorOverlay(){
   const F = S.floor;
   if(!F || S.phase !== 'tap_floor') return;
@@ -3420,6 +3599,12 @@ function syncClipView(){
 
 function drawClipPreview(time){
   if(!S.W || !S.H) return;
+  // requestPreviewFrame's seek is fire-and-forget, shared by the frame-picker
+  // and the clip editor; it can still be settling when the user has already
+  // moved on (e.g. USE FRAME landed on 'confirm' before the frame-picker's own
+  // background thumbnail fill finished). A late resolution must not stomp a
+  // later phase's render() output with a bare video-frame-plus-lines repaint.
+  if(S.phase !== 'frame' && S.phase !== 'clip') return;
   ctx.drawImage(vid, 0, 0, S.W, S.H);
   for(const k of ORDER){
     const L = S.lines[k];
