@@ -10,6 +10,7 @@ import argparse
 import csv
 import json
 import os
+import time
 from pathlib import Path
 
 import cv2
@@ -42,7 +43,7 @@ from tracking_common import (  # noqa: E402
 )
 
 
-VIDEO_INPUT_PATH = Path(__file__).with_name("ModelTrainTest3.mp4")
+VIDEO_INPUT_PATH = Path(__file__).with_name("SquashTrain.mp4")
 VIDEO_OUTPUT_PATH = Path(__file__).with_name("annotated_output_local.mp4")
 CSV_OUTPUT_PATH = Path(__file__).with_name("ball_coordinates_local.csv")
 
@@ -50,11 +51,12 @@ FRAME_STRIDE = 1
 START_FRAME = None
 END_FRAME = None
 MAX_FRAMES = None
-START_SECONDS = None
+START_SECONDS = 30
 CONFIDENCE = CONFIDENCE_THRESHOLD
 INFERENCE_WIDTH = DEFAULT_INFERENCE_WIDTH
-TRAJECTORY_FILL_MAX_GAP = 4
+TRAJECTORY_FILL_MAX_GAP = 6
 TRAJECTORY_FILL_EDGE_MARGIN = 24.0
+ANNOTATION_PROGRESS_INTERVAL_SECONDS = 5.0
 
 
 def positive_int_or_none(value):
@@ -102,6 +104,12 @@ def parse_args():
             "Do not interpolate when anchor/interpolated boxes are this close "
             "to the frame edge."
         ),
+    )
+    parser.add_argument(
+        "--annotation-progress-interval",
+        type=float,
+        default=ANNOTATION_PROGRESS_INTERVAL_SECONDS,
+        help="Seconds between annotation progress/ETA updates.",
     )
     parser.add_argument("--no-video", action="store_true")
     parser.add_argument("--smoke-test", action="store_true")
@@ -306,6 +314,36 @@ def frame_range(args, source_fps, source_frame_count):
     return start_frame, end_frame
 
 
+def format_duration(seconds):
+    rounded_seconds = max(0, int(round(seconds)))
+    hours, remainder = divmod(rounded_seconds, 3600)
+    minutes, seconds = divmod(remainder, 60)
+    return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+
+
+def iter_video_frames_sequentially(capture, source_frames):
+    """Yield selected source frames after one initial seek and sequential reads."""
+    if not source_frames:
+        return
+
+    first_source_frame = source_frames[0]
+    capture.set(cv2.CAP_PROP_POS_FRAMES, first_source_frame)
+    next_source_frame = first_source_frame
+
+    for source_frame in source_frames:
+        if source_frame < next_source_frame:
+            raise ValueError("source_frames must be strictly increasing.")
+
+        frame = None
+        while next_source_frame <= source_frame:
+            ok, frame = capture.read()
+            if not ok:
+                return
+            next_source_frame += 1
+
+        yield source_frame, frame
+
+
 def api_key_fingerprint(api_key):
     api_key = api_key.strip()
     if len(api_key) <= 8:
@@ -339,6 +377,8 @@ def main():
         raise RuntimeError("--trajectory-fill-max-gap must be 0 or greater.")
     if args.trajectory_fill_edge_margin < 0:
         raise RuntimeError("--trajectory-fill-edge-margin must be 0 or greater.")
+    if args.annotation_progress_interval <= 0:
+        raise RuntimeError("--annotation-progress-interval must be greater than 0.")
     if not args.api_key.strip():
         raise RuntimeError("No Roboflow API key found. Set ROBOFLOW_API_KEY in .env.")
 
@@ -435,6 +475,11 @@ def main():
         if args.no_video or not processed_source_frames:
             return
 
+        total_frames = len(processed_source_frames)
+        print(
+            f"Preparing motion-consistent annotations for {total_frames:,} frame(s)...",
+            flush=True,
+        )
         selected_by_frame = select_motion_consistent_ball_predictions(
             predictions_by_source_frame,
             confidence_threshold=args.confidence,
@@ -447,13 +492,20 @@ def main():
         if not annotation_cap.isOpened():
             raise RuntimeError(f"Could not reopen video for annotation: {args.video}")
 
-        try:
-            for output_index, source_frame in enumerate(processed_source_frames, start=1):
-                annotation_cap.set(cv2.CAP_PROP_POS_FRAMES, source_frame)
-                ok, frame = annotation_cap.read()
-                if not ok:
-                    continue
+        annotation_started = time.monotonic()
+        last_progress_update = annotation_started
+        annotated_count = 0
+        print(
+            f"Annotation pass: sequentially decoding {total_frames:,} frame(s).",
+            flush=True,
+        )
 
+        try:
+            sequential_frames = iter_video_frames_sequentially(
+                annotation_cap,
+                processed_source_frames,
+            )
+            for output_index, (source_frame, frame) in enumerate(sequential_frames, start=1):
                 tracked_prediction = selected_by_frame.get(source_frame)
                 if tracked_prediction is None:
                     missing_video_frames.append((output_index, source_frame, frame.copy()))
@@ -463,14 +515,38 @@ def main():
                         or len(missing_video_frames) > args.trajectory_fill_max_gap
                     ):
                         flush_missing_video_frames()
-                    continue
+                else:
+                    flush_missing_video_frames(tracked_prediction, output_index)
+                    write_output_frame(draw_tracked_prediction(frame, tracked_prediction))
+                    previous_anchor = (output_index, tracked_prediction)
+                    trajectory_tracked_detection_count += 1
 
-                flush_missing_video_frames(tracked_prediction, output_index)
-                write_output_frame(draw_tracked_prediction(frame, tracked_prediction))
-                previous_anchor = (output_index, tracked_prediction)
-                trajectory_tracked_detection_count += 1
+                annotated_count = output_index
+                now = time.monotonic()
+                if (
+                    annotated_count == total_frames
+                    or now - last_progress_update >= args.annotation_progress_interval
+                ):
+                    elapsed = max(now - annotation_started, 1e-9)
+                    frames_per_second = annotated_count / elapsed
+                    remaining_seconds = (total_frames - annotated_count) / frames_per_second
+                    percent = annotated_count / total_frames * 100
+                    print(
+                        "Annotation progress: "
+                        f"{annotated_count:,}/{total_frames:,} ({percent:.1f}%) | "
+                        f"{frames_per_second:.1f} frames/s | "
+                        f"ETA {format_duration(remaining_seconds)}",
+                        flush=True,
+                    )
+                    last_progress_update = now
 
             flush_missing_video_frames()
+            if annotated_count < total_frames:
+                print(
+                    "Warning: annotation video ended after "
+                    f"{annotated_count:,}/{total_frames:,} requested frame(s).",
+                    flush=True,
+                )
         finally:
             annotation_cap.release()
 
@@ -566,6 +642,7 @@ def main():
         "trajectory_estimated_video_frames": trajectory_estimated_count,
         "trajectory_fill_max_gap": args.trajectory_fill_max_gap,
         "trajectory_fill_edge_margin": args.trajectory_fill_edge_margin,
+        "annotation_progress_interval": args.annotation_progress_interval,
         "model_object_type": type(model).__name__,
     }
     metadata_path.write_text(json.dumps(metadata, indent=2) + "\n")

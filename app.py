@@ -15,6 +15,7 @@ from werkzeug.utils import secure_filename
 
 import court_detect
 import court_model
+from coaching_advice import player_advice
 from judge_call import (
     Point,
     judge_ball,
@@ -48,6 +49,7 @@ from job_runner import (
     create_job,
     get_job,
     is_serve_hit,
+    request_cancel,
     start_tracking_job,
 )
 from inference_engine import DEFAULT_MODEL_ID, TRACKING_BACKEND
@@ -252,11 +254,17 @@ def coaching_analytics_for_hits(hits, target_summary):
         if hit.get("velocity")
     ]
 
+    # 3x3 target grid: columns 1-3 left, 4-6 center, 7-9 right; within each
+    # column the rows run lob -> normal (driving) -> low (attacking).
+    def zone_total(*zones):
+        return sum(int(target_zones.get(zone, {}).get("count", 0)) for zone in zones)
+
     total_wall_hits = int(target_summary.get("total_wall_hits") or len(hits))
-    center_hits = sum(int(target_zones.get(zone, {}).get("count", 0)) for zone in (4, 5))
-    side_hits = sum(int(target_zones.get(zone, {}).get("count", 0)) for zone in (1, 2, 3, 6, 7, 8))
-    low_hits = sum(int(target_zones.get(zone, {}).get("count", 0)) for zone in (3, 5, 8))
-    high_hits = sum(int(target_zones.get(zone, {}).get("count", 0)) for zone in (1, 4, 6))
+    center_hits = zone_total(4, 5, 6)
+    side_hits = zone_total(1, 2, 3, 7, 8, 9)
+    high_hits = zone_total(1, 4, 7)     # lob band, above ~10.6 ft
+    mid_hits = zone_total(2, 5, 8)      # driving height, ~10.6 ft to the service line
+    low_hits = zone_total(3, 6, 9)      # service line down to the tin
     calls = [hit.get("call") for hit in hits]
 
     return {
@@ -279,6 +287,7 @@ def coaching_analytics_for_hits(hits, target_summary):
         "center_target_rate": rounded(center_hits / total_wall_hits * 100, 1) if total_wall_hits else None,
         "side_target_rate": rounded(side_hits / total_wall_hits * 100, 1) if total_wall_hits else None,
         "low_target_rate": rounded(low_hits / total_wall_hits * 100, 1) if total_wall_hits else None,
+        "mid_target_rate": rounded(mid_hits / total_wall_hits * 100, 1) if total_wall_hits else None,
         "high_target_rate": rounded(high_hits / total_wall_hits * 100, 1) if total_wall_hits else None,
         "in_count": sum(1 for call in calls if call == "IN"),
         "out_count": sum(1 for call in calls if call == "OUT"),
@@ -1218,6 +1227,20 @@ def track_status(run_id):
     return jsonify(public_job(job))
 
 
+@app.post("/api/track/cancel/<run_id>")
+def track_cancel(run_id):
+    """Abandon a run. Only one job holds the tracking semaphore, so a run the
+    user backed out of has to be stopped for real or it blocks the next one."""
+    safe_id = secure_filename(run_id)
+    job = get_job(safe_id)
+    if job is None:
+        return error_response("Tracking job was not found.", status=404)
+
+    if job.get("status") in {"queued", "running"}:
+        request_cancel(safe_id)
+    return jsonify({"ok": True, "run_id": safe_id, "status": job.get("status")})
+
+
 @app.post("/api/judge")
 def judge_frame():
     data = request.get_json(silent=True) or {}
@@ -1350,6 +1373,15 @@ def coaching_response_payload(analytics, llm_provider, llm_report=None, llm_stat
             if player.get("player_number") is not None
         }
 
+    # Drill progressions (solo -> drills -> conditioned games -> matchplay)
+    # for whatever weaknesses each player's metrics expose. Derived from the
+    # metrics, so they stand on their own whether or not an LLM answered.
+    player_drills = {
+        str(player.get("player_number")): player_advice(player)
+        for player in analytics.get("players", [])
+        if player.get("player_number") is not None
+    }
+
     return {
         "ok": True,
         "analytics": analytics,
@@ -1357,6 +1389,7 @@ def coaching_response_payload(analytics, llm_provider, llm_report=None, llm_stat
         "feedback_source": source,
         "player_feedback": player_feedback,
         "player_feedback_source": source,
+        "player_drills": player_drills,
         "llm_provider": llm_provider,
         "llm_status": llm_status,
     }

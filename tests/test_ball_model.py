@@ -1,8 +1,17 @@
 import json
 import hashlib
+from types import SimpleNamespace
+
+import numpy as np
 import pytest
 
 import ball_model
+
+
+def _runner_with_manifest(**fields):
+    """A HeatmapRunner with no real module/torch -- only _decode_output is under test."""
+    manifest = SimpleNamespace(**fields)
+    return ball_model.HeatmapRunner(module=None, manifest=manifest, torch_module=None)
 
 
 def _write_model(tmp_path, **overrides):
@@ -112,6 +121,107 @@ def test_load_manifest_raises_on_top_level_json_list(tmp_path):
         ball_model.load_manifest(tmp_path)
 
 
+def test_v2_manifest_loads_temporal_fields(tmp_path):
+    model_dir = _write_model(
+        tmp_path,
+        schema_version="ball-model-v2",
+        decode="heatmap_peak",
+        frames_per_input=3,
+        heatmap_stride=2,
+        nominal_ball_px=12.0,
+    )
+    manifest = ball_model.load_manifest(model_dir)
+    assert manifest.frames_per_input == 3
+    assert manifest.decode == "heatmap_peak"
+    assert manifest.heatmap_stride == 2
+    assert manifest.nominal_ball_px == 12.0
+
+
+def test_v1_manifest_reports_single_frame_defaults(tmp_path):
+    manifest = ball_model.load_manifest(_write_model(tmp_path))
+    assert manifest.frames_per_input == 1
+    assert manifest.decode == "in_graph"
+    assert manifest.heatmap_stride == 0
+    assert manifest.nominal_ball_px == 0.0
+
+
+def test_v2_manifest_rejects_missing_frames_per_input(tmp_path):
+    model_dir = _write_model(
+        tmp_path,
+        schema_version="ball-model-v2",
+        decode="heatmap_peak",
+        heatmap_stride=2,
+        nominal_ball_px=12.0,
+    )
+    with pytest.raises(KeyError):
+        ball_model.load_manifest(model_dir)
+
+
+def test_v2_manifest_rejects_nonpositive_heatmap_stride(tmp_path):
+    model_dir = _write_model(
+        tmp_path,
+        schema_version="ball-model-v2",
+        decode="heatmap_peak",
+        frames_per_input=3,
+        heatmap_stride=0,
+        nominal_ball_px=12.0,
+    )
+    with pytest.raises(ValueError, match="heatmap_stride"):
+        ball_model.load_manifest(model_dir)
+
+
+def test_v2_manifest_rejects_zero_frames_per_input(tmp_path):
+    model_dir = _write_model(
+        tmp_path,
+        schema_version="ball-model-v2",
+        decode="heatmap_peak",
+        frames_per_input=0,
+        heatmap_stride=2,
+        nominal_ball_px=12.0,
+    )
+    with pytest.raises(ValueError, match="frames_per_input"):
+        ball_model.load_manifest(model_dir)
+
+
+def test_v2_manifest_rejects_even_frames_per_input(tmp_path):
+    model_dir = _write_model(
+        tmp_path,
+        schema_version="ball-model-v2",
+        decode="heatmap_peak",
+        frames_per_input=2,
+        heatmap_stride=2,
+        nominal_ball_px=12.0,
+    )
+    with pytest.raises(ValueError, match="odd"):
+        ball_model.load_manifest(model_dir)
+
+
+def test_v2_manifest_rejects_nonpositive_nominal_ball_px(tmp_path):
+    model_dir = _write_model(
+        tmp_path,
+        schema_version="ball-model-v2",
+        decode="heatmap_peak",
+        frames_per_input=3,
+        heatmap_stride=2,
+        nominal_ball_px=0.0,
+    )
+    with pytest.raises(ValueError, match="nominal_ball_px"):
+        ball_model.load_manifest(model_dir)
+
+
+def test_v2_manifest_rejects_non_heatmap_peak_decode(tmp_path):
+    model_dir = _write_model(
+        tmp_path,
+        schema_version="ball-model-v2",
+        decode="in_graph",
+        frames_per_input=3,
+        heatmap_stride=2,
+        nominal_ball_px=12.0,
+    )
+    with pytest.raises(ValueError, match="heatmap_peak"):
+        ball_model.load_manifest(model_dir)
+
+
 def test_model_manifest_artifact_path(tmp_path):
     """ModelManifest.artifact_path must resolve to model.torchscript inside model_dir."""
     model_dir = _write_model(tmp_path)
@@ -141,8 +251,95 @@ def test_ball_model_imports_without_torch():
 @pytest.mark.requires_model
 def test_torchscript_runner_returns_boxes_for_real_model():
     runner = ball_model.load_detector()
-    import numpy as np
     crops = [np.zeros((416, 416, 3), dtype=np.uint8)]
     result = runner.run_batch(crops)
     assert len(result) == 1
     assert isinstance(result[0], list)
+
+
+def test_decode_heatmap_finds_subpixel_peak():
+    hm = np.zeros((208, 208), dtype=np.float32)
+    hm[50, 100] = 0.9
+    hm[50, 101] = 0.6          # pulls the sub-pixel x positively
+    peaks = ball_model.decode_heatmap(hm, threshold=0.1, stride=2, nominal_px=12.0)
+    assert len(peaks) == 1
+    cx, cy, score = peaks[0]
+    assert score == pytest.approx(0.9)
+    assert cy == pytest.approx(100.0, abs=1.0)          # 50 * stride
+    assert 200.0 < cx < 204.0                           # 100 * stride, nudged right
+
+
+def test_decode_heatmap_below_threshold_is_empty():
+    hm = np.full((208, 208), 0.05, dtype=np.float32)
+    assert ball_model.decode_heatmap(hm, 0.1, 2, 12.0) == []
+
+
+def test_decode_heatmap_two_separated_peaks_both_found():
+    hm = np.zeros((208, 208), dtype=np.float32)
+    hm[20, 20] = 0.8
+    hm[150, 150] = 0.5
+    peaks = ball_model.decode_heatmap(hm, 0.1, 2, 12.0)
+    assert len(peaks) == 2
+
+
+def test_decode_heatmap_plateau_emits_single_peak():
+    hm = np.zeros((208, 208), dtype=np.float32)
+    hm[30, 30] = hm[30, 31] = 0.7    # two equal neighbours must not double-fire
+    peaks = ball_model.decode_heatmap(hm, 0.1, 2, 12.0)
+    assert len(peaks) == 1
+
+
+def test_decode_heatmap_wide_plateau_emits_single_peak():
+    # A 3px-wide flat run: the 3rd pixel's 3x3 window no longer overlaps the
+    # winner's window directly, so suppression must chain through the
+    # already-skipped 2nd pixel rather than only reaching one step.
+    hm = np.zeros((208, 208), dtype=np.float32)
+    hm[30, 30] = hm[30, 31] = hm[30, 32] = 0.7
+    peaks = ball_model.decode_heatmap(hm, 0.1, 2, 12.0)
+    assert len(peaks) == 1
+
+
+def test_decode_heatmap_long_plateau_emits_single_peak():
+    hm = np.zeros((208, 208), dtype=np.float32)
+    hm[30, 30:35] = 0.7    # 5px-wide flat run
+    peaks = ball_model.decode_heatmap(hm, 0.1, 2, 12.0)
+    assert len(peaks) == 1
+
+
+def test_heatmap_runner_decodes_only_the_middle_channel():
+    # Output [B, frames, Hh, Wh]; runner must decode ONLY the middle
+    # (centre-frame) channel and emit TorchScriptRunner-shaped tuples.
+    out = np.zeros((1, 3, 208, 208), dtype=np.float32)
+    out[:, 1, 50, 100] = 0.9   # middle frame -- the one being detected
+    out[:, 0, 10, 10] = 0.9    # past-frame channel -- must be ignored
+    out[:, 2, 90, 90] = 0.9    # future-frame channel -- must be ignored
+    runner = _runner_with_manifest(frames_per_input=3, conf_threshold=0.1,
+                                   heatmap_stride=2, nominal_ball_px=12.0)
+    results = runner._decode_output(out)
+    assert len(results) == 1 and len(results[0]) == 1
+    cx, cy, w, h, score, class_index = results[0][0]
+    assert (cy, score, class_index) == (pytest.approx(100.0, abs=1.0), pytest.approx(0.9), 0)
+    assert w == h == 12.0
+
+
+def test_load_detector_dispatches_to_heatmap_runner_for_v2_manifest(tmp_path, monkeypatch):
+    """load_detector must route decode == 'heatmap_peak' to HeatmapRunner, not TorchScriptRunner."""
+    import sys
+    import types
+
+    model_dir = _write_model(
+        tmp_path,
+        schema_version="ball-model-v2",
+        decode="heatmap_peak",
+        frames_per_input=3,
+        heatmap_stride=2,
+        nominal_ball_px=12.0,
+    )
+
+    fake_module = SimpleNamespace(eval=lambda: None)
+    fake_torch = types.SimpleNamespace(
+        jit=types.SimpleNamespace(load=lambda *a, **k: fake_module))
+    monkeypatch.setitem(sys.modules, "torch", fake_torch)
+
+    runner = ball_model.load_detector(model_dir)
+    assert isinstance(runner, ball_model.HeatmapRunner)

@@ -6,10 +6,12 @@ The single-camera half of the former `tests/test_ball_track_offline.py`. The
 
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+import numpy as np
 import pytest
 
 import ball_track_offline
@@ -127,6 +129,111 @@ def test_selected_detector_rejects_unknown_value(monkeypatch):
         ball_track_offline.selected_detector()
 
 
+def test_selected_detector_accepts_local_alias(monkeypatch):
+    monkeypatch.setenv("BALL_DETECTOR", "local")
+    assert ball_track_offline.selected_detector() == "local"
+
+
+def test_selected_detector_yolox_still_accepted(monkeypatch):
+    monkeypatch.setenv("BALL_DETECTOR", "yolox")
+    assert ball_track_offline.selected_detector() == "local"   # normalised
+
+
+# --- _centered_windows -------------------------------------------------
+
+
+def test_centered_windows_pads_both_clip_edges():
+    frames = [(i, np.full((2, 2, 3), v, dtype=np.uint8))
+              for i, v in enumerate((10, 20, 30, 40))]
+    out = [(i, [int(f[0, 0, 0]) for f in window])
+           for i, window in ball_track_offline._centered_windows(iter(frames))]
+    assert out == [(0, [10, 10, 20]),   # left edge: first frame repeated
+                   (1, [10, 20, 30]),
+                   (2, [20, 30, 40]),
+                   (3, [30, 40, 40])]   # right edge: last frame repeated
+
+
+def test_centered_windows_single_frame_clip():
+    frames = [(0, np.full((2, 2, 3), 7, dtype=np.uint8))]
+    out = [(i, [int(f[0, 0, 0]) for f in w])
+           for i, w in ball_track_offline._centered_windows(iter(frames))]
+    assert out == [(0, [7, 7, 7])]
+
+
+def test_centered_windows_empty_clip():
+    assert list(ball_track_offline._centered_windows(iter([]))) == []
+
+
+# --- detections_to_track_samples: temporal manifest routing ------------
+
+
+def test_temporal_manifest_routes_through_centered_windows(monkeypatch):
+    # Ambient BALL_DETECTOR must not change this test's outcome -- see
+    # test_build_infer_defaults_to_yolox's comment on the same gotcha.
+    monkeypatch.delenv("BALL_DETECTOR", raising=False)
+    calls = []
+
+    def fake_detect_stack(runner, frames, manifest):
+        calls.append([int(f[0, 0, 0]) for f in frames])
+        return [{"x": 1.0, "y": 2.0, "width": 3.0, "height": 3.0,
+                 "confidence": 0.9, "class": "ball", "class_name": "ball"}]
+
+    runner = SimpleNamespace(manifest=SimpleNamespace(
+        conf_threshold=0.1, frames_per_input=3))
+    monkeypatch.setattr(ball_track_offline, "_detect_frame_stack", fake_detect_stack)
+    monkeypatch.setattr(ball_track_offline, "_video_fps", lambda path: 60.0)
+    monkeypatch.setattr(ball_track_offline, "_iter_frames", lambda path: iter(
+        (i, np.full((2, 2, 3), v, dtype=np.uint8))
+        for i, v in enumerate((10, 20, 30))))
+
+    samples = ball_track_offline.detections_to_track_samples(
+        "fake.mp4", model=runner, confidence=0.4)
+
+    assert calls == [[10, 10, 20], [10, 20, 30], [20, 30, 30]]
+    # timestamps: frame t's sample uses t/fps even though t+1 was decoded first
+    assert [s.t_s for s in samples] == pytest.approx([0.0, 1 / 60, 2 / 60])
+
+
+def test_temporal_manifest_rejects_stride(monkeypatch):
+    monkeypatch.delenv("BALL_DETECTOR", raising=False)
+    runner = SimpleNamespace(manifest=SimpleNamespace(
+        conf_threshold=0.1, frames_per_input=3))
+    monkeypatch.setattr(ball_track_offline, "_video_fps", lambda path: 60.0)
+    monkeypatch.setattr(ball_track_offline, "_iter_frames", lambda path: iter(
+        [(0, np.zeros((2, 2, 3), dtype=np.uint8))]))
+    with pytest.raises(ValueError, match="stride"):
+        ball_track_offline.detections_to_track_samples(
+            "fake.mp4", model=runner, confidence=0.4, stride=2)
+
+
+def test_temporal_routing_rejects_model_without_manifest(monkeypatch):
+    """A `model` with no `.manifest` (e.g. an RF-DETR object) under the local
+    backend must raise the same friendly TypeError _build_infer raises, not
+    an opaque AttributeError from reaching into `runner.manifest` directly."""
+    monkeypatch.delenv("BALL_DETECTOR", raising=False)
+    monkeypatch.setattr(ball_track_offline, "_video_fps", lambda path: 60.0)
+    monkeypatch.setattr(ball_track_offline, "_iter_frames", lambda path: iter(
+        [(0, np.zeros((2, 2, 3), dtype=np.uint8))]))
+
+    with pytest.raises(TypeError, match="manifest"):
+        ball_track_offline.detections_to_track_samples(
+            "fake.mp4", model=object(), confidence=0.4)
+
+
+def test_single_frame_manifest_keeps_v1_path(monkeypatch):
+    # frames_per_input == 1 must keep going through _detect_frame per frame
+    monkeypatch.delenv("BALL_DETECTOR", raising=False)
+    seen = []
+    monkeypatch.setattr(ball_track_offline, "_detect_frame",
+                        lambda runner, frame, manifest: seen.append(1) or [])
+    monkeypatch.setattr(ball_track_offline, "_video_fps", lambda path: 60.0)
+    monkeypatch.setattr(ball_track_offline, "_iter_frames", lambda path: iter(
+        [(0, np.zeros((2, 2, 3), dtype=np.uint8))]))
+    runner = SimpleNamespace(manifest=SimpleNamespace(
+        conf_threshold=0.1, frames_per_input=1))
+    ball_track_offline.detections_to_track_samples(
+        "fake.mp4", model=runner, confidence=0.4)
+    assert seen == [1]
 
 
 def test_build_infer_defaults_to_yolox(monkeypatch):
