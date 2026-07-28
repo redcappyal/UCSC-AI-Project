@@ -202,3 +202,15 @@ def test_validate_traced_output_rejects_bare_logits_shape():
     with pytest.raises(ValueError, match=r"(?i)\[0, 1\]"):
         export_wasb_model.validate_traced_output_is_probabilities(
             np.array([-4.2, 0.0, 6.8], dtype="float32"))
+
+
+def test_attrdict_bridges_item_and_attribute_access():
+    # HRNet reads cfg['frames_in'] in __init__ but cfg.MODEL.EXTRA in
+    # _make_deconv_layers; a config object must survive both styles, nested.
+    cfg = export_wasb_model.AttrDict(
+        {"frames_in": 3, "MODEL": {"EXTRA": {"STEM": {"STRIDES": [1, 1]}}}})
+    assert cfg["frames_in"] == 3
+    assert cfg.MODEL.EXTRA.STEM.STRIDES == [1, 1]
+    assert cfg["MODEL"]["EXTRA"]["STEM"]["STRIDES"] == [1, 1]
+    with pytest.raises(AttributeError):
+        _ = cfg.missing_key

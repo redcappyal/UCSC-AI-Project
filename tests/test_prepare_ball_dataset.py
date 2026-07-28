@@ -725,3 +725,169 @@ def test_sequence_edge_padding_repeats_anchor_under_negative_offset(
     # decoded content (content(0) = 0).
     assert tp1_tile.mean() == pytest.approx(0, abs=5)
     assert tm1_tile.mean() != pytest.approx(tp1_tile.mean(), abs=5)
+
+
+def test_frame_map_overrides_offset_probe_and_uses_mapped_neighbours(
+        tmp_path, monkeypatch):
+    # A mapped clip must never enter the 0/-1/+1 probe: sampling was not 1:1,
+    # so no single offset exists. Neighbours come from the mapped video index.
+    cv2 = pytest.importorskip("cv2")
+    np = pytest.importorskip("numpy")
+
+    def fake_decode(video_path, indices):
+        return {i: _solid_frame(np, i * 10) for i in indices}
+    monkeypatch.setattr(prepare_ball_dataset, "decode_frames", fake_decode)
+
+    def probe_must_not_run(*args, **kwargs):
+        raise AssertionError("offset probe ran for a mapped clip")
+    monkeypatch.setattr(
+        prepare_ball_dataset, "_resolve_clip_offset", probe_must_not_run)
+
+    train_dir = tmp_path / "train"
+    train_dir.mkdir()
+    path = train_dir / "Bay_mov-0005_jpg.jpg"
+    # Export image matches mapped video frame 17 (value 170), nowhere near
+    # label-space index 5 -- exactly the case the offset probe cannot align.
+    _imwrite_unicode(path, _solid_frame(np, 170),
+                     [int(cv2.IMWRITE_JPEG_QUALITY), 95])
+    record = {"path": path, "clip": "Bay", "frame": 5, "width": 64, "height": 64,
+              "balls": [{"bbox": [24, 24, 8, 8], "streak": None}]}
+    plans_by_record = {path: plan_crops(
+        record, crop=16, scale=1.0, rng=random.Random(0),
+        positives=1, negatives=0, jitter=0.0, min_visible=0.5)}
+
+    render_split([record], plans_by_record, tmp_path, "train", 16, 95,
+                 seq_frames=3, clip_videos={"Bay": Path("fake.mp4")},
+                 clip_last_frame={"Bay": 20},
+                 frame_maps={"Bay": {"video_frame_count": 30,
+                                     "frames": {5: 17}}})
+
+    stem = crop_file_name(path.stem, 0)[:-len(".jpg")]
+    # tm1 = video frame 16, tp1 = video frame 18 -- mapped space, not 4/6.
+    assert (_imread_unicode(train_dir / f"{stem}.tm1.jpg").mean()
+            == pytest.approx(160, abs=4))
+    assert (_imread_unicode(train_dir / f"{stem}.tp1.jpg").mean()
+            == pytest.approx(180, abs=4))
+
+
+def test_frame_map_alignment_mismatch_is_fatal(tmp_path, monkeypatch):
+    # The map changes where to look, never whether alignment is checked: a
+    # mapped frame that doesn't match the export image must die loudly.
+    cv2 = pytest.importorskip("cv2")
+    np = pytest.importorskip("numpy")
+
+    def fake_decode(video_path, indices):
+        return {i: _solid_frame(np, i * 10) for i in indices}
+    monkeypatch.setattr(prepare_ball_dataset, "decode_frames", fake_decode)
+
+    train_dir = tmp_path / "train"
+    train_dir.mkdir()
+    path = train_dir / "Bay_mov-0005_jpg.jpg"
+    _imwrite_unicode(path, _solid_frame(np, 0),
+                     [int(cv2.IMWRITE_JPEG_QUALITY), 95])
+    record = {"path": path, "clip": "Bay", "frame": 5, "width": 64, "height": 64,
+              "balls": [{"bbox": [24, 24, 8, 8], "streak": None}]}
+    plans_by_record = {path: plan_crops(
+        record, crop=16, scale=1.0, rng=random.Random(0),
+        positives=1, negatives=0, jitter=0.0, min_visible=0.5)}
+
+    with pytest.raises(SystemExit, match="frame-map alignment failed"):
+        render_split([record], plans_by_record, tmp_path, "train", 16, 95,
+                     seq_frames=3, clip_videos={"Bay": Path("fake.mp4")},
+                     clip_last_frame={"Bay": 20},
+                     frame_maps={"Bay": {"video_frame_count": 30,
+                                         "frames": {5: 17}}})
+
+
+def test_frame_map_missing_labelled_frame_is_fatal(tmp_path, monkeypatch):
+    # A partial map silently falling back to the offset probe would defeat
+    # the point of supplying one; it must die naming the unmapped frames.
+    cv2 = pytest.importorskip("cv2")
+    np = pytest.importorskip("numpy")
+
+    def fake_decode(video_path, indices):
+        return {i: _solid_frame(np, i * 10) for i in indices}
+    monkeypatch.setattr(prepare_ball_dataset, "decode_frames", fake_decode)
+
+    train_dir = tmp_path / "train"
+    train_dir.mkdir()
+    path = train_dir / "Bay_mov-0005_jpg.jpg"
+    _imwrite_unicode(path, _solid_frame(np, 170),
+                     [int(cv2.IMWRITE_JPEG_QUALITY), 95])
+    record = {"path": path, "clip": "Bay", "frame": 5, "width": 64, "height": 64,
+              "balls": [{"bbox": [24, 24, 8, 8], "streak": None}]}
+    plans_by_record = {path: plan_crops(
+        record, crop=16, scale=1.0, rng=random.Random(0),
+        positives=1, negatives=0, jitter=0.0, min_visible=0.5)}
+
+    with pytest.raises(SystemExit, match=r"lacks entries.*\[5\]"):
+        render_split([record], plans_by_record, tmp_path, "train", 16, 95,
+                     seq_frames=3, clip_videos={"Bay": Path("fake.mp4")},
+                     clip_last_frame={"Bay": 20},
+                     frame_maps={"Bay": {"video_frame_count": 30,
+                                         "frames": {4: 16}}})
+
+
+def test_frame_map_neighbour_past_video_end_pads_with_anchor(
+        tmp_path, monkeypatch):
+    # Mapped anchor at the video's last frame: tp1's target equals
+    # video_frame_count, is never requested from decode_frames (which would
+    # die there), and pads by repeating the anchor -- same convention as the
+    # unmapped clip-end case.
+    cv2 = pytest.importorskip("cv2")
+    np = pytest.importorskip("numpy")
+
+    def fake_decode(video_path, indices):
+        assert max(indices) <= 29, "requested a frame past the video's end"
+        return {i: _solid_frame(np, i * 8) for i in indices}
+    monkeypatch.setattr(prepare_ball_dataset, "decode_frames", fake_decode)
+
+    train_dir = tmp_path / "train"
+    train_dir.mkdir()
+    path = train_dir / "Bay_mov-0005_jpg.jpg"
+    _imwrite_unicode(path, _solid_frame(np, 232),
+                     [int(cv2.IMWRITE_JPEG_QUALITY), 95])
+    record = {"path": path, "clip": "Bay", "frame": 5, "width": 64, "height": 64,
+              "balls": [{"bbox": [24, 24, 8, 8], "streak": None}]}
+    plans_by_record = {path: plan_crops(
+        record, crop=16, scale=1.0, rng=random.Random(0),
+        positives=1, negatives=0, jitter=0.0, min_visible=0.5)}
+
+    render_split([record], plans_by_record, tmp_path, "train", 16, 95,
+                 seq_frames=3, clip_videos={"Bay": Path("fake.mp4")},
+                 clip_last_frame={"Bay": 20},
+                 frame_maps={"Bay": {"video_frame_count": 30,
+                                     "frames": {5: 29}}})
+
+    stem = crop_file_name(path.stem, 0)[:-len(".jpg")]
+    anchor_mean = _imread_unicode(train_dir / crop_file_name(path.stem, 0)).mean()
+    # tm1 = real video frame 28.
+    assert (_imread_unicode(train_dir / f"{stem}.tm1.jpg").mean()
+            == pytest.approx(224, abs=4))
+    # tp1 padded with the anchor's own pixels.
+    assert (_imread_unicode(train_dir / f"{stem}.tp1.jpg").mean()
+            == pytest.approx(anchor_mean, abs=2))
+
+
+def test_load_frame_map_parses_ints_and_rejects_malformed(tmp_path):
+    good = tmp_path / "map.json"
+    good.write_text(json.dumps(
+        {"Bay": {"video_frame_count": 30, "frames": {"5": 17}}}))
+    parsed = prepare_ball_dataset.load_frame_map(good)
+    assert parsed == {"Bay": {"video_frame_count": 30, "frames": {5: 17}}}
+
+    for bad_entry in ({"frames": {"5": 17}},                      # no count
+                      {"video_frame_count": 30},                  # no frames
+                      {"video_frame_count": 30, "frames": {"5": "x"}}):
+        bad = tmp_path / "bad.json"
+        bad.write_text(json.dumps({"Bay": bad_entry}))
+        with pytest.raises(SystemExit, match="Bay"):
+            prepare_ball_dataset.load_frame_map(bad)
+
+
+def test_frame_map_without_seq_frames_is_fatal(tmp_path):
+    with pytest.raises(SystemExit, match="frame-map only applies"):
+        prepare_ball_dataset.build(
+            tmp_path, tmp_path / "out", 16, 1, 0, 0.0, 0.5, 0, 1, 0,
+            [], [], 0, 95, seq_frames=1,
+            frame_maps={"Bay": {"video_frame_count": 1, "frames": {}}})

@@ -569,10 +569,19 @@ def _resolve_clip_offset(clip, clip_records, decoded, export_images, last_frame,
 
 
 def _decode_sequences(records, plans_by_record, clip_videos, clip_last_frame, crop,
-                      tolerance=ALIGNMENT_MAX_ABS_DIFF):
+                      tolerance=ALIGNMENT_MAX_ABS_DIFF, frame_maps=None):
     """{(record.path, plan_index): (tm1_tile, tp1_tile)} cropped-to-window
     neighbour-frame patches for every planned crop of every record with a
     matched video.
+
+    Clips present in `frame_maps` skip the 0/-1/+1 offset probe entirely: the
+    map supplies each labelled frame's true video index (for clips whose
+    export sampling was not 1:1 with video frames, e.g. time-based sampling
+    of a variable-frame-rate recording), and `video_frame_count` bounds
+    neighbour lookups so a t+1 past the clip's end pads instead of dying in
+    `decode_frames`. Every mapped anchor is still verified against its export
+    image under `tolerance` -- the map changes where to look, never whether
+    alignment is checked.
 
     Decoded and cropped one clip at a time -- peak memory is bounded by a
     single clip's native-resolution frames, not the whole split's. The naive
@@ -608,15 +617,49 @@ def _decode_sequences(records, plans_by_record, clip_videos, clip_last_frame, cr
     for clip, clip_records in sorted(by_clip.items()):
         video = clip_videos[clip]
         last_frame = clip_last_frame.get(clip)
-        decoded = decode_frames(video, _needed_indices(clip_records, last_frame))
         # Read each record's export image once here -- shared by the offset
         # probe below, the anchor-repeat fallback, and the native-shape
         # resize -- rather than once per candidate offset (up to 3x the
         # same JPEG).
         export_images = {record["path"]: _imread_unicode(record["path"])
                          for record in clip_records}
-        offset = _resolve_clip_offset(
-            clip, clip_records, decoded, export_images, last_frame, tolerance)
+        fmap = (frame_maps or {}).get(clip)
+        if fmap is not None:
+            frame_of = fmap["frames"]
+            unmapped = sorted(r["frame"] for r in clip_records
+                              if r["frame"] not in frame_of)
+            if unmapped:
+                raise SystemExit(
+                    f"--frame-map for clip {clip!r} lacks entries for "
+                    f"labelled frame(s) {unmapped}; a partial map cannot "
+                    f"align the clip.")
+            count = fmap["video_frame_count"]
+            wanted = set()
+            for record in clip_records:
+                mapped = frame_of[record["frame"]]
+                wanted.update(idx for idx in (mapped - 1, mapped, mapped + 1)
+                              if 0 <= idx < count)
+            decoded = decode_frames(video, sorted(wanted))
+            for record in clip_records:
+                mapped = frame_of[record["frame"]]
+                diff = verify_frame_alignment(
+                    decoded[mapped], export_images[record["path"]])
+                if diff > tolerance:
+                    raise SystemExit(
+                        f"--frame-map alignment failed for "
+                        f"{record['path'].name}: mapped video frame {mapped} "
+                        f"differs from the export image (mean |diff| "
+                        f"{diff:.1f} > {tolerance}) -- the map does not match "
+                        f"this video.")
+            true_t_of = {record["path"]: frame_of[record["frame"]]
+                         for record in clip_records}
+        else:
+            decoded = decode_frames(
+                video, _needed_indices(clip_records, last_frame))
+            offset = _resolve_clip_offset(
+                clip, clip_records, decoded, export_images, last_frame, tolerance)
+            true_t_of = {record["path"]: record["frame"] + offset
+                         for record in clip_records}
         for record in clip_records:
             # true_t is the anchor's real VIDEO-space decode index -- left
             # UNCLAMPED. Clamping it against `last_frame` (label/unshifted
@@ -642,7 +685,7 @@ def _decode_sequences(records, plans_by_record, clip_videos, clip_last_frame, cr
             # could reach -- same "duller edge, no extra video-metadata
             # plumbing" trade-off `_clamp_frame` already documents for the
             # offset=0 case.
-            true_t = record["frame"] + offset
+            true_t = true_t_of[record["path"]]
             export_image = export_images[record["path"]]
             native_shape = export_image.shape[:2]
             plans = plans_by_record[record["path"]]
@@ -676,8 +719,46 @@ def _decode_sequences(records, plans_by_record, clip_videos, clip_last_frame, cr
     return tiles
 
 
+def load_frame_map(path):
+    """Parse a --frame-map JSON file into {clip: {"video_frame_count": int,
+    "frames": {export_index: video_frame}}} with integer keys.
+
+    JSON object keys arrive as strings; both index spaces convert to int here
+    so `_decode_sequences` never sees string keys. Dies naming the file and
+    the offending clip on any malformed entry.
+    """
+    path = Path(path)
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise SystemExit(f"--frame-map {path}: {exc}")
+    if not isinstance(raw, dict):
+        raise SystemExit(
+            f"--frame-map {path}: top level must be an object keyed by clip "
+            f"name.")
+    maps = {}
+    for clip, entry in raw.items():
+        if (not isinstance(entry, dict)
+                or not isinstance(entry.get("video_frame_count"), int)
+                or not isinstance(entry.get("frames"), dict)):
+            raise SystemExit(
+                f"--frame-map {path}: clip {clip!r} needs "
+                f'{{"video_frame_count": int, '
+                f'"frames": {{export_index: video_frame}}}}.')
+        try:
+            frames = {int(k): int(v) for k, v in entry["frames"].items()}
+        except (TypeError, ValueError):
+            raise SystemExit(
+                f"--frame-map {path}: clip {clip!r} has a non-integer frame "
+                f"entry.")
+        maps[clip] = {"video_frame_count": entry["video_frame_count"],
+                      "frames": frames}
+    return maps
+
+
 def render_split(records, plans_by_record, out_dir, split, crop, quality,
-                 *, seq_frames=1, clip_videos=None, clip_last_frame=None):
+                 *, seq_frames=1, clip_videos=None, clip_last_frame=None,
+                 frame_maps=None):
     """Write crop JPEGs and the split's COCO json. Returns the manifest slice.
 
     `crop_file_name` keys off `record["path"].stem`, dropping the parent
@@ -707,7 +788,8 @@ def render_split(records, plans_by_record, out_dir, split, crop, quality,
     tiles = {}
     if seq_frames > 1 and clip_videos:
         tiles = _decode_sequences(
-            records, plans_by_record, clip_videos, clip_last_frame or {}, crop)
+            records, plans_by_record, clip_videos, clip_last_frame or {}, crop,
+            frame_maps=frame_maps)
 
     for record in records:
         plans = plans_by_record.get(record["path"])
@@ -790,7 +872,7 @@ def render_split(records, plans_by_record, out_dir, split, crop, quality,
 
 def build(source, out, crop, positives, negatives, jitter, min_visible,
           min_source_width, min_frame_gap, target_ball_px, val_clips, test_clips,
-          seed, quality, *, seq_frames=1, clips_dir=None):
+          seed, quality, *, seq_frames=1, clips_dir=None, frame_maps=None):
     if seq_frames % 2 == 0:
         raise SystemExit(
             f"--seq-frames must be odd (got {seq_frames}): sequence length "
@@ -800,6 +882,11 @@ def build(source, out, crop, positives, negatives, jitter, min_visible,
         raise SystemExit(
             f"--seq-frames {seq_frames} needs --clips-dir pointing at the "
             f"source videos, to decode the t-1/t+1 neighbour frames.")
+    if frame_maps and seq_frames == 1:
+        raise SystemExit(
+            "--frame-map only applies with --seq-frames > 1: it exists to "
+            "align sequence neighbour decoding, which single-frame crops "
+            "never do.")
 
     records, categories = load_export(source)
     total_frames = len(records)
@@ -844,7 +931,8 @@ def build(source, out, crop, positives, negatives, jitter, min_visible,
     for split in ("train", "val", "test"):
         manifest_splits[split] = render_split(
             splits.get(split, []), plans_by_record, out, split, crop, quality,
-            seq_frames=seq_frames, clip_videos=clip_videos, clip_last_frame=clip_last_frame)
+            seq_frames=seq_frames, clip_videos=clip_videos,
+            clip_last_frame=clip_last_frame, frame_maps=frame_maps)
 
     ball_widths = sorted(b["bbox"][2] for r in kept for b in r["balls"])
     manifest = {
@@ -917,6 +1005,12 @@ def parse_args():
                         help="1 = today's single-frame crops (default). >1 "
                              "(must be odd) also cuts t-1/t+1 crops from "
                              "--clips-dir, aligned to the labelled frame.")
+    parser.add_argument("--frame-map", type=Path, default=None,
+                        help="JSON {clip: {video_frame_count, frames: "
+                             "{export_index: video_frame}}} overriding the "
+                             "0/-1/+1 offset probe for clips whose export "
+                             "sampling was not 1:1 with video frames. Mapped "
+                             "anchors are still alignment-verified.")
     return parser.parse_args()
 
 
@@ -928,7 +1022,9 @@ def main():
         args.min_source_width, args.min_frame_gap, args.target_ball_px,
         args.val_clips, args.test_clips, args.seed, args.jpeg_quality,
         seq_frames=args.seq_frames,
-        clips_dir=args.clips_dir.expanduser() if args.clips_dir else None)
+        clips_dir=args.clips_dir.expanduser() if args.clips_dir else None,
+        frame_maps=load_frame_map(args.frame_map.expanduser())
+        if args.frame_map else None)
 
     print(f"{manifest['source_frames_kept']}/{manifest['source_frames_seen']} "
           f"source frames kept -> {args.out}")
