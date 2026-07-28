@@ -122,6 +122,12 @@
     padding:12px 14px calc(92px + env(safe-area-inset-bottom))}
   body.phase-load main{flex:1; display:flex; flex-direction:column; justify-content:center}
   body.phase-target main{flex:1 1 auto; min-height:0; overflow-y:auto; -webkit-overflow-scrolling:touch}
+  /* Section pages (Matches, Coach, Progress, roadmap placeholders) are pure
+     content with no stage above them, and they can outgrow the viewport once
+     their cards expand. main is flex:0 0 auto, so without this it simply grows
+     past the bottom of a body that never scrolls, putting the overflow out of
+     reach entirely. */
+  body.phase-page main{flex:1 1 auto; min-height:0; overflow-y:auto; -webkit-overflow-scrolling:touch}
   /* Keep the stage at its pre-rally-visualization size. JS measures the
      original track controls (with the rally card hidden) into this variable;
      the added card then scrolls inside the same control footprint. */
@@ -1726,6 +1732,7 @@ function setPhase(p){
   document.body.classList.toggle('phase-load', p === 'load');
   document.body.classList.toggle('phase-target', reportPhase);
   document.body.classList.toggle('phase-track', p === 'track');
+  document.body.classList.toggle('phase-page', ROADMAP_PHASES.includes(p));
   for(const id of ['p-load','p-record','p-frame','p-tap','p-review','p-wall-corners','p-tap-floor','p-confirm','p-clip','p-analyze','p-track','p-label','p-target',
                    'p-player1-report','p-player2-report',
                    'p-live','p-matches','p-coach','p-progress','p-stats','p-shot-bot','p-sharing']) $(id).classList.add('hidden');

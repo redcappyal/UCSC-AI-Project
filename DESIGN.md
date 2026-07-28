@@ -120,6 +120,13 @@ iOS app in Safari (add-to-home-screen capable).
   first paint** (inline head script — keep it there to avoid theme flash).
 - `body{height:100dvh; overflow:hidden}` — the app is a fixed shell, not a scrolling page.
   Individual panels may scroll internally if they must; the shell never does.
+- **A content page that can outgrow the viewport must be given an internal
+  scroller.** `main` is `flex:0 0 auto; overflow:hidden`, so a tall page does not
+  clip-and-scroll — it grows straight past the bottom of a body that never
+  scrolls, putting the overflow permanently out of reach. Section pages carry
+  `body.phase-page` (`flex:1 1 auto; min-height:0; overflow-y:auto`); reports use
+  `body.phase-target` and the Call page `body.phase-track`. Any new stage-less
+  phase needs one of these, or its lower content silently becomes unreachable.
 - `-webkit-tap-highlight-color:transparent` — we own press feedback (§11).
 
 ### 3.2 Shell anatomy (do not restructure)
