@@ -520,7 +520,12 @@ tokens.
 - **Analyzing:** full-stage scrim `rgba(0,0,0,.55)` + "ANALYZING…" 22/700 uppercase
   pulsing `.35→1` opacity, 1.4 s. Pattern for any in-place canvas work.
 - **Zoom controls:** top-right borderless white glyph buttons with heavy text-shadow —
-  floating chrome over video never gets a fill.
+  floating chrome over video never gets a fill. **They move to bottom-center
+  (`body.zoom-low`) while tapping the out line, tin, service line or wall corners.**
+  Floating chrome sits *above* the canvas and swallows taps meant for it, and the
+  out line meets the right side wall directly under the default position — so any
+  overlay placed over the frame must be checked against the tap targets of every
+  phase that shows it. Floor landmarks all sit low, so those phases keep top-right.
 
 ### 8.13 Feature cards (hub pages)
 
