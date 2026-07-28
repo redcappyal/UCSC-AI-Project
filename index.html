@@ -1339,19 +1339,61 @@ function stepLabelFor(p){
                     : `${idx + 1}/${seq.length} · ${label}`;
 }
 
-/* Post-hoc player naming (spec §4.6): player 1 is always the rally-1 server,
-   so its track letter maps a saved name to a player number. Falls back to
-   'Player N' when players_v1 is absent, the name is unset, or (assumed
-   backend) the rally-1 server track was never observed. */
+/* Post-hoc player naming (spec §4.6): the anchor is the FIRST rally whose
+   serve was actually observed, not necessarily rally 1 — rally 1's serve can
+   go unobserved while a later rally's is (e.g. person detection picks the
+   ball up mid-clip), and job_runner.assign_front_wall_hit_players binds a
+   track to a player number once, at that anchor rally, then propagates it
+   forward. Reading rally 1 unconditionally (as this used to) silently no-ops
+   naming when rally 1 is unobserved, and — worse — SWAPS names whenever
+   PLAYER_ASSIGNMENT_FIRST_SERVER=2, because the anchor's track binds to
+   whichever player was serving *at that point in the chain*, not always
+   player 1. anchor.server_player_number carries that binding already, so use
+   it directly instead of assuming player 1. */
+function attributionAnchor(v1){
+  const rallies = (v1 && v1.rallies) || [];
+  return rallies.find(rally => rally.server_source === 'observed' &&
+    (rally.server_track === 'A' || rally.server_track === 'B')) || null;
+}
+
+/* attribution_backend 'observed' asserts some rally's serve was observed
+   (that's how the backend derives the flag), so an anchor should always
+   exist alongside it. If it doesn't — a data contradiction, e.g. a stale or
+   hand-built players_v1 — track→player mapping is impossible; the card must
+   say so rather than silently freezing every name at 'Player N' forever. */
+function attributionMappingBroken(v1){
+  return !!v1 && v1.attribution_backend === 'observed' && !attributionAnchor(v1);
+}
+
+/* -> 'A' | 'B' | null for the given player number, or null when no mapping
+   is possible (no anchor and not in the broken-mapping fallback state).
+   anchor.server_player_number is the player who was serving AT THE ANCHOR
+   RALLY, per the same chain-of-custody job_runner.assign_front_wall_hit_players
+   used to build it — it is not always player 1 (that only holds when
+   PLAYER_ASSIGNMENT_FIRST_SERVER's default of 1 also happens to be who's
+   serving by the time the anchor rally is reached). Mapping unconditionally
+   to player 1 here is exactly the swap bug this function replaces. */
+function trackForPlayer(v1, playerNumber){
+  const anchor = attributionAnchor(v1);
+  if(anchor){
+    const anchorPlayer = Number(anchor.server_player_number);
+    if(anchorPlayer === 1 || anchorPlayer === 2){
+      return playerNumber === anchorPlayer ? anchor.server_track
+                                           : (anchor.server_track === 'A' ? 'B' : 'A');
+    }
+  }
+  if(attributionMappingBroken(v1)){
+    // Documented fallback (spec §4.6): A -> Player 1, B -> Player 2, so
+    // naming still does something predictable instead of a permanent no-op.
+    return playerNumber === 1 ? 'A' : 'B';
+  }
+  return null;
+}
+
 function playerDisplayName(playerNumber){
   const v1 = S.run && S.run.players_v1;
   const names = v1 && v1.player_names;
-  const rally1 = v1 && v1.rallies && v1.rallies[0];
-  let track = null;
-  if(rally1 && rally1.server_track){
-    track = playerNumber === 1 ? rally1.server_track
-                               : (rally1.server_track === 'A' ? 'B' : 'A');
-  }
+  const track = v1 ? trackForPlayer(v1, playerNumber) : null;
   const name = track && names ? names[track] : null;
   return name || ('Player ' + playerNumber);
 }
@@ -5030,7 +5072,9 @@ function updatePlayerReportButtonLabels(){
 
 /* Players card (spec §4.6): post-hoc naming of tracks A/B. Renders only when
    the run has players_v1; the backend note, name fields, and (when the
-   rally-1 serve was observed) the "who is this" crop all key off it. */
+   anchor rally's serve was observed) the "who is this" crop all key off the
+   same attributionAnchor() used by playerDisplayName, so the card and every
+   name-propagation site agree on which track is which player. */
 function renderPlayersCard(){
   updatePlayerReportButtonLabels();
   const card = $('playersCard');
@@ -5040,16 +5084,18 @@ function renderPlayersCard(){
     return;
   }
   card.classList.remove('hidden');
-  $('playersBackendNote').textContent = v1.attribution_backend === 'observed'
-    ? 'Players detected automatically (RF-DETR).'
-    : 'Player attribution is assumed serve alternation — person detection was unavailable for this run.';
+  $('playersBackendNote').textContent = v1.attribution_backend !== 'observed'
+    ? 'Player attribution is assumed serve alternation — person detection was unavailable for this run.'
+    : attributionMappingBroken(v1)
+      ? 'No serve could be attributed — names will label Player 1/2 by convention.'
+      : 'Players detected automatically (RF-DETR).';
 
   const names = v1.player_names || {};
   $('playerNameA').value = names.A || '';
   $('playerNameB').value = names.B || '';
 
-  const rally1 = v1.rallies && v1.rallies[0];
-  const track = rally1 && rally1.server_track;
+  const anchor = attributionAnchor(v1);
+  const track = anchor && anchor.server_track;
   if(v1.serve_crop && (track === 'A' || track === 'B')){
     $('serveCropBlock').classList.remove('hidden');
     $('serveCropImg').src = `/api/runs/${encodeURIComponent(S.run.run_id)}/${v1.serve_crop}`;
@@ -5065,14 +5111,15 @@ function updateCropButtonLabels(){
 }
 
 /* The crop shows whichever track (A/B — meaningless letters to the user)
-   served rally 1. Tapping the button matching the recognized name binds that
-   typed name to the crop's actual track and the other typed name to the
-   other track, regardless of which input field the user happened to type
-   each name into first. */
+   served the anchor rally (attributionAnchor — the first observed serve, not
+   necessarily rally 1). Tapping the button matching the recognized name
+   binds that typed name to the crop's actual track and the other typed name
+   to the other track, regardless of which input field the user happened to
+   type each name into first. */
 function assignCropTrack(pickedField){
   const v1 = S.run && S.run.players_v1;
-  const rally1 = v1 && v1.rallies && v1.rallies[0];
-  const track = rally1 && rally1.server_track;
+  const anchor = v1 && attributionAnchor(v1);
+  const track = anchor && anchor.server_track;
   if(track !== 'A' && track !== 'B') return;
   const otherTrack = track === 'A' ? 'B' : 'A';
   const otherField = pickedField === 'A' ? 'B' : 'A';
