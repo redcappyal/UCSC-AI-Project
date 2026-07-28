@@ -13,7 +13,7 @@
 ## Global Constraints
 
 - **The venv is `.venv`. System `python3` has no flask or cv2.** Every command below uses `.venv/bin/python`.
-- **Full suite must stay green:** `.venv/bin/python -m pytest tests/ -q` → `318 passed, 1 deselected`. That deselection is expected, not a skip to chase. Your new tests raise the passed count.
+- **Full suite must stay green:** `.venv/bin/python -m pytest tests/ -q` → `283 passed, 1 deselected`. That deselection is expected, not a skip to chase. Your new tests raise the passed count.
 - **A PostToolUse hook auto-runs the paired test file** whenever you edit a `*.py` that has a `tests/test_*.py`. Failures come back as a *blocked edit*, not a warning. So `tests/test_court_detect.py` must stay fast (< ~10 s).
 - **Never pass a possibly-non-ASCII path to `cv2.imread`/`cv2.imwrite`.** This plan never does — the endpoint uses `cv2.imdecode` on an in-memory buffer, which is unaffected.
 - **The manual wizard must remain wired and behaviourally unchanged.** No task deletes or edits `tap_out` / `tap_tin` / `tap_service` / `review` / `tap_wall` / `tap_floor` logic.
@@ -50,6 +50,7 @@ Everything else is scored against this, so it comes first. The renderer draws pa
 
 **Interfaces:**
 - Consumes: `court_model.CameraModel` (has `.project((x, y, z)) -> (px, py)`, raises `ValueError` behind the camera); `tests/synthetic3d.make_camera(...)`.
+- Also produces: `court_camera()` — the one canonical camera every task's tests use. `make_camera()`'s default `look_at` tilts the out line off the top of the frame, so a bare `make_camera()` is never correct here; `court_camera()` wraps it with framing that puts the whole court in view.
 - Produces:
   - `render_court(camera, visible_depth_ft=26.0, noise_sigma=0.0, seed=0) -> (image_bgr, truth)`
   - `truth` is a `dict[str, tuple]`: line datums map to a 2-tuple of endpoint pixels; point datums map to one pixel. Keys: `out_line_lower_edge`, `service_line_top_edge`, `tin_top_edge`, `front_seam`, `short_line`, `wall_top_left`, `wall_top_right`, `wall_bottom_left`, `wall_bottom_right`, `short_line_left`, `short_line_right`, `t_point`.
@@ -78,12 +79,12 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from synthetic3d import make_camera
+from synthetic_court import court_camera
 from synthetic_court import FLOOR_BGR, LINE_BGR, WALL_BGR, render_court
 
 
 def test_render_court_paints_lines_where_the_camera_projects_them():
-    camera = make_camera()
+    camera = court_camera()
     image, truth = render_court(camera)
 
     assert image.shape == (1080, 1920, 3)
@@ -133,9 +134,12 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from court_model import (
+    BOX_BACK_CENTER_Y_FT,
     COURT_WIDTH_FT,
     HALF_COURT_X_FT,
+    LEFT_BOX_INNER_CENTER_X_FT,
     LINE_WIDTH_FT,
+    RIGHT_BOX_INNER_CENTER_X_FT,
     OUT_LINE_HEIGHT_FT,
     SERVICE_BOX_BACK_FT,
     SERVICE_BOX_FT,
@@ -225,8 +229,9 @@ def render_court(camera, visible_depth_ft=26.0, noise_sigma=0.0, seed=0):
           _wall_band(TIN_TOP_HEIGHT_FT - LINE_WIDTH_FT, TIN_TOP_HEIGHT_FT),
           LINE_BGR)
 
-    # Floor paint. These are stored by CENTRELINE, so each band straddles its
-    # datum (court_model.py:49-62).
+    # Floor paint. The short line and half-court line are stored by CENTRELINE,
+    # so those bands straddle their datum (court_model.py:49-62). The service
+    # box constants are NOT centrelines -- see the note below them.
     half = LINE_WIDTH_FT / 2.0
     _fill(image, camera,
           _floor_band(0.0, COURT_WIDTH_FT,
@@ -237,17 +242,23 @@ def render_court(camera, visible_depth_ft=26.0, noise_sigma=0.0, seed=0):
           _floor_band(HALF_COURT_X_FT - half, HALF_COURT_X_FT + half,
                       SHORT_LINE_FROM_FRONT_FT, visible_depth_ft),
           LINE_BGR)
-    for x_inner in (SERVICE_BOX_FT, COURT_WIDTH_FT - SERVICE_BOX_FT):
+    # SERVICE_BOX_FT and SERVICE_BOX_BACK_FT are WSF EDGE datums, not
+    # centrelines -- court_model.py:27-35 has the paint spanning [5.25, 5.25+w]
+    # and [23.25, 23.25+w], OUTSIDE the box interior. Straddling the raw datum
+    # would put every box band 25 mm inside where the paint really is, and
+    # Task 5 scores its self-verification against the *_CENTER_* constants
+    # below, so the two must agree.
+    for x_centre in (LEFT_BOX_INNER_CENTER_X_FT, RIGHT_BOX_INNER_CENTER_X_FT):
         _fill(image, camera,
-              _floor_band(x_inner - half, x_inner + half,
+              _floor_band(x_centre - half, x_centre + half,
                           SHORT_LINE_FROM_FRONT_FT, SERVICE_BOX_BACK_FT),
               LINE_BGR)
     for x_low, x_high in ((0.0, SERVICE_BOX_FT),
                           (COURT_WIDTH_FT - SERVICE_BOX_FT, COURT_WIDTH_FT)):
         _fill(image, camera,
               _floor_band(x_low, x_high,
-                          SERVICE_BOX_BACK_FT - half,
-                          SERVICE_BOX_BACK_FT + half),
+                          BOX_BACK_CENTER_Y_FT - half,
+                          BOX_BACK_CENTER_Y_FT + half),
               LINE_BGR)
 
     if noise_sigma > 0:
@@ -285,7 +296,7 @@ def render_court(camera, visible_depth_ft=26.0, noise_sigma=0.0, seed=0):
 Run: `.venv/bin/python -m pytest tests/test_court_detect.py -q`
 Expected: PASS — `1 passed`
 
-If the wall/floor assertions fail, print `truth["front_seam"]` and check the seam is inside the frame; adjust `make_camera`'s `look_at` only inside the test, never the renderer's court constants.
+If the wall/floor assertions fail, print `truth["front_seam"]` and check the seam is inside the frame. Adjust `court_camera()`'s framing in `tests/synthetic_court.py` only — never the court constants imported from `court_model.py`, which are the shared datum contract every task depends on.
 
 - [ ] **Step 5: Commit**
 
@@ -328,7 +339,7 @@ def _frames_with_moving_player(camera, count=5):
 
 
 def test_median_frame_erases_a_moving_player():
-    camera = make_camera()
+    camera = court_camera()
     frames = _frames_with_moving_player(camera)
     median, moved = court_detect.median_frame(frames)
 
@@ -338,7 +349,7 @@ def test_median_frame_erases_a_moving_player():
 
 
 def test_median_frame_flags_a_panning_camera():
-    camera = make_camera()
+    camera = court_camera()
     base, _ = render_court(camera)
     frames = [np.roll(base, shift * 90, axis=1) for shift in range(5)]
 
@@ -454,7 +465,7 @@ def _nearest_line_to(lines, point_a, point_b):
 
 
 def test_find_lines_recovers_the_front_wall_paint():
-    camera = make_camera()
+    camera = court_camera()
     image, truth = render_court(camera, noise_sigma=2.0)
 
     lines = court_detect.find_lines(court_detect.line_response(image),
@@ -466,11 +477,11 @@ def test_find_lines_recovers_the_front_wall_paint():
         # The stripe is ~LINE_WIDTH_FT wide, so a line fitted to the whole
         # stripe may sit up to half a width off the named datum. Task 5 pulls
         # it onto the exact edge; here we only require the right stripe.
-        assert abs(found.y_at(start[0]) - start[1]) < 12, name
+        assert abs(found.y_at(start[0]) - start[1]) < 6, name
 
 
 def test_edge_response_finds_the_wall_floor_seams():
-    camera = make_camera()
+    camera = court_camera()
     image, truth = render_court(camera, noise_sigma=2.0)
 
     lines = court_detect.find_lines(court_detect.edge_response(image),
@@ -605,22 +616,42 @@ class DetectedLine:
         return (self.x1 + dx1 * along, self.y1 + dy1 * along)
 
 
-def _angle_delta(first, second):
-    """Smallest angle between two orientations, accounting for the ±90 wrap."""
-    delta = abs(first - second) % 180.0
-    return min(delta, 180.0 - delta)
-
-
-def _normal_form(segment):
-    """(orientation, signed perpendicular offset from the origin)."""
+def _segment_direction(segment):
+    """Unit direction of a segment, or None if it is degenerate."""
     x1, y1, x2, y2 = segment
-    angle = math.degrees(math.atan2(y2 - y1, x2 - x1))
-    if angle > 90:
-        angle -= 180
-    if angle <= -90:
-        angle += 180
-    radians = math.radians(angle)
-    return angle, -math.sin(radians) * x1 + math.cos(radians) * y1
+    dx, dy = x2 - x1, y2 - y1
+    length = math.hypot(dx, dy)
+    if length < 1e-9:
+        return None
+    return dx / length, dy / length
+
+
+def _offset_along(direction, point):
+    """Signed perpendicular offset of `point` from the origin in a direction frame.
+
+    Only comparable between two segments expressed in the SAME frame: negating
+    a direction negates the offset. That is why fragments are aligned to their
+    group's direction before this is measured, rather than each canonicalising
+    itself -- any per-fragment rule (wrap the angle, force uy >= 0) merely moves
+    the sign flip to whatever orientation its tie-break sits on, and a flip
+    turns a 0 px offset difference into ~2*y.
+    """
+    ux, uy = direction
+    return -uy * point[0] + ux * point[1]
+
+
+def _aligned_to(direction, reference):
+    """`direction`, flipped if needed to point the same way as `reference`."""
+    ux, uy = direction
+    rx, ry = reference
+    return (-ux, -uy) if ux * rx + uy * ry < 0 else (ux, uy)
+
+
+def _direction_delta_deg(first, second):
+    """Unsigned angle between two unit directions, in degrees."""
+    ax, ay = first
+    bx, by = second
+    return abs(math.degrees(math.atan2(ax * by - ay * bx, ax * bx + ay * by)))
 
 
 def _fit_group(segments):
@@ -663,16 +694,24 @@ def find_lines(response, min_length_px):
         return []
 
     groups = []
-    for segment in found[:, 0, :]:
-        angle, offset = _normal_form([float(value) for value in segment])
+    for raw in found[:, 0, :]:
+        segment = [float(value) for value in raw]
+        direction = _segment_direction(segment)
+        if direction is None:
+            continue
         for group in groups:
-            if (_angle_delta(angle, group["angle"]) <= MERGE_ANGLE_DEG
-                    and abs(offset - group["offset"]) <= MERGE_OFFSET_PX):
-                group["segments"].append([float(value) for value in segment])
-                break
+            aligned = _aligned_to(direction, group["direction"])
+            if _direction_delta_deg(aligned, group["direction"]) > MERGE_ANGLE_DEG:
+                continue
+            if abs(_offset_along(aligned, segment[:2])
+                   - group["offset"]) > MERGE_OFFSET_PX:
+                continue
+            group["segments"].append(segment)
+            break
         else:
-            groups.append({"angle": angle, "offset": offset,
-                           "segments": [[float(value) for value in segment]]})
+            groups.append({"direction": direction,
+                           "offset": _offset_along(direction, segment[:2]),
+                           "segments": [segment]})
 
     lines = [_fit_group(group["segments"]) for group in groups]
     return sorted(lines, key=lambda line: line.length_px, reverse=True)
@@ -710,7 +749,7 @@ Append to `tests/test_court_detect.py`:
 
 ```python
 def test_assign_lines_names_every_required_entity():
-    camera = make_camera()
+    camera = court_camera()
     image, truth = render_court(camera, noise_sigma=2.0)
     minimum = image.shape[1] * 0.10
 
@@ -889,7 +928,7 @@ from judge_call import load_calibration_lines
 
 
 def test_refit_to_datum_lands_on_the_named_edge_not_the_centre():
-    camera = make_camera()
+    camera = court_camera()
     image, truth = render_court(camera)
     mask = court_detect.paint_mask(image)
     lines = court_detect.find_lines(court_detect.line_response(image),
@@ -910,7 +949,7 @@ def test_refit_to_datum_lands_on_the_named_edge_not_the_centre():
 
 
 def test_detect_court_recovers_the_camera_that_drew_the_court():
-    camera = make_camera()
+    camera = court_camera()
     image, truth = render_court(camera, noise_sigma=2.0)
 
     result = court_detect.detect_court([image])
@@ -939,7 +978,7 @@ def test_detect_court_recovers_the_camera_that_drew_the_court():
 
 
 def test_detect_court_output_parses_with_the_existing_consumers():
-    camera = make_camera()
+    camera = court_camera()
     image, _ = render_court(camera, noise_sigma=2.0)
 
     result = court_detect.detect_court([image])
@@ -1291,7 +1330,7 @@ Expected: PASS — `11 passed`
 
 Then the full suite, because this task imports `court_model` at module scope:
 Run: `.venv/bin/python -m pytest tests/ -q`
-Expected: `329 passed, 1 deselected`
+Expected: `294 passed, 1 deselected`
 
 - [ ] **Step 5: Commit**
 
@@ -1305,7 +1344,7 @@ git commit -m "feat(detect): datum-correct line fits, anchor intersections, floo
 ### Task 6: `POST /api/detect-court`
 
 **Files:**
-- Modify: `app.py` (add after the `/api/camera-model` route, which ends at `app.py:1053`)
+- Modify: `app.py` (insert immediately before `def validate_floor_calibration`, currently `app.py:1057` — i.e. after the `/api/camera-model` route ends)
 - Test: `tests/test_camera_endpoints.py`
 
 **Interfaces:**
@@ -1334,7 +1373,7 @@ def test_detect_court_endpoint_returns_usable_calibration_structures():
     import io
 
     client = _client()
-    image, _ = render_court(make_camera(), noise_sigma=2.0)
+    image, _ = render_court(court_camera(), noise_sigma=2.0)
     payload = {"frames": [(io.BytesIO(_jpeg(image)), f"frame{index}.jpg")
                           for index in range(3)]}
 
@@ -1424,7 +1463,7 @@ Run: `.venv/bin/python -m pytest tests/test_camera_endpoints.py -q`
 Expected: PASS
 
 Run: `.venv/bin/python -m pytest tests/ -q`
-Expected: `331 passed, 1 deselected`
+Expected: `296 passed, 1 deselected`
 
 - [ ] **Step 5: Commit**
 
@@ -1882,7 +1921,7 @@ Use the `/verify` skill. Load a test video, pick a frame, tap **USE FRAME**, the
 - [ ] **Step 5: Run the full suite**
 
 Run: `.venv/bin/python -m pytest tests/ -q`
-Expected: `331 passed, 1 deselected`
+Expected: `296 passed, 1 deselected`
 
 - [ ] **Step 6: Commit**
 
