@@ -407,6 +407,10 @@ above is unchanged.
 - Range: native, `accent-color:var(--accent-bg)`, 44 px hit area, paired `.sliderlabel`
   (14 dim label + 600 tabular value `output`).
 - File: hidden input inside `label.filebtn`.
+- Text: `color-mix(in srgb, var(--surface) 86%, var(--bg))` fill, radius 12 (§4.4), 17 px,
+  `min-height:48px`, `1px --line` border — the border is what distinguishes it from the
+  Number variant, needed because a text field sits inside a `--surface` card (post-hoc
+  player naming, §4.6) rather than always on `--bg` the way Number fields do.
 
 ### 8.5 Progress (`.progressbox`)
 

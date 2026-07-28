@@ -1208,6 +1208,20 @@
 <script>
 'use strict';
 const $ = id => document.getElementById(id);
+
+/* Escapes a string for safe interpolation into an innerHTML template string.
+   Player names are free-text (typed, persisted server-side, up to 40 chars)
+   and reach a handful of innerHTML sinks — coach report metric captions,
+   rally winner ribbon segments, the judge verdict's player-attribution span.
+   Apply this at those sinks only; playerDisplayName/playerAttributionText
+   stay unescaped because they also feed plain textContent/.title assignments,
+   which are already safe and would double-encode ("&amp;amp;") if escaped
+   twice. */
+function escapeHtml(value){
+  return String(value).replace(/[&<>"']/g, ch => ({
+    '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;',
+  }[ch]));
+}
 const vid = $('vid'), canvas = $('view'), ctx = canvas.getContext('2d', {willReadFrequently:true});
 const stage = $('stage');
 
@@ -4815,7 +4829,7 @@ function renderPlayerCoachPanel(data, playerNumber, sourceText){
     side_target_rate: null,
     low_target_rate: null,
     rally_outcome_analytics: {},
-  }, found, { label: playerDisplayName(playerNumber) });
+  }, found, { label: escapeHtml(playerDisplayName(playerNumber)) });
   $(`coachPanelP${playerNumber}`).classList.remove('hidden');
   $(`coachSourceP${playerNumber}`).textContent = sourceText;
   $(`coachIntroP${playerNumber}`).textContent =
@@ -4912,11 +4926,11 @@ function setCoachLoading(playerNumber){
   ].join('');
   $(`coachOutcomesP${playerNumber}`).innerHTML =
     renderOutcomeMetricSection({
-      label: playerDisplayName(playerNumber),
+      label: escapeHtml(playerDisplayName(playerNumber)),
       rally_outcome_analytics: {},
     }, 'winning') +
     renderOutcomeMetricSection({
-      label: playerDisplayName(playerNumber),
+      label: escapeHtml(playerDisplayName(playerNumber)),
       rally_outcome_analytics: {},
     }, 'losing');
   $(`coachFeedbackP${playerNumber}`).textContent = 'Building player feedback from the target map...';
@@ -5285,7 +5299,7 @@ function buildRallyVisualization(initialFrame){
     segment.setAttribute('aria-label',
       `Rally ${number}, ${winner}, frames ${rally.start_frame} to ${rally.end_frame}`);
     segment.title = segment.getAttribute('aria-label');
-    segment.innerHTML = `<strong>R${number}</strong><span>${winner.replace('Player ', 'P')}</span>`;
+    segment.innerHTML = `<strong>R${number}</strong><span>${escapeHtml(winner.replace('Player ', 'P'))}</span>`;
     ribbon.appendChild(segment);
 
     const chip = document.createElement('button');
@@ -5653,7 +5667,7 @@ function playerAttributionText(hit){
 }
 
 function playerAttributionMarkup(hit){
-  return `<span class="verdictPlayer">${playerAttributionText(hit)}</span>`;
+  return `<span class="verdictPlayer">${escapeHtml(playerAttributionText(hit))}</span>`;
 }
 
 function clearJudgeResult(){
