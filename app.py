@@ -2073,9 +2073,10 @@ if __name__ == "__main__":
     RUNS_DIR.mkdir(exist_ok=True)
     UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
     host = os.getenv("HOST", "127.0.0.1")
-    # macOS AirPlay Receiver commonly owns port 5000 and can intercept
+    # Not 5000: macOS AirPlay Receiver commonly owns it and can intercept
     # `localhost` with an AirTunes 403 even while Flask is bound on IPv4.
-    port = int(os.getenv("PORT", "5001"))
+    # 5188 is the number README, CLAUDE.md, and the /verify skill all cite.
+    port = int(os.getenv("PORT", "5188"))
     print(f"Starting SquashAnalytics {APP_VERSION} from {ROOT}")
     print(f"TRACKING_BACKEND={TRACKING_BACKEND} DEFAULT_DEVICE={os.environ.get('DEFAULT_DEVICE')}")
     print(f"ONNXRUNTIME_EXECUTION_PROVIDERS={os.environ.get('ONNXRUNTIME_EXECUTION_PROVIDERS')}")

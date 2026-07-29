@@ -67,13 +67,15 @@ cp .env.example .env        # add your ROBOFLOW_API_KEY
 Open http://127.0.0.1:5188. For phone access on the same network:
 
 ```bash
-HOST=0.0.0.0 PORT=5188 .venv/bin/python app.py
+HOST=0.0.0.0 .venv/bin/python app.py
 ```
 
 Useful environment variables:
 
 | Variable | Default | Effect |
 |---|---|---|
+| `HOST` | `127.0.0.1` | Bind address. `0.0.0.0` exposes the server to the LAN for phone access. |
+| `PORT` | `5188` | Listen port. Avoid 5000 — macOS AirPlay Receiver holds it. |
 | `BALL_DETECTOR` | `local` | Ball detector for analysis jobs: `local` (committed WASB temporal model) or `rfdetr` (hosted Roboflow). No silent fallback. |
 | `BALL_DEVICE` | `auto` | Device for the local ball detector: CUDA when available, else CPU. MPS is opt-in (`mps`), never auto. |
 | `BALL_MODEL_DIR` | `models/crosscourt-wasb-416-v1` | Override the local ball model directory. |
