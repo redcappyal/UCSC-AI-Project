@@ -503,6 +503,42 @@ directory).
 
 ---
 
+## 5b. First run: crosscourt-ball-wasb-v1 (2026-07-29)
+
+Trained on `ball-crops-seq-v1` (export-path build, tutorial excluded: 1,975
+train / 89 val / 265 test sequence samples), init `wasb_tennis_best`, batch 4,
+Adam 1e-4. Early-stopped at epoch 41; **best val F1 0.710 at epoch 26
+(precision 1.000, recall 0.551)** at conf 0.5 / 5 px match radius. Same shape
+as the YOLOX precedent: val plateaued in the 20s, 15 more epochs bought
+nothing. Training scripts live on the box (`train_wasb.py`,
+`wasb_crops_dataset.py`, `check_gates.py` beside the WASB-SBDT clone).
+
+Gates: **(a) PASS** — one-batch overfit puts every supervised peak within
+1 px at ~0.7 conf (note: judge 5(a) by *peak placement*, never by loss ratio —
+416² targets are ~99.99% background, so "zero everywhere" already scores a
+microscopic loss). **(b) 7/16** contact-sheet peaks locked on, consistent with
+R 0.55. **(c) no inversion** — but no per-channel separation either: all three
+channels fire together, because outer channels are only ever supervised by
+repeats and negatives (§2.2 masks real neighbours), so they learn to echo the
+middle head. Harmless at serving time — `ball_model.py`'s HeatmapRunner
+decodes only the middle channel — but it means gate (c)'s strict
+"outers stay quiet" form cannot pass under this supervision scheme; the
+meaningful check is that the MIDDLE channel responds and no OUTER channel
+fires *instead*. **(d) PASS, unexpectedly well** — three identical frames
+containing a ball: middle-channel peak p50 0.014, max 0.038, 0% fire at 0.5.
+Static-clutter suppression emerged from motion statistics alone, before any
+§2.3 hard negatives exist.
+
+Read on val (single rig shared with train — memorisation, not accuracy):
+precision-limited nothing, recall-limited everything. When it fires it is
+essentially never wrong; it misses half the balls. The lever for v2 is
+recall: more independent bursts, §2.3 negatives, and production-mount footage.
+
+Exported to `models/crosscourt-wasb-416-v1` (traced sha256 `6eb5a6d3…`,
+measured stride 1). Round trip through the real serving path
+(`BALL_MODEL_DIR` + `load_detector().run_batch`): 60/89 val positives within
+5 px at the manifest's 0.1 floor, 52/89 at the caller's 0.4 bar.
+
 ## 6. Export (Task 7, not this document)
 
 Once a checkpoint passes §5 and clears whatever val F1 bar Task 8's baseline
