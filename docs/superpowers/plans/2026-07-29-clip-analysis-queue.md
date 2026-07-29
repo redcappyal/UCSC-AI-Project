@@ -386,7 +386,7 @@ working preview.
 
 ---
 
-### Task 10 — chunked upload — TODO
+### Task 10 — chunked upload — DONE (2026-07-29)
 
 `POST /api/upload` is whole-file multipart capped at 2 GB (`app.py:55`,
 `deploy/Caddyfile`) ≈ 5 minutes of 4K60. A 40-minute match cannot be ingested at all,
@@ -396,6 +396,17 @@ Follow **MVP plan Task 17**: chunked upload endpoints, byte-identical reassembly
 test, and a `uploadFileChunked(file, progressLabel)` client with progress.
 
 Commit: `feat: chunked upload so a full match can be ingested`
+
+**Result:** commit `3fb2091`. `POST /api/upload/init` / `/api/upload/chunk/<id>?index=N` /
+`/api/upload/complete/<id>` in `app.py`, `uploadFileChunked` in `index.html` (switches
+above 512 MB), `tests/test_chunked_upload.py` (10 tests). Suite **605 passed, 2 skipped,
+1 deselected**. Verified against the running server: init ok, sequential chunks 200,
+out-of-order 409, complete returns a `video_id`.
+
+Strict sequencing is the integrity guarantee — a gap would assemble a file with a hole in
+it that still decodes and still produces statistics. `init` captures the filename suffix
+because `video_path_for_id` globs `<id>.*`. The partial dir derives from `BY_HASH_DIR` so
+the `runs_dir` fixture sandboxes it.
 
 ---
 
