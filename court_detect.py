@@ -164,18 +164,27 @@ def _segment_direction(segment):
     return dx / length, dy / length
 
 
-def _offset_along(direction, point):
-    """Signed perpendicular offset of `point` from the origin in a direction frame.
+def _perpendicular_distance(anchor, direction, point):
+    """Distance from `point` to the line through `anchor` along `direction`.
 
-    Only comparable between two segments expressed in the SAME frame: negating
-    a direction negates the offset. That is why fragments are aligned to their
-    group's direction before this is measured, rather than each canonicalising
-    itself -- any per-fragment rule (wrap the angle, force uy >= 0) merely moves
-    the sign flip to whatever orientation its tie-break sits on, and a flip
-    turns a 0 px offset difference into ~2*y.
+    Measured between the two points themselves, never extrapolated back to the
+    image origin. An origin-referenced offset (-uy*x + ux*y, compared between
+    fragments) levers each fragment's angular error by its distance from the
+    origin: two pieces of one 4 px stripe, one starting at x=715 and one at
+    x=776 with a 0.4 deg tilt, measure 555 and 564 -- a 9 px gap that splits
+    one court line into two groups. Anchoring the comparison where the
+    fragments actually are removes the lever arm, and being unsigned it is
+    also immune to the direction flip that offsets had to be aligned against.
     """
     ux, uy = direction
-    return -uy * point[0] + ux * point[1]
+    return abs(-uy * (point[0] - anchor[0]) + ux * (point[1] - anchor[1]))
+
+
+def _midpoint(segment):
+    """Centre of a segment -- the point a group is anchored and compared at,
+    because it is the fragment's least-extrapolated position."""
+    x1, y1, x2, y2 = segment
+    return ((x1 + x2) / 2.0, (y1 + y2) / 2.0)
 
 
 def _aligned_to(direction, reference):
@@ -240,18 +249,19 @@ def find_lines(response, min_length_px):
         direction = _segment_direction(segment)
         if direction is None:
             continue
+        midpoint = _midpoint(segment)
         for group in groups:
             aligned = _aligned_to(direction, group["direction"])
             if _direction_delta_deg(aligned, group["direction"]) > MERGE_ANGLE_DEG:
                 continue
-            if abs(_offset_along(aligned, segment[:2])
-                   - group["offset"]) > MERGE_OFFSET_PX:
+            if _perpendicular_distance(group["anchor"], group["direction"],
+                                       midpoint) > MERGE_OFFSET_PX:
                 continue
             group["segments"].append(segment)
             break
         else:
             groups.append({"direction": direction,
-                           "offset": _offset_along(direction, segment[:2]),
+                           "anchor": midpoint,
                            "segments": [segment]})
 
     lines = [_fit_group(group["segments"]) for group in groups]
