@@ -109,6 +109,28 @@ def test_build_players_v1_shape():
     assert assumed["attribution_backend"] == "assumed"
 
 
+def test_build_players_v1_carries_attribution_state():
+    """The rally ribbon reads provenance off players_v1, not off the raw
+    assignment, so both repair fields have to survive the copy -- including
+    the deliberate mismatch where a repaired rally still reads "propagated"
+    under server_source."""
+    assignment = {"rallies": [
+        {"rally_number": 1, "server_player_number": 2,
+         "server_source": "propagated", "winner_player_number": 1,
+         "winner_crosscheck_agrees": False,
+         "attribution_state": "repaired", "parity_repaired": True},
+        {"rally_number": 2, "server_player_number": 1,
+         "server_source": "observed", "winner_player_number": None,
+         "winner_crosscheck_agrees": False,
+         "attribution_state": "conflict", "parity_repaired": False},
+    ]}
+    rallies = build_players_v1(assignment, None, detector_backend="rfdetr")["rallies"]
+    assert [r["attribution_state"] for r in rallies] == ["repaired", "conflict"]
+    assert [r["parity_repaired"] for r in rallies] == [True, False]
+    assert rallies[0]["server_source"] == "propagated"
+    assert rallies[0]["winner_crosscheck_agrees"] is False
+
+
 def test_serve_crop_target_uses_rally1_observed_server():
     assignment = {"rallies": [
         {"rally_number": 1, "server_track": "A", "server_source": "observed",

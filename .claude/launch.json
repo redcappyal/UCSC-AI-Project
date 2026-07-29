@@ -13,6 +13,12 @@
       "runtimeExecutable": "python3",
       "runtimeArgs": ["-m", "http.server", "8321"],
       "port": 8321
+    },
+    {
+      "name": "static-preview-win",
+      "runtimeExecutable": "python",
+      "runtimeArgs": ["-m", "http.server", "8322"],
+      "port": 8322
     }
   ]
 }
