@@ -320,3 +320,48 @@ def test_a_run_that_found_no_ball_reports_zero_coverage_not_a_missing_key(
     job_runner.run_tracking_job(run_id)
 
     assert job_runner.get_job(run_id)["detection_coverage"] == 0.0
+
+
+# --- fps-normalized windows -------------------------------------------------
+
+
+def test_wired_hit_windows_match_the_pre_refactor_values_at_60fps():
+    """The refactor's safety claim, asserted where it is wired rather than
+    only where it is defined.
+
+    Before fps-normalization the pipeline passed max_gap=max(3, stride) and
+    left min_gap/smooth at their defaults. At the 60 fps reference the scaled
+    kwargs must reproduce exactly that, or the whole eval corpus moves.
+    """
+    from detect_wall_hits import (
+        MAX_GAP_FRAMES, MIN_GAP_FRAMES, SMOOTH_WINDOW, scaled_hit_kwargs,
+    )
+
+    scaled = scaled_hit_kwargs(60.0)
+    frame_stride = 4
+
+    assert max(scaled["max_gap"], frame_stride) == max(MAX_GAP_FRAMES, frame_stride)
+    assert scaled["min_gap"] == MIN_GAP_FRAMES
+    assert scaled["smooth"] == SMOOTH_WINDOW
+
+
+def test_audio_pads_are_unchanged_at_the_reference_frame_rate():
+    audio = [{"window_start_frame": 100, "window_end_frame": 110}]
+
+    at_reference = job_runner.refine_segments_for_audio_candidates(
+        audio, 0, 1000, 60.0
+    )
+    unscaled = job_runner.refine_segments_for_audio_candidates(audio, 0, 1000)
+
+    assert at_reference == unscaled
+
+
+def test_audio_pads_shrink_on_slower_footage():
+    """A pad counted in frames covers twice the wall-clock at half the rate."""
+    audio = [{"window_start_frame": 100, "window_end_frame": 110}]
+
+    slow = job_runner.refine_segments_for_audio_candidates(audio, 0, 1000, 30.0)
+    fast = job_runner.refine_segments_for_audio_candidates(audio, 0, 1000, 60.0)
+
+    assert slow[0][0] > fast[0][0]
+    assert slow[0][1] < fast[0][1]

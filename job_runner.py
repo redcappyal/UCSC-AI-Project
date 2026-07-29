@@ -25,7 +25,7 @@ from audio_events import extract_audio_candidates
 from bounce_gb_model_detector import DEFAULT_MODEL_PATH as BOUNCE_GB_MODEL_PATH
 from bounce_gb_model_detector import detect_hits_with_gb_model
 from classify_events import classify_events
-from detect_wall_hits import MAX_GAP_FRAMES, detect_hits_from_rows
+from detect_wall_hits import detect_hits_from_rows, scale_frames_for_fps, scaled_hit_kwargs
 from inference_engine import get_tracking_model, infer_frame_predictions
 from judge_call import (
     Point,
@@ -42,6 +42,7 @@ from tracking_common import (
     CONFIDENCE_THRESHOLD,
     CSV_FIELDNAMES,
     ball_csv_row,
+    scaled_window_frames,
     select_motion_consistent_ball_predictions,
 )
 
@@ -348,6 +349,7 @@ def track_segments(model, video_path, segments, inference_width, source_fps, res
     selected_predictions = select_motion_consistent_ball_predictions(
         raw_predictions,
         CONFIDENCE_THRESHOLD,
+        window_frames=scaled_window_frames(source_fps),
     )
     for frame_idx, ball_prediction in selected_predictions.items():
         results[frame_idx] = ball_csv_row(frame_idx, source_fps, ball_prediction)
@@ -384,11 +386,18 @@ def refine_segments_for_hits(hits, start_frame, end_frame, stride):
     )
 
 
-def refine_segments_for_audio_candidates(candidates, start_frame, end_frame):
+def refine_segments_for_audio_candidates(candidates, start_frame, end_frame, fps=None):
+    """Pad each audio window out to the frames worth re-tracking.
+
+    The pad is a duration expressed in frames, so it is converted for this
+    clip's frame rate (identity at 60). `fps=None` keeps the reference pad,
+    which is what the CLI callers that have no frame rate to hand want.
+    """
+    pad = scale_frames_for_fps(AUDIO_WINDOW_PAD_FRAMES, fps)
     return merge_frame_windows(
         (
-            max(start_frame, int(candidate["window_start_frame"]) - AUDIO_WINDOW_PAD_FRAMES),
-            min(end_frame, int(candidate["window_end_frame"]) + AUDIO_WINDOW_PAD_FRAMES),
+            max(start_frame, int(candidate["window_start_frame"]) - pad),
+            min(end_frame, int(candidate["window_end_frame"]) + pad),
         )
         for candidate in candidates
     )
@@ -1303,19 +1312,26 @@ def run_tracking_job(run_id):
                 video_path, start_frame, end_frame, source_fps
             )
 
+            # Windows are counted in frames but tuned in wall-clock, so they
+            # are converted for this clip's frame rate first (identity at 60).
+            hit_kwargs = scaled_hit_kwargs(source_fps)
             # Coarse samples are frame_stride apart; the default max_gap would
-            # split every track at stride > 3.
-            max_gap = max(MAX_GAP_FRAMES, frame_stride)
+            # split every track at stride > 3. The floor is applied AFTER
+            # scaling -- slow footage scales max_gap down, which makes a gap
+            # below the stride more likely, not less.
+            max_gap = max(hit_kwargs["max_gap"], frame_stride)
             detected = detect_hits_from_rows(
                 sorted_rows(results),
                 max_gap=max_gap,
+                min_gap=hit_kwargs["min_gap"],
+                smooth=hit_kwargs["smooth"],
                 wall_x_range=wall_x_range,
                 calibration=calibration,
             )
             segments = refine_segments_for_hits(detected, start_frame, end_frame, frame_stride)
             if audio_candidates:
                 audio_segments = refine_segments_for_audio_candidates(
-                    audio_candidates, start_frame, end_frame
+                    audio_candidates, start_frame, end_frame, source_fps
                 )
                 segments = merge_frame_windows(
                     (low, high) for low, high, _ in segments + audio_segments
@@ -1346,22 +1362,23 @@ def run_tracking_job(run_id):
             # refine pass is skipped because the whole clip was already
             # tracked at the requested width.
             if audio_candidates:
+                rescue_pad = scale_frames_for_fps(AUDIO_RESCUE_PAD_FRAMES, source_fps)
                 unseen = [
                     window
                     for window in audio_candidates
                     if not any(
                         row_has_ball_detection(results.get(f))
                         for f in range(
-                            int(window["window_start_frame"]) - AUDIO_RESCUE_PAD_FRAMES,
-                            int(window["window_end_frame"]) + AUDIO_RESCUE_PAD_FRAMES + 1,
+                            int(window["window_start_frame"]) - rescue_pad,
+                            int(window["window_end_frame"]) + rescue_pad + 1,
                         )
                     )
                 ]
                 if unseen:
                     rescue_segments = merge_frame_windows(
                         (
-                            max(start_frame, int(w["window_start_frame"]) - AUDIO_RESCUE_PAD_FRAMES),
-                            min(end_frame, int(w["window_end_frame"]) + AUDIO_RESCUE_PAD_FRAMES),
+                            max(start_frame, int(w["window_start_frame"]) - rescue_pad),
+                            min(end_frame, int(w["window_end_frame"]) + rescue_pad),
                         )
                         for w in unseen
                     )

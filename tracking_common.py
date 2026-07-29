@@ -11,6 +11,14 @@ import cv2
 
 CONFIDENCE_THRESHOLD = 0.40
 BALL_CLASS_NAMES = {"ball", "squash ball", "squash-ball", "squash_ball"}
+
+# The frame rate the frame-counted constants below were tuned at. Kept in step
+# with detect_wall_hits.REFERENCE_FPS -- both describe the same capture.
+# Pixel-domain constants here (MOTION_TRACK_*_PX, and the FLOOR_REBOUND_*_PX
+# thresholds) are deliberately left unscaled: the ball tier only admits footage
+# near the resolution they were tuned at (capabilities.BALL_MIN_WIDTH_PX).
+REFERENCE_FPS = 60.0
+
 MOTION_TRACK_WINDOW_FRAMES = 5
 MOTION_TRACK_MIN_DETECTIONS = 2
 MOTION_TRACK_MIN_SPAN_PX = 8.0
@@ -359,6 +367,18 @@ def is_stationary_candidate(stats):
         and stats["span_px"] <= MOTION_TRACK_MIN_SPAN_PX
         and stats["path_px"] <= MOTION_TRACK_MIN_PATH_PX
     )
+
+
+def scaled_window_frames(fps):
+    """MOTION_TRACK_WINDOW_FRAMES expressed for `fps`, floored at 2.
+
+    Two points is the minimum that defines a direction at all, so the floor is
+    the point below which the "motion consistent" test stops being about
+    motion. Identity at REFERENCE_FPS; a missing frame rate falls back there.
+    """
+    if not fps or fps <= 0:
+        return MOTION_TRACK_WINDOW_FRAMES
+    return max(2, int(round(MOTION_TRACK_WINDOW_FRAMES * fps / REFERENCE_FPS)))
 
 
 def select_motion_consistent_ball_predictions(
