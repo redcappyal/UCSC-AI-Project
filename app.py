@@ -37,10 +37,15 @@ except ImportError:
 
 
 ROOT = Path(__file__).resolve().parent
-APP_VERSION = "wall-corner-calibration-2026-07-20-1"
+APP_VERSION = "fps-wall-homography-2026-07-29-1"
 
 if load_dotenv is not None:
     load_dotenv(ROOT / ".env")
+
+# Keep the Flask analysis pipeline on the established Roboflow RF-DETR ball
+# detector. The newer committed WASB detector remains available for explicit
+# A/B runs with BALL_DETECTOR=local, but it is no longer the app default.
+os.environ.setdefault("BALL_DETECTOR", "rfdetr")
 
 # inference_engine sets the model-cache/metrics env defaults on import;
 # import it (via job_runner) before anything touches the inference package.
@@ -2068,7 +2073,9 @@ if __name__ == "__main__":
     RUNS_DIR.mkdir(exist_ok=True)
     UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
     host = os.getenv("HOST", "127.0.0.1")
-    port = int(os.getenv("PORT", "5000"))
+    # macOS AirPlay Receiver commonly owns port 5000 and can intercept
+    # `localhost` with an AirTunes 403 even while Flask is bound on IPv4.
+    port = int(os.getenv("PORT", "5001"))
     print(f"Starting SquashAnalytics {APP_VERSION} from {ROOT}")
     print(f"TRACKING_BACKEND={TRACKING_BACKEND} DEFAULT_DEVICE={os.environ.get('DEFAULT_DEVICE')}")
     print(f"ONNXRUNTIME_EXECUTION_PROVIDERS={os.environ.get('ONNXRUNTIME_EXECUTION_PROVIDERS')}")

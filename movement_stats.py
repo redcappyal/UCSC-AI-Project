@@ -119,10 +119,26 @@ def to_court_samples(track_samples, floor_map):
     return court
 
 
+def _rally_spans(rallies):
+    """Normalise timeline and hit-derived rally boundary field names."""
+    spans = []
+    for rally in rallies or []:
+        start = rally.get("start_time_seconds")
+        end = rally.get("end_time_seconds")
+        if start is None:
+            start = rally.get("start_s")
+        if end is None:
+            end = rally.get("end_s")
+        if start is None or end is None:
+            continue
+        start, end = float(start), float(end)
+        if end >= start:
+            spans.append((start, end))
+    return spans
+
+
 def _within_rallies(samples, rallies):
-    if not rallies:
-        return []
-    spans = [(float(r["start_s"]), float(r["end_s"])) for r in rallies]
+    spans = _rally_spans(rallies)
     return [
         sample for sample in samples
         if any(start <= sample.t_s <= end for start, end in spans)
@@ -186,7 +202,7 @@ def _heatmap(samples):
 
 def _rally_seconds(rallies):
     return sum(
-        max(0.0, float(r["end_s"]) - float(r["start_s"])) for r in (rallies or [])
+        max(0.0, end - start) for start, end in _rally_spans(rallies)
     )
 
 
@@ -199,12 +215,35 @@ def _percentile(values, fraction):
 def movement_stats(samples, rallies):
     """Movement statistics for one player over the rallies of a run.
 
-    `samples` are CourtSamples; `rallies` are `{"start_s","end_s"}` spans from
-    the rally timeline. Everything is scoped to rally time, so the numbers
-    describe play rather than the whole recording.
+    `samples` are CourtSamples. Rallies may use the audio/motion timeline's
+    `start_s` / `end_s` fields or the hit-derived assignment's
+    `start_time_seconds` / `end_time_seconds` fields. The app passes the latter
+    so every statistic begins at a rally's first detected hit and ends at its
+    last detected hit.
+
+    Each rally is smoothed and differenced independently. Joining all in-play
+    samples first would connect the last position of rally N directly to the
+    first position of rally N+1 and falsely count between-rally repositioning.
     """
-    in_play = _within_rallies(samples, rallies)
-    observed = [sample for sample in in_play if not sample.coasted]
+    spans = _rally_spans(rallies)
+    observed_by_rally = [[] for _ in spans]
+    for sample in sorted(samples, key=lambda item: item.t_s):
+        if sample.coasted:
+            continue
+        for index, (start, end) in enumerate(spans):
+            if start <= sample.t_s <= end:
+                observed_by_rally[index].append(sample)
+                break
+    smoothed_by_rally = [
+        _smoothed(rally_samples)
+        for rally_samples in observed_by_rally
+        if rally_samples
+    ]
+    smoothed = [
+        sample
+        for rally_samples in smoothed_by_rally
+        for sample in rally_samples
+    ]
 
     empty = {
         "distance_ft": 0.0,
@@ -216,24 +255,23 @@ def movement_stats(samples, rallies):
         "heatmap": _empty_heatmap(),
         "sample_coverage": 0.0,
     }
-    if not observed:
+    if not smoothed:
         return empty
-
-    smoothed = _smoothed(observed)
 
     distance = 0.0
     speeds = []
-    for earlier, later in zip(smoothed, smoothed[1:]):
-        elapsed = later.t_s - earlier.t_s
-        if elapsed <= 0:
-            continue
-        step = ((later.x_ft - earlier.x_ft) ** 2
-                + (later.y_ft - earlier.y_ft) ** 2) ** 0.5
-        speed = min(step / elapsed, SPEED_MAX_FTPS)
-        # Distance is recomputed from the clamped speed so a tracker identity
-        # swap cannot contribute a teleport's worth of "running" either.
-        distance += speed * elapsed
-        speeds.append(speed)
+    for rally_samples in smoothed_by_rally:
+        for earlier, later in zip(rally_samples, rally_samples[1:]):
+            elapsed = later.t_s - earlier.t_s
+            if elapsed <= 0:
+                continue
+            step = ((later.x_ft - earlier.x_ft) ** 2
+                    + (later.y_ft - earlier.y_ft) ** 2) ** 0.5
+            speed = min(step / elapsed, SPEED_MAX_FTPS)
+            # Distance is recomputed from the clamped speed so a tracker
+            # identity swap cannot contribute a teleport's worth of running.
+            distance += speed * elapsed
+            speeds.append(speed)
 
     on_t = sum(
         1 for sample in smoothed
@@ -245,7 +283,8 @@ def movement_stats(samples, rallies):
     rally_seconds = _rally_seconds(rallies)
     observed_seconds = sum(
         later.t_s - earlier.t_s
-        for earlier, later in zip(smoothed, smoothed[1:])
+        for rally_samples in smoothed_by_rally
+        for earlier, later in zip(rally_samples, rally_samples[1:])
         if 0 < later.t_s - earlier.t_s <= COVERAGE_MAX_GAP_S
     )
 

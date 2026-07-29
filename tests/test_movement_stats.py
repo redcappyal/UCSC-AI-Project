@@ -159,6 +159,40 @@ def test_samples_outside_every_rally_are_excluded():
     assert stats["distance_ft"] == pytest.approx(0.0, abs=0.01)
 
 
+def test_hit_derived_first_and_last_hit_fields_bound_movement():
+    samples = (
+        _still_at(10.5, 20.0, start=0.0, end=1.9)
+        + _still_at(10.5, 20.0, start=2.0, end=4.0)
+        + _still_at(1.0, 30.0, start=4.1, end=6.0)
+    )
+    rallies = [{
+        "start_time_seconds": 2.0,
+        "end_time_seconds": 4.0,
+    }]
+
+    stats = movement_stats(samples, rallies)
+
+    assert stats["distance_ft"] == pytest.approx(0.0, abs=0.01)
+    assert stats["front_pct"] == 0.0
+    assert stats["back_pct"] == pytest.approx(1.0)
+
+
+def test_distance_never_bridges_the_gap_between_hit_bounded_rallies():
+    samples = (
+        _still_at(1.0, 20.0, start=0.0, end=1.0)
+        + _still_at(20.0, 20.0, start=10.0, end=11.0)
+    )
+    rallies = [
+        {"start_time_seconds": 0.0, "end_time_seconds": 1.0},
+        {"start_time_seconds": 10.0, "end_time_seconds": 11.0},
+    ]
+
+    stats = movement_stats(samples, rallies)
+
+    assert stats["distance_ft"] == pytest.approx(0.0, abs=0.01)
+    assert stats["avg_speed_ftps"] == pytest.approx(0.0, abs=0.01)
+
+
 def test_heatmap_is_normalised_and_peaks_where_the_player_was():
     samples = _still_at(1.0, 1.0)          # front-left corner
 

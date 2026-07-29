@@ -107,6 +107,27 @@
     justify-content:center; overflow:hidden; background:var(--strip-bg)}
   #view{max-width:100%; max-height:100%; touch-action:none;
     transform-origin:0 0; will-change:transform}
+  /* Judged-frame impact map. Its 21:15 aspect ratio matches the regulation
+     front wall; JS positions it inside the displayed video rather than the
+     stage so letterboxing cannot strand it in the black margin. */
+  #impactMiniMap{position:absolute; top:12px; right:12px; z-index:4;
+    display:none; width:clamp(118px,18vw,190px); aspect-ratio:21 / 15;
+    pointer-events:none; opacity:.9; filter:drop-shadow(0 2px 5px rgba(0,0,0,.55))}
+  body.phase-track #impactMiniMap{display:block}
+  #impactMiniMap svg{display:block; width:100%; height:100%; overflow:visible}
+  #impactMiniMap .impactWallFill{fill:rgba(8,9,11,.2)}
+  #impactMiniMap .impactWallEdge{fill:none; stroke:rgba(255,255,255,.82); stroke-width:.24}
+  #impactMiniMap .impactOutLine{stroke:var(--out); stroke-width:.32}
+  #impactMiniMap .impactServiceLine{stroke:var(--service); stroke-width:.22}
+  #impactMiniMap .impactTin{fill:rgba(180,255,58,.08)}
+  #impactMiniMap .impactTinLine{stroke:var(--tin); stroke-width:.32}
+  #impactMiniMap .impactMarker{fill:var(--accent-bg); stroke:rgba(10,11,13,.95);
+    stroke-width:.16; vector-effect:non-scaling-stroke}
+  #impactMiniMap .impactMarker.current{fill:#fff; stroke:var(--accent-bg);
+    stroke-width:.34}
+  @media (max-width:600px){
+    #impactMiniMap{width:clamp(108px,31vw,145px)}
+  }
   #zoomCtrl{position:absolute; top:8px; right:8px; display:flex; gap:8px; z-index:5}
   /* Wall tapping: the out line meets the right side wall under the default
      top-right position, so the buttons would eat that tap. Sit them along the
@@ -545,15 +566,20 @@
   .drillStage{display:block; font-style:normal; font-size:11px; font-weight:700;
     letter-spacing:.05em; text-transform:uppercase; color:var(--text); margin-bottom:2px}
 
-  /* Post-hoc player naming (spec §4.6): backend note, the two name fields, the
-     optional rally-1 serve identification crop, and the save action. */
+  /* Post-hoc player naming: each tracked player is shown directly above the
+     name field that labels that track. */
   .playersNote{padding:12px 14px 0; color:var(--dim); font-size:14px; line-height:1.45}
-  .playersFields{padding:10px 14px 4px}
+  .playersIdentities{padding:10px 14px 4px; display:grid;
+    grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px}
+  .playerIdentityCard{min-width:0; padding:10px; display:flex; flex-direction:column;
+    gap:10px; border:1px solid var(--line); border-radius:14px; background:var(--bg)}
+  .playerCropFrame{width:100%; max-width:240px; aspect-ratio:4/5; margin:0 auto;
+    overflow:hidden; display:flex; align-items:center; justify-content:center;
+    border-radius:8px; border:1px solid var(--line); background:var(--strip-bg)}
+  .playerCropImg{display:block; width:100%; height:100%; object-fit:cover}
+  .playerCropEmpty{padding:10px; color:var(--dim); font-size:13px; line-height:1.35;
+    text-align:center}
   .playersField{display:flex; flex-direction:column; gap:6px; font-size:13px; color:var(--dim); min-width:0}
-  .playersCrop{padding:4px 14px 12px; display:flex; flex-direction:column; gap:8px}
-  #serveCropImg{display:block; width:100%; max-width:220px; margin:0 auto; border-radius:8px;
-    border:1px solid var(--line); background:var(--strip-bg)}
-  .playersCropPrompt{margin:0; text-align:center; font-size:14px; color:var(--dim)}
   .playersSave{padding:4px 14px 14px; display:flex; flex-direction:column; gap:6px}
 
   /* The verdict box always occupies the same space: empty (blank), event
@@ -820,6 +846,17 @@
 <div id="stage" class="hidden">
   <canvas id="view"></canvas>
   <video id="camVid" class="hidden" playsinline muted autoplay></video>
+  <div id="impactMiniMap" aria-label="Front-wall impact map">
+    <svg viewBox="0 0 21 15" role="img" aria-hidden="true">
+      <rect class="impactWallFill" x=".5" y=".5" width="20" height="14"></rect>
+      <rect class="impactTin" x=".5" y="13.42" width="20" height="1.08"></rect>
+      <rect class="impactWallEdge" x=".5" y=".5" width="20" height="14"></rect>
+      <line class="impactOutLine" x1=".5" y1=".5" x2="20.5" y2=".5"></line>
+      <line class="impactServiceLine" x1=".5" y1="9.16" x2="20.5" y2="9.16"></line>
+      <line class="impactTinLine" x1=".5" y1="13.42" x2="20.5" y2="13.42"></line>
+      <g id="impactMiniMarkers"></g>
+    </svg>
+  </div>
   <div id="analyzeOverlay" class="hidden"><span class="analyzePulse">Analyzing…</span></div>
   <div id="zoomCtrl" class="hidden">
     <button class="small" id="zoomOutBtn" type="button" aria-label="Zoom out">−</button>
@@ -1124,20 +1161,24 @@
           <strong>Players</strong>
         </div>
         <p class="playersNote" id="playersBackendNote"></p>
-        <div class="labelGrid playersFields">
-          <label class="playersField">Player A name
-            <input type="text" id="playerNameA" maxlength="40" autocomplete="off" placeholder="Player A">
-          </label>
-          <label class="playersField">Player B name
-            <input type="text" id="playerNameB" maxlength="40" autocomplete="off" placeholder="Player B">
-          </label>
-        </div>
-        <div class="playersCrop hidden" id="serveCropBlock">
-          <img id="serveCropImg" alt="First server at the rally 1 serve">
-          <p class="playersCropPrompt">Who is this? (server at the first attributed serve)</p>
-          <div class="row">
-            <button type="button" id="cropIsA"></button>
-            <button type="button" id="cropIsB"></button>
+        <div class="playersIdentities">
+          <div class="playerIdentityCard">
+            <div class="playerCropFrame">
+              <img class="playerCropImg hidden" id="playerCropA" alt="Detected Player A">
+              <span class="playerCropEmpty" id="playerCropEmptyA">No photo available for Player A</span>
+            </div>
+            <label class="playersField">Player A name
+              <input type="text" id="playerNameA" maxlength="40" autocomplete="off" placeholder="Enter name">
+            </label>
+          </div>
+          <div class="playerIdentityCard">
+            <div class="playerCropFrame">
+              <img class="playerCropImg hidden" id="playerCropB" alt="Detected Player B">
+              <span class="playerCropEmpty" id="playerCropEmptyB">No photo available for Player B</span>
+            </div>
+            <label class="playersField">Player B name
+              <input type="text" id="playerNameB" maxlength="40" autocomplete="off" placeholder="Enter name">
+            </label>
           </div>
         </div>
         <div class="playersSave">
@@ -2479,6 +2520,10 @@ function applyDetection(result){
       : null;
   }
   S.wall = wallFromCalibration(result);
+  // The four wall corners define a complete front-wall homography. Use it to
+  // replace partial auto-detected spans before showing the draggable six-point
+  // confirmation screen.
+  refitFrontWallLinesFromCorners();
   S.floor = null;
   const floorPlane = result.planes && result.planes.floor;
   if(COURT && floorPlane && Array.isArray(floorPlane.landmarks)){
@@ -2681,11 +2726,10 @@ function buildConfirmView(){
   render();
 }
 
-/* Dragging an anchor moves that anchor and refits the homographies. It never
-   refits S.lines: those come from hundreds of detected edge pixels, and
-   rebuilding a line from two dragged corners would be strictly less accurate
-   than what detection already found (spec §8.1). Where a dragged corner ends
-   up far from its line, we say so rather than silently picking a winner. */
+/* Dragging a wall anchor refits the front-wall homography and all three wall
+   lines. The detector can return a clean angle over only part of a painted
+   line; keeping that stale span after a user corrected the corners made the
+   six-point calibration visually and numerically inconsistent. */
 const CONFIRM_DIVERGE_PX = 6;
 
 /* §0.6's 44 px, as a diameter, measured on the glass. The old rule
@@ -2724,7 +2768,10 @@ function pushConfirmUndo(key){
 
 function moveConfirmAnchor(key, x, y){
   const [kind, id] = key.split(':');
-  if(kind === 'wall' && S.wall) S.wall.points[+id] = [x, y];
+  if(kind === 'wall' && S.wall){
+    S.wall.points[+id] = [x, y];
+    refitFrontWallLinesFromCorners();
+  }
   if(kind === 'floor' && S.floor){
     const landmark = S.floor.landmarks.find(l => l.id === id);
     if(landmark){ landmark.tap_px = [x, y]; landmark.refined_px = [x, y]; }
@@ -3344,6 +3391,65 @@ function drawFitLine(fit, color){
   ctx.restore();
 }
 
+function fitFromProjectedWallEndpoints(first, second, previous){
+  let left = first, right = second;
+  if(left[0] > right[0]) [left, right] = [right, left];
+  const dx = right[0] - left[0];
+  if(Math.abs(dx) < 1e-6) return null;
+  const m = (right[1] - left[1]) / dx;
+  const b = left[1] - m * left[0];
+  if(![m, b, ...left, ...right].every(Number.isFinite)) return null;
+  return {
+    m, b,
+    xMin:left[0], xMax:right[0],
+    rms:0,
+    n:(previous && previous.n) || 4,
+    total:(previous && previous.total) || 4,
+    trimmed:0,
+    wallHomography:true,
+  };
+}
+
+/* Four known points on one plane determine its projective transform:
+   out-line junctions at z=15 ft and floor-seam corners at z=0. Projecting
+   the regulation line heights through that transform produces full-width,
+   perspective-correct out/service/tin lines even when paint detection found
+   only a short fragment. */
+function refitFrontWallLinesFromCorners(){
+  const heights = COURT && COURT.front_wall_line_heights_ft;
+  if(!heights || !S.wall || S.wall.points.length !== WALL_CORNERS.length)
+    return false;
+  const width = COURT.width_ft;
+  const outHeight = heights[CFG.out.edgeName];
+  if(!Number.isFinite(width) || !Number.isFinite(outHeight)) return false;
+
+  const source = [[0, outHeight], [width, outHeight], [width, 0], [0, 0]];
+  const Hwall = fitHomographyDLT(source, S.wall.points);
+  if(!Hwall) return false;
+
+  const derived = {};
+  try{
+    for(const key of ORDER){
+      const height = heights[CFG[key].edgeName];
+      if(!Number.isFinite(height)) return false;
+      const first = applyH(Hwall, [0, height]);
+      const second = applyH(Hwall, [width, height]);
+      const previous = S.lines[key] && S.lines[key].fit;
+      const fit = fitFromProjectedWallEndpoints(first, second, previous);
+      if(!fit) return false;
+      derived[key] = fit;
+    }
+  }catch(_){
+    return false;
+  }
+
+  for(const key of ORDER){
+    const previous = S.lines[key] || {seeds:[], maskCanvas:null};
+    S.lines[key] = {...previous, maskCanvas:null, fit:derived[key]};
+  }
+  return true;
+}
+
 // Reference corners with exact court coordinates: the OUT LINE's junctions
 // with the side walls (15 ft) and the wall/floor seam corners (0 ft) — not
 // the physical panel's top edge, whose height varies by venue. All four feed
@@ -3505,7 +3611,8 @@ function buildJson(){
       slope: f.m, intercept: f.b,
       fit_rms_px: +f.rms.toFixed(2),
       x_span_px: [+x0.toFixed(2), +x1.toFixed(2)],
-      x_span_source: f.snappedToTin ? 'tin_top_edge' : 'fit',
+      x_span_source: f.wallHomography ? 'wall_homography'
+        : f.snappedToTin ? 'tin_top_edge' : 'fit',
       edge_pixels_used: f.n
     };
   };
@@ -6028,11 +6135,8 @@ function updatePlayerReportButtonLabels(){
   if(REVIEW_PHASES.includes(S.phase)) syncReviewSeg(S.phase);
 }
 
-/* Players card (spec §4.6): post-hoc naming of tracks A/B. Renders only when
-   the run has players_v1; the backend note, name fields, and (when the
-   anchor rally's serve was observed) the "who is this" crop all key off the
-   same attributionAnchor() used by playerDisplayName, so the card and every
-   name-propagation site agree on which track is which player. */
+/* Players card: the crop and name field for a track stay in the same card, so
+   naming no longer requires translating an anonymous A/B button prompt. */
 function renderPlayersCard(){
   updatePlayerReportButtonLabels();
   const card = $('playersCard');
@@ -6042,8 +6146,10 @@ function renderPlayersCard(){
     return;
   }
   card.classList.remove('hidden');
-  $('playersBackendNote').textContent = v1.attribution_backend !== 'observed'
-    ? 'Player attribution is assumed serve alternation — person detection was unavailable for this run.'
+  $('playersBackendNote').textContent = v1.detector_backend === 'none'
+    ? 'Player photos are unavailable — person detection did not run for this match.'
+    : v1.attribution_backend !== 'observed'
+      ? 'Players were detected automatically; serve attribution was assumed for this match.'
     : attributionMappingBroken(v1)
       ? 'No serve could be attributed — names will label Player 1/2 by convention.'
       : 'Players detected automatically (RF-DETR).';
@@ -6053,45 +6159,25 @@ function renderPlayersCard(){
   $('playerNameB').value = names.B || '';
 
   const anchor = attributionAnchor(v1);
-  const track = anchor && anchor.server_track;
-  if(v1.serve_crop && (track === 'A' || track === 'B')){
-    $('serveCropBlock').classList.remove('hidden');
-    $('serveCropImg').src = `/api/runs/${encodeURIComponent(S.run.run_id)}/${v1.serve_crop}`;
-  } else {
-    $('serveCropBlock').classList.add('hidden');
+  for(const track of ['A', 'B']){
+    const direct = v1.player_crops && v1.player_crops[track];
+    const legacy = v1.serve_crop && anchor && anchor.server_track === track
+      ? v1.serve_crop
+      : null;
+    const path = direct || legacy;
+    const img = $(`playerCrop${track}`);
+    const empty = $(`playerCropEmpty${track}`);
+    if(path){
+      img.src = `/api/runs/${encodeURIComponent(S.run.run_id)}/${path}`;
+      img.classList.remove('hidden');
+      empty.classList.add('hidden');
+    }else{
+      img.removeAttribute('src');
+      img.classList.add('hidden');
+      empty.classList.remove('hidden');
+    }
   }
-  updateCropButtonLabels();
 }
-
-function updateCropButtonLabels(){
-  $('cropIsA').textContent = $('playerNameA').value.trim() || 'Player A';
-  $('cropIsB').textContent = $('playerNameB').value.trim() || 'Player B';
-}
-
-/* The crop shows whichever track (A/B — meaningless letters to the user)
-   served the anchor rally (attributionAnchor — the first observed serve, not
-   necessarily rally 1). Tapping the button matching the recognized name
-   binds that typed name to the crop's actual track and the other typed name
-   to the other track, regardless of which input field the user happened to
-   type each name into first. */
-function assignCropTrack(pickedField){
-  const v1 = S.run && S.run.players_v1;
-  const anchor = v1 && attributionAnchor(v1);
-  const track = anchor && anchor.server_track;
-  if(track !== 'A' && track !== 'B') return;
-  const otherTrack = track === 'A' ? 'B' : 'A';
-  const otherField = pickedField === 'A' ? 'B' : 'A';
-  const pickedValue = $(`playerName${pickedField}`).value;
-  const otherValue = $(`playerName${otherField}`).value;
-  $(`playerName${track}`).value = pickedValue;
-  $(`playerName${otherTrack}`).value = otherValue;
-  updateCropButtonLabels();
-}
-
-$('cropIsA').onclick = () => assignCropTrack('A');
-$('cropIsB').onclick = () => assignCropTrack('B');
-$('playerNameA').addEventListener('input', updateCropButtonLabels);
-$('playerNameB').addEventListener('input', updateCropButtonLabels);
 
 $('savePlayersBtn').onclick = async () => {
   if(!S.run || !S.run.run_id) return;
@@ -6134,6 +6220,8 @@ function buildTrackView(){
   buildHitTimeline(hits, initialFrame);
   renderPlayersCard();   // naming lives on this pane now that p-target is gone
   preserveTrackStageHeight();
+  impactMiniState.key = '';
+  renderImpactMiniMap(initialFrame);
 }
 
 function preserveTrackStageHeight(){
@@ -6164,11 +6252,14 @@ function preserveTrackStageHeight(){
 }
 /* The video is the evidence on this page — never let the controls squeeze it
    out entirely. The main floor keeps the judge row reachable on short screens. */
-const TRACK_MIN_STAGE_PX = 180;
+const TRACK_MIN_STAGE_PX = 500;
 const TRACK_MIN_MAIN_PX = 240;
 
 addEventListener('resize', () => {
-  if(S.phase === 'track') preserveTrackStageHeight();
+  if(S.phase === 'track'){
+    preserveTrackStageHeight();
+    positionImpactMiniMap();
+  }
 });
 
 $('reviewSourceVideoBtn').onclick = () => {
@@ -6567,6 +6658,7 @@ function startTrackPlayback(){
       updateTrackReadout(frame);
       $('judgeFrame').value = frame;
       drawTrackFrame();
+      renderImpactMiniMap(frame);
     },
     done: () => seekSourceFrameToCanvas(S.trackView.cursor),
   });
@@ -6592,6 +6684,90 @@ function isTrackedFrame(frame){
   return S.run && frame >= S.run.start_frame && frame <= S.run.end_frame;
 }
 
+const IMPACT_MAP = {left:.5, right:20.5, outY:.5, tinY:13.42};
+const impactMiniState = {key:''};
+
+function frontWallImpactHits(){
+  return ((S.run && S.run.hits) || [])
+    .filter(hit => (hit.event_type == null
+        || hit.event_type === 'wall'
+        || hit.event_type === 'unknown')
+      && hit.wall_diagram
+      && Number.isFinite(Number(hit.wall_diagram.x))
+      && Number.isFinite(Number(hit.wall_diagram.y))
+      && Number(hit.wall_diagram.x) >= 0
+      && Number(hit.wall_diagram.x) <= 1
+      && Number(hit.wall_diagram.y) >= 0
+      && Number(hit.wall_diagram.y) <= 1)
+    .slice()
+    .sort((a, b) => Number(a.frame) - Number(b.frame));
+}
+
+function positionImpactMiniMap(){
+  if(S.phase !== 'track') return;
+  const map = $('impactMiniMap');
+  const stageRect = stage.getBoundingClientRect();
+  const canvasRect = canvas.getBoundingClientRect();
+  if(canvasRect.width < 1 || canvasRect.height < 1) return;
+  const inset = 12;
+  map.style.top = `${Math.max(inset, canvasRect.top - stageRect.top + inset)}px`;
+  map.style.right = `${Math.max(inset, stageRect.right - canvasRect.right + inset)}px`;
+}
+
+function renderImpactMiniMap(frame){
+  const markers = $('impactMiniMarkers');
+  if(!markers) return;
+  const playhead = Number(frame);
+  const elapsedHits = frontWallImpactHits()
+    .filter(hit => !Number.isFinite(playhead) || Number(hit.frame) <= playhead);
+  const latestRallyHit = elapsedHits.slice().reverse().find(
+    hit => Number.isFinite(Number(hit.rally_number)),
+  );
+  const currentRallyNumber = latestRallyHit
+    ? Number(latestRallyHit.rally_number)
+    : null;
+  // Keep only the current rally. As soon as its first hit reaches the
+  // playhead, every marker from the previous rally disappears.
+  const visibleHits = currentRallyNumber == null
+    ? elapsedHits
+    : elapsedHits.filter(
+      hit => Number(hit.rally_number) === currentRallyNumber,
+    );
+  const currentHit = visibleHits.find(hit => Number(hit.frame) === playhead);
+  const renderKey = `${S.run && S.run.run_id}:${currentRallyNumber ?? ''}:${visibleHits.length}:${currentHit ? currentHit.frame : ''}`;
+  if(impactMiniState.key === renderKey){
+    positionImpactMiniMap();
+    return;
+  }
+  impactMiniState.key = renderKey;
+  const fragment = document.createDocumentFragment();
+
+  for(const hit of visibleHits){
+    const normalizedX = Number(hit.wall_diagram.x);
+    const normalizedY = Number(hit.wall_diagram.y);
+    const circle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+    const current = Number(hit.frame) === playhead;
+    circle.setAttribute('class', `impactMarker${current ? ' current' : ''}`);
+    circle.setAttribute('cx', IMPACT_MAP.left
+      + normalizedX * (IMPACT_MAP.right - IMPACT_MAP.left));
+    circle.setAttribute('cy', IMPACT_MAP.outY
+      + normalizedY * (IMPACT_MAP.tinY - IMPACT_MAP.outY));
+    circle.setAttribute('r', current ? '.52' : '.34');
+    circle.setAttribute('opacity', current ? '1' : '.72');
+    const title = document.createElementNS('http://www.w3.org/2000/svg', 'title');
+    title.textContent = `Front-wall impact at frame ${hit.frame}`;
+    circle.appendChild(title);
+    fragment.appendChild(circle);
+  }
+
+  markers.replaceChildren(fragment);
+  $('impactMiniMap').setAttribute(
+    'aria-label',
+    `Front-wall impact map${currentRallyNumber == null ? '' : ` for rally ${currentRallyNumber}`} with ${visibleHits.length} detected ${visibleHits.length === 1 ? 'impact' : 'impacts'}`,
+  );
+  positionImpactMiniMap();
+}
+
 async function seekSourceFrameToCanvas(frame, syncInput=true){
   if(!S.run || !Number.isFinite(S.run.fps) || S.run.fps <= 0) return;
   frame = clampTrackedFrame(frame);
@@ -6608,6 +6784,7 @@ async function seekSourceFrameToCanvas(frame, syncInput=true){
     if(L) drawFitLine(L.fit, CFG[k].hex);
   }
   updateTrackCursor(frame);
+  renderImpactMiniMap(frame);
   if(syncInput) $('judgeFrame').value = frame;
   scheduleAutoJudge(frame);
 }

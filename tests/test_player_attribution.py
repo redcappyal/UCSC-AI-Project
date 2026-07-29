@@ -8,6 +8,7 @@ from player_attribution import (
     SERVE_LOOKBACK_S,
     build_players_v1,
     build_serve_resolver,
+    player_crop_targets,
     rally_identity_confidences,
     serve_crop_target,
 )
@@ -92,10 +93,18 @@ def test_build_players_v1_shape():
     }
     block = build_players_v1(assignment, {"updates": 100, "ambiguous_assignments": 3},
                              detector_backend="rfdetr",
-                             serve_crop_relpath="players/serve_rally1.jpg")
+                             serve_crop_relpath="players/player_A.jpg",
+                             player_crop_relpaths={
+                                 "A": "players/player_A.jpg",
+                                 "B": "players/player_B.jpg",
+                             })
     assert block["attribution_backend"] == "observed"
     assert block["detector_backend"] == "rfdetr"
-    assert block["serve_crop"] == "players/serve_rally1.jpg"
+    assert block["serve_crop"] == "players/player_A.jpg"
+    assert block["player_crops"] == {
+        "A": "players/player_A.jpg",
+        "B": "players/player_B.jpg",
+    }
     assert block["player_names"] == {"A": None, "B": None}
     assert block["tracker"] == {"updates": 100, "ambiguous_assignments": 3}
     assert [r["rally_number"] for r in block["rallies"]] == [1, 2]
@@ -175,6 +184,36 @@ def test_serve_crop_target_none_when_no_rally_observed():
     ]}
     samples = {"A": [sample(9.8, 300, 500)], "B": [sample(29.8, 900, 500)]}
     assert serve_crop_target(assignment, samples) is None
+
+
+def test_player_crop_targets_show_both_tracks_at_the_observed_serve():
+    assignment = {"rallies": [
+        {"rally_number": 1, "server_track": "A", "server_source": "observed",
+         "start_time_seconds": 10.0},
+    ]}
+    samples = {
+        "A": [sample(9.8, 300, 500), sample(10.6, 310, 500)],
+        "B": [sample(9.75, 900, 500), sample(10.7, 910, 500)],
+    }
+
+    targets = player_crop_targets(assignment, samples)
+
+    assert set(targets) == {"A", "B"}
+    assert targets["A"][1].foot_px == (300.0, 500.0)
+    assert targets["B"][1].foot_px == (900.0, 500.0)
+
+
+def test_player_crop_targets_use_joint_live_moment_without_observed_serve():
+    assignment = {"rallies": []}
+    samples = {
+        "A": [sample(2.0, 300, 500), sample(5.0, 310, 500)],
+        "B": [sample(2.25, 900, 500), sample(5.0, 910, 500)],
+    }
+
+    targets = player_crop_targets(assignment, samples)
+
+    assert targets["A"][1].t_s == 2.0
+    assert targets["B"][1].t_s == 2.25
 
 
 def test_write_track_samples_round_trip(tmp_path):

@@ -119,7 +119,7 @@ def test_a_rally_only_run_reports_the_ball_tier_off_with_its_reason(tmp_path):
     job = dict(FULL_JOB)
     job["capabilities"] = dict(
         FULL_JOB["capabilities"],
-        ball_tracking={"enabled": False, "reason": "needs >=50 fps (got 30)"},
+        ball_tracking={"enabled": False, "reason": "needs >=1600 px wide (got 1280)"},
         line_calls={"enabled": False, "reason": "ball tracking off"},
     )
     job["hits"] = []
@@ -128,7 +128,7 @@ def test_a_rally_only_run_reports_the_ball_tier_off_with_its_reason(tmp_path):
     report = build_report(_run_dir(tmp_path, "1790000000001", job))
 
     assert report["capabilities"]["ball_tracking"]["enabled"] is False
-    assert "50 fps" in report["capabilities"]["ball_tracking"]["reason"]
+    assert "1600" in report["capabilities"]["ball_tracking"]["reason"]
     assert report["shots"] is None
     assert report["rally_timeline"]["rallies"]
 
