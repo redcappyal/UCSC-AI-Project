@@ -346,3 +346,49 @@ def test_timeline_carries_the_gap_it_used():
     )
 
     assert timeline["gap_s"] > 0
+
+
+def test_a_rally_that_dips_below_threshold_is_not_shattered_into_fragments():
+    """Real motion energy is spiky, not a plateau.
+
+    Measured on the repo's own 5-minute clip: 12.3% of samples sit above the
+    threshold, but as 98 fragments whose MEDIAN duration is 0.00 s and whose
+    longest is 1.83 s. Requiring strictly contiguous samples therefore found
+    zero rallies in a real match -- every fragment fell under MIN_RALLY_S.
+
+    A rally is sustained activity, which in a noisy signal means "active most
+    of the time", not "active at every sample". Short dips are bridged before
+    duration is measured.
+    """
+    ts = np.arange(0.0, 40.0, 0.2)
+    energy = np.full(ts.shape, 0.4)
+    # One 12-second rally, interrupted by three sub-second dips.
+    energy[(ts >= 10.0) & (ts <= 22.0)] = 8.0
+    for dip in (13.0, 16.5, 19.0):
+        energy[(ts >= dip) & (ts <= dip + 0.6)] = 0.4
+    series = list(zip(ts.tolist(), energy.tolist()))
+
+    rallies = segment_rallies([], series, 40.0)
+
+    assert len(rallies) == 1, [
+        (round(r["start_s"], 1), round(r["end_s"], 1)) for r in rallies
+    ]
+    assert rallies[0]["end_s"] - rallies[0]["start_s"] > 10.0
+
+
+def test_bridging_never_merges_two_genuinely_separate_rallies():
+    """The bridge must stay well under the shortest gap between rallies.
+
+    MIN_GAP_S is 4 s. If the bridge approached that, two rallies separated by
+    a normal between-point pause would fuse into one and the rally count would
+    silently halve.
+    """
+    from rally_segmenter import MIN_GAP_S, MOTION_BRIDGE_S
+
+    assert MOTION_BRIDGE_S < MIN_GAP_S / 2.0
+
+    rallies = segment_rallies(
+        [], _motion([(5.0, 12.0), (20.0, 27.0)], duration=40.0), 40.0
+    )
+
+    assert len(rallies) == 2

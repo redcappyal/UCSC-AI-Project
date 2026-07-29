@@ -76,6 +76,19 @@ CONFIDENT_IMPACT_COUNT = 4
 # to run on every decoded frame.
 MOTION_WORK_WIDTH = 160
 
+# Active motion spans separated by less than this are one span. Real motion
+# energy is spiky rather than a plateau: measured on the repo's own 5-minute
+# clip, 12.3% of samples cleared the threshold but as 98 fragments with a
+# MEDIAN duration of 0.00 s and a longest of 1.83 s, so requiring strictly
+# contiguous samples found zero rallies in a real match. A rally is *sustained*
+# activity -- active most of the time, not at every sample.
+#
+# The value has to sit well under MIN_GAP_S: bridging must never reach across
+# a genuine between-points pause and fuse two rallies, which would silently
+# halve the rally count. Half of MIN_GAP_S is the ceiling, and a test asserts
+# it stays there.
+MOTION_BRIDGE_S = 1.5
+
 
 def infer_gap_seconds(impact_times):
     """The pause length that separates rallies, inferred from the impacts.
@@ -187,7 +200,28 @@ def _active_motion_spans(motion):
             span_start = None
     if span_start is not None:
         spans.append((span_start, samples[-1][0]))
-    return spans
+
+    return _bridge_short_gaps(spans, MOTION_BRIDGE_S)
+
+
+def _bridge_short_gaps(spans, bridge_s):
+    """Join spans separated by less than `bridge_s` into one.
+
+    Without this a rally is only recognised if every single sample clears the
+    threshold, which real footage never manages -- a player pausing, the ball
+    out of frame, or the exposure settling all dip below it for a few tenths
+    of a second, and the rally shatters into fragments too short to count.
+    """
+    if not spans:
+        return []
+
+    bridged = [spans[0]]
+    for start, end in spans[1:]:
+        if start - bridged[-1][1] <= bridge_s:
+            bridged[-1] = (bridged[-1][0], max(bridged[-1][1], end))
+        else:
+            bridged.append((start, end))
+    return bridged
 
 
 def _overlaps(first, second):
