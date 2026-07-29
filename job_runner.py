@@ -17,14 +17,17 @@ from pathlib import Path
 
 import cv2
 
+import capabilities
 import court_model
+import movement_stats
 import person_model
 import player_attribution
+import rally_segmenter
 from audio_events import extract_audio_candidates
 from bounce_gb_model_detector import DEFAULT_MODEL_PATH as BOUNCE_GB_MODEL_PATH
 from bounce_gb_model_detector import detect_hits_with_gb_model
 from classify_events import classify_events
-from detect_wall_hits import MAX_GAP_FRAMES, detect_hits_from_rows
+from detect_wall_hits import detect_hits_from_rows, scale_frames_for_fps, scaled_hit_kwargs
 from inference_engine import get_tracking_model, infer_frame_predictions
 from judge_call import (
     Point,
@@ -41,6 +44,7 @@ from tracking_common import (
     CONFIDENCE_THRESHOLD,
     CSV_FIELDNAMES,
     ball_csv_row,
+    scaled_window_frames,
     select_motion_consistent_ball_predictions,
 )
 
@@ -135,6 +139,61 @@ def persist_job(job):
         os.replace(tmp_path, job_path)
     except OSError:
         pass
+
+
+class MotionAccumulator:
+    """Frame-motion energy gathered off whichever decode pass is running.
+
+    Samples are keyed by frame index, so a frame decoded twice -- the refine
+    and audio-rescue passes re-visit windows the coarse pass already saw --
+    contributes once. Without that the re-tracked windows would read as extra
+    motion precisely where the ball tier already found something, which is the
+    one place tier 1 must not be quietly influenced by tier 3.
+
+    `reset()` drops the reference frame at a segment boundary: consecutive
+    segments are not adjacent in time, and differencing across the seam
+    manufactures a spike that reads as the start of a rally.
+    """
+
+    def __init__(self, source_fps):
+        self.source_fps = float(source_fps) or 30.0
+        self._previous = None
+        self._energy_by_frame = {}
+
+    def reset(self):
+        self._previous = None
+
+    def observe(self, frame_idx, frame):
+        if frame_idx in self._energy_by_frame:
+            return
+        self._previous, energy = rally_segmenter.motion_energy_step(
+            self._previous, frame
+        )
+        self._energy_by_frame[frame_idx] = energy
+
+    def series(self):
+        """`(time_s, energy)` samples in frame order."""
+        return [
+            (frame_idx / self.source_fps, energy)
+            for frame_idx, energy in sorted(self._energy_by_frame.items())
+        ]
+
+
+def compose_frame_observers(*observers):
+    """One `frame_observer` callable fanning out to several.
+
+    track_segments takes a single observer, and both the person pass and the
+    motion accumulator want to ride the coarse decode.
+    """
+    live = [observer for observer in observers if observer is not None]
+    if not live:
+        return None
+
+    def observe(frame_idx, frame):
+        for observer in live:
+            observer(frame_idx, frame)
+
+    return observe
 
 
 def build_person_pass(source_fps, frame_stride):
@@ -347,6 +406,7 @@ def track_segments(model, video_path, segments, inference_width, source_fps, res
     selected_predictions = select_motion_consistent_ball_predictions(
         raw_predictions,
         CONFIDENCE_THRESHOLD,
+        window_frames=scaled_window_frames(source_fps),
     )
     for frame_idx, ball_prediction in selected_predictions.items():
         results[frame_idx] = ball_csv_row(frame_idx, source_fps, ball_prediction)
@@ -383,11 +443,18 @@ def refine_segments_for_hits(hits, start_frame, end_frame, stride):
     )
 
 
-def refine_segments_for_audio_candidates(candidates, start_frame, end_frame):
+def refine_segments_for_audio_candidates(candidates, start_frame, end_frame, fps=None):
+    """Pad each audio window out to the frames worth re-tracking.
+
+    The pad is a duration expressed in frames, so it is converted for this
+    clip's frame rate (identity at 60). `fps=None` keeps the reference pad,
+    which is what the CLI callers that have no frame rate to hand want.
+    """
+    pad = scale_frames_for_fps(AUDIO_WINDOW_PAD_FRAMES, fps)
     return merge_frame_windows(
         (
-            max(start_frame, int(candidate["window_start_frame"]) - AUDIO_WINDOW_PAD_FRAMES),
-            min(end_frame, int(candidate["window_end_frame"]) + AUDIO_WINDOW_PAD_FRAMES),
+            max(start_frame, int(candidate["window_start_frame"]) - pad),
+            min(end_frame, int(candidate["window_end_frame"]) + pad),
         )
         for candidate in candidates
     )
@@ -1165,6 +1232,223 @@ def floor_zones_from_run(run_dir):
     return payload.get("floor_zones")
 
 
+# Motion samples per second when decoding for motion alone. Rally boundaries
+# are wanted to about half a second, so six samples a second is several times
+# the resolution the answer is read at -- and a 40-minute match decodes in a
+# fraction of the time a full pass would take.
+MOTION_ONLY_SAMPLES_PER_SECOND = 6
+
+# Audio peaks kept when building the rally timeline. The ball pipeline asks for
+# a handful because each one costs a re-track window; the timeline only needs
+# their times, so it can afford the density that makes rally boundaries sharp
+# across a long clip.
+AUDIO_TIMELINE_MAX_PEAKS = 512
+
+
+def accumulate_motion_only(video_path, start_frame, end_frame, source_fps,
+                           person_pass=None):
+    """Decode for motion energy alone, running no ball model.
+
+    Used when the ball tier is off. Tiers 1 and 2 need neither a ball nor the
+    ball model -- rally structure needs nothing, movement needs a solved court
+    -- so a clip that cannot support tier 3 must still get both. Until this
+    existed, the motion series and the person pass were both by-products of
+    the ball decode, and skipping it silently took two tiers down with it.
+
+    `person_pass` rides this decode for exactly that reason. It sees frames at
+    the motion stride rather than the coarse stride, which is sparser; the
+    tracker's own cadence logic handles that, and coasted samples show up as
+    reduced coverage in the movement stats rather than as invented positions.
+
+    Best-effort: a decode failure costs the timeline, not the run.
+    """
+    stride = max(2, int(round(source_fps / MOTION_ONLY_SAMPLES_PER_SECOND)))
+    accumulator = MotionAccumulator(source_fps)
+    observe = compose_frame_observers(
+        accumulator.observe,
+        person_pass.observe if person_pass is not None else None,
+    )
+    frame_queue = queue.Queue(maxsize=DECODE_QUEUE_SIZE)
+    stop_event = threading.Event()
+    decode_errors = []
+    decoder = threading.Thread(
+        target=decode_segments_to_queue,
+        args=(video_path, [(start_frame, end_frame, stride)], frame_queue,
+              stop_event, decode_errors),
+        daemon=True,
+    )
+    decoder.start()
+    try:
+        while True:
+            item = frame_queue.get()
+            if item is None:
+                break
+            observe(*item)
+    finally:
+        stop_event.set()
+        while True:
+            try:
+                frame_queue.get_nowait()
+            except queue.Empty:
+                break
+        decoder.join(timeout=5)
+
+    return accumulator
+
+
+def detection_coverage(results):
+    """Fraction of inferred frames that actually carried a ball.
+
+    This is the number that separates "found nothing" from "couldn't look".
+    A rally length or coverage statistic computed from a third of the frames
+    reads exactly like one computed from all of them -- and recall is the
+    standing weakness (71/109 missed, eval_set/BASELINE-2026-07-23.md), so
+    the fraction has to travel with the numbers derived from it.
+
+    0.0 when nothing was found; None only when nothing was inferred, because
+    zero is a measurement and absence is not.
+    """
+    if not results:
+        return None
+    detected = sum(1 for row in results.values() if row.get("detected"))
+    return detected / len(results)
+
+
+def load_run_calibration(run_dir):
+    """The run's calibration dict, or None when it has none or it is corrupt.
+
+    Absent and unreadable both resolve to None on purpose: a calibration that
+    cannot be parsed is not a calibration, and every caller here already
+    treats "no calibration" as a supported state rather than an error.
+    """
+    calibration_path = Path(run_dir) / "calibration.json"
+    if not calibration_path.exists():
+        return None
+    try:
+        return json.loads(calibration_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+
+
+def build_players_v2(person_pass, calibration, rallies, identity_confidence=None):
+    """Per-player movement statistics in court feet, or None.
+
+    None when the tier could not run -- no detector, or no floor homography to
+    turn feet in pixels into feet on a court. Returning zeroed stats instead
+    would be a report of a player who never moved, which is a different claim
+    from "this could not be measured".
+
+    `backend` names the detector that produced the tracks, because a motion-blob
+    fallback and real weights are not equally trustworthy and the report must
+    not present them as if they were.
+    """
+    if person_pass is None:
+        return None
+
+    floor_map = court_model.load_floor_calibration(calibration)
+    if floor_map is None:
+        return None
+
+    samples_by_track = person_pass.tracker.samples()
+    stats = {}
+    for label, track in (("player_a", "A"), ("player_b", "B")):
+        stats[label] = movement_stats.movement_stats(
+            movement_stats.to_court_samples(
+                samples_by_track.get(track, []), floor_map
+            ),
+            rallies,
+        )
+
+    return {
+        "schema": PLAYERS_V2_SCHEMA,
+        "backend": person_pass.detector.backend,
+        "identity_confidence": identity_confidence,
+        **stats,
+    }
+
+
+PLAYERS_V2_SCHEMA = "players-v2"
+RALLY_TIMELINE_SCHEMA = "rally-timeline-v1"
+
+
+def build_and_write_rally_timeline(run_dir, audio_candidates, motion_series,
+                                   duration_s, player_assignment=None):
+    """Assemble the rally timeline and persist it beside the run.
+
+    Written to disk as well as returned because reports are assembled from the
+    run directory, not from the in-memory job -- a job that has been evicted
+    still has to render.
+
+    `audio_candidates` is None when the clip's audio could not be read at all,
+    which the timeline reports as `audio_available: false` rather than as
+    silence. Best-effort persistence, matching write_track_samples: an
+    unwritable run dir must not fail the job.
+    """
+    impact_times = None
+    if audio_candidates is not None:
+        impact_times = [
+            float(candidate["time_seconds"])
+            for candidate in audio_candidates
+            if "time_seconds" in candidate
+        ]
+
+    timeline = rally_segmenter.build_rally_timeline(
+        impact_times, motion_series, duration_s, player_assignment
+    )
+    timeline["schema"] = RALLY_TIMELINE_SCHEMA
+
+    try:
+        (Path(run_dir) / "rally_timeline.json").write_text(
+            json.dumps(timeline, indent=2), encoding="utf-8"
+        )
+    except OSError:
+        pass
+    return timeline
+
+
+def complete_without_ball_tier(run_id, run_dir, csv_path, caps, timeline=None,
+                               players_v2=None):
+    """Finish a run whose footage cannot support ball tracking.
+
+    The ball stages are skipped rather than run to an empty result, which
+    saves a model load and, more importantly, stops the run from presenting
+    as a rally in which nothing happened. `capabilities` carries the reason,
+    and `timeline` carries what tier 1 found anyway -- rally structure needs
+    neither a ball nor a court, so it survives this path by design.
+
+    A headers-only CSV is still written: readers open it unconditionally, and
+    to them a missing file is an error path nobody wrote while an empty one is
+    "we looked and there was nothing" -- which is what happened.
+
+    The player-movement tier is NOT skipped with it. It used to be -- the
+    person detector observed frames via `frame_observer=` on the ball decode,
+    so skipping that pass silently took tier 2 down too, which the ladder says
+    must not happen: tier 2 needs a solved court, not a ball. It now rides the
+    motion-only decode in `accumulate_motion_only`, and `players_v2` arrives
+    here already built.
+    """
+    write_results_csv(csv_path, {})
+    player_assignment = assign_front_wall_hit_players([])
+    extra = {} if players_v2 is None else {"players_v2": players_v2}
+    update_job(
+        run_id,
+        status="complete",
+        stage="complete",
+        rows=0,
+        hits=[],
+        capabilities=caps,
+        rally_timeline=timeline,
+        **extra,
+        target_zones=build_target_zone_summary([]),
+        target_zones_by_player=build_player_target_zone_summaries([]),
+        player_assignment=player_assignment,
+        players_v1=player_attribution.build_players_v1(
+            player_assignment, None, detector_backend="none"
+        ),
+        message=f"Ball tracking off: {caps['ball_tracking']['reason']}.",
+    )
+
+
 def sorted_rows(results):
     return [results[frame_idx] for frame_idx in sorted(results)]
 
@@ -1229,11 +1513,62 @@ def run_tracking_job(run_id):
             return on_frame
 
         try:
+            # Read before anything expensive starts: the calibration decides
+            # more than judging now. Whether a floor homography exists is a
+            # capability input, and the answer has to be known before the
+            # decision to load a model that costs minutes and gigabytes.
+            calibration = load_run_calibration(run_dir)
+            caps = capabilities.compute_capabilities(
+                job.get("probe"),
+                court_solved=(
+                    court_model.load_floor_calibration(calibration) is not None
+                ),
+            )
+            update_job(run_id, capabilities=caps)
+
+            if not caps["ball_tracking"]["enabled"]:
+                # Tiers 1 and 2 need neither the ball nor the ball model, so
+                # they run on their own decode rather than dying with the pass
+                # they used to ride.
+                update_job(run_id, status="running", stage="coarse",
+                           message="Reading rally structure...")
+                motion_stride = max(
+                    2, int(round(source_fps / MOTION_ONLY_SAMPLES_PER_SECOND))
+                )
+                movement_pass = (
+                    build_person_pass(source_fps, motion_stride)
+                    if caps["player_movement"]["enabled"] else None
+                )
+                motion = accumulate_motion_only(
+                    video_path, start_frame, end_frame, source_fps,
+                    person_pass=movement_pass,
+                )
+                timeline = build_and_write_rally_timeline(
+                    run_dir,
+                    extract_audio_candidates(
+                        video_path, start_frame, end_frame, source_fps,
+                        max_peaks=AUDIO_TIMELINE_MAX_PEAKS,
+                    ),
+                    motion.series(),
+                    (end_frame - start_frame + 1) / source_fps,
+                )
+                complete_without_ball_tier(
+                    run_id, run_dir, csv_path, caps, timeline,
+                    build_players_v2(
+                        movement_pass, calibration, timeline["rallies"]
+                    ),
+                )
+                return
+
             update_job(run_id, status="running", stage="coarse", message="Loading local model...")
             model = get_tracking_model()
             wall_x_range = tin_horizontal_range_from_run(run_dir)
 
             person_pass = build_person_pass(source_fps, frame_stride)
+            # Motion rides the coarse decode, which is the one contiguous pass
+            # over the whole range. Samples are keyed by frame index, so the
+            # refine and audio-rescue re-decodes cannot contribute twice.
+            motion = MotionAccumulator(source_fps)
             if person_pass is not None:
                 update_job(run_id, message="Person detector: rfdetr")
 
@@ -1249,18 +1584,15 @@ def run_tracking_job(run_id):
                 source_fps,
                 results,
                 make_progress_callback("Coarse pass"),
-                frame_observer=person_pass.observe if person_pass is not None else None,
+                frame_observer=compose_frame_observers(
+                    person_pass.observe if person_pass is not None else None,
+                    motion.observe,
+                ),
             )
             write_results_csv(csv_path, results)
 
-            # The two-stage bounce detector needs the calibrated wall lines.
-            calibration = None
-            calibration_path = run_dir / "calibration.json"
-            if calibration_path.exists():
-                try:
-                    calibration = json.loads(calibration_path.read_text(encoding="utf-8"))
-                except (OSError, json.JSONDecodeError):
-                    calibration = None
+            # `calibration` was read above, before the capability gate -- the
+            # two-stage bounce detector needs the same calibrated wall lines.
 
             # Audio impact events drive recall: they add refine windows around
             # events the coarse trajectory pass missed, and later feed the
@@ -1271,19 +1603,26 @@ def run_tracking_job(run_id):
                 video_path, start_frame, end_frame, source_fps
             )
 
+            # Windows are counted in frames but tuned in wall-clock, so they
+            # are converted for this clip's frame rate first (identity at 60).
+            hit_kwargs = scaled_hit_kwargs(source_fps)
             # Coarse samples are frame_stride apart; the default max_gap would
-            # split every track at stride > 3.
-            max_gap = max(MAX_GAP_FRAMES, frame_stride)
+            # split every track at stride > 3. The floor is applied AFTER
+            # scaling -- slow footage scales max_gap down, which makes a gap
+            # below the stride more likely, not less.
+            max_gap = max(hit_kwargs["max_gap"], frame_stride)
             detected = detect_hits_from_rows(
                 sorted_rows(results),
                 max_gap=max_gap,
+                min_gap=hit_kwargs["min_gap"],
+                smooth=hit_kwargs["smooth"],
                 wall_x_range=wall_x_range,
                 calibration=calibration,
             )
             segments = refine_segments_for_hits(detected, start_frame, end_frame, frame_stride)
             if audio_candidates:
                 audio_segments = refine_segments_for_audio_candidates(
-                    audio_candidates, start_frame, end_frame
+                    audio_candidates, start_frame, end_frame, source_fps
                 )
                 segments = merge_frame_windows(
                     (low, high) for low, high, _ in segments + audio_segments
@@ -1314,22 +1653,23 @@ def run_tracking_job(run_id):
             # refine pass is skipped because the whole clip was already
             # tracked at the requested width.
             if audio_candidates:
+                rescue_pad = scale_frames_for_fps(AUDIO_RESCUE_PAD_FRAMES, source_fps)
                 unseen = [
                     window
                     for window in audio_candidates
                     if not any(
                         row_has_ball_detection(results.get(f))
                         for f in range(
-                            int(window["window_start_frame"]) - AUDIO_RESCUE_PAD_FRAMES,
-                            int(window["window_end_frame"]) + AUDIO_RESCUE_PAD_FRAMES + 1,
+                            int(window["window_start_frame"]) - rescue_pad,
+                            int(window["window_end_frame"]) + rescue_pad + 1,
                         )
                     )
                 ]
                 if unseen:
                     rescue_segments = merge_frame_windows(
                         (
-                            max(start_frame, int(w["window_start_frame"]) - AUDIO_RESCUE_PAD_FRAMES),
-                            min(end_frame, int(w["window_end_frame"]) + AUDIO_RESCUE_PAD_FRAMES),
+                            max(start_frame, int(w["window_start_frame"]) - rescue_pad),
+                            min(end_frame, int(w["window_end_frame"]) + rescue_pad),
                         )
                         for w in unseen
                     )
@@ -1449,11 +1789,38 @@ def run_tracking_job(run_id):
             extra_fields = {}
             if floor_zones is not None:
                 extra_fields["floor_zones"] = floor_zones
+            coverage = detection_coverage(results)
+            if coverage is not None:
+                extra_fields["detection_coverage"] = coverage
+            # Built from audio and motion, then reconciled against the
+            # hit-derived rallies rather than replaced by them: the two come
+            # from different signals, and which one to trust is the report's
+            # decision to make with both in hand.
+            extra_fields["rally_timeline"] = build_and_write_rally_timeline(
+                run_dir,
+                audio_candidates,
+                motion.series(),
+                (end_frame - start_frame + 1) / source_fps,
+                player_assignment,
+            )
+            # Movement is scoped to the audio+motion rallies rather than the
+            # hit-derived ones: with recall where it is, hit rallies miss whole
+            # exchanges, and a distance scoped to them would silently omit the
+            # court covered during every rally the ball tier did not see.
+            if caps["player_movement"]["enabled"]:
+                players_v2 = build_players_v2(
+                    person_pass,
+                    calibration,
+                    extra_fields["rally_timeline"]["rallies"],
+                )
+                if players_v2 is not None:
+                    extra_fields["players_v2"] = players_v2
             update_job(
                 run_id,
                 status="complete",
                 stage="complete",
                 processed_frames=total_frames,
+                capabilities=caps,
                 rows=len(results),
                 hits=hits,
                 target_zones=target_zones,

@@ -9,10 +9,28 @@ import numpy as np
 
 DEFAULT_BALL_CSV = Path(__file__).with_name("ball_coordinates.csv")
 DEFAULT_OUTPUT_CSV = Path(__file__).with_name("detected_hits.csv")
+
+# The frame rate every constant below was tuned against. Time-domain constants
+# are counted in FRAMES, so at 30 fps each one silently covers twice the
+# wall-clock it was chosen for -- the same detector answering a different
+# question depending on what the phone recorded at. `scaled_hit_kwargs`
+# converts them at use; identity holds here, so the ~60 fps eval corpus cannot
+# move.
+REFERENCE_FPS = 60.0
+
+# Time-domain (frames) -- scaled by scaled_hit_kwargs at every use.
 MAX_GAP_FRAMES = 3
-MAX_JUMP_PX_PER_FRAME = 200.0
 SMOOTH_WINDOW = 3
 MIN_GAP_FRAMES = 10
+
+# Pixel-domain -- deliberately NOT scaled by resolution. The ball tier only
+# admits footage at least 1600 px wide (capabilities.BALL_MIN_WIDTH_PX), so
+# these are only ever applied near the resolution they were tuned at, and the
+# tiers that do run on small footage (rally structure, player movement) never
+# consume them. Scaling them would mean tuning against clips the detector is
+# gated off anyway.
+MAX_JUMP_PX_PER_FRAME = 200.0
+
 TOP_K = 20
 MIN_DV_PX_PER_SECOND = 200.0
 MIN_TURN_DEGREES = 25.0
@@ -39,6 +57,38 @@ TWO_STAGE_DEFAULTS = {
 # keeps the stage-1 distance search anchored to this event; a wider slice
 # lets the minimum drift onto post-bounce flight toward the other line.
 EVENT_WINDOW_HALF_WIDTH = TWO_STAGE_DEFAULTS["window_half_width"]
+
+
+def scale_frames_for_fps(frames, fps, minimum=1):
+    """Convert a frame count tuned at REFERENCE_FPS to the same duration at `fps`.
+
+    `minimum` is a floor, not a rounding detail: a window of zero frames is not
+    a smaller window, it is a disabled one, and slow footage would otherwise
+    switch off smoothing and gap-bridging at exactly the frame rates that need
+    them most.
+
+    A missing or nonsensical frame rate falls back to the reference, which
+    reproduces today's behaviour exactly. That is the conservative choice --
+    containers report 0 fps often enough that raising is not an option, and
+    treating 0 as real would rescale every window toward the floor on the
+    clips whose metadata is already worst.
+    """
+    if not fps or fps <= 0:
+        return frames
+    return max(minimum, int(round(frames * fps / REFERENCE_FPS)))
+
+
+def scaled_hit_kwargs(fps):
+    """The frame-counted detector windows, expressed for `fps`.
+
+    Identity at REFERENCE_FPS, which is the property that makes scaling safe
+    to land: the whole eval corpus is ~60 fps, so no scored result can move.
+    """
+    return {
+        "max_gap": scale_frames_for_fps(MAX_GAP_FRAMES, fps),
+        "min_gap": scale_frames_for_fps(MIN_GAP_FRAMES, fps),
+        "smooth": scale_frames_for_fps(SMOOTH_WINDOW, fps),
+    }
 
 
 def normalize_x_range(wall_x_range):

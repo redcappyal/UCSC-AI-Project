@@ -857,11 +857,26 @@ draggable anchor pucks at the four wall corners and the two short-line ends.
 ### 8.20 Live-analytics surfaces (Analysis & Progress roots)
 
 The Analysis and Progress roots render **real end-of-pipeline data** — `/api/runs` for
-the index, `/api/runs/<id>/coach` for analytics + feedback — ported from the design
-lab with its sample data removed. Shared rules: coach feedback is server/LLM text, so
-it is `escapeHtml`-ed at every innerHTML sink; run loading is cached per run id and
-refreshed on every root entry; every surface has an honest `.emptycard` state
-("No analyzed sessions yet…" / "Trends need at least two analyzed sessions.").
+the index, `/api/runs/<id>/report` for the per-tier report, `/api/runs/<id>/coach` for
+analytics + feedback — ported from the design lab with its sample data removed. Shared
+rules: coach feedback and capability reasons are server text, so both are `escapeHtml`-ed
+at every innerHTML sink; run loading is cached per run id and refreshed on every root
+entry; every surface has an honest `.emptycard` state ("No analyzed sessions yet…" /
+"Trends need at least two analyzed sessions.").
+
+**A run qualifies for the list on ANY tier having produced something** — never on wall
+hits. The list originally required `has_analytics` plus `total_wall_hits > 0`, which
+silently dropped exactly the clips the analysis ladder exists to serve: 30 fps
+camera-roll footage that yields rally structure and player movement but no ball tracking
+had nothing to show and appeared as "no analyzed sessions".
+
+**Absence is always rendered as its reason, never as an empty result.** This is
+Principle 3 of the analysis design carried into the UI. A tier that could not run shows
+its `capabilities[tier].reason`; a run predating capability gating shows its
+`legacy_reason`. The ball-tier surfaces (gauge, Avg height / Avg pace / Width, Ball
+metrics) are **omitted entirely** when that tier did not run — drawing a zeroed gauge and
+three em-dashes reads as "we looked and found nothing", which is the single claim the
+capability card exists to prevent.
 
 - **Analysis run cards** (`.clipcard`): §8.9 card at padding 0, rendered **open** —
   every card shows its whole summary; there is no expand/collapse. Head row
@@ -872,12 +887,26 @@ refreshed on every root entry; every surface has an honest `.emptycard` state
   review page (§16) by seeding the restore stash and rebooting — the same path the iOS
   `#run` deep link takes. It is a `<div>`, so it carries `role="button"`,
   `tabindex="0"` and an Enter/Space handler; without them a match would be reachable
-  by pointer only. Body: tick **gauge** (13 ticks, accent-filled arc, 30/800 center
-  value) · three `.scol` tiles (Avg height / Avg pace / Width) · `.fbrow` feedback
-  sentences · "Ball metrics" tiles (Top pace / Floor bounces) · a dim provenance
-  `.metaline` ("n front-wall hits · n judged · run id"). No buttons inside the card:
-  the review page *is* "Open full review", and it owns "Watch source video" (§16,
-  `p-track`).
+  by pointer only. Body, in ladder order — rally structure first because it is the tier
+  that always runs, ball detail last because it is the one most often gated off:
+  **"Rallies"** — three `.scol` tiles (Count / Longest / In play %) and a `.metaline`
+  naming the signal it came from ("From impact sounds and frame motion" / "From frame
+  motion only — no audio track"), plus a disagreement note when the timeline and the
+  hit-derived rallies differ ·
+  **"Movement"** — one three-tile `.scorecols` row per player (distance / On the T /
+  Front %) and a `.metaline` naming the detector backend and the fraction of rally time
+  actually observed, because a motion-blob fallback and real weights are not equally
+  trustworthy and the card must not present them as if they were ·
+  **ball tier, only when it ran** — tick **gauge** (13 ticks, accent-filled arc, 30/800
+  center value) · three `.scol` tiles (Avg height / Avg pace / Width) · `.fbrow` feedback
+  sentences · "Ball metrics" tiles (Top pace / Floor bounces) · a `.metaline` stating
+  `detection_coverage` ("Ball found in n% of inspected frames — the ball metrics use only
+  those frames"), which is what separates "found nothing" from "couldn't look" ·
+  **"What this clip could measure"** — one `.fbrow` per tier, label left, `ON`/`OFF`
+  `.statechip` right, and the reason as dim `.s` text under the label when off ·
+  a dim provenance `.metaline` ("n front-wall hits · n judged · run id").
+  No buttons inside the card: the review page *is* "Open full review", and it owns
+  "Watch source video" (§16, `p-track`).
 - **Progress** (`p-progress`): `.seg` range picker (1W/1M/3M/6M) · `#deltastrip` —
   three `.delta` cards (radius 18) with 11 dim label, 20/700 value, and a `.chip`
   delta vs the previous run (`good`/`poor` tint, `flat` when unchanged) · `.trend`

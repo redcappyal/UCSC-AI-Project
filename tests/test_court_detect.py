@@ -296,6 +296,42 @@ def test_find_lines_accepts_opencv_4_and_5_hough_shapes(monkeypatch, hough_shape
     assert sorted(round(line.y_at(100)) for line in lines) == [40, 120]
 
 
+def test_find_lines_merges_fragments_of_one_line_that_start_far_apart(monkeypatch):
+    """One painted line must never come back as two.
+
+    These are the six segments HoughLinesP really returns for the synthetic
+    service line -- one 4 px stripe, fragmented, each piece carrying a
+    sub-degree slope error. Grouping compared each fragment's perpendicular
+    offset *from the image origin*, which levers that slope error by the
+    fragment's distance from the origin: the piece starting at x=776 with a
+    0.4 deg tilt measures 564 while the piece starting at x=715 measures 555,
+    a 9 px gap that clears MERGE_OFFSET_PX and opens a second group.
+
+    Two lines where the court has one is not cosmetic. assign_lines fills
+    service from rest[0] and tin from rest[-1], so a duplicate hands the SAME
+    stripe to both -- a calibration whose tin sits on the service line,
+    returned as status "ok". Occlusion produces exactly this fragmentation on
+    real footage whenever a player stands in front of a line.
+    """
+    fragments = np.asarray([
+        [715, 555, 1205, 555],
+        [847, 556, 1119, 556],
+        [732, 556, 960, 557],
+        [776, 559, 1205, 556],
+        [950, 559, 1205, 557],
+        [715, 557, 949, 559],
+    ], dtype=np.int32).reshape(-1, 1, 4)
+    monkeypatch.setattr(cv2, "HoughLinesP", lambda *args, **kwargs: fragments)
+
+    lines = court_detect.find_lines(
+        np.zeros((1080, 1920), dtype=np.uint8),
+        min_length_px=192,
+    )
+
+    assert len(lines) == 1
+    assert abs(lines[0].y_at(960) - 556.5) < 2.0
+
+
 def test_edge_response_finds_the_wall_floor_seams():
     camera = court_camera()
     image, truth = render_court(camera, noise_sigma=2.0)

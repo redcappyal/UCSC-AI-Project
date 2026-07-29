@@ -730,7 +730,10 @@
   .statechip.done{background:var(--accent-bg); color:var(--accent-text)}
   .statechip.todo{background:var(--bg); color:var(--dim)}
   .clipbody{max-height:0; overflow:hidden; transition:max-height .28s ease}
-  .clipcard.open .clipbody{max-height:1600px}
+  /* The card no longer toggles, so the open body must not be clamped: the
+     rally/movement/capability sections push a two-player summary past any
+     fixed height, and overflow:hidden would silently cut it off. */
+  .clipcard.open .clipbody{max-height:none}
   .clipbody .inner{padding:14px 16px 16px; display:flex; flex-direction:column; gap:14px;
     border-top:1px solid var(--line)}
   /* gauge + score columns + feedback rows */
@@ -5212,6 +5215,39 @@ function videoUploadKey(file){
   return `${file.name}:${file.size}:${file.lastModified}`;
 }
 
+/* Files above this go up in chunks. The single-POST route is capped at 2 GB
+   server-side (~5 minutes of 4K60), so a full match cannot be ingested at all
+   through it; below the threshold the one-shot path is simpler and faster. */
+const CHUNKED_UPLOAD_THRESHOLD = 512 * 1024 * 1024;
+const UPLOAD_CHUNK_BYTES = 16 * 1024 * 1024;
+
+async function uploadFileChunked(file, progressLabel){
+  const init = await fetch('/api/upload/init', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({filename:file.name, size:file.size}),
+  }).then(r => r.json());
+  if(!init.ok) throw new Error(init.error || 'Could not start the upload.');
+
+  const total = Math.ceil(file.size / UPLOAD_CHUNK_BYTES);
+  if(progressLabel) setTrackProgress(progressLabel, 0);
+  for(let index = 0; index < total; index++){
+    const slice = file.slice(index*UPLOAD_CHUNK_BYTES, (index+1)*UPLOAD_CHUNK_BYTES);
+    const res = await fetch(`/api/upload/chunk/${init.upload_id}?index=${index}`, {
+      method:'POST', headers:{'Content-Type':'application/octet-stream'}, body: slice,
+    });
+    if(!res.ok){
+      const body = await res.json().catch(() => ({}));
+      throw new Error(body.error || `Upload failed on part ${index+1} of ${total}.`);
+    }
+    if(progressLabel) setTrackProgress(progressLabel, 100*(index+1)/total);
+  }
+
+  const done = await fetch(`/api/upload/complete/${init.upload_id}`, {method:'POST'})
+    .then(r => r.json());
+  if(!done.ok) throw new Error(done.error || 'Could not finish the upload.');
+  return done;
+}
+
 function ensureVideoUploaded(progressLabel = 'Uploading video'){
   const key = videoUploadKey(S.videoFile);
   if(S.uploadedVideoId && S.uploadedVideoKey === key) return Promise.resolve(S.uploadedVideoId);
@@ -5220,7 +5256,9 @@ function ensureVideoUploaded(progressLabel = 'Uploading video'){
   const form = new FormData();
   form.append('video_file', S.videoFile);
   S.uploadPromiseKey = key;
-  S.uploadPromise = postFormRequest('/api/upload', form, progressLabel)
+  S.uploadPromise = (S.videoFile.size > CHUNKED_UPLOAD_THRESHOLD
+      ? uploadFileChunked(S.videoFile, progressLabel)
+      : postFormRequest('/api/upload', form, progressLabel))
     .then(data => {
       S.uploadedVideoId = data.video_id;
       S.uploadedVideoKey = key;
@@ -7584,7 +7622,7 @@ async function startDevReloadPoller(){
    end-of-pipeline analytics: /api/runs for the index, /api/runs/<id>/coach
    for per-run analytics + feedback. Ported from design-lab/crosscourt-lab.html
    with the sample data removed — screens show honest empty states instead. */
-const LIVE = { runs:[], coach:{}, loading:null, range:'1M' };
+const LIVE = { runs:[], coach:{}, report:{}, loading:null, range:'1M' };
 const LIVE_MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 const LIVE_DAYS = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
 const LIVE_HUES = [205,150,30,280,110,255,20,180,60,320];
@@ -7622,23 +7660,42 @@ async function fetchLiveJSON(url){
   if(!r.ok) throw new Error(url);
   return r.json();
 }
-/* One in-flight load shared by every root; coach payloads cache by run id. */
+/* One in-flight load shared by every root; coach and report payloads cache by
+   run id.
+
+   A run qualifies on ANY tier having produced something — not on wall hits.
+   The old gate required has_analytics (a detected_hits.json, which a run whose
+   ball tier was skipped never writes) and total_wall_hits > 0, so exactly the
+   clips the analysis ladder exists to serve — 30 fps camera-roll footage that
+   yields rally structure and player movement — were dropped from the list and
+   the user saw nothing at all. */
+function reportHasAnything(rep){
+  if(!rep) return false;
+  if(((rep.shots||{}).hit_count||0) > 0) return true;
+  if(((rep.rally_timeline||{}).rallies||[]).length) return true;
+  return !!rep.players_v2;
+}
 function loadLiveRuns(){
   if(LIVE.loading) return LIVE.loading;
   LIVE.loading = (async () => {
     try{
       const idx = await fetchLiveJSON('/api/runs');
       const candidates = (idx.runs||[])
-        .filter(r => r.has_analytics && r.status === 'complete').slice(0,10);
+        .filter(r => r.status === 'complete').slice(0,10);
+      const reports = await Promise.all(candidates.map(r =>
+        LIVE.report[r.run_id] ? Promise.resolve({report:LIVE.report[r.run_id]})
+          : fetchLiveJSON(`/api/runs/${r.run_id}/report`).catch(()=>null)));
       const coaches = await Promise.all(candidates.map(r =>
-        LIVE.coach[r.run_id] ? Promise.resolve(LIVE.coach[r.run_id])
+        !r.has_analytics ? Promise.resolve(null)
+          : LIVE.coach[r.run_id] ? Promise.resolve(LIVE.coach[r.run_id])
           : fetchLiveJSON(`/api/runs/${r.run_id}/coach`).catch(()=>null)));
       const good = [];
       candidates.forEach((r,i) => {
-        const c = coaches[i];
-        if(c && c.ok && ((c.analytics||{}).total_wall_hits||0) > 0){
-          LIVE.coach[r.run_id] = c; good.push(r);
-        }
+        const rep = (reports[i]||{}).report;
+        if(!reportHasAnything(rep)) return;
+        LIVE.report[r.run_id] = rep;
+        if(coaches[i] && coaches[i].ok) LIVE.coach[r.run_id] = coaches[i];
+        good.push(r);
       });
       LIVE.runs = good;
     }catch(_){ /* backend unreachable — roots keep their empty states */ }
@@ -7756,6 +7813,74 @@ function gaugeSVG(score, label){
 const COURT_THUMB = '<svg class="court" viewBox="0 0 62 46" fill="none" stroke="#fff" stroke-width="1.2" aria-hidden="true"><rect x="9" y="8" width="44" height="26" rx="1"/><path d="M9 21h44"/><path d="M9 28h44"/></svg>';
 /* thumbnail play glyph reuses the transport PLAY_ICON declared above */
 const FB_NOTE_ICON ='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 8v5"/><circle cx="12" cy="16.5" r=".5" fill="currentColor"/><circle cx="12" cy="12" r="9"/></svg>';
+/* ---------- report-v1 sections (capabilities, rallies, movement) ----------
+   Principle 3 of the analysis design: a tier that could not run is shown
+   disabled WITH ITS REASON, never omitted and never drawn as an empty result.
+   So every helper below returns either real content or a stated reason — none
+   of them can return nothing. Reasons are server text and go through
+   escapeHtml at every sink, like coach feedback. */
+const TIER_LABELS = {
+  rally_structure:'Rally structure', player_movement:'Player movement',
+  ball_tracking:'Ball tracking', line_calls:'Line calls',
+};
+function capabilityRows(rep){
+  if(rep.legacy){
+    return `<div class="metaline">${escapeHtml(rep.legacy_reason||'')}</div>`;
+  }
+  const caps = rep.capabilities || {};
+  return Object.keys(TIER_LABELS).filter(k => caps[k]).map(k => {
+    const t = caps[k];
+    const chip = t.enabled
+      ? '<span class="statechip done">ON</span>'
+      : '<span class="statechip">OFF</span>';
+    const why = t.enabled ? '' :
+      `<span class="s" style="color:var(--dim)">${escapeHtml(t.reason||'')}</span>`;
+    return `<div class="fbrow">
+      <div class="info"><span class="s" style="color:var(--text)">${TIER_LABELS[k]}</span>${why}</div>
+      ${chip}
+    </div>`;
+  }).join('');
+}
+function rallySection(rep){
+  const tl = rep.rally_timeline;
+  if(!tl) return '<div class="metaline">Rally structure was not measured for this run.</div>';
+  const rallies = tl.rallies || [];
+  if(!rallies.length){
+    return `<div class="metaline">No rallies found${tl.audio_available ? '' : ' (clip has no audio track, so this used frame motion alone)'}.</div>`;
+  }
+  const play = rallies.reduce((s,r) => s + (r.end_s - r.start_s), 0);
+  const dur = (rep.video||{}).duration_s || 0;
+  const work = dur ? Math.round(100*play/dur) : null;
+  const longest = Math.max(...rallies.map(r => r.end_s - r.start_s));
+  return `<div class="scorecols">
+      <div class="scol"><span class="sl">Count</span><span class="sv num">${rallies.length}</span></div>
+      <div class="scol"><span class="sl">Longest</span><span class="sv num">${longest.toFixed(1)}<span class="ss">s</span></span></div>
+      <div class="scol"><span class="sl">In play</span><span class="sv num">${work==null?'—':work}<span class="ss">%</span></span></div>
+    </div>
+    <div class="metaline">${escapeHtml(tl.audio_available ? 'From impact sounds and frame motion' : 'From frame motion only — no audio track')}${tl.agrees_with_hits === false ? ' · disagrees with the hit-derived rallies' : ''}</div>`;
+}
+function movementSection(rep){
+  const pv = rep.players_v2;
+  if(!pv){
+    const why = ((rep.capabilities||{}).player_movement||{}).reason;
+    return `<div class="metaline">${escapeHtml(why ? 'Movement not measured: ' + why : 'Movement was not measured for this run.')}</div>`;
+  }
+  const row = (label, s) => `<div class="scorecols" style="grid-template-columns:1fr 1fr 1fr">
+      <div class="scol"><span class="sl">${label} distance</span><span class="sv num">${Math.round(s.distance_ft||0)}<span class="ss">ft</span></span></div>
+      <div class="scol"><span class="sl">On the T</span><span class="sv num">${Math.round(100*(s.t_time_pct||0))}<span class="ss">%</span></span></div>
+      <div class="scol"><span class="sl">Front</span><span class="sv num">${Math.round(100*(s.front_pct||0))}<span class="ss">%</span></span></div>
+    </div>`;
+  const cov = Math.round(100*((pv.player_a||{}).sample_coverage||0));
+  return row('P1', pv.player_a||{}) + row('P2', pv.player_b||{}) +
+    `<div class="metaline">Detector: ${escapeHtml(pv.backend||'unknown')} · ${cov}% of rally time observed</div>`;
+}
+function coverageLine(rep){
+  if(rep.detection_coverage == null) return '';
+  // Position-independent wording: this line sits after the ball metrics, so
+  // "below" would point at the capability card instead of what it describes.
+  return `<div class="metaline">Ball found in ${Math.round(100*rep.detection_coverage)}% of inspected frames — the ball metrics use only those frames.</div>`;
+}
+
 function renderClipCards(){
   const list = $('clipList');
   if(!LIVE.runs.length){
@@ -7778,7 +7903,13 @@ function renderClipCards(){
         <div class="iconcircle">${FB_NOTE_ICON}</div>
         <div class="info"><span class="s" style="color:var(--text)">${escapeHtml(s)}</span></div>
       </div>`).join('');
-    const body = `
+    const rep = LIVE.report[id] || {};
+    const ballRan = !!rep.shots || m.hits > 0;
+    // The ball tier's own surfaces are drawn only when that tier ran. Drawing
+    // an empty gauge and three em-dashes for a clip that was never eligible
+    // reads as "we looked and found nothing", which is the one thing the
+    // capability card exists to prevent.
+    const ballBlock = !ballRan ? '' : `
       <div class="gauge">${m.inPct != null ? gaugeSVG(m.inPct,'Front-wall IN')
         : '<div class="metaline">No judged front-wall calls in this clip.</div>'}</div>
       <div class="scorecols">
@@ -7792,6 +7923,19 @@ function renderClipCards(){
         <div class="scol"><span class="sl">Top pace</span><span class="sv num">${fmt(m.top,0)}<span class="ss">mph</span></span></div>
         <div class="scol"><span class="sl">Floor bounces</span><span class="sv num">${m.bounces==null?'—':m.bounces}</span></div>
       </div>
+      ${coverageLine(rep)}`;
+    // Ladder order: rally structure first because that tier always runs, ball
+    // detail last because it is the one most often gated off. No buttons at the
+    // foot — the head row is the card's one action, and the review page owns
+    // both "Open full review" and "Watch source video".
+    const body = `
+      <div class="cardtitle" style="font-size:14px">Rallies</div>
+      ${rallySection(rep)}
+      <div class="cardtitle" style="font-size:14px">Movement</div>
+      ${movementSection(rep)}
+      ${ballBlock}
+      <div class="cardtitle" style="font-size:14px">What this clip could measure</div>
+      ${capabilityRows(rep)}
       <div class="metaline">${m.hits} front-wall hits · ${m.calls} judged · run ${escapeHtml(id)}</div>`;
     return `
       <div class="card clipcard open" data-clip="${escapeHtml(id)}">
