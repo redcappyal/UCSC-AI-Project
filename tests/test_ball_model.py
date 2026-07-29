@@ -338,8 +338,73 @@ def test_load_detector_dispatches_to_heatmap_runner_for_v2_manifest(tmp_path, mo
 
     fake_module = SimpleNamespace(eval=lambda: None)
     fake_torch = types.SimpleNamespace(
-        jit=types.SimpleNamespace(load=lambda *a, **k: fake_module))
+        jit=types.SimpleNamespace(load=lambda *a, **k: fake_module),
+        cuda=_FakeCuda(False),
+        backends=types.SimpleNamespace(mps=_FakeMps(False)))
     monkeypatch.setitem(sys.modules, "torch", fake_torch)
 
     runner = ball_model.load_detector(model_dir)
     assert isinstance(runner, ball_model.HeatmapRunner)
+
+
+class _FakeCuda:
+    def __init__(self, available):
+        self._available = available
+
+    def is_available(self):
+        return self._available
+
+
+class _FakeMps:
+    def __init__(self, available):
+        self._available = available
+
+    def is_available(self):
+        return self._available
+
+
+def _fake_torch(cuda=False, mps=False):
+    import types
+    return types.SimpleNamespace(
+        cuda=_FakeCuda(cuda),
+        backends=types.SimpleNamespace(mps=_FakeMps(mps)),
+    )
+
+
+def test_resolve_device_auto_prefers_cuda(monkeypatch):
+    monkeypatch.delenv("BALL_DEVICE", raising=False)
+    assert ball_model._resolve_device(_fake_torch(cuda=True)) == "cuda"
+
+
+def test_resolve_device_auto_without_cuda_is_cpu_never_mps(monkeypatch):
+    # MPS available but auto must not pick it (8 GB unified-memory machines).
+    monkeypatch.delenv("BALL_DEVICE", raising=False)
+    assert ball_model._resolve_device(_fake_torch(mps=True)) == "cpu"
+
+
+def test_resolve_device_explicit_mps_honored(monkeypatch):
+    monkeypatch.setenv("BALL_DEVICE", "mps")
+    assert ball_model._resolve_device(_fake_torch(mps=True)) == "mps"
+
+
+def test_resolve_device_explicit_mps_unavailable_raises(monkeypatch):
+    monkeypatch.setenv("BALL_DEVICE", "mps")
+    with pytest.raises(RuntimeError, match="MPS"):
+        ball_model._resolve_device(_fake_torch(mps=False))
+
+
+def test_resolve_device_explicit_cuda_unavailable_raises(monkeypatch):
+    monkeypatch.setenv("BALL_DEVICE", "cuda")
+    with pytest.raises(RuntimeError, match="CUDA|cuda"):
+        ball_model._resolve_device(_fake_torch(cuda=False))
+
+
+def test_resolve_device_unknown_value_raises(monkeypatch):
+    monkeypatch.setenv("BALL_DEVICE", "tpu")
+    with pytest.raises(ValueError, match="tpu"):
+        ball_model._resolve_device(_fake_torch())
+
+
+def test_resolve_device_explicit_cpu(monkeypatch):
+    monkeypatch.setenv("BALL_DEVICE", "cpu")
+    assert ball_model._resolve_device(_fake_torch(cuda=True)) == "cpu"
