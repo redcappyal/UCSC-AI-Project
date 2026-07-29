@@ -17,6 +17,7 @@ from pathlib import Path
 
 import cv2
 
+import capabilities
 import court_model
 import person_model
 import player_attribution
@@ -1114,6 +1115,77 @@ def floor_zones_from_run(run_dir):
     return payload.get("floor_zones")
 
 
+def detection_coverage(results):
+    """Fraction of inferred frames that actually carried a ball.
+
+    This is the number that separates "found nothing" from "couldn't look".
+    A rally length or coverage statistic computed from a third of the frames
+    reads exactly like one computed from all of them -- and recall is the
+    standing weakness (71/109 missed, eval_set/BASELINE-2026-07-23.md), so
+    the fraction has to travel with the numbers derived from it.
+
+    0.0 when nothing was found; None only when nothing was inferred, because
+    zero is a measurement and absence is not.
+    """
+    if not results:
+        return None
+    detected = sum(1 for row in results.values() if row.get("detected"))
+    return detected / len(results)
+
+
+def load_run_calibration(run_dir):
+    """The run's calibration dict, or None when it has none or it is corrupt.
+
+    Absent and unreadable both resolve to None on purpose: a calibration that
+    cannot be parsed is not a calibration, and every caller here already
+    treats "no calibration" as a supported state rather than an error.
+    """
+    calibration_path = Path(run_dir) / "calibration.json"
+    if not calibration_path.exists():
+        return None
+    try:
+        return json.loads(calibration_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+
+
+def complete_without_ball_tier(run_id, run_dir, csv_path, caps):
+    """Finish a run whose footage cannot support ball tracking.
+
+    The ball stages are skipped rather than run to an empty result, which
+    saves a model load and, more importantly, stops the run from presenting
+    as a rally in which nothing happened. `capabilities` carries the reason.
+
+    A headers-only CSV is still written: readers open it unconditionally, and
+    to them a missing file is an error path nobody wrote while an empty one is
+    "we looked and there was nothing" -- which is what happened.
+
+    KNOWN LIMITATION: this takes the player-movement tier down with it, which
+    the analysis ladder says it should not -- tier 2 needs a solved court, not
+    a ball. The coupling is structural rather than intended: the person
+    detector observes frames via `frame_observer=` on the *ball* decode pass,
+    so skipping that pass skips it too. Breaking that seam belongs to the
+    movement-stats task, which gives tier 2 its own pass over the video.
+    """
+    write_results_csv(csv_path, {})
+    player_assignment = assign_front_wall_hit_players([])
+    update_job(
+        run_id,
+        status="complete",
+        stage="complete",
+        rows=0,
+        hits=[],
+        capabilities=caps,
+        target_zones=build_target_zone_summary([]),
+        target_zones_by_player=build_player_target_zone_summaries([]),
+        player_assignment=player_assignment,
+        players_v1=player_attribution.build_players_v1(
+            player_assignment, None, detector_backend="none"
+        ),
+        message=f"Ball tracking off: {caps['ball_tracking']['reason']}.",
+    )
+
+
 def sorted_rows(results):
     return [results[frame_idx] for frame_idx in sorted(results)]
 
@@ -1178,6 +1250,23 @@ def run_tracking_job(run_id):
             return on_frame
 
         try:
+            # Read before anything expensive starts: the calibration decides
+            # more than judging now. Whether a floor homography exists is a
+            # capability input, and the answer has to be known before the
+            # decision to load a model that costs minutes and gigabytes.
+            calibration = load_run_calibration(run_dir)
+            caps = capabilities.compute_capabilities(
+                job.get("probe"),
+                court_solved=(
+                    court_model.load_floor_calibration(calibration) is not None
+                ),
+            )
+            update_job(run_id, capabilities=caps)
+
+            if not caps["ball_tracking"]["enabled"]:
+                complete_without_ball_tier(run_id, run_dir, csv_path, caps)
+                return
+
             update_job(run_id, status="running", stage="coarse", message="Loading local model...")
             model = get_tracking_model()
             wall_x_range = tin_horizontal_range_from_run(run_dir)
@@ -1202,14 +1291,8 @@ def run_tracking_job(run_id):
             )
             write_results_csv(csv_path, results)
 
-            # The two-stage bounce detector needs the calibrated wall lines.
-            calibration = None
-            calibration_path = run_dir / "calibration.json"
-            if calibration_path.exists():
-                try:
-                    calibration = json.loads(calibration_path.read_text(encoding="utf-8"))
-                except (OSError, json.JSONDecodeError):
-                    calibration = None
+            # `calibration` was read above, before the capability gate -- the
+            # two-stage bounce detector needs the same calibrated wall lines.
 
             # Audio impact events drive recall: they add refine windows around
             # events the coarse trajectory pass missed, and later feed the
@@ -1398,11 +1481,15 @@ def run_tracking_job(run_id):
             extra_fields = {}
             if floor_zones is not None:
                 extra_fields["floor_zones"] = floor_zones
+            coverage = detection_coverage(results)
+            if coverage is not None:
+                extra_fields["detection_coverage"] = coverage
             update_job(
                 run_id,
                 status="complete",
                 stage="complete",
                 processed_frames=total_frames,
+                capabilities=caps,
                 rows=len(results),
                 hits=hits,
                 target_zones=target_zones,

@@ -148,3 +148,73 @@ def test_the_paired_run_directory_convention_is_gone(monkeypatch, tmp_path):
         assert [p.name for p in runs.iterdir()] == [run_id]
     finally:
         _cleanup(run_id)
+
+
+# --- probe threading --------------------------------------------------------
+# The capability gate in run_tracking_job reads job["probe"]. /api/track is the
+# only place that can measure it, because it is the only place holding the file.
+
+
+def test_track_records_a_probe_on_the_job(monkeypatch, tmp_path):
+    """Without this the gate sees no probe and disables the measured tiers.
+
+    A run that qualifies would then be skipped for "clip was never probed",
+    which is honest about the gate and wrong about the footage.
+    """
+    app_module, runs = _track_env(monkeypatch, tmp_path)
+    monkeypatch.setattr(app_module, "probe_video", lambda path: {
+        "fps": 60.0, "width": 1920, "height": 1080, "frame_count": 600,
+        "duration_s": 10.0, "sharpness": 120.0, "has_audio": True,
+    })
+
+    response = _post_track(app_module.app.test_client())
+    run_id = response.get_json()["run_id"]
+    try:
+        job = _job_on_disk(runs, run_id)
+        assert job["probe"]["fps"] == 60.0
+        assert job["probe"]["width"] == 1920
+    finally:
+        _cleanup(run_id)
+
+
+def test_a_failed_probe_does_not_fail_the_upload(monkeypatch, tmp_path):
+    """Probing is diagnostic. Losing it must cost the capability detail, not
+    the run -- a clip OpenCV cannot measure may still be one a player wants
+    analysed, and the gate already treats a missing probe conservatively."""
+    app_module, runs = _track_env(monkeypatch, tmp_path)
+
+    def explode(path):
+        raise ValueError("could not open video")
+
+    monkeypatch.setattr(app_module, "probe_video", explode)
+
+    response = _post_track(app_module.app.test_client())
+    assert response.status_code == 200
+    run_id = response.get_json()["run_id"]
+    try:
+        assert "probe" not in _job_on_disk(runs, run_id)
+    finally:
+        _cleanup(run_id)
+
+
+def test_status_response_passes_capabilities_through(monkeypatch, tmp_path):
+    """The client renders capability cards from the status payload.
+
+    public_job copies a whitelist, so a key the worker writes but the
+    whitelist omits is invisible to every client.
+    """
+    app_module, runs = _track_env(monkeypatch, tmp_path)
+    import job_runner
+
+    response = _post_track(app_module.app.test_client())
+    run_id = response.get_json()["run_id"]
+    try:
+        job_runner.update_job(run_id, capabilities={
+            "ball_tracking": {"enabled": False, "reason": "needs >=50 fps (got 30)"},
+        })
+        status = app_module.app.test_client().get(f"/api/track/status/{run_id}")
+        body = status.get_json()
+        assert body["capabilities"]["ball_tracking"]["enabled"] is False
+        assert "50 fps" in body["capabilities"]["ball_tracking"]["reason"]
+    finally:
+        _cleanup(run_id)

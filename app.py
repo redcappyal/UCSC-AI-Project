@@ -16,6 +16,7 @@ from werkzeug.utils import secure_filename
 import court_detect
 import court_model
 from coaching_advice import player_advice
+from media_probe import probe_video
 from judge_call import (
     Point,
     judge_ball,
@@ -148,6 +149,15 @@ def public_job(job):
         "annotated_video_url",
         "csv_url",
         "error",
+        # Analysis-tier state. The client renders capability cards from these,
+        # so a key the worker writes but this whitelist omits is invisible to
+        # every client. Listed ahead of the tasks that emit some of them --
+        # only keys actually present are copied, so naming them early is inert.
+        "probe",
+        "capabilities",
+        "detection_coverage",
+        "rally_timeline",
+        "players_v2",
     ):
         if key in job:
             response[key] = job[key]
@@ -1195,6 +1205,16 @@ def track_clip():
     extra_job_fields = {}
     if calibration_warning:
         extra_job_fields["calibration_warning"] = calibration_warning
+
+    # This is the only place holding the file, so it is the only place that can
+    # measure what the clip can support. The worker gates its tiers on the
+    # result. A probe failure costs the capability *detail*, never the run:
+    # a clip OpenCV cannot measure may still be one a player wants analysed,
+    # and compute_capabilities already treats a missing probe conservatively.
+    try:
+        extra_job_fields["probe"] = probe_video(video_path)
+    except Exception as error:
+        app.logger.warning("run %s: could not probe video: %s", run_id, error)
     create_job(
         run_id,
         run_dir,
