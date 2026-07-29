@@ -354,7 +354,7 @@ render each absence as its stated reason (or the legacy card), never as an empty
 
 ---
 
-### Task 9 — the Matches tab becomes the report surface — TODO
+### Task 9 — the Matches tab becomes the report surface — DONE (2026-07-29)
 
 `index.html` `p-matches` currently renders live run cards (`renderClipCards`). Make it the
 real report surface: run list → `report-v1` render.
@@ -364,6 +364,25 @@ phone viewport). Verify with the `/verify` skill and attach a screenshot to the 
 description of what was checked.
 
 Commit: `feat(web): real Matches tab — run list + report-v1 surface`
+
+**Result:** commit `e0ed672`. `index.html` (loader + `capabilityRows` / `rallySection` /
+`movementSection` / `coverageLine`), `DESIGN.md` §8.20 rewritten in the same change,
+`.claude/launch.json` gains a Windows entry. Suite **595 passed, 2 skipped, 1 deselected**.
+
+**The important part was a deletion.** `loadLiveRuns` required `has_analytics` *and*
+`total_wall_hits > 0`, so a ball-tier-skipped run — the exact case the whole queue
+enables — never appeared in the list at all, and the user saw "no analyzed sessions" for
+a run that succeeded. Runs now qualify on **any** tier having produced something. Without
+this, Tasks 1–8 were invisible.
+
+Ball-tier surfaces are omitted, not zeroed, when the tier did not run: a 0% gauge and
+three em-dashes read as "we looked and found nothing".
+
+**Verification was text-based, not visual.** Screenshots were unavailable — the Browser
+pane was not compositing in this session — so the card was checked by extracted text and
+computed styles in both themes at 390×844, with no console errors. **A visual pass at a
+phone viewport is still outstanding** and is the first thing to do on a machine with a
+working preview.
 
 ---
 
