@@ -118,6 +118,13 @@ iOS app in Safari (add-to-home-screen capable).
 - `color-scheme` set on `:root` per theme; theme stored in `localStorage('slc-theme')`,
   defaulting to `prefers-color-scheme`, applied as `data-theme` on `<html>` **before
   first paint** (inline head script — keep it there to avoid theme flash).
+- **The theme is one setting for the whole app, not per page.** The store is the
+  origin's, so a flip has to reach pages that are already loaded: `syncThemeFromStorage`
+  re-applies it on the `storage` event (a second browser tab) and on
+  `visibilitychange`/`pageshow` (a section webview coming back on screen in the native
+  shell, where each of the four tabs is its own webview and the boot script above ran
+  once, long ago). Syncing never replays the §10 wipe — that transition is anchored to
+  the button that was pressed. Any future cross-page setting needs the same two hooks.
 - `body{height:100dvh; overflow:hidden}` — the app is a fixed shell, not a scrolling page.
   Individual panels may scroll internally if they must; the shell never does.
 - **A content page that can outgrow the viewport must be given an internal
@@ -160,7 +167,9 @@ iOS app in Safari (add-to-home-screen capable).
 - Nav dock sits at `bottom:calc(14px + env(safe-area-inset-bottom))`.
 - **Shell embed:** when loaded inside the native iOS shell the URL carries
   `?shell=1`, which adds `body.shell-embed` and hides `#navPill` — the app's own
-  tab bar owns section navigation there. Everything else renders unchanged;
+  tab bar owns section navigation there. It also hides `.devOnly` (the Dashboard
+  Dev row, §8.15): inside the app the page is the product, and the only reader of
+  that row is someone sitting at the Mac. Everything else renders unchanged;
   Since the Challenge dock was archived there is no second dock left to reconcile.
   The flag is a **query** parameter, not a hash one: `openRunReview` strips the
   hash before `location.reload()`, so a hash-borne flag was dropped on that
@@ -696,7 +705,9 @@ The Dashboard is the section root the app boots into. Top → bottom:
   13/600 title + 12 dim sentence, filled from the latest run's coach feedback.
 - **Dev row:** after a `1px --line` hairline: `DEV` micro-label (11/600 uppercase,
   `--dim`) + `button.small` utilities — the "Label mode" toggle (`.active` = accent
-  fill + 700, like correction chips).
+  fill + 700, like correction chips). Browser-only: the hairline, label, and row
+  all carry `.devOnly`, which `body.shell-embed` hides (§3.2). Anything added here
+  takes that class too.
 
 All live regions render from `/api/runs` + `/api/runs/<id>/coach` (§8.20) and keep
 their markup defaults as the empty state — no fake sample data, ever.

@@ -333,6 +333,10 @@
   /* Inside the native iOS shell (#shell=1) the app's tab bar owns navigation;
      showing the web pill too would stack two navs. */
   body.shell-embed #navPill{display:none}
+  /* The Dev row is workshop chrome, not product: it stays in a desktop browser
+     (labeling mode is the only remaining producer of ground_truth.json) and
+     leaves the native shell, where the page is what a demo audience sees. */
+  body.shell-embed .devOnly{display:none}
   /* Bounce labeling */
   .labelGrid{display:grid; grid-template-columns:1fr 1fr; gap:10px}
   .labelGrid .dot{width:10px; height:10px; border-radius:50%; margin-right:9px; flex:0 0 auto}
@@ -884,9 +888,9 @@
     <p class="status" id="loadStatus"></p>
     <div class="sectionhead hidden" id="aiRecsHead"><span class="cardtitle">Coach Notes</span></div>
     <div class="airow hidden" id="aiRecsRow"></div>
-    <hr class="hairline">
-    <p class="devHead">Dev</p>
-    <div class="devRow">
+    <hr class="hairline devOnly">
+    <p class="devHead devOnly">Dev</p>
+    <div class="devRow devOnly">
       <button class="small" id="labelModeBtn" type="button">Label mode</button>
     </div>
   </section>
@@ -2008,6 +2012,30 @@ $('themeBtn').onclick = () => {
     ));
 };
 applyTheme(document.documentElement.dataset.theme);
+
+/* The theme is per-origin state, not per-page. The native shell runs each of
+   the four sections in its own webview and the boot script only reads the
+   stored value once, so a flip in one tab used to leave the other three
+   painted in the old theme until they happened to reload. Two listeners cover
+   both routes a stale page can learn about the change: the standards `storage`
+   event, which is what a second browser tab gets, and a re-read when the page
+   comes back on screen, which is the one a WKWebView is sure to notice on a
+   tab switch. Neither path runs the wipe transition — it is anchored to the
+   theme button on the page that was clicked, and replaying it somewhere else
+   would animate a change the user did not make there. */
+function syncThemeFromStorage(){
+  const t = localStorage.getItem('slc-theme');
+  if((t === 'dark' || t === 'light') && t !== document.documentElement.dataset.theme)
+    applyTheme(t);
+}
+/* key === null is a localStorage.clear() — treat it as "re-read everything". */
+addEventListener('storage', e => {
+  if(e.key === 'slc-theme' || e.key === null) syncThemeFromStorage();
+});
+document.addEventListener('visibilitychange', () => {
+  if(!document.hidden) syncThemeFromStorage();
+});
+addEventListener('pageshow', syncThemeFromStorage);
 
 /* ---------- record phase: on-device capture + on-site calibration ----------
    Recordings live on the device in the app's own OPFS `recordings/` folder

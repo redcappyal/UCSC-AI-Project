@@ -13,8 +13,8 @@ final class ConfigTests: XCTestCase {
     }
 
     func testBareHostGetsHTTPScheme() {
-        Config.setServerBase("192.168.1.20:5000")
-        XCTAssertEqual(Config.baseURL.absoluteString, "http://192.168.1.20:5000")
+        Config.setServerBase("192.168.1.20:5188")
+        XCTAssertEqual(Config.baseURL.absoluteString, "http://192.168.1.20:5188")
     }
 
     func testExplicitSchemeKept() {
@@ -23,7 +23,7 @@ final class ConfigTests: XCTestCase {
     }
 
     func testEmptyInputClearsOverride() {
-        Config.setServerBase("192.168.1.20:5000")
+        Config.setServerBase("192.168.1.20:5188")
         Config.setServerBase("   ")
         XCTAssertNil(UserDefaults.standard.string(forKey: Config.serverBaseKey))
         XCTAssertEqual(Config.baseURL.absoluteString, Config.defaultBase)

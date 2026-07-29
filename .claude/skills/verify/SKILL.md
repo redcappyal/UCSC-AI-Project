@@ -6,7 +6,7 @@ description: Build/launch/drive recipe for verifying UI and pipeline changes in 
 # Verifying changes in this app
 
 ## Launch
-- Server: `PORT=5177 .venv/bin/python app.py` (repo venv has flask + cv2; system python3 does not). Health check: `curl http://127.0.0.1:5177/api/health`.
+- Server: `.venv/bin/python app.py` (repo venv has flask + cv2; system python3 does not). Health check: `curl http://127.0.0.1:5188/api/health`. Port 5188 is the `app.py` default; override with `PORT=` only to run a second instance beside it.
 - The whole UI is `index.html` (inline HTML/CSS/JS), served by Flask at `/`.
 - Worktrees have no `.venv` — symlink the main repo's: `ln -sfn <main-repo>/.venv <worktree>/.venv`, then launch from the worktree on a spare port. `/api/health` returns `root` — check it to confirm which checkout you're actually serving.
 - UI-only checks work without Flask: `python3 -m http.server <port>` in the repo root; the "Backend not reachable" banner is expected noise, only JS exceptions matter.
