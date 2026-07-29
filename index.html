@@ -1540,13 +1540,18 @@
 const $ = id => document.getElementById(id);
 
 /* Escapes a string for safe interpolation into an innerHTML template string.
-   Player names are free-text (typed, persisted server-side, up to 40 chars)
-   and reach a handful of innerHTML sinks — coach report metric captions,
-   rally winner ribbon segments, the judge verdict's player-attribution span.
-   Apply this at those sinks only; playerDisplayName/playerAttributionText
-   stay unescaped because they also feed plain textContent/.title assignments,
-   which are already safe and would double-encode ("&amp;amp;") if escaped
-   twice. */
+   Two families of value need it. Player names are free-text (typed, persisted
+   server-side, up to 40 chars) and reach the coach report metric captions, the
+   rally winner ribbon segments, and the judge verdict's player-attribution
+   span. Server-supplied strings — the judge's `reason`, an /api/judge error
+   message, a hit's `event_type`, a target-zone name — reach the verdict box,
+   the event card, and the target grid.
+
+   Apply this at the innerHTML sink, never at the producer: helpers like
+   playerDisplayName, playerAttributionText and formatZoneList also feed plain
+   textContent/.title assignments, which are already safe and would
+   double-encode ("&amp;amp;") if their output arrived pre-escaped. Numbers
+   interpolated through .toFixed()/Math.round() need nothing. */
 function escapeHtml(value){
   return String(value).replace(/[&<>"']/g, ch => ({
     '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;',
@@ -5512,7 +5517,7 @@ function renderTargetZones(summary, ids){
       cell.style.background = targetZoneFill(zone.percentage || 0);
       placeTargetCell(cell, placement);
       cell.innerHTML =
-        `<span class="targetZoneNum">${zone.zone}</span>` +
+        `<span class="targetZoneNum">${escapeHtml(zone.zone)}</span>` +
         `<span class="targetPct">${Math.round(zone.percentage || 0)}%</span>`;
       cell.title = `Zone ${zone.zone}: ${zone.count} hit${zone.count === 1 ? '' : 's'}`;
       grid.appendChild(cell);
@@ -5734,7 +5739,9 @@ function renderOutcomeMetricSection(player, outcome){
     ),
     coachMetric(
       'Main targets',
-      formatZoneList(metrics.common_target_zones || [], 3),
+      // formatZoneList also feeds textContent sinks, so it stays unescaped and
+      // the escape lands here, at the one caller that builds innerHTML.
+      escapeHtml(formatZoneList(metrics.common_target_zones || [], 3)),
       `${player.labelHtml}'s most-used front-wall areas in ${context}.`
     ),
     coachMetric(
@@ -6689,7 +6696,7 @@ function renderEventCard(hit){
   $('judgeResult').className = 'verdict neutral';
   $('judgeResult').innerHTML =
     playerAttributionMarkup(hit) +
-    `<strong>${EVENT_LABELS[hit.event_type] || hit.event_type}</strong>` +
+    `<strong>${escapeHtml(EVENT_LABELS[hit.event_type] || hit.event_type)}</strong>` +
     `<div>Frame ${hit.frame} · line calls apply to front-wall hits only</div>`;
   // Non-wall hits carry no judge context; seed the dot from the impact fit
   // when the pipeline produced one, else the nearest detected ball center.
@@ -6717,7 +6724,7 @@ function renderJudgeResult(data, selectedHit=null){
     `<strong>${isServe && !noCall ? 'SERVE ' : ''}${callWithMargin(data.call, data.margin_px)}</strong>` +
     `<div>Frame ${data.frame} · ${isServe && noCall ? 'serve · ' : ''}` +
     `${sourceText} (${data.ball.x.toFixed(1)}, ${data.ball.y.toFixed(1)}) · ` +
-    `${data.reason}${data.outside_line_span ? ' · outside calibrated line span' : ''}</div>`;
+    `${escapeHtml(data.reason)}${data.outside_line_span ? ' · outside calibrated line span' : ''}</div>`;
 }
 
 /* Live verdict while scrubbing: once the playhead settles on a frame, judge it
@@ -6767,7 +6774,7 @@ async function judgeFrameRequest(frame, quiet=false){
     $('judgeResult').className = 'verdict neutral';
     $('judgeResult').innerHTML =
       playerAttributionMarkup(selectedHit) +
-      `<strong>No call</strong><div>Frame ${frame} · ${error.message}</div>`;
+      `<strong>No call</strong><div>Frame ${frame} · ${escapeHtml(error.message)}</div>`;
     if(!quiet) showError(error.message);
   } finally {
     $('judgeBtn').disabled = false;
