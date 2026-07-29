@@ -251,3 +251,24 @@ def test_the_runs_index_is_newest_first(tmp_path, monkeypatch):
     ids = [row["run_id"] for row in client.get("/api/runs").get_json()["runs"]]
 
     assert ids == ["1790000000000", "1780000000000"]
+
+
+def test_report_carries_ball_backend(tmp_path):
+    run_dir = _run_dir(tmp_path, "1790000000010", {
+        "run_id": "1790000000010", "status": "complete",
+        "capabilities": {},
+        "ball_backend": {"backend": "local", "name": "crosscourt-wasb-416",
+                         "version": 1, "artifact_sha256": "abc",
+                         "device": "cuda"},
+    })
+    report = build_report(run_dir)
+    assert report["ball_backend"]["backend"] == "local"
+    assert report["ball_backend"]["name"] == "crosscourt-wasb-416"
+
+
+def test_report_ball_backend_none_for_legacy_runs(tmp_path):
+    run_dir = _run_dir(tmp_path, "1790000000011", {
+        "run_id": "1790000000011", "status": "complete",
+    })
+    report = build_report(run_dir)
+    assert report["ball_backend"] is None
