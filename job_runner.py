@@ -19,6 +19,7 @@ import cv2
 
 import capabilities
 import court_model
+import movement_stats
 import person_model
 import player_attribution
 import rally_segmenter
@@ -1193,18 +1194,29 @@ MOTION_ONLY_SAMPLES_PER_SECOND = 6
 AUDIO_TIMELINE_MAX_PEAKS = 512
 
 
-def accumulate_motion_only(video_path, start_frame, end_frame, source_fps):
-    """Decode for motion energy alone, running no model.
+def accumulate_motion_only(video_path, start_frame, end_frame, source_fps,
+                           person_pass=None):
+    """Decode for motion energy alone, running no ball model.
 
-    Used when the ball tier is off. Rally structure needs neither a ball nor a
-    court, so a clip that cannot support tier 3 must still get tier 1 -- and
-    the only thing standing in the way is that the motion series was, until
-    now, a by-product of the ball decode.
+    Used when the ball tier is off. Tiers 1 and 2 need neither a ball nor the
+    ball model -- rally structure needs nothing, movement needs a solved court
+    -- so a clip that cannot support tier 3 must still get both. Until this
+    existed, the motion series and the person pass were both by-products of
+    the ball decode, and skipping it silently took two tiers down with it.
+
+    `person_pass` rides this decode for exactly that reason. It sees frames at
+    the motion stride rather than the coarse stride, which is sparser; the
+    tracker's own cadence logic handles that, and coasted samples show up as
+    reduced coverage in the movement stats rather than as invented positions.
 
     Best-effort: a decode failure costs the timeline, not the run.
     """
     stride = max(2, int(round(source_fps / MOTION_ONLY_SAMPLES_PER_SECOND)))
     accumulator = MotionAccumulator(source_fps)
+    observe = compose_frame_observers(
+        accumulator.observe,
+        person_pass.observe if person_pass is not None else None,
+    )
     frame_queue = queue.Queue(maxsize=DECODE_QUEUE_SIZE)
     stop_event = threading.Event()
     decode_errors = []
@@ -1220,7 +1232,7 @@ def accumulate_motion_only(video_path, start_frame, end_frame, source_fps):
             item = frame_queue.get()
             if item is None:
                 break
-            accumulator.observe(*item)
+            observe(*item)
     finally:
         stop_event.set()
         while True:
@@ -1267,6 +1279,44 @@ def load_run_calibration(run_dir):
         return None
 
 
+def build_players_v2(person_pass, calibration, rallies, identity_confidence=None):
+    """Per-player movement statistics in court feet, or None.
+
+    None when the tier could not run -- no detector, or no floor homography to
+    turn feet in pixels into feet on a court. Returning zeroed stats instead
+    would be a report of a player who never moved, which is a different claim
+    from "this could not be measured".
+
+    `backend` names the detector that produced the tracks, because a motion-blob
+    fallback and real weights are not equally trustworthy and the report must
+    not present them as if they were.
+    """
+    if person_pass is None:
+        return None
+
+    floor_map = court_model.load_floor_calibration(calibration)
+    if floor_map is None:
+        return None
+
+    samples_by_track = person_pass.tracker.samples()
+    stats = {}
+    for label, track in (("player_a", "A"), ("player_b", "B")):
+        stats[label] = movement_stats.movement_stats(
+            movement_stats.to_court_samples(
+                samples_by_track.get(track, []), floor_map
+            ),
+            rallies,
+        )
+
+    return {
+        "schema": PLAYERS_V2_SCHEMA,
+        "backend": person_pass.detector.backend,
+        "identity_confidence": identity_confidence,
+        **stats,
+    }
+
+
+PLAYERS_V2_SCHEMA = "players-v2"
 RALLY_TIMELINE_SCHEMA = "rally-timeline-v1"
 
 
@@ -1305,7 +1355,8 @@ def build_and_write_rally_timeline(run_dir, audio_candidates, motion_series,
     return timeline
 
 
-def complete_without_ball_tier(run_id, run_dir, csv_path, caps, timeline=None):
+def complete_without_ball_tier(run_id, run_dir, csv_path, caps, timeline=None,
+                               players_v2=None):
     """Finish a run whose footage cannot support ball tracking.
 
     The ball stages are skipped rather than run to an empty result, which
@@ -1318,15 +1369,16 @@ def complete_without_ball_tier(run_id, run_dir, csv_path, caps, timeline=None):
     to them a missing file is an error path nobody wrote while an empty one is
     "we looked and there was nothing" -- which is what happened.
 
-    KNOWN LIMITATION: this takes the player-movement tier down with it, which
-    the analysis ladder says it should not -- tier 2 needs a solved court, not
-    a ball. The coupling is structural rather than intended: the person
-    detector observes frames via `frame_observer=` on the *ball* decode pass,
-    so skipping that pass skips it too. Breaking that seam belongs to the
-    movement-stats task, which gives tier 2 its own pass over the video.
+    The player-movement tier is NOT skipped with it. It used to be -- the
+    person detector observed frames via `frame_observer=` on the ball decode,
+    so skipping that pass silently took tier 2 down too, which the ladder says
+    must not happen: tier 2 needs a solved court, not a ball. It now rides the
+    motion-only decode in `accumulate_motion_only`, and `players_v2` arrives
+    here already built.
     """
     write_results_csv(csv_path, {})
     player_assignment = assign_front_wall_hit_players([])
+    extra = {} if players_v2 is None else {"players_v2": players_v2}
     update_job(
         run_id,
         status="complete",
@@ -1335,6 +1387,7 @@ def complete_without_ball_tier(run_id, run_dir, csv_path, caps, timeline=None):
         hits=[],
         capabilities=caps,
         rally_timeline=timeline,
+        **extra,
         target_zones=build_target_zone_summary([]),
         target_zones_by_player=build_player_target_zone_summaries([]),
         player_assignment=player_assignment,
@@ -1423,12 +1476,21 @@ def run_tracking_job(run_id):
             update_job(run_id, capabilities=caps)
 
             if not caps["ball_tracking"]["enabled"]:
-                # Tier 1 does not need the ball or the court, so it runs on its
-                # own decode rather than dying with the pass it used to ride.
+                # Tiers 1 and 2 need neither the ball nor the ball model, so
+                # they run on their own decode rather than dying with the pass
+                # they used to ride.
                 update_job(run_id, status="running", stage="coarse",
                            message="Reading rally structure...")
+                motion_stride = max(
+                    2, int(round(source_fps / MOTION_ONLY_SAMPLES_PER_SECOND))
+                )
+                movement_pass = (
+                    build_person_pass(source_fps, motion_stride)
+                    if caps["player_movement"]["enabled"] else None
+                )
                 motion = accumulate_motion_only(
-                    video_path, start_frame, end_frame, source_fps
+                    video_path, start_frame, end_frame, source_fps,
+                    person_pass=movement_pass,
                 )
                 timeline = build_and_write_rally_timeline(
                     run_dir,
@@ -1440,7 +1502,10 @@ def run_tracking_job(run_id):
                     (end_frame - start_frame + 1) / source_fps,
                 )
                 complete_without_ball_tier(
-                    run_id, run_dir, csv_path, caps, timeline
+                    run_id, run_dir, csv_path, caps, timeline,
+                    build_players_v2(
+                        movement_pass, calibration, timeline["rallies"]
+                    ),
                 )
                 return
 
@@ -1687,6 +1752,18 @@ def run_tracking_job(run_id):
                 (end_frame - start_frame + 1) / source_fps,
                 player_assignment,
             )
+            # Movement is scoped to the audio+motion rallies rather than the
+            # hit-derived ones: with recall where it is, hit rallies miss whole
+            # exchanges, and a distance scoped to them would silently omit the
+            # court covered during every rally the ball tier did not see.
+            if caps["player_movement"]["enabled"]:
+                players_v2 = build_players_v2(
+                    person_pass,
+                    calibration,
+                    extra_fields["rally_timeline"]["rallies"],
+                )
+                if players_v2 is not None:
+                    extra_fields["players_v2"] = players_v2
             update_job(
                 run_id,
                 status="complete",

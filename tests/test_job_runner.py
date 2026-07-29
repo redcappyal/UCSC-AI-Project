@@ -450,3 +450,92 @@ def test_the_timeline_is_written_to_the_run_directory(tmp_path, monkeypatch):
     written = json.loads((run_dir / "rally_timeline.json").read_text())
     assert written["schema"] == "rally-timeline-v1"
     assert "rallies" in written
+
+
+# --- movement tier ----------------------------------------------------------
+
+
+class _StubPersonDetector:
+    backend = "stub"
+
+    def detect(self, frame_bgr):
+        return [_det(400, 700), _det(1200, 500)]
+
+
+def test_movement_stats_are_emitted_when_the_tier_is_on(tmp_path, monkeypatch):
+    video_path = tmp_path / "clip.mp4"
+    _write_clip(video_path)
+    run_id = "test-job-runner-movement-on"
+    run_dir = _make_job(tmp_path, run_id, video_path)
+    _qualify_for_ball_tier(run_id, run_dir)
+    monkeypatch.setattr(person_model, "load_person_detector",
+                        lambda: _StubPersonDetector())
+    _stub_pipeline(monkeypatch)
+
+    job_runner.run_tracking_job(run_id)
+
+    players_v2 = job_runner.get_job(run_id)["players_v2"]
+    assert players_v2["backend"] == "stub"
+    assert "player_a" in players_v2 and "player_b" in players_v2
+    assert "distance_ft" in players_v2["player_a"]
+
+
+def test_the_movement_tier_survives_the_ball_tier_being_off(tmp_path, monkeypatch):
+    """The coupling this task exists to break.
+
+    Capability gating skipped the ball stages, and the person detector rode on
+    the ball decode via frame_observer -- so a clip that could not support ball
+    tracking silently lost player movement too, which the analysis ladder says
+    is a tier that needs only a solved court.
+    """
+    video_path = tmp_path / "clip.mp4"
+    _write_clip(video_path)
+    run_id = "test-job-runner-movement-ball-off"
+    run_dir = _make_job(tmp_path, run_id, video_path)
+    # A solved court, but footage too slow and too small for the ball tier.
+    (run_dir / "calibration.json").write_text(
+        json.dumps(make_v2_calibration()), encoding="utf-8"
+    )
+    job_runner.update_job(run_id, probe=_unqualified_probe())
+    monkeypatch.setattr(person_model, "load_person_detector",
+                        lambda: _StubPersonDetector())
+    monkeypatch.setattr(
+        job_runner, "get_tracking_model",
+        lambda: (_ for _ in ()).throw(AssertionError("model loaded")),
+    )
+    monkeypatch.setattr(job_runner, "extract_audio_candidates",
+                        lambda *args, **kwargs: [])
+
+    job_runner.run_tracking_job(run_id)
+
+    job = job_runner.get_job(run_id)
+    assert job["status"] == "complete"
+    assert job["capabilities"]["ball_tracking"]["enabled"] is False
+    assert job["capabilities"]["player_movement"]["enabled"] is True
+    assert "players_v2" in job, "tier 2 died with tier 3 again"
+    assert job["players_v2"]["backend"] == "stub"
+
+
+def test_no_court_means_no_movement_stats_with_a_reason(tmp_path, monkeypatch):
+    """Feet need a homography. Without one there is nothing honest to report."""
+    video_path = tmp_path / "clip.mp4"
+    _write_clip(video_path)
+    run_id = "test-job-runner-movement-no-court"
+    _make_job(tmp_path, run_id, video_path)
+    job_runner.update_job(run_id, probe=dict(QUALIFIED_PROBE))
+    monkeypatch.setattr(person_model, "load_person_detector",
+                        lambda: _StubPersonDetector())
+    monkeypatch.setattr(
+        job_runner, "get_tracking_model",
+        lambda: (_ for _ in ()).throw(AssertionError("model loaded")),
+    )
+    monkeypatch.setattr(job_runner, "extract_audio_candidates",
+                        lambda *args, **kwargs: [])
+
+    job_runner.run_tracking_job(run_id)
+
+    job = job_runner.get_job(run_id)
+    movement = job["capabilities"]["player_movement"]
+    assert movement["enabled"] is False
+    assert "court" in movement["reason"]
+    assert job.get("players_v2") is None
