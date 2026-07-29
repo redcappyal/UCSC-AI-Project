@@ -309,8 +309,20 @@ def start_tracking_job(run_id):
     return thread
 
 
-def decode_segments_to_queue(video_path, segments, frame_queue, stop_event, decode_errors):
-    """Producer thread: decode (start, end, stride) segments into frame_queue."""
+def decode_segments_to_queue(video_path, segments, frame_queue, stop_event,
+                             decode_errors, temporal=False):
+    """Producer thread: decode (start, end, stride) segments into frame_queue.
+
+    temporal=False enqueues (frame_idx, frame) -- the single-frame payload
+    the rfdetr backend consumes. temporal=True enqueues
+    (center_idx, [prev, cur, nxt]) for each strided center: CONSECUTIVE
+    frames (the temporal model was trained on t-1/t/t+1, never t-s/t/t+s),
+    decoded with read(); frames no window needs are skipped with grab()
+    exactly as before. Segment edges pad by repeating the first/last frame,
+    mirroring ball_track_offline._centered_windows so serving matches
+    training, and state resets per segment so a window never spans a
+    segment boundary.
+    """
 
     def enqueue(item):
         while not stop_event.is_set():
@@ -319,6 +331,11 @@ def decode_segments_to_queue(video_path, segments, frame_queue, stop_event, deco
                 return
             except queue.Full:
                 continue
+
+    def emit_window(center_idx, prev, center, nxt):
+        enqueue((center_idx, [prev if prev is not None else center,
+                              center,
+                              nxt if nxt is not None else center]))
 
     cap = cv2.VideoCapture(str(video_path))
     try:
@@ -331,9 +348,15 @@ def decode_segments_to_queue(video_path, segments, frame_queue, stop_event, deco
 
             cap.set(cv2.CAP_PROP_POS_FRAMES, seg_start)
             read_count = seg_start
+            last_decoded = None   # (idx, frame) -- prev-adjacency check
+            pending = None        # (center_idx, prev, frame) awaiting its nxt
 
             while read_count <= seg_end and not stop_event.is_set():
-                if (read_count - seg_start) % stride != 0:
+                offset = (read_count - seg_start) % stride
+                is_center = offset == 0
+                is_neighbour = stride >= 2 and offset in (1, stride - 1)
+                wanted = is_center or (temporal and (stride == 1 or is_neighbour))
+                if not wanted:
                     # grab() skips the decode-to-BGR step for strided-out frames.
                     if not cap.grab():
                         break
@@ -344,8 +367,29 @@ def decode_segments_to_queue(video_path, segments, frame_queue, stop_event, deco
                 if not ok:
                     break
 
-                enqueue((read_count, frame))
+                if not temporal:
+                    enqueue((read_count, frame))
+                    read_count += 1
+                    continue
+
+                if pending is not None:
+                    center_idx, prev, center = pending
+                    nxt = frame if read_count == center_idx + 1 else None
+                    emit_window(center_idx, prev, center, nxt)
+                    pending = None
+
+                if is_center:
+                    prev = None
+                    if last_decoded is not None and last_decoded[0] == read_count - 1:
+                        prev = last_decoded[1]
+                    pending = (read_count, prev, frame)
+
+                last_decoded = (read_count, frame)
                 read_count += 1
+
+            if temporal and pending is not None:
+                center_idx, prev, center = pending
+                emit_window(center_idx, prev, center, None)
     except Exception as error:
         decode_errors.append(error)
     finally:

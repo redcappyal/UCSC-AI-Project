@@ -539,3 +539,82 @@ def test_no_court_means_no_movement_stats_with_a_reason(tmp_path, monkeypatch):
     assert movement["enabled"] is False
     assert "court" in movement["reason"]
     assert job.get("players_v2") is None
+
+
+def _drain_decode(video_path, segments, temporal):
+    import queue as queue_module
+    import threading
+
+    frame_queue = queue_module.Queue()
+    stop_event = threading.Event()
+    errors = []
+    job_runner.decode_segments_to_queue(
+        video_path, segments, frame_queue, stop_event, errors,
+        temporal=temporal,
+    )
+    assert errors == []
+    items = []
+    while True:
+        item = frame_queue.get_nowait()
+        if item is None:
+            return items
+        items.append(item)
+
+
+def _frame_value(frame):
+    """Recover the frame's identity from its solid pixel value.
+
+    _write_clip paints frame i as solid i*20, but mp4 encoding is lossy
+    (value 20 can decode as 17), so snap to the nearest multiple of 20.
+    """
+    return round(int(frame[0, 0, 0]) / 20) * 20
+
+
+def test_temporal_decode_stride1_sliding_windows_and_edge_padding(tmp_path):
+    video = tmp_path / "clip.mp4"
+    _write_clip(video, frame_count=5)
+    items = _drain_decode(video, [(0, 4, 1)], temporal=True)
+    assert [idx for idx, _ in items] == [0, 1, 2, 3, 4]
+    values = {idx: [_frame_value(f) for f in frames] for idx, frames in items}
+    assert values[0] == [0, 0, 20]        # left edge pads prev with cur
+    assert values[2] == [20, 40, 60]      # interior: true neighbours
+    assert values[4] == [60, 80, 80]      # right edge pads nxt with cur
+
+
+def test_temporal_decode_stride4_centers_get_true_neighbours(tmp_path):
+    video = tmp_path / "clip.mp4"
+    _write_clip(video, frame_count=10)
+    items = _drain_decode(video, [(0, 9, 4)], temporal=True)
+    assert [idx for idx, _ in items] == [0, 4, 8]
+    values = {idx: [_frame_value(f) for f in frames] for idx, frames in items}
+    assert values[0] == [0, 0, 20]          # first center: padded prev, true nxt
+    assert values[4] == [60, 80, 100]       # strided center: TRUE t-1/t+1, not t-4/t+4
+    assert values[8] == [140, 160, 180]
+
+
+def test_temporal_decode_stride2_shared_neighbours(tmp_path):
+    video = tmp_path / "clip.mp4"
+    _write_clip(video, frame_count=5)
+    items = _drain_decode(video, [(0, 4, 2)], temporal=True)
+    assert [idx for idx, _ in items] == [0, 2, 4]
+    values = {idx: [_frame_value(f) for f in frames] for idx, frames in items}
+    assert values[2] == [20, 40, 60]
+    assert values[4] == [60, 80, 80]
+
+
+def test_temporal_decode_resets_across_segments(tmp_path):
+    video = tmp_path / "clip.mp4"
+    _write_clip(video, frame_count=12)
+    items = _drain_decode(video, [(0, 3, 1), (8, 11, 1)], temporal=True)
+    assert [idx for idx, _ in items] == [0, 1, 2, 3, 8, 9, 10, 11]
+    values = {idx: [_frame_value(f) for f in frames] for idx, frames in items}
+    assert values[3] == [40, 60, 60]        # segment end pads, never crosses
+    assert values[8] == [160, 160, 180]     # new segment starts padded
+
+
+def test_non_temporal_decode_payload_unchanged(tmp_path):
+    video = tmp_path / "clip.mp4"
+    _write_clip(video, frame_count=6)
+    items = _drain_decode(video, [(0, 5, 2)], temporal=False)
+    assert [idx for idx, _ in items] == [0, 2, 4]
+    assert all(isinstance(frame, np.ndarray) for _, frame in items)
