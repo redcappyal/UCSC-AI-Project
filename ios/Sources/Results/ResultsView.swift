@@ -22,7 +22,9 @@ struct ResultsView: View {
         .task { await submission.submit(videoURL: clip.url, duration: clip.duration) }
         .fullScreenCover(isPresented: $showFullReview) {
             if let runID = submission.completedRunID {
-                WebScreen(url: URL(string: Config.baseURL.absoluteString + "/#run=\(runID)&shell=1")!,
+                // shell=1 in the query, not the fragment: the review page
+                // strips its own hash on reload (see RootTabView.rootURL).
+                WebScreen(url: URL(string: Config.baseURL.absoluteString + "/?shell=1#run=\(runID)")!,
                           showsClose: true)
             }
         }

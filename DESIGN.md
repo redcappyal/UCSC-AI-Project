@@ -95,7 +95,7 @@ training-app language). Its motifs, all now in the codebase:
 | Video-editor trim UI (accent handles, filmstrip, white playhead) | `.clipEditor`, `.clipHandle`, center-fixed `#clipCursor` |
 | Segmented range controls (`1W/1M/3M/6M`) | `.seg` segmented control, `.corrSeg` two-way segment (§8.18) |
 | Floating dark icon dock | `#navPill` section dock (§8.3) |
-| Session cards with gauge + feedback rows | `.clipcard` on the Analysis root (always open; the head row opens the review, §8.20) |
+| Session cards with gauge + feedback rows | `.clipcard` head rows on the Analysis root; the gauge and feedback live on `p-match` behind them (§8.20) |
 | Zone/heat charts on a literal court | `.targetCourt` front-wall chart, `#floorMapSvg` bounce map |
 
 Tone target: **modern training companion** (TennisIQ-class sports apps) — warm but not
@@ -158,10 +158,14 @@ iOS app in Safari (add-to-home-screen capable).
 - `<main>` padding: `12px 14px calc(92px + env(safe-area-inset-bottom))` — the bottom
   clearance keeps content above the nav dock. Never remove the safe-area term.
 - Nav dock sits at `bottom:calc(14px + env(safe-area-inset-bottom))`.
-- **Shell embed:** when loaded inside the native iOS shell the URL hash carries
-  `shell=1`, which adds `body.shell-embed` and hides `#navPill` — the app's own
+- **Shell embed:** when loaded inside the native iOS shell the URL carries
+  `?shell=1`, which adds `body.shell-embed` and hides `#navPill` — the app's own
   tab bar owns section navigation there. Everything else renders unchanged;
-  `.callTabs` (review/challenge pill) stays visible since it has no native twin.
+  Since the Challenge dock was archived there is no second dock left to reconcile.
+  The flag is a **query** parameter, not a hash one: `openRunReview` strips the
+  hash before `location.reload()`, so a hash-borne flag was dropped on that
+  reload (and on a WKWebView process-restore) and both docks ended up on screen.
+  The hash form is still read, for links minted before that move.
 - Z-index ladder: stage overlays `5–6` · error banner `30` · nav pill `40`. New modal
   surfaces (if ever needed) start at `50`. Do not exceed without updating this table.
 
@@ -169,10 +173,16 @@ iOS app in Safari (add-to-home-screen capable).
 system back button for the header chevron and the proxied primary (§3.4), which
 are web-shell mechanisms. The phase inventory and the §16 blueprints are shared;
 only the chrome that moves between phases differs per client. The native tab bar
-is **three** items — Analysis · Training · Progress, webviews onto those section
-roots with `shell=1` — not the web dock's four: the Dashboard root is a web-only
-entry, and the native record screen has no tab (hidden 2026-07-28 until the
-auto-calibrating capture flow earns it back). One piece of native-only chrome
+carries **the same four items as the web dock, in the same order** — Dashboard ·
+Analysis · Training · Progress, webviews onto those section roots with
+`?shell=1` — drawn in the platform's own chrome (system tab bar) rather than as a
+copy of the dark dock. It is **icon-only**, like the dock: `tabItem` takes a bare
+`Image`, because a `Label` there always draws its title on iPhone, and the name
+rides along as the image's accessibility label — the native counterpart of the
+dock buttons' `aria-label`. The two menus are one menu with two renderings;
+changing the item set means changing both. The native record screen
+still has no tab (hidden 2026-07-28 until the auto-calibrating capture flow earns
+it back). One piece of native-only chrome
 floats over the webviews: the server-settings gear, bottom-trailing above the tab
 bar, because a fresh install must be able to point the app at a pipeline.
 
@@ -181,7 +191,8 @@ bar, because a fresh install must be able to point the app at a pipeline.
 Each screen is a `<section id="p-…">` inside `<main>`, toggled with `.hidden`. The current
 phases: `p-load`, `p-record`, `p-frame`, `p-tap`, `p-review`, `p-tap-floor`, `p-clip`,
 `p-analyze`, `p-track`, `p-player1-report`, `p-player2-report`, `p-label`,
-the section roots `p-matches` (Analysis), `p-coach` (Training), `p-progress`, and the
+the section roots `p-matches` (Analysis), `p-coach` (Training), `p-progress`, the
+match analysis page `p-match`, and the
 roadmap placeholders `p-live`, `p-stats`, `p-shot-bot`, `p-sharing` (blueprints in §16).
 To add a screen, add a section and follow §17 — never add a second header, tab bar, or
 routing chrome beyond the §8.3 nav dock.
@@ -471,7 +482,7 @@ remains the only section router.
 ### 8.3 Nav dock (`#navPill` — dark, icon-only)
 
 ```css
-#navPill, .callTabs{position:fixed; left:50%; bottom:calc(14px + env(safe-area-inset-bottom));
+#navPill{position:fixed; left:50%; bottom:calc(14px + env(safe-area-inset-bottom));
   transform:translateX(-50%); z-index:40; display:flex; gap:2px; padding:7px;
   border-radius:999px; background:var(--nav-bg);
   box-shadow:0 18px 36px rgba(16,17,20,.28)}
@@ -487,8 +498,9 @@ items: **Dashboard · Analysis · Training · Progress** (not judge/label modes;
 lives in the Dashboard dev row, §8.15). Visible only on the four section roots
 (`p-load`, `p-matches`, `p-coach`, `p-progress`); hidden inside flows and sub-pages.
 Back chevron is hidden on section roots (they are siblings — the dock switches between
-them) and shown everywhere else. `.callTabs` (Review/Challenge) shares the dock shell
-but keeps its text labels. No glass anywhere — the dock is opaque.
+them) and shown everywhere else. No glass anywhere — the dock is opaque. **This is the
+app's only dock:** the call page's `.callTabs` (Review/Challenge) shared this shell
+until it was archived 2026-07-29 (`archive/challenge-ui/`).
 
 ### 8.4 Inputs
 
@@ -886,17 +898,17 @@ metrics) are **omitted entirely** when that tier did not run — drawing a zeroe
 three em-dashes reads as "we looked and found nothing", which is the single claim the
 capability card exists to prevent.
 
-- **Analysis run cards** (`.clipcard`): §8.9 card at padding 0, rendered **open** —
-  every card shows its whole summary; there is no expand/collapse. Head row
+- **Analysis run cards** (`.clipcard`): §8.9 card at padding 0, **head row only** —
+  Analysis is a list of matches, not a stack of unrolled reports. Head row
   (`.cliptop`): 62×46 gradient thumb (hue rotates per run — the sanctioned gradient)
   with a court line-sketch + play glyph · run date 14/600 + duration `.metaline` ·
   right-aligned `.statechip` (`IN n%` in accent when calls exist, `ANALYZED`
   otherwise). **The head row is the card's one action:** tapping it opens that match's
-  review page (§16) by seeding the restore stash and rebooting — the same path the iOS
-  `#run` deep link takes. It is a `<div>`, so it carries `role="button"`,
+  analysis page, `p-match` (§16). It is a `<div>`, so it carries `role="button"`,
   `tabindex="0"` and an Enter/Space handler; without them a match would be reachable
-  by pointer only. Body, in ladder order — rally structure first because it is the tier
-  that always runs, ball detail last because it is the one most often gated off:
+  by pointer only. The analysis itself (`#matchBody`) is rendered on that page, in
+  ladder order — rally structure first because it is the tier that always runs, ball
+  detail last because it is the one most often gated off:
   **"Rallies"** — three `.scol` tiles (Count / Longest / In play %) and a `.metaline`
   naming the signal it came from ("From impact sounds and frame motion" / "From frame
   motion only — no audio track"), plus a disagreement note when the timeline and the
@@ -912,9 +924,11 @@ capability card exists to prevent.
   those frames"), which is what separates "found nothing" from "couldn't look" ·
   **"What this clip could measure"** — one `.fbrow` per tier, label left, `ON`/`OFF`
   `.statechip` right, and the reason as dim `.s` text under the label when off ·
-  a dim provenance `.metaline` ("n front-wall hits · n judged · run id").
-  No buttons inside the card: the review page *is* "Open full review", and it owns
-  "Watch source video" (§16, `p-track`).
+  a dim provenance `.metaline` ("n front-wall hits · n judged · run id") ·
+  one `.ghostbtn` **"Open full review"**, the only entrance to the frame-by-frame
+  call page (§16, `p-track`), which owns "Watch source video". One level per screen:
+  the list names the matches, this page reads the analysis, the review page judges
+  frames.
 - **Progress** (`p-progress`): `.seg` range picker (1W/1M/3M/6M) · `#deltastrip` —
   three `.delta` cards (radius 18) with 11 dim label, 20/700 value, and a `.chip`
   delta vs the previous run (`good`/`poor` tint, `flat` when unchanged) · `.trend`
@@ -1125,10 +1139,11 @@ Each phase: header shows step label + proxied primary; `#instr` gives the one-li
 | `p-tap-floor` | Floor calibration wizard | `.floorRow`: diagram (progress marks) + prompt/side actions · skip-all / save-profile | "Use floor map" |
 | `p-clip` | Trim rally clip | overview · trim editor (accent handles) · transport+readout row · start/end nudge steppers · frame summary | "Track ball" |
 | `p-analyze` | Honest processing | `.progressbox` stats + bar (+ stage ANALYZING pulse) | — (auto-advances) |
-| `p-track` | **Match review — Call pane.** Review track, judge calls, name the players | control area keeps its pre-rally-visualization height so the video stage does not shrink, floored against the stage per §3.1; the added content scrolls inside that footprint · scrub hint lives in the header `#instr` line (detection failures replace it, `.warn`) · rally segmentation card (proportional neutral ribbon, active segment in accent, `attr-*` provenance states + legend §8.22, text winner chip for every rally) · overview w/ marker minis · hit timeline (neon bars, center playhead) · readout · transport — **Review tab:** frame input + Judge row · verdict box · Players card (naming + serve crop) · ghost "Watch source video"; **Challenge tab:** type dropdown (In/Out folded into the front-wall options) · Bounce / Not-bounce toggle (`.corrSeg`) · tabs switched by a floating Review \| Challenge dock (`.callTabs`, same dark-dock shell as `#navPill` §8.3, fixed bottom-center) | "Judge frame" |
+| `p-track` | **Match review — Call pane.** Review track, judge calls, name the players | control area keeps its pre-rally-visualization height so the video stage does not shrink, floored against the stage per §3.1; the added content scrolls inside that footprint · scrub hint lives in the header `#instr` line (detection failures replace it, `.warn`) · rally segmentation card (proportional neutral ribbon, active segment in accent, `attr-*` provenance states + legend §8.22, text winner chip for every rally) · overview w/ marker minis · hit timeline (neon bars, center playhead) · readout · transport · frame input + Judge row · verdict box · Players card (naming + serve crop) · ghost "Watch source video". One pane, no switcher — the Challenge pane and its dock were archived 2026-07-29 (`archive/challenge-ui/`) | "Judge frame" |
 | `p-player1-report` / `p-player2-report` | **Match review — Player 1 / Player 2 panes.** Per-player coaching report | Player N front-wall map (§8.10 court chart + `.targetMeta`; serves excluded) · Player N report panel (§8.17, opening with the §8.22 provenance line) · **P1 only:** the run's floor-bounce map (§8.10 `#floorMapSvg` + `.targetMeta`) — bounces are per-run, not per-player, so the panel renders once under the first report rather than twice | — (no primary) |
 | `p-label` | Human bounce labeling | overview · label timeline · transport+zoom · 2-col type grid (dot+label) · delete (destructive = plain secondary, disabled until selection) | — |
-| `p-matches` | Analysis section root — session library | view head ("Analysis" + `n runs · live pipeline`) · one always-open `.clipcard` per analyzed run, its head row opening that match's review (§8.20) · `.emptycard` when none | — (no chevron; section root) |
+| `p-matches` | Analysis section root — session library | view head ("Analysis" + `n runs · live pipeline`) · one head-row `.clipcard` per analyzed run, opening that match's analysis page (§8.20) · `.emptycard` when none | — (no chevron; section root) |
+| `p-match` | **Match analysis.** One analyzed match, read end to end | view head (match date + duration · rally clip) · `#matchBody`: the §8.20 analysis stack (Rallies · Movement · ball tier when it ran · "What this clip could measure" · provenance line) · ghost "Open full review" · `.emptycard` when the run is gone | — (back chevron only — no home button, like the review panes; the native shell hides its tab bar and settings gear here, §3.2) |
 | `p-coach` | Training section root (hub) | view head · ink hero (Coaching + sessions ring) · three feature cards (§8.13) | — (no chevron; section root) |
 | `p-progress` | Progress section root — cross-session trends | view head · range `.seg` · delta strip · trend cards · best-mark card (§8.20) · `.emptycard` under two runs | — (no chevron; section root) |
 | `p-live` | Placeholder: live match | placeholder hero · Planned card (§8.14) | — (back chevron only) |
@@ -1155,9 +1170,9 @@ result rides along with each recording. Analysis completion routes to the review
 tears the run's calibration and clip state down with it, so the wizard is unreachable for
 a committed run — starting a new analysis from the Dashboard is the only way back into
 it. The nav dock is the section tab bar and appears on the four section roots only
-(§8.3). Deep links: `#tab=matches|coach|progress` boot straight to a root; `#run=<id>`
-seeds the restore stash and lands on the review page — the same stash a `.clipcard` head
-row seeds (§8.20).
+(§8.3). Deep links: `#tab=load|matches|coach|progress` boot straight to a root; `#run=<id>`
+seeds the restore stash and lands on the review page — the same stash `p-match`'s
+"Open full review" seeds (§8.20).
 
 Production surfaces (section roots and placeholder pages) carry **no `#instr` guidance
 copy** — the UI leads; onboarding will teach, later. The `#instr` strip remains for the
@@ -1167,9 +1182,10 @@ no CLS) and speaks only for the dev-row label mode. A healthy backend is silent 
 `#loadStatus` only reports problems.
 
 Mode switch Judge ↔ Label lives in the Dashboard dev-row toggle (§8.15). The call
-page's Review ↔ Challenge switch is a second instance of the same dark dock
-(`.callTabs` shares `#navPill`'s shell, §8.3); only one dock is ever on screen at a
-time.
+page once carried a second instance of the same dark dock, switching Review ↔
+Challenge; that pane and its dock were archived 2026-07-29
+(`archive/challenge-ui/`), so **`#navPill` is the only dock in the app** — a
+second one is a thing to justify, not a pattern to copy.
 
 **The `SOON` tag on "Live match".** §8.15's rule is a question about one surface — does
 tapping *this* card lead to a working experience. `p-live` is a roadmap placeholder on
@@ -1221,9 +1237,8 @@ must still record exactly as it does today.
 - No spinners where real progress or evidence is possible; no fake progress.
 - No layout shift from appearing content; no moving playhead (the strip moves).
 - No page-transition animations; nothing animated longer than 500 ms except ambient
-  pulses (§10 Micro at .28s). The Analysis card expand this used to sanction no longer
-  fires — every card renders open (§8.20) — though `.clipbody`'s transition is retained
-  for whatever next needs a card to open.
+  pulses (§10 Micro at .28s). The Analysis card expand this used to sanction is gone
+  entirely: the card is a head row and the analysis is its own page (§8.20).
 - No hover-only affordances; no touch targets under 44 px; no removal of safe-area math.
 - No scrolling app shell; no second header/tab-bar/nav chrome.
 - No uppercase buttons or paragraphs (uppercase is for chips/tags/micro-labels/telemetry

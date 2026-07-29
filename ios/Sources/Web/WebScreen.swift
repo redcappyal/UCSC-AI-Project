@@ -6,6 +6,10 @@ import WebKit
 struct WebScreen: View {
     let url: URL
     var showsClose = false
+    /// Reports whether the page is showing a section root (true) or has gone a
+    /// level deeper, e.g. a match analysis (false). The tab shell hides its own
+    /// tab bar on the deeper screens so the page's back chevron is the one exit.
+    var onSectionRootChange: ((Bool) -> Void)?
     @Environment(\.dismiss) private var dismiss
     // The page's own theme (localStorage 'slc-theme', independent of the
     // device appearance), reported by the injected observer below. Driving
@@ -19,7 +23,9 @@ struct WebScreen: View {
             // and pads its own header/dock with env(safe-area-inset-*), so
             // insetting it here would double the clearance and paint a native
             // band (the "black notch") above the web background.
-            WebViewRepresentable(url: url) { webTheme = $0 }
+            WebViewRepresentable(url: url,
+                                 onThemeChange: { webTheme = $0 },
+                                 onSectionRootChange: onSectionRootChange)
                 .ignoresSafeArea()
             if showsClose {
                 Button {
@@ -45,8 +51,11 @@ struct WebScreen: View {
 private struct WebViewRepresentable: UIViewRepresentable {
     let url: URL
     let onThemeChange: (ColorScheme?) -> Void
+    let onSectionRootChange: ((Bool) -> Void)?
 
-    func makeCoordinator() -> Coordinator { Coordinator(onThemeChange: onThemeChange) }
+    func makeCoordinator() -> Coordinator {
+        Coordinator(onThemeChange: onThemeChange, onSectionRootChange: onSectionRootChange)
+    }
 
     func makeUIView(context: Context) -> WKWebView {
         let configuration = WKWebViewConfiguration()
@@ -54,13 +63,21 @@ private struct WebViewRepresentable: UIViewRepresentable {
         // Mirrors index.html's boot script: <html data-theme> is set before
         // first paint and rewritten by applyTheme(), so observing that one
         // attribute covers both the initial theme and later toggles.
+        //
+        // `data-section-root` is the same trick for navigation depth, written
+        // by setPhase(). Both are attributes rather than one-shot messages so a
+        // reload re-reports without the shell having to ask.
         let observer = WKUserScript(
             source: """
             (function () {
-              const report = () => window.webkit.messageHandlers.slcTheme
-                .postMessage(document.documentElement.dataset.theme || '');
-              new MutationObserver(report).observe(
-                document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
+              const root = document.documentElement;
+              const report = () => {
+                window.webkit.messageHandlers.slcTheme.postMessage(root.dataset.theme || '');
+                window.webkit.messageHandlers.slcSectionRoot
+                  .postMessage(root.dataset.sectionRoot !== '0');
+              };
+              new MutationObserver(report).observe(root,
+                { attributes: true, attributeFilter: ['data-theme', 'data-section-root'] });
               report();
             })();
             """,
@@ -68,6 +85,7 @@ private struct WebViewRepresentable: UIViewRepresentable {
             forMainFrameOnly: true)
         configuration.userContentController.addUserScript(observer)
         configuration.userContentController.add(context.coordinator, name: "slcTheme")
+        configuration.userContentController.add(context.coordinator, name: "slcSectionRoot")
         let webView = WKWebView(frame: .zero, configuration: configuration)
         webView.isOpaque = false
         webView.backgroundColor = .clear
@@ -89,19 +107,29 @@ private struct WebViewRepresentable: UIViewRepresentable {
     }
 
     static func dismantleUIView(_ webView: WKWebView, coordinator: Coordinator) {
-        // The handler retains the coordinator; without this a torn-down tab
+        // The handlers retain the coordinator; without this a torn-down tab
         // (the .id(serverBase) reload) leaks its coordinator and webview.
         webView.configuration.userContentController.removeScriptMessageHandler(forName: "slcTheme")
+        webView.configuration.userContentController.removeScriptMessageHandler(forName: "slcSectionRoot")
     }
 
     final class Coordinator: NSObject, WKScriptMessageHandler {
         let onThemeChange: (ColorScheme?) -> Void
-        init(onThemeChange: @escaping (ColorScheme?) -> Void) {
+        let onSectionRootChange: ((Bool) -> Void)?
+        init(onThemeChange: @escaping (ColorScheme?) -> Void,
+             onSectionRootChange: ((Bool) -> Void)?) {
             self.onThemeChange = onThemeChange
+            self.onSectionRootChange = onSectionRootChange
         }
 
         func userContentController(_ userContentController: WKUserContentController,
                                    didReceive message: WKScriptMessage) {
+            if message.name == "slcSectionRoot" {
+                // Absent/garbled payload means "root": showing the tab bar is
+                // the recoverable failure, hiding it strands the user.
+                onSectionRootChange?(message.body as? Bool ?? true)
+                return
+            }
             switch message.body as? String {
             case "light": onThemeChange(.light)
             case "dark": onThemeChange(.dark)

@@ -36,12 +36,20 @@ What this changes about work in this repo:
   2026-07-27: `detect_wall_hits` finds candidates for the refine pass, then
   `bounce_gb_model_detector` + `classify_events` label them. Don't reintroduce a fork
   here — the pipeline needs one well-measured path.
-- **Two features are archived, not deleted.** Two-phone stereo in `archive/stereo/`
-  (tag `archive/stereo-v1`, revisit gate: single-view wall-hit recall ~85%) and the
+- **Three features are archived, not deleted.** Two-phone stereo in `archive/stereo/`
+  (tag `archive/stereo-v1`, revisit gate: single-view wall-hit recall ~85%), the
   fusion engine + 3D contact detection in `archive/fusion-engine/` (tag
   `archive/fusion-engine-v1`; it was evaluated and failed its gate — see
-  `eval_set/RESULTS-3d-contact.md`). Both are inert and uncollected. Do not extend
+  `eval_set/RESULTS-3d-contact.md`), and the Challenge/corrections UI in
+  `archive/challenge-ui/` (2026-07-29). All are inert and uncollected. Do not extend
   them or import from them.
+- **Corrections now have one producer, not two.** Archiving the Challenge pane removed
+  the in-app way to write `corrections.json`, one of the **two** label streams
+  `build_eval_set.py` distills into `eval_set/cases.jsonl`. Existing cases and
+  `ui_runs/` files are untouched and still score; labeling mode (`p-label` →
+  `ground_truth.json`) is still live and is now the only way to add labels. The
+  corrections endpoint and schema stay in `app.py`. See that archive's README before
+  planning any work that assumes new correction labels are arriving.
 
 ## Design
 
