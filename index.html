@@ -317,19 +317,19 @@
   .rallyLegend i.assumed{background:var(--bg); border:1px dashed var(--line)}
   .rallyLegend i.conflict{background:var(--tint-poor-bg); color:var(--tint-poor-fg);
     border:1px dashed var(--tint-poor-fg)}
-  /* Floating dark docks (lab nav): the section tab bar is icon-only circles;
-     Review/Challenge on the call page keeps its text labels in the same shell. */
-  #navPill, .callTabs{position:fixed; left:50%; bottom:calc(14px + env(safe-area-inset-bottom));
+
+  /* The floating dark dock (lab nav): the section tab bar, icon-only circles.
+     The call page's Review/Challenge dock shared this shell until it was
+     archived 2026-07-29 (archive/challenge-ui/), leaving one dock in the app. */
+  #navPill{position:fixed; left:50%; bottom:calc(14px + env(safe-area-inset-bottom));
     transform:translateX(-50%); z-index:40; display:flex; gap:2px; padding:7px;
     border-radius:999px; background:var(--nav-bg);
     box-shadow:0 18px 36px rgba(16,17,20,.28)}
-  #navPill button, .callTabs button{width:auto; min-height:44px; padding:0 16px; gap:8px;
+  #navPill button{width:46px; height:46px; padding:0; gap:8px; border-radius:50%;
     border:0; background:transparent; box-shadow:none; color:rgba(255,255,255,.55); font-size:13px}
-  #navPill button{width:46px; height:46px; padding:0; border-radius:50%}
   #navPill button span{display:none}
-  #navPill button.active, .callTabs button.active{background:var(--accent-bg); color:var(--accent-text)}
+  #navPill button.active{background:var(--accent-bg); color:var(--accent-text)}
   #navPill svg{width:20px; height:20px; flex:0 0 auto}
-  .callTabs svg{width:17px; height:17px; flex:0 0 auto}
   /* Inside the native iOS shell (#shell=1) the app's tab bar owns navigation;
      showing the web pill too would stack two navs. */
   body.shell-embed #navPill{display:none}
@@ -569,24 +569,9 @@
   .verdict.neutral{background:var(--surface); box-shadow:var(--shadow-card); color:var(--text)}
   .verdict.blank{background:transparent;
     border:1px dashed color-mix(in srgb, var(--dim) 40%, transparent); color:var(--dim)}
-  /* Review / Challenge panes on the call page: Review reads the model's call,
-     Challenge is the correction flywheel's front door. The switcher itself is
-     the floating .callTabs pill above. */
+  /* The call page's one pane: it reads the model's call. Its Challenge sibling
+     and their switcher were archived 2026-07-29 (archive/challenge-ui/). */
   .callTabPane{display:flex; flex-direction:column; gap:10px}
-  /* Call corrections: a human verdict on each judged call, recorded per frame.
-     The type dropdown (In/Out folded into the front-wall options) supervises
-     the event engine; the Bounce / Not bounce toggle supervises impact timing. */
-  .correctionPanel{display:flex; flex-direction:column; gap:8px}
-  .correctionRow{display:flex; gap:8px; align-items:center}
-  .correctionRow .corrLabel{font-size:13px; color:var(--dim); white-space:nowrap; flex:0 0 auto}
-  .correctionRow select{flex:1; min-width:0; min-height:44px; padding:8px 12px;
-    background:var(--surface); color:var(--text); border:none; border-radius:14px;
-    box-shadow:var(--shadow-btn); font:inherit; font-size:15px; font-weight:600}
-  .corrSeg{flex:1; display:flex; gap:6px}
-  .corrSeg button{flex:1; width:auto; min-height:38px; padding:5px 12px; font-size:12px;
-    white-space:nowrap; border:1px solid var(--line); background:transparent; box-shadow:none}
-  .corrSeg button.active{background:var(--accent-bg); color:var(--accent-text);
-    border-color:transparent; font-weight:700}
 
   /* phase primary buttons stay in the DOM as the behavioral source of truth
      (handlers + disabled state) but render only as the header action pill */
@@ -706,7 +691,7 @@
     width:auto; padding:0}
   .seg button.active{background:var(--surface); color:var(--text);
     box-shadow:0 1px 2px rgba(16,17,20,.06), 0 3px 8px rgba(16,17,20,.06)}
-  /* analysis run cards (expandable) */
+  /* analysis run cards — head only; the analysis itself is its own page (p-match) */
   .clipcard{padding:0; overflow:hidden}
   .cliptop{display:flex; align-items:center; gap:12px; padding:14px 16px; cursor:pointer}
   .thumb{width:62px; height:46px; border-radius:14px; flex:none; display:flex; align-items:center;
@@ -719,13 +704,9 @@
     font-weight:700; letter-spacing:.04em; display:inline-flex; gap:5px; align-items:center}
   .statechip.done{background:var(--accent-bg); color:var(--accent-text)}
   .statechip.todo{background:var(--bg); color:var(--dim)}
-  .clipbody{max-height:0; overflow:hidden; transition:max-height .28s ease}
-  /* The card no longer toggles, so the open body must not be clamped: the
-     rally/movement/capability sections push a two-player summary past any
-     fixed height, and overflow:hidden would silently cut it off. */
-  .clipcard.open .clipbody{max-height:none}
-  .clipbody .inner{padding:14px 16px 16px; display:flex; flex-direction:column; gap:14px;
-    border-top:1px solid var(--line)}
+  /* The match analysis, on its own page: the same stack the card used to hold
+     inline, now unclamped — <main> supplies the page padding. */
+  #matchBody{display:flex; flex-direction:column; gap:14px}
   /* score columns + feedback rows */
   .scorecols{display:grid; grid-template-columns:1fr 1fr 1fr; gap:8px}
   .scol{border:1px solid var(--line); border-radius:14px; padding:10px 12px; display:flex;
@@ -1166,44 +1147,6 @@
       </div>
       <button class="ghostbtn" type="button" id="reviewSourceVideoBtn">Watch source video</button>
     </div>
-    <div class="callTabPane hidden" id="challengeTab">
-      <p class="status" id="corrEmpty">Judge a hit first — then challenge its call here.</p>
-      <div class="correctionPanel hidden" id="corrPanel">
-        <div class="correctionRow">
-          <span class="corrLabel">Type:</span>
-          <select id="corrTypeSel">
-            <option value="wall_IN">Front wall — In</option>
-            <option value="wall_OUT">Front wall — Out</option>
-            <option value="side_wall">Side wall</option>
-            <option value="floor">Floor</option>
-            <option value="racket">Racket</option>
-            <option value="none">Not a hit</option>
-          </select>
-        </div>
-        <div class="correctionRow hidden" id="corrFrameRow">
-          <span class="corrLabel">Bounce frame:</span>
-          <div class="corrSeg">
-            <button type="button" id="corrFrameThis">Bounce</button>
-            <button type="button" id="corrFrameOther">Not bounce</button>
-          </div>
-        </div>
-        <p class="status hidden" id="corrStatus"></p>
-      </div>
-    </div>
-    <nav class="callTabs">
-      <button type="button" id="tabReview" class="active">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-          <path d="M2 12s3.5-6.5 10-6.5S22 12 22 12s-3.5 6.5-10 6.5S2 12 2 12z"/><circle cx="12" cy="12" r="2.6" fill="currentColor" stroke="none"/>
-        </svg>
-        <span>Review</span>
-      </button>
-      <button type="button" id="tabChallenge">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-          <path d="M5 21V4"/><path d="M5 4h13l-2.5 4L18 12H5"/>
-        </svg>
-        <span>Challenge</span>
-      </button>
-    </nav>
   </section>
 
   <!-- MODE: bounce labeling (ground truth for the event engine) -->
@@ -1394,6 +1337,17 @@
     <div id="clipList" style="display:flex;flex-direction:column;gap:12px">
       <div class="card emptycard">Loading sessions&#8230;</div>
     </div>
+  </section>
+
+  <!-- PHASE: match (one analyzed match, opened from an Analysis card). A
+       destination, not a step: the shell header's back chevron is its only exit,
+       and in the native shell the tab bar hides for it (DESIGN.md §3.2). -->
+  <section class="hidden" id="p-match">
+    <div class="viewhead">
+      <h2 id="matchTitle">Match</h2>
+      <span class="dim" id="matchMeta"></span>
+    </div>
+    <div id="matchBody"></div>
   </section>
 
   <!-- PHASE: coach (section root — Training hub; cards drill into the improvement pillars) -->
@@ -1595,9 +1549,6 @@ const S = {
   run:null,                   // backend tracking result
   coachReports:{},            // run_id -> coaching analytics/feedback response
   coachLlmRequests:{},        // run_id -> in-flight LLM enhancement promise
-  corrections:{},             // frame -> saved v2 correction entry for the run
-  corrTarget:null,            // {frame, predicted, draft, pickingFrame} — the hit being corrected
-  ballByFrame:null,           // Map(frame -> {x,y}) from ball_coordinates.csv (video px)
   trackSeekId:0,
   trackPlaying:false,
   trackRaf:null,
@@ -1647,6 +1598,8 @@ const STEP_META = {
   // Section roots (Matches, Coach hub) + roadmap placeholder pages. No action key (no
   // primary yet) and no instr — production screens carry no guidance copy; the UX leads.
   matches: {label:'Analysis', instr:''},
+  // stepLabelFor() overrides this with the match date, like the review panes.
+  match:   {label:'Match', instr:''},
   coach:   {label:'Training', instr:''},
   progress:{label:'Progress', instr:''},
   live:    {label:'Live match', instr:''},
@@ -1657,6 +1610,10 @@ const STEP_META = {
 /* Roadmap phases share one empty-stage treatment; section id = 'p-' + key with _ → - */
 const ROADMAP_PHASES = ['live','matches','coach','progress','stats','shot_bot','sharing'];
 const roadmapSection = p => 'p-' + p.replace('_','-');
+/* Every phase that is a plain content page: no video stage, page background.
+   The match detail is one of these but keeps its own reveal (it has a view to
+   build), so it is not in ROADMAP_PHASES. */
+const PAGE_PHASES = [...ROADMAP_PHASES, 'match'];
 /* Section roots: the nav pill switches between them, so they get no back chevron */
 const SECTION_ROOTS = ['load','matches','coach','progress'];
 
@@ -1686,6 +1643,7 @@ function stepLabelFor(p){
   /* The review page is identified by WHICH MATCH it is, not by position in a
      flow the user can no longer walk back through. */
   if(REVIEW_PHASES.includes(p)) return reviewMatchLabel();
+  if(p === 'match') return matchDetailLabel();
   const seq = stepSequence();
   const idx = seq.indexOf(p);
   return idx === -1 ? STEP_META[p].label
@@ -1823,22 +1781,23 @@ function setPhase(p){
   S.phase = p;
   resetZoom();
   const reportPhase = p === 'player1_report' || p === 'player2_report';
-  stage.classList.toggle('hidden', p === 'load' || reportPhase || ROADMAP_PHASES.includes(p));
+  stage.classList.toggle('hidden', p === 'load' || reportPhase || PAGE_PHASES.includes(p));
   document.body.classList.toggle('phase-load', p === 'load');
   document.body.classList.toggle('phase-target', reportPhase);
   document.body.classList.toggle('phase-track', p === 'track');
-  document.body.classList.toggle('phase-page', ROADMAP_PHASES.includes(p));
+  document.body.classList.toggle('phase-page', PAGE_PHASES.includes(p));
   for(const id of ['p-load','p-record','p-frame','p-tap','p-review','p-wall-corners','p-tap-floor','p-confirm','p-clip','p-analyze','p-track','p-label',
-                   'p-player1-report','p-player2-report',
+                   'p-player1-report','p-player2-report','p-match',
                    'p-live','p-matches','p-coach','p-progress','p-stats','p-shot-bot','p-sharing']) $(id).classList.add('hidden');
   $('camVid').classList.toggle('hidden', p !== 'record');   // live preview only on the record screen
   $('analyzeOverlay').classList.toggle('hidden', p !== 'analyze');
   $('stepLabel').textContent = stepLabelFor(p);
   $('hdrBack').classList.toggle('hidden', SECTION_ROOTS.includes(p));
   // The review page is a destination, not a stop on the way home: its only
-  // navigation is the back chevron to Analysis and the pane switcher.
+  // navigation is the back chevron to Analysis and the pane switcher. The match
+  // analysis is the same kind of destination — one way in, one way out.
   const reviewPhase = REVIEW_PHASES.includes(p);
-  $('hdrHome').classList.toggle('hidden', p === 'load' || reviewPhase);
+  $('hdrHome').classList.toggle('hidden', p === 'load' || reviewPhase || p === 'match');
   $('reviewSeg').classList.toggle('hidden', !reviewPhase);
   if(reviewPhase) syncReviewSeg(p);
   syncHeaderAction(STEP_META[p].action);
@@ -1887,9 +1846,13 @@ function setPhase(p){
   if(p === 'label'){ $('p-label').classList.remove('hidden'); buildLabelView(); }
   if(p === 'player1_report'){ $('p-player1-report').classList.remove('hidden'); buildPlayerReportView(1); }
   if(p === 'player2_report'){ $('p-player2-report').classList.remove('hidden'); buildPlayerReportView(2); }
+  if(p === 'match'){ $('p-match').classList.remove('hidden'); buildMatchView(); }
   if(ROADMAP_PHASES.includes(p)){ $(roadmapSection(p)).classList.remove('hidden'); }
-  // Tab bar: visible on the three section roots only, hidden inside flows
-  // and sub-pages; the active capsule tracks the current section.
+  // Tab bar: visible on the four section roots only, hidden inside flows
+  // and sub-pages; the active capsule tracks the current section. The native
+  // shell watches this same fact on <html> so its own tab bar can follow —
+  // an attribute rather than a message so it survives WebScreen teardown.
+  document.documentElement.dataset.sectionRoot = SECTION_ROOTS.includes(p) ? '1' : '0';
   $('navPill').classList.toggle('hidden', !SECTION_ROOTS.includes(p));
   $('navPlay').classList.toggle('active', p === 'load');
   $('navMatches').classList.toggle('active', p === 'matches');
@@ -2816,6 +2779,9 @@ $('hdrBack').onclick = () => {
     // page, so Back is not a retreat through P2 -> P1 -> Call, and the run's
     // calibration no longer exists to return to.
     exitReviewToMatches();
+  } else if(S.phase === 'match'){
+    // The match analysis is a leaf off Analysis, and its only exit.
+    setPhase('matches');
   } else if(S.phase === 'label'){
     vid.pause(); S.base = null; $('fileIn').value = ''; setPhase('load');
   } else if(ROADMAP_PHASES.includes(S.phase)){
@@ -5406,8 +5372,6 @@ $('runTrackBtn').onclick = async () => {
     S.run = data;
     S.restoredSession = false;   // full local state exists behind this run
     saveRestoreStash(data.hits && data.hits.length ? data.hits[0].frame : data.start_frame);
-    loadCorrections(data.run_id);
-    loadBallPositions(data.run_id);
     $('trackStatus').textContent = `Tracked ${data.rows} frame rows.`;
     $('trackStatus').className = 'status ok';
     commitRunAndReview();
@@ -6644,7 +6608,6 @@ async function seekSourceFrameToCanvas(frame, syncInput=true){
     if(L) drawFitLine(L.fit, CFG[k].hex);
   }
   updateTrackCursor(frame);
-  drawCorrectionDot();
   if(syncInput) $('judgeFrame').value = frame;
   scheduleAutoJudge(frame);
 }
@@ -6687,7 +6650,6 @@ function playerAttributionMarkup(hit){
 function clearJudgeResult(){
   $('judgeResult').className = 'verdict blank';
   $('judgeResult').innerHTML = '<div>No line call yet</div>';
-  hideCorrPanel();
 }
 
 function renderEventCard(hit){
@@ -6698,20 +6660,10 @@ function renderEventCard(hit){
     playerAttributionMarkup(hit) +
     `<strong>${escapeHtml(EVENT_LABELS[hit.event_type] || hit.event_type)}</strong>` +
     `<div>Frame ${hit.frame} · line calls apply to front-wall hits only</div>`;
-  // Non-wall hits carry no judge context; seed the dot from the impact fit
-  // when the pipeline produced one, else the nearest detected ball center.
-  const ball = hit.impact ? {x:hit.impact.x, y:hit.impact.y} : ballAtFrame(hit.frame);
-  setCorrTarget(hit.frame, { type:hit.event_type, call:null, source:null,
-                             margin_px:null, ball });
 }
 
 function renderJudgeResult(data, selectedHit=null){
   const hit = selectedHit || hitAtFrame(data.frame);
-  setCorrTarget(data.frame, {
-    type: (hit && hit.event_type) || 'wall',
-    call: data.call, source: data.source,
-    margin_px: data.margin_px, ball: data.ball,
-  });
   const callClass = data.call === 'IN' ? 'in' : data.call === 'OUT' ? 'out' : 'neutral';
   const isServe = !!(data.is_serve || (hit && hit.is_serve));
   // `SERVE ` prefixes a verdict (SERVE IN / SERVE OUT), so it has nothing to
@@ -6729,15 +6681,13 @@ function renderJudgeResult(data, selectedHit=null){
 
 /* Live verdict while scrubbing: once the playhead settles on a frame, judge it
    so the verdict box always describes the frame on screen. Skipped while the
-   transport is playing, while picking a corrected bounce frame (that scrub
-   must not clobber the correction target), and for the already-judged frame. */
+   transport is playing, and for the already-judged frame. */
 let autoJudgeTimer = null;
 function scheduleAutoJudge(frame){
   clearTimeout(autoJudgeTimer);
   autoJudgeTimer = setTimeout(() => {
     if(S.phase !== 'track' || !S.run || transport.phase === 'track') return;
     if(S.trackView.cursor !== frame || S.judgedFrame === frame) return;
-    if(S.corrTarget && S.corrTarget.pickingFrame) return;
     const hit = hitAtFrame(frame);
     if(hit && EVENT_LABELS[hit.event_type] !== undefined) renderEventCard(hit);
     else judgeFrameRequest(frame, true);
@@ -6749,7 +6699,6 @@ async function judgeFrameRequest(frame, quiet=false){
   const selectedHit = hitAtFrame(frame);
   S.judgedFrame = frame;
   saveRestoreStash(frame);
-  if(!quiet) setCallTab('review');    // the verdict lands in the Review pane
   $('judgeBtn').disabled = true;
   clearJudgeResult();
   if(selectedHit){
@@ -6789,239 +6738,12 @@ $('judgeBtn').onclick = () => {
   judgeFrameRequest(frame);
 };
 
-/* ---------- bounce corrections (the data flywheel's front door) ----------
-   Every judged hit gets a correction panel: hit type (supervises the event
-   engine + false positives), ball position via draggable dot (RF-DETR
-   retraining data), and bounce timing (supervises impact estimation).
-   IN/OUT stays, but only for front-wall hits — it's derived geometry. */
-const CORR_ALL_BTNS = ['corrTypeSel', 'corrFrameThis', 'corrFrameOther'];
-
-/* Review / Challenge tab switch. Judging always lands on Review; Challenge
-   holds the correction controls for the currently judged hit. */
-function setCallTab(tab){
-  $('tabReview').classList.toggle('active', tab === 'review');
-  $('tabChallenge').classList.toggle('active', tab === 'challenge');
-  $('reviewTab').classList.toggle('hidden', tab !== 'review');
-  $('challengeTab').classList.toggle('hidden', tab !== 'challenge');
-}
-$('tabReview').onclick = () => setCallTab('review');
-$('tabChallenge').onclick = () => setCallTab('challenge');
-
-async function loadCorrections(runId){
-  S.corrections = {};
-  try{
-    const response = await fetch(`/api/runs/${runId}/corrections`);
-    if(!response.ok) return;
-    const data = await response.json();
-    for(const c of data.corrections || []) S.corrections[c.frame] = c;
-  }catch(_){ /* offline or malformed file — start empty */ }
-}
-
-async function loadBallPositions(runId){
-  S.ballByFrame = null;
-  try{
-    const response = await fetch(`/api/runs/${runId}/ball_coordinates.csv`);
-    if(!response.ok) return;
-    const lines = (await response.text()).trim().split('\n');
-    const cols = lines[0].split(',');
-    const fi = cols.indexOf('source_frame'), di = cols.indexOf('detected');
-    const xi = cols.indexOf('x_center'), yi = cols.indexOf('y_center');
-    if(fi < 0 || di < 0 || xi < 0 || yi < 0) return;
-    const map = new Map();
-    for(const line of lines.slice(1)){
-      const row = line.split(',');
-      if(row[di].trim().toLowerCase() !== 'true') continue;
-      map.set(parseInt(row[fi], 10), {x:+row[xi], y:+row[yi]});
-    }
-    S.ballByFrame = map;
-  }catch(_){ /* dot seeding degrades to null; drag still works from a tap */ }
-}
-
-function ballAtFrame(frame){
-  if(!S.ballByFrame) return null;
-  const exact = S.ballByFrame.get(frame);
-  if(exact) return {...exact};
-  const radius = 2 * ((S.run && S.run.frame_stride) || 1);
-  let best = null, bestDist = Infinity;
-  for(const [f, p] of S.ballByFrame){
-    const d = Math.abs(f - frame);
-    if(d <= radius && d < bestDist){ best = p; bestDist = d; }
-  }
-  return best ? {...best} : null;
-}
-
+/* The detected hit on a frame, if any — what tells the judge flow whether a
+   frame is an event to card or a plain frame to send to /api/judge. (Defined
+   with the correction panel until that was archived; see
+   archive/challenge-ui/.) */
 function hitAtFrame(frame){
   return ((S.run && S.run.hits) || []).find(h => h.frame === frame) || null;
-}
-
-function setCorrTarget(frame, predicted){
-  const saved = (S.corrections || {})[frame];
-  const draft = saved
-    ? JSON.parse(JSON.stringify(saved.corrected))
-    : { type: predicted.type || 'wall',
-        call: predicted.call === 'IN' || predicted.call === 'OUT' ? predicted.call : null,
-        ball: predicted.ball ? {...predicted.ball} : null,
-        frame_is_bounce: true, frame: null };
-  if(draft.type === 'wall' && !draft.call) draft.call = 'IN';
-  S.corrTarget = { frame, predicted, draft, pickingFrame:false };
-  renderCorrPanel();
-  redrawTrackCanvas();
-}
-
-function hideCorrPanel(){
-  $('corrPanel').classList.add('hidden');
-  $('corrStatus').classList.add('hidden');
-  $('corrEmpty').classList.remove('hidden');
-  if(S.corrTarget){ S.corrTarget = null; redrawTrackCanvas(); }
-}
-
-function renderCorrPanel(){
-  const target = S.corrTarget;
-  if(!target){ hideCorrPanel(); return; }
-  const saved = (S.corrections || {})[target.frame];
-  const draft = target.draft;
-  $('corrTypeSel').value = draft.type === 'wall'
-    ? `wall_${draft.call === 'OUT' ? 'OUT' : 'IN'}` : draft.type;
-  $('corrFrameRow').classList.toggle('hidden', draft.type === 'none');
-  $('corrFrameThis').classList.toggle('active', !!saved && draft.frame_is_bounce === true);
-  $('corrFrameOther').classList.toggle('active', !!saved && draft.frame_is_bounce === false);
-  $('corrFrameOther').textContent = target.pickingFrame ? 'Use this frame'
-    : draft.frame_is_bounce === false && draft.frame != null
-      ? `Frame ${draft.frame}` : 'Not bounce';
-  $('corrPanel').classList.remove('hidden');
-  $('corrEmpty').classList.add('hidden');
-  const statusText = target.pickingFrame
-    ? 'Scrub to the true bounce frame, then tap Use this frame.'
-    : saved ? savedStatusText(saved) : '';
-  $('corrStatus').textContent = statusText;
-  $('corrStatus').classList.toggle('hidden', !statusText);
-}
-
-function savedStatusText(saved){
-  const c = saved.corrected;
-  if(c.type === 'none') return 'Recorded as not a hit — saved to this run’s eval set.';
-  const typeName = { wall:'Front wall', side_wall:'Side wall', floor:'Floor', racket:'Racket' }[c.type] || c.type;
-  const call = c.call ? ` ${c.call}` : '';
-  const at = c.ball ? ` at (${c.ball.x.toFixed(0)}, ${c.ball.y.toFixed(0)})` : '';
-  const when = c.frame_is_bounce === false && c.frame != null ? `, frame ${c.frame}` : '';
-  return `Recorded: ${typeName}${call}${at}${when} — saved to this run’s eval set.`;
-}
-
-async function sendCorrection(corrected){
-  const target = S.corrTarget;
-  if(!target || !S.run) return;
-  for(const id of CORR_ALL_BTNS) $(id).disabled = true;
-  try{
-    const response = await fetch(`/api/runs/${S.run.run_id}/corrections`, {
-      method:'POST',
-      headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({ frame: target.frame, corrected,
-                            predicted: target.predicted }),
-    });
-    const result = await response.json();
-    if(!result.ok) throw new Error(result.error || 'Saving the correction failed.');
-    if(corrected === null){
-      delete S.corrections[target.frame];
-      // Reset the draft to the model's view so the panel reads as untouched.
-      setCorrTarget(target.frame, target.predicted);
-      return;
-    }
-    S.corrections[target.frame] = result.correction;
-    target.draft = JSON.parse(JSON.stringify(result.correction.corrected));
-  }catch(error){
-    showError(error.message);
-  }finally{
-    for(const id of CORR_ALL_BTNS) $(id).disabled = false;
-    if(S.corrTarget) renderCorrPanel();
-    redrawTrackCanvas();
-  }
-}
-
-function postDraft(){
-  const target = S.corrTarget;
-  if(!target) return;
-  const d = target.draft;
-  const corrected = d.type === 'none'
-    ? { type:'none', call:null, ball:null, frame_is_bounce:null, frame:null }
-    : { type:d.type, call:d.type === 'wall' ? d.call : null,
-        ball:d.ball, frame_is_bounce:d.frame_is_bounce,
-        frame:d.frame_is_bounce ? null : d.frame };
-  if(corrected.type !== 'none' && !corrected.ball){
-    showError('No ball position for this frame — drag the dot onto the ball first.');
-    return;
-  }
-  sendCorrection(corrected);
-}
-
-$('corrTypeSel').onchange = () => {
-  const target = S.corrTarget;
-  if(!target){ return; }
-  const value = $('corrTypeSel').value;
-  const draft = target.draft;
-  if(value === 'wall_IN' || value === 'wall_OUT'){
-    draft.type = 'wall';
-    draft.call = value === 'wall_OUT' ? 'OUT' : 'IN';
-  } else {
-    draft.type = value;
-    draft.call = null;
-  }
-  if(draft.type === 'none'){ draft.ball = null; draft.frame_is_bounce = null; draft.frame = null; }
-  else {
-    if(!draft.ball) draft.ball = target.predicted.ball ? {...target.predicted.ball}
-                                                       : ballAtFrame(target.frame);
-    if(typeof draft.frame_is_bounce !== 'boolean'){ draft.frame_is_bounce = true; draft.frame = null; }
-  }
-  target.pickingFrame = false;
-  postDraft();
-};
-$('corrFrameThis').onclick = () => {
-  if(!S.corrTarget) return;
-  S.corrTarget.draft.frame_is_bounce = true;
-  S.corrTarget.draft.frame = null;
-  S.corrTarget.pickingFrame = false;
-  postDraft();
-};
-$('corrFrameOther').onclick = () => {
-  const target = S.corrTarget;
-  if(!target) return;
-  if(!target.pickingFrame){
-    target.pickingFrame = true;      // scrub freely; the panel stays up
-    renderCorrPanel();
-    return;
-  }
-  target.pickingFrame = false;
-  target.draft.frame_is_bounce = false;
-  target.draft.frame = S.trackView.cursor;
-  postDraft();
-};
-
-/* ---------- ball dot overlay: tap/drag to correct the position ---------- */
-const CORR_DOT_GRAB_PX = 30;   // video-px hit radius for starting a drag
-
-function corrDotFrame(){
-  const target = S.corrTarget;
-  if(!target || !target.draft.ball || target.draft.type === 'none') return null;
-  return target.draft.frame_is_bounce === false && target.draft.frame != null
-    ? target.draft.frame : target.frame;
-}
-
-function drawCorrectionDot(){
-  const target = S.corrTarget;
-  const frame = corrDotFrame();
-  if(frame === null || S.trackView.cursor !== frame && !target.pickingFrame) return;
-  const b = target.draft.ball;
-  const r = Math.max(6, S.W / 160);
-  ctx.beginPath();
-  ctx.arc(b.x, b.y, r, 0, Math.PI * 2);
-  ctx.fillStyle = 'rgba(255, 200, 40, 0.35)';
-  ctx.fill();
-  ctx.lineWidth = Math.max(2, r / 4);
-  ctx.strokeStyle = '#ffc828';
-  ctx.stroke();
-  ctx.beginPath();
-  ctx.arc(b.x, b.y, Math.max(2, r / 5), 0, Math.PI * 2);
-  ctx.fillStyle = '#ffc828';
-  ctx.fill();
 }
 
 function redrawTrackCanvas(){
@@ -7033,47 +6755,7 @@ function redrawTrackCanvas(){
     const L = S.lines[k];
     if(L) drawFitLine(L.fit, CFG[k].hex);
   }
-  drawCorrectionDot();
 }
-
-let corrDotDrag = null;   // {pointerId} while dragging the dot
-
-function canvasPointToVideo(e){
-  const r = canvas.getBoundingClientRect();
-  return {
-    x: Math.min(S.W - 1, Math.max(0, (e.clientX - r.left) * S.W / r.width)),
-    y: Math.min(S.H - 1, Math.max(0, (e.clientY - r.top) * S.H / r.height)),
-  };
-}
-
-canvas.addEventListener('pointerdown', e => {
-  if(S.phase !== 'track' || !S.corrTarget) return;
-  const b = S.corrTarget.draft.ball;
-  const frame = corrDotFrame();
-  const p = canvasPointToVideo(e);
-  const grabbable = b && frame !== null && S.trackView.cursor === frame;
-  if(grabbable && Math.hypot(p.x - b.x, p.y - b.y) <= CORR_DOT_GRAB_PX){
-    e.preventDefault();
-    try{ canvas.setPointerCapture(e.pointerId); }catch(_){ /* synthetic events */ }
-    corrDotDrag = { pointerId: e.pointerId };
-    S.corrTarget.draft.ball = { x: Math.round(p.x * 10) / 10, y: Math.round(p.y * 10) / 10 };
-    redrawTrackCanvas();
-  }
-});
-canvas.addEventListener('pointermove', e => {
-  if(!corrDotDrag || e.pointerId !== corrDotDrag.pointerId || !S.corrTarget) return;
-  e.preventDefault();
-  const p = canvasPointToVideo(e);
-  S.corrTarget.draft.ball = { x: Math.round(p.x * 10) / 10, y: Math.round(p.y * 10) / 10 };
-  redrawTrackCanvas();
-});
-function endCorrDotDrag(e){
-  if(!corrDotDrag || e.pointerId !== corrDotDrag.pointerId) return;
-  corrDotDrag = null;
-  if(S.corrTarget) postDraft();
-}
-canvas.addEventListener('pointerup', endCorrDotDrag);
-canvas.addEventListener('pointercancel', endCorrDotDrag);
 
 /* ---------- bounce labeling (event-engine ground truth) ---------- */
 const LABEL_BAR_CLASS = { wall:'in', racket:'racket', floor:'floor', side_wall:'side' };
@@ -7593,8 +7275,6 @@ async function tryRestoreSession(){
     const cal = await (await fetch(`/api/runs/${encodeURIComponent(stash.run_id)}/calibration.json`, {cache:'no-store'})).json();
     restoreLinesFromCalibration(cal);
   }catch(_){ /* no overlays; judging is server-side and still works */ }
-  loadCorrections(stash.run_id);
-  loadBallPositions(stash.run_id);
 
   // Stream the clip back from the server; if it's gone, keep the run state
   // and ask for a manual re-pick (loadedmetadata finishes the restore).
@@ -7908,44 +7588,15 @@ function renderClipCards(){
   }
   $('clipMeta').textContent = `${LIVE.runs.length} runs · live pipeline`;
   list.innerHTML = LIVE.runs.map((r,i) => {
-    const id = r.run_id, m = liveMetrics(id);
+    const id = r.run_id;
     const hue = LIVE_HUES[i%LIVE_HUES.length];
     const grad = `linear-gradient(140deg, hsl(${hue} 28% 74%), hsl(${hue} 26% 48%))`;
-    const sentences = splitSentences((LIVE.coach[id]||{}).feedback).slice(0,3);
-    const fb = sentences.map(s => `
-      <div class="fbrow">
-        <div class="iconcircle">${FB_NOTE_ICON}</div>
-        <div class="info"><span class="s" style="color:var(--text)">${escapeHtml(s)}</span></div>
-      </div>`).join('');
-    const rep = LIVE.report[id] || {};
-    const ballRan = !!rep.shots || m.hits > 0;
-    // The ball tier's own surfaces are drawn only when that tier ran. Drawing
-    // em-dashes for a clip that was never eligible reads as "we looked and
-    // found nothing", which is the one thing the capability card exists to
-    // prevent.
-    const ballBlock = !ballRan ? '' : `
-      <div class="scorecols" style="grid-template-columns:1fr 1fr">
-        <div class="scol"><span class="sl">Unforced errors</span><span class="sv num">${m.errors ? m.unforced : '—'}</span></div>
-        <div class="scol"><span class="sl">Floor bounces</span><span class="sv num">${m.bounces==null?'—':m.bounces}</span></div>
-      </div>
-      ${fb}`;
-    // Ladder order: rally structure first because that tier always runs, ball
-    // detail last because it is the one most often gated off. No buttons at the
-    // foot — the head row is the card's one action, and the review page owns
-    // both "Open full review" and "Watch source video".
-    const body = `
-      <div class="cardtitle" style="font-size:14px">Rallies</div>
-      ${rallySection(rep)}
-      <div class="cardtitle" style="font-size:14px">Movement</div>
-      ${movementSection(rep)}
-      ${ballBlock}
-      <div class="cardtitle" style="font-size:14px">What this clip could measure</div>
-      ${capabilityRows(rep)}
-      <div class="metaline">run ${escapeHtml(id)}</div>`;
+    // Head only. Analysis is a list of matches; the analysis itself is the
+    // page behind the card (p-match), not something every row unrolls inline.
     return `
-      <div class="card clipcard open" data-clip="${escapeHtml(id)}">
-        <div class="cliptop" data-review="${escapeHtml(id)}" role="button" tabindex="0"
-             aria-label="Open the review for ${escapeHtml(fmtRunDate(r.created))}">
+      <div class="card clipcard" data-clip="${escapeHtml(id)}">
+        <div class="cliptop" data-match="${escapeHtml(id)}" role="button" tabindex="0"
+             aria-label="Open the analysis for ${escapeHtml(fmtRunDate(r.created))}">
           <div class="thumb" style="background:${grad}">${COURT_THUMB}${PLAY_ICON}</div>
           <div class="info">
             <span class="name">${fmtRunDate(r.created)}</span>
@@ -7953,18 +7604,74 @@ function renderClipCards(){
           </div>
           <span class="statechip done">ANALYZED</span>
         </div>
-        <div class="clipbody"><div class="inner">${body}</div></div>
       </div>`;
   }).join('');
-  // Tapping a match opens its review page. The card keeps its summary open
-  // rather than toggling: the expand/collapse existed to reach "Open full
-  // review", and the review page is now one tap away from the card itself.
-  list.querySelectorAll('[data-review]').forEach(el => {
-    el.onclick = () => openRunReview(el.dataset.review);
+  list.querySelectorAll('[data-match]').forEach(el => {
+    el.onclick = () => openMatchDetail(el.dataset.match);
     el.onkeydown = e => {
-      if(e.key === 'Enter' || e.key === ' '){ e.preventDefault(); openRunReview(el.dataset.review); }
+      if(e.key === 'Enter' || e.key === ' '){ e.preventDefault(); openMatchDetail(el.dataset.match); }
     };
   });
+}
+
+/* ---------- the match analysis page (p-match) ---------- */
+function matchDetailLabel(){
+  const r = LIVE.runs.find(x => x.run_id === LIVE.matchId);
+  return r ? fmtRunDate(r.created) : 'Match';
+}
+function openMatchDetail(id){
+  LIVE.matchId = id;
+  setPhase('match');
+}
+/* The analysis stack for one run — rally structure first because that tier
+   always runs, ball detail last because it is the one most often gated off. */
+function matchDetailBody(id){
+  const m = liveMetrics(id);
+  const sentences = splitSentences((LIVE.coach[id]||{}).feedback).slice(0,3);
+  const fb = sentences.map(s => `
+    <div class="fbrow">
+      <div class="iconcircle">${FB_NOTE_ICON}</div>
+      <div class="info"><span class="s" style="color:var(--text)">${escapeHtml(s)}</span></div>
+    </div>`).join('');
+  const rep = LIVE.report[id] || {};
+  const ballRan = !!rep.shots || m.hits > 0;
+  // The ball tier's own surfaces are drawn only when that tier ran. Drawing
+  // em-dashes for a clip that was never eligible reads as "we looked and
+  // found nothing", which is the one thing the capability card exists to
+  // prevent. (Metric set per the 2026-07-29 review: unforced errors, not
+  // IN%/pace/height — those live on in the backend report only.)
+  const ballBlock = !ballRan ? '' : `
+    <div class="scorecols" style="grid-template-columns:1fr 1fr">
+      <div class="scol"><span class="sl">Unforced errors</span><span class="sv num">${m.errors ? m.unforced : '—'}</span></div>
+      <div class="scol"><span class="sl">Floor bounces</span><span class="sv num">${m.bounces==null?'—':m.bounces}</span></div>
+    </div>
+    ${fb}`;
+  return `
+    <div class="cardtitle" style="font-size:14px">Rallies</div>
+    ${rallySection(rep)}
+    <div class="cardtitle" style="font-size:14px">Movement</div>
+    ${movementSection(rep)}
+    ${ballBlock}
+    <div class="cardtitle" style="font-size:14px">What this clip could measure</div>
+    ${capabilityRows(rep)}
+    <div class="metaline">run ${escapeHtml(id)}</div>
+    <button class="ghostbtn" type="button" id="matchReviewBtn">Open full review</button>`;
+}
+function buildMatchView(){
+  const id = LIVE.matchId;
+  const r = LIVE.runs.find(x => x.run_id === id);
+  $('matchTitle').textContent = r ? fmtRunDate(r.created) : 'Match';
+  $('matchMeta').textContent = r ? fmtRunDur(r.duration_seconds) : '';
+  if(!r){
+    // The runs list refreshes on every entry to Analysis, so a stale id here
+    // means the run is gone — say so rather than drawing an empty analysis.
+    $('matchBody').innerHTML = '<div class="card emptycard">That match is no longer available.</div>';
+    return;
+  }
+  $('matchBody').innerHTML = matchDetailBody(id);
+  // The frame-by-frame call page is a level deeper than the analysis, and this
+  // is now its only entrance — the Analysis card stops here.
+  $('matchReviewBtn').onclick = () => openRunReview(id);
 }
 /* Open the full call page for a run: seed the restore stash and reboot —
    the exact path the iOS #run deep link takes, so rehydration is identical. */
@@ -8126,13 +7833,19 @@ function renderProgressView(){
   });
 }
 
-/* ---------- deep links (#run=<id>&frame=<n>, #tab=matches|coach) ----------
+/* ---------- deep links (?shell=1#run=<id>&frame=<n>, #tab=load|matches|coach) ----------
    The native iOS shell opens the webview at a specific run (results card →
    full review) or a section tab. A #run link seeds the restore stash so
    tryRestoreSession does the rehydration exactly like a returning session. */
 function applyDeepLink(){
   const params = new URLSearchParams(location.hash.replace(/^#/, ''));
-  if(params.get('shell') === '1') document.body.classList.add('shell-embed');
+  /* The shell flag rides the query string, not the hash: openRunReview strips
+     the hash before reloading, so a hash-only flag would be lost on that
+     reload (and on a WKWebView process-restore) and the web nav dock would
+     reappear under the native tab bar. The hash is still read for older
+     links. */
+  if(new URLSearchParams(location.search).get('shell') === '1'
+     || params.get('shell') === '1') document.body.classList.add('shell-embed');
   const runId = (params.get('run') || '').trim();
   if(runId){
     try{
@@ -8151,14 +7864,16 @@ function applyDeepLink(){
     return 'run';
   }
   const tab = params.get('tab');
-  return (tab === 'matches' || tab === 'coach' || tab === 'progress') ? tab : null;
+  return SECTION_ROOTS.includes(tab) ? tab : null;
 }
 
 updatePlayButtons();
 setPhase('load');
 checkBackend();
 const bootLink = applyDeepLink();
-if(bootLink === 'matches' || bootLink === 'coach' || bootLink === 'progress') setPhase(bootLink);
+/* A section-root deep link is an explicit destination — it must not be
+   overridden by a restored session (the native Dashboard tab boots #tab=load). */
+if(SECTION_ROOTS.includes(bootLink)) setPhase(bootLink);
 else tryRestoreSession();
 startDevReloadPoller();
 </script>
