@@ -15,6 +15,7 @@ from werkzeug.utils import secure_filename
 
 import court_detect
 import court_model
+import match_report
 from coaching_advice import player_advice
 from media_probe import probe_video
 from judge_call import (
@@ -1482,9 +1483,41 @@ def list_runs():
                 "duration_seconds": duration,
                 "status": job.get("status"),
                 "has_analytics": (run_dir / "detected_hits.json").exists(),
+                # Which analysis tiers this run actually ran. Empty for runs
+                # made before capability gating -- a list where every row looks
+                # identical is not a list worth reading, and "we don't know"
+                # has to be visible as its own answer.
+                "tiers_enabled": match_report.tiers_enabled(job),
             })
     runs.sort(key=lambda entry: entry["created"], reverse=True)
     return jsonify({"ok": True, "runs": runs})
+
+
+@app.get("/api/runs/<run_id>/report")
+def run_report(run_id):
+    """report-v1 for one run: every tier it ran, and why it skipped the rest."""
+    run_dir = RUNS_DIR / secure_filename(run_id)
+    try:
+        report = match_report.build_report(
+            run_dir, coach_builder=report_coach_builder
+        )
+    except FileNotFoundError:
+        return error_response("Run was not found.", status=404)
+    except (OSError, json.JSONDecodeError) as error:
+        return error_response(f"Run could not be read: {error}", status=500)
+
+    return jsonify({"ok": True, "report": report})
+
+
+def report_coach_builder(detected):
+    """Coaching analytics for a report, from an already-loaded detected_hits.
+
+    Deliberately the derived analytics only, never the LLM narration: a report
+    is fetched on every view, and narration is a network call with a cost and a
+    latency nobody asked for when they opened a page. The Coach tab still asks
+    for the narrated version explicitly.
+    """
+    return build_coaching_analytics(detected)
 
 
 @app.get("/api/runs/<run_id>/<path:filename>")
