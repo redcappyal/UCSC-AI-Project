@@ -16,7 +16,7 @@ from pathlib import Path
 SCHEMA_VERSION = "ball-model-v1"
 SCHEMA_VERSION_V2 = "ball-model-v2"
 SCHEMA_VERSIONS = (SCHEMA_VERSION, SCHEMA_VERSION_V2)
-DEFAULT_MODEL_DIR = Path(__file__).resolve().parent / "models" / "crosscourt-ball-416-v1"
+DEFAULT_MODEL_DIR = Path(__file__).resolve().parent / "models" / "crosscourt-wasb-416-v1"
 _EXPORT_HINT = (
     "Produce it in the training environment with export_ball_model.py "
     "(see ios/MODEL.md §2b)."

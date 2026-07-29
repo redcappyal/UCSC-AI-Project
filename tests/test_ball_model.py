@@ -249,9 +249,10 @@ def test_ball_model_imports_without_torch():
 
 
 @pytest.mark.requires_model
-def test_torchscript_runner_returns_boxes_for_real_model():
+def test_runner_returns_boxes_for_real_model():
     runner = ball_model.load_detector()
-    crops = [np.zeros((416, 416, 3), dtype=np.uint8)]
+    channels = 3 * runner.manifest.frames_per_input
+    crops = [np.zeros((416, 416, channels), dtype=np.uint8)]
     result = runner.run_batch(crops)
     assert len(result) == 1
     assert isinstance(result[0], list)
@@ -408,3 +409,14 @@ def test_resolve_device_unknown_value_raises(monkeypatch):
 def test_resolve_device_explicit_cpu(monkeypatch):
     monkeypatch.setenv("BALL_DEVICE", "cpu")
     assert ball_model._resolve_device(_fake_torch(cuda=True)) == "cpu"
+
+
+def test_default_model_dir_is_the_committed_wasb_artifact(monkeypatch):
+    """The default must point at an artifact that ships with the repo --
+    the YOLOX dir is gitignored and absent on every fresh clone."""
+    monkeypatch.delenv("BALL_MODEL_DIR", raising=False)
+    manifest = ball_model.load_manifest()
+    assert manifest.name == "crosscourt-wasb-416"
+    assert manifest.schema_version == "ball-model-v2"
+    assert manifest.frames_per_input == 3
+    assert manifest.decode == "heatmap_peak"
