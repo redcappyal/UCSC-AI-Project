@@ -245,7 +245,7 @@ a first guess. Nothing has scored these boundaries against a human yet.
 
 ---
 
-### Task 6 — rally-boundary eval axis + baseline — TODO
+### Task 6 — rally-boundary eval axis + baseline — DONE (2026-07-29, F1 unmeasured)
 
 An analysis with no eval axis is an opinion. Score the segmenter against silver labels
 seeded from existing good runs, spot-checkable by a human later.
@@ -255,6 +255,33 @@ Follow **MVP plan Task 6**. Ship `rally_labels.jsonl` (text, small, committed) a
 ±1.5 s tolerance**. Falling short is *reportable, not fatal* — write the real number.
 
 Commit: `feat: rally-boundary eval axis + silver labels + baseline`
+
+**Result:** commit `468ad53`. `eval_rally_boundaries.py` (scorer + CLI),
+`tools/seed_rally_labels.py`, `tests/test_eval_rally_boundaries.py` (13 tests),
+`eval_set/rally_labels.jsonl`, `eval_set/BASELINE-RALLY-2026-07-29.md`. Suite
+**564 passed, 2 skipped, 1 deselected**; line-call eval unmoved.
+
+**The F1 target is NOT MET because it is NOT MEASURED, and that is the real outcome.**
+The only label CSV with a provenance sidecar (`bayclub_wall_hits.csv` → 17 silver rallies
+from 92 human hits) indexes into a video on the Mac; the other two have no sidecar, so
+their frame numbers are anonymous integers. The plan's intended `ui_runs/` seeding path is
+unavailable — gitignored, absent from a fresh worktree. The baseline doc carries the exact
+command to fill the number in on the Mac.
+
+**The axis earned its keep anyway.** Run end-to-end on `SquashAnalytics.mp4`, the
+segmenter found **0 rallies in a five-minute match**. Real motion energy is spiky, not a
+plateau: 230/1872 samples cleared the threshold but as 98 fragments, median duration
+0.00 s, longest 1.83 s — all under `MIN_RALLY_S`. Fixed with `MOTION_BRIDGE_S = 1.5`
+(bridge short dips before measuring duration; a test pins `MOTION_BRIDGE_S < MIN_GAP_S/2`
+so it can never fuse two rallies). **0 → 10 rallies**, 3.3–7.3 s, 16% of the clip in play.
+That is a smoke result, not a score — there are no labels for that clip.
+
+**Follow-ups this leaves open** (do not silently absorb into a later task):
+1. Run the eval on the Mac and supersede the baseline with a real F1.
+2. Write `.meta.json` sidecars for `wall_hits.csv` and `matchplay_ep3_wall_hits.csv` —
+   cheap, and it triples the label corpus.
+3. `SquashAnalytics.mp4` has **no audio track**, so nothing here exercises the audio or
+   audio+motion paths on real footage.
 
 ---
 
