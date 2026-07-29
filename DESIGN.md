@@ -149,8 +149,12 @@ iOS app in Safari (add-to-home-screen capable).
 #navPill        floating dark icon dock, bottom-center (section roots only)
 ```
 
-- Header: `min-height:56px`, padding `8px 16px`, gap 10. Step label = 17/700,
-  `letter-spacing:-.02em`, ellipsizes.
+- Header: `min-height:56px`, padding `calc(8px + env(safe-area-inset-top)) 16px 8px`,
+  gap 10. Step label = 17/700, `letter-spacing:-.02em`, ellipsizes. The top
+  safe-area term keeps the header below the notch/Dynamic Island when the page
+  runs full-bleed in the native shell (viewport-fit=cover); it resolves to 0 in
+  a normal browser. `#errBanner` carries the same term on its `top`. Never
+  remove either safe-area term.
 - `<main>` padding: `12px 14px calc(92px + env(safe-area-inset-bottom))` — the bottom
   clearance keeps content above the nav dock. Never remove the safe-area term.
 - Nav dock sits at `bottom:calc(14px + env(safe-area-inset-bottom))`.
@@ -164,9 +168,13 @@ iOS app in Safari (add-to-home-screen capable).
 **Native shell (iOS).** The native client substitutes `NavigationStack` and the
 system back button for the header chevron and the proxied primary (§3.4), which
 are web-shell mechanisms. The phase inventory and the §16 blueprints are shared;
-only the chrome that moves between phases differs per client. The native Play
-root shows two hero cards, not three — "Judge a clip" is a web file input with no
-native equivalent, so "Record a clip" takes the accent slot there.
+only the chrome that moves between phases differs per client. The native tab bar
+is **three** items — Analysis · Training · Progress, webviews onto those section
+roots with `shell=1` — not the web dock's four: the Dashboard root is a web-only
+entry, and the native record screen has no tab (hidden 2026-07-28 until the
+auto-calibrating capture flow earns it back). One piece of native-only chrome
+floats over the webviews: the server-settings gear, bottom-trailing above the tab
+bar, because a fresh install must be able to point the app at a pipeline.
 
 ### 3.3 Phases, not pages
 

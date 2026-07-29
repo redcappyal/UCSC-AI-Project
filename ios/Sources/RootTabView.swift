@@ -8,23 +8,15 @@ struct RootTabView: View {
     // not guarantee their ordering across a tab switch, and the mask must be
     // a function of which tab is showing, not of which callback ran last.
     @State private var tab: RootTab = .launch
+    @State private var showServerSettings = false
 
     var body: some View {
         TabView(selection: $tab) {
-            // Play is `RecordView` directly again. It was wrapped in
-            // `PlayRootView`'s NavigationStack only to offer a second hero
-            // card — the two-camera live match — which is archived
-            // (archive/stereo/README.md). With one destination there is no
-            // stack to push onto, so the stack went with it and the
-            // server-settings gear went back to being an overlay on
-            // `RecordView` (where it lived before the live entry point).
+            // The native Play (record) tab was removed 2026-07-28: the tab bar
+            // is the three web section roots only. `RecordView` and the whole
+            // capture stack stay in the target, just unreachable, until the
+            // auto-calibrating capture flow is ready to earn the slot back.
             //
-            // The per-tab orientation mask below stays exactly as it is: it
-            // came from the landscape-only capture work, not the live work,
-            // and the tab is still what the mask is a function of.
-            RecordView()
-                .tabItem { Label("Play", systemImage: "record.circle") }
-                .tag(RootTab.play)
             // Labels track the web app's section roots (design-lab IA,
             // DESIGN.md §8.3): the `matches`/`coach` cases and their #tab
             // fragments are the stable internal names those roots kept.
@@ -43,6 +35,23 @@ struct RootTabView: View {
         }
         .tint(Theme.accentBg)
         .background(Theme.bg)
+        // The server-settings gear lived as an overlay on `RecordView`; with
+        // the Play tab hidden it moves here so a fresh install can still point
+        // the app at a pipeline. Bottom-trailing, lifted above the tab bar:
+        // both top corners belong to the web header (back/home left, theme
+        // toggle right), and the web's own bottom docks are center-aligned.
+        .overlay(alignment: .bottomTrailing) {
+            Button { showServerSettings = true } label: {
+                Image(systemName: "gearshape")
+                    .foregroundStyle(Theme.dim)
+                    .padding(10)
+                    .background(Theme.surface, in: Circle())
+            }
+            .accessibilityLabel("Server settings")
+            .padding(.trailing, 12)
+            .padding(.bottom, 60)
+        }
+        .sheet(isPresented: $showServerSettings) { ServerSettingsView() }
         .onChange(of: tab, initial: true) { _, newTab in
             OrientationPolicy.shared.applyForTab(newTab)
         }

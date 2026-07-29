@@ -62,7 +62,7 @@
     -webkit-tap-highlight-color:transparent}
   .hidden{display:none !important}
 
-  #errBanner{position:fixed; top:8px; left:10px; right:10px; z-index:30; display:flex; gap:12px;
+  #errBanner{position:fixed; top:calc(8px + env(safe-area-inset-top)); left:10px; right:10px; z-index:30; display:flex; gap:12px;
     align-items:center; background:var(--surface); border-radius:18px; padding:12px 14px;
     box-shadow:var(--shadow-card)}
   #errBanner span{flex:1; font-weight:600; font-size:15px}
@@ -70,7 +70,7 @@
     background:var(--seg-bg); box-shadow:none}
 
   header{flex:0 0 auto; display:flex; align-items:center; gap:10px;
-    padding:8px 16px; min-height:56px}
+    padding:calc(8px + env(safe-area-inset-top)) 16px 8px; min-height:56px}
   #stepLabel{flex:1 1 auto; min-width:0; font-size:17px; font-weight:700;
     letter-spacing:-.02em;
     white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
@@ -1938,6 +1938,11 @@ function loadVideoFile(f, recCal = null){
     }
   }, 4000);
   clearThumbCache();   // cache keys are absolute video times; a new file invalidates them
+  // Upload now, not at the clip phase: the picker's temporary copy is
+  // freshest here (iOS WKWebView can evict it during the calibration wizard,
+  // after which every read fails as a bogus network error), and the transfer
+  // overlaps the wizard instead of delaying Track.
+  ensureVideoUploaded(null).catch(() => {});
   vid.src = URL.createObjectURL(f);
   vid.load();
 }
@@ -5217,7 +5222,9 @@ function videoUploadKey(file){
 
 /* Files above this go up in chunks. The single-POST route is capped at 2 GB
    server-side (~5 minutes of 4K60), so a full match cannot be ingested at all
-   through it; below the threshold the one-shot path is simpler and faster. */
+   through it; below the threshold the one-shot path is simpler and faster.
+   There is deliberately no client-side size cap: chunking is what makes an
+   over-2 GB match uploadable, so rejecting one up front would defeat it. */
 const CHUNKED_UPLOAD_THRESHOLD = 512 * 1024 * 1024;
 const UPLOAD_CHUNK_BYTES = 16 * 1024 * 1024;
 
@@ -5256,7 +5263,15 @@ function ensureVideoUploaded(progressLabel = 'Uploading video'){
   const form = new FormData();
   form.append('video_file', S.videoFile);
   S.uploadPromiseKey = key;
-  S.uploadPromise = (S.videoFile.size > CHUNKED_UPLOAD_THRESHOLD
+  // Probe a slice before sending: an evicted picker temp file (iOS WKWebView
+  // reclaims them under pressure) fails XHR with the same face as a dead
+  // network, so catch it here while it can still be named. The probe guards
+  // both upload paths — an evicted file fails chunked just as readily.
+  S.uploadPromise = S.videoFile.slice(0, 1024).arrayBuffer()
+    .catch(() => {
+      throw new Error('The clip is no longer readable on this device — re-select the video and try again.');
+    })
+    .then(() => S.videoFile.size > CHUNKED_UPLOAD_THRESHOLD
       ? uploadFileChunked(S.videoFile, progressLabel)
       : postFormRequest('/api/upload', form, progressLabel))
     .then(data => {

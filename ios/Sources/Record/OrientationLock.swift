@@ -3,13 +3,16 @@ import UIKit
 
 /// Which tab is showing, and therefore which orientations the app permits.
 enum RootTab: Hashable, CaseIterable {
+    // `.play` has no tab item since 2026-07-28 (the tab bar is the three web
+    // section roots); the case stays because the capture stack it keys —
+    // this file's masks and pins — is hidden, not deleted.
     case play, matches, coach, progress
 
     /// The tab the app opens into. `RootTabView`'s initial `@State` and
     /// `OrientationPolicy`'s seeded mask both read this one literal, so the
     /// two can never drift apart — a hand-copied literal in each place is
     /// what let the launch-orientation bug happen the first time.
-    static let launch: RootTab = .play
+    static let launch: RootTab = .matches
 }
 
 /// The app's supported-orientation policy as pure functions.

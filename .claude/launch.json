@@ -6,7 +6,8 @@
       "runtimeExecutable": ".venv/bin/python",
       "runtimeArgs": ["app.py"],
       "port": 5188,
-      "autoPort": true
+      "autoPort": true,
+      "env": { "HOST": "0.0.0.0" }
     },
     {
       "name": "squash-app-windows",
