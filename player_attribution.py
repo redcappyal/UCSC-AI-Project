@@ -1,10 +1,9 @@
-"""Serve-anchored player attribution (spec §4.4).
+"""Player identity metadata and crop selection.
 
-Within a rally, front-wall hits strictly alternate (squash rule), so per-hit
-identity is unnecessary: the only question is which track served each rally.
-The resolver answers it from raw pixels — the track whose live sample is
-nearest the last detected ball position shortly before the rally's first
-front-wall hit. No homography, no calibration.
+The production attribution rule lives in job_runner: A serves rally 1, hits
+alternate within a rally, and the inferred winner serves next. Person tracks
+are used for photos and movement statistics, not to override that sequence.
+The legacy pixel-distance resolver remains for replaying older stored runs.
 """
 
 import math
@@ -143,19 +142,23 @@ def _first_observed_serve(assignment):
 def player_crop_targets(assignment, samples_by_track):
     """-> {"A": (frame_idx, sample), "B": (...)} for identity photos.
 
-    Both crops prefer the moment of the first observed serve. Keeping the
-    photos near the same instant avoids showing the same physical player twice
-    after a later tracker identity swap. If no serve was observed, use the
-    earliest instant where both tracks have live samples. A track that is never
-    jointly visible still gets its strongest live sample so the naming UI
-    degrades to one useful photo rather than hiding both.
+    Both crops prefer the start of the first rally. Keeping the photos near the
+    same instant avoids showing the same physical player twice after a later
+    tracker identity swap. If no rally was assigned, use the earliest instant
+    where both tracks have live samples. A track that is never jointly visible
+    still gets its strongest live sample so the naming UI degrades to one
+    useful photo rather than hiding both.
     """
     live = {
         track: [sample for sample in samples_by_track.get(track, [])
                 if not sample.coasted]
         for track in ("A", "B")
     }
-    anchor = _first_observed_serve(assignment)
+    anchor = next(
+        (rally for rally in (assignment.get("rallies") or [])
+         if rally.get("server_track") in ("A", "B")),
+        None,
+    )
     reference_t = (
         float(anchor.get("start_time_seconds", 0.0))
         if anchor is not None

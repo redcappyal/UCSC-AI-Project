@@ -205,13 +205,13 @@ def index_runs_by_video_sha(runs_dir):
 
 
 def collect_label_csv_cases(labels_dir, run_index):
-    """`label_hits.py` CSVs (+ their .meta.json sidecars) -> wall-hit cases.
+    """`label_hits.py` CSVs (+ their .meta.json sidecars) -> typed cases.
 
-    These are pure frame labels from offline labeling, so they only carry the
-    `wall` type. A CSV whose video was never tracked has no detector output to
-    compare against; it is still emitted, flagged `no_detector_run`, and the
-    missed-bounce axis skips it — otherwise "never ran the model" would score
-    identically to "model missed everything".
+    Historical one-column CSVs default to `wall`; current CSVs carry an
+    `event_type` column. A CSV whose video was never tracked has no detector
+    output to compare against; it is still emitted, flagged `no_detector_run`,
+    and the missed-bounce axis skips it — otherwise "never ran the model"
+    would score identically to "model missed everything".
     """
     cases = []
     stats = {"label_files": 0, "label_files_without_sidecar": 0,
@@ -226,8 +226,8 @@ def collect_label_csv_cases(labels_dir, run_index):
             stats["label_files_without_sidecar"] += 1
             continue
 
-        frames = load_label_frames(csv_path)
-        if not frames:
+        events = load_label_events(csv_path)
+        if not events:
             continue
         stats["label_files"] += 1
 
@@ -236,19 +236,19 @@ def collect_label_csv_cases(labels_dir, run_index):
         if run is None:
             stats["label_files_without_run"] += 1
 
-        events = [{"frame": frame, "type": "wall"} for frame in frames]
         tolerance = max(1, int(run["frame_stride"] or 1) if run else 1)
         matches = match_events_to_hits(events, run["hits"], tolerance) if run else {}
 
         label_source = csv_path.name
-        for frame in frames:
+        for event in events:
+            frame = event["frame"]
             cases.append({
                 "kind": "label_csv_event",
                 "case_id": f"lbl:{label_source}:{frame}",
                 "run_id": run["run_id"] if run else None,
                 "label_source": label_source,
                 "frame": frame,
-                "human_type": "wall",
+                "human_type": event["type"],
                 "tolerance_frames": tolerance,
                 "matched_detected": matches.get(frame),
                 "no_detector_run": run is None,
@@ -265,6 +265,11 @@ def collect_label_csv_cases(labels_dir, run_index):
 def load_label_frames(csv_path):
     """Frame numbers from a label_hits.py CSV, tolerating its historical
     header variants."""
+    return [event["frame"] for event in load_label_events(csv_path)]
+
+
+def load_label_events(csv_path):
+    """Typed events from current or historical label_hits.py CSVs."""
     try:
         with csv_path.open(newline="", encoding="utf-8") as handle:
             reader = csv.DictReader(handle)
@@ -274,15 +279,29 @@ def load_label_frames(csv_path):
                            if name in reader.fieldnames), None)
             if column is None:
                 return []
-            frames = set()
+            type_column = next(
+                (name for name in ("event_type", "type")
+                 if name in reader.fieldnames),
+                None,
+            )
+            events = {}
             for row in reader:
                 try:
-                    frames.add(int(str(row[column]).strip()))
+                    frame = int(str(row[column]).strip())
                 except (KeyError, TypeError, ValueError):
                     continue
+                event_type = str(row.get(type_column) or "wall").strip().lower()
+                if event_type == "sidewall":
+                    event_type = "side_wall"
+                if event_type not in HIT_TYPES:
+                    continue
+                events[frame] = event_type
     except OSError:
         return []
-    return sorted(frames)
+    return [
+        {"frame": frame, "type": events[frame]}
+        for frame in sorted(events)
+    ]
 
 
 def dedupe_label_cases(cases):

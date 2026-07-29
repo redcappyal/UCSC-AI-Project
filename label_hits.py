@@ -10,8 +10,23 @@ import cv2
 
 DEFAULT_VIDEO_PATH = Path(__file__).with_name("Bay Club Squash 5min+audio.mp4")
 DEFAULT_LABELS_PATH = Path(__file__).with_name("wall_hits.csv")
-WINDOW_NAME = "Squash Wall Hit Labeler"
+WINDOW_NAME = "Squash Hit and Bounce Labeler"
 SIDECAR_SCHEMA = "label-run-v1"
+LABEL_SHORTCUTS = {
+    "h": "wall",
+    "f": "floor",
+    "p": "side_wall",
+}
+LABEL_DISPLAY_NAMES = {
+    "wall": "WALL HIT",
+    "floor": "FLOOR BOUNCE",
+    "side_wall": "SIDEWALL BOUNCE",
+}
+LABEL_COLORS = {
+    "wall": (0, 255, 0),
+    "floor": (255, 255, 0),
+    "side_wall": (0, 165, 255),
+}
 
 
 def video_sha256(video_path):
@@ -42,6 +57,13 @@ def save_sidecar(labels_path, video_path, video_sha, fps, frame_count, labels):
                 "fps": fps,
                 "frame_count": frame_count,
                 "label_count": len(labels),
+                "label_counts_by_type": {
+                    event_type: sum(
+                        1 for label_type in labels.values()
+                        if label_type == event_type
+                    )
+                    for event_type in LABEL_DISPLAY_NAMES
+                },
                 "labeled_min_frame": min(labels) if labels else None,
                 "labeled_max_frame": max(labels) if labels else None,
                 "labeled_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
@@ -56,9 +78,9 @@ def save_sidecar(labels_path, video_path, video_sha, fps, frame_count, labels):
 
 def load_labels(labels_path):
     if not labels_path.exists():
-        return set()
+        return {}
 
-    labels = set()
+    labels = {}
     with labels_path.open(newline="") as labels_file:
         reader = csv.reader(labels_file)
         first_row = next(reader, None)
@@ -66,6 +88,7 @@ def load_labels(labels_path):
             return labels
 
         frame_column_names = ("hit_frame", "source_frame", "frame")
+        type_column_names = ("event_type", "type")
         normalized_first_row = [value.strip() for value in first_row]
         frame_column_index = next(
             (
@@ -75,10 +98,19 @@ def load_labels(labels_path):
             ),
             None,
         )
+        type_column_index = next(
+            (
+                index
+                for index, column in enumerate(normalized_first_row)
+                if column in type_column_names
+            ),
+            None,
+        )
 
         if frame_column_index is None:
             rows = [first_row, *reader]
             frame_column_index = 0
+            type_column_index = None
         else:
             rows = reader
 
@@ -87,17 +119,40 @@ def load_labels(labels_path):
                 continue
             value = row[frame_column_index].strip()
             if value:
-                labels.add(int(value))
+                event_type = "wall"
+                if type_column_index is not None and len(row) > type_column_index:
+                    raw_type = row[type_column_index].strip().lower()
+                    if raw_type == "sidewall":
+                        raw_type = "side_wall"
+                    if raw_type:
+                        if raw_type not in LABEL_DISPLAY_NAMES:
+                            continue
+                        event_type = raw_type
+                labels[int(value)] = event_type
 
     return labels
 
 
 def save_labels(labels_path, labels):
     with labels_path.open("w", newline="") as labels_file:
-        writer = csv.DictWriter(labels_file, fieldnames=["hit_frame"])
+        writer = csv.DictWriter(
+            labels_file, fieldnames=["hit_frame", "event_type"]
+        )
         writer.writeheader()
         for frame in sorted(labels):
-            writer.writerow({"hit_frame": frame})
+            writer.writerow({
+                "hit_frame": frame,
+                "event_type": labels[frame],
+            })
+
+
+def toggle_label(labels, frame, event_type):
+    """Toggle one typed label, replacing a different type at the same frame."""
+    if labels.get(frame) == event_type:
+        labels.pop(frame)
+        return None
+    labels[frame] = event_type
+    return event_type
 
 
 def clamp(value, minimum, maximum):
@@ -167,18 +222,39 @@ def draw_text_box(frame, lines, origin=(16, 28)):
 def render_frame(frame, frame_index, frame_count, fps, labels, playing):
     display = frame.copy()
     timestamp_seconds = frame_index / fps if fps else 0.0
-    status = "HIT MARKED" if frame_index in labels else "not marked"
+    current_type = labels.get(frame_index)
+    status = (
+        f"{LABEL_DISPLAY_NAMES[current_type]} MARKED"
+        if current_type
+        else "not marked"
+    )
     play_status = "PLAYING" if playing else "PAUSED"
+    counts = {
+        event_type: sum(1 for label_type in labels.values()
+                        if label_type == event_type)
+        for event_type in LABEL_DISPLAY_NAMES
+    }
 
     lines = [
         f"Frame {frame_index} / {frame_count - 1}   Time {timestamp_seconds:.3f}s",
-        f"{status}   Labels: {len(labels)}   {play_status}",
-        "h mark/unmark | arrows/a/d prev/next | [/]/</> jump | g goto | space play | s save | q quit",
+        (
+            f"{status}   Total: {len(labels)}   {play_status}   "
+            f"Wall: {counts['wall']} Floor: {counts['floor']} "
+            f"Sidewall: {counts['side_wall']}"
+        ),
+        "h wall | f floor | p sidewall | arrows/a/d prev/next | n/N next/previous label",
+        "[/]/</> jump | g goto | space play | s save | q quit",
     ]
     draw_text_box(display, lines)
 
-    if frame_index in labels:
-        cv2.rectangle(display, (8, 8), (display.shape[1] - 8, display.shape[0] - 8), (0, 255, 0), 5)
+    if current_type:
+        cv2.rectangle(
+            display,
+            (8, 8),
+            (display.shape[1] - 8, display.shape[0] - 8),
+            LABEL_COLORS[current_type],
+            5,
+        )
 
     return display
 
@@ -214,7 +290,10 @@ def find_next_label(labels, current_frame, direction):
 
 def build_parser():
     parser = argparse.ArgumentParser(
-        description="Frame-by-frame video labeler for squash wall-hit frames."
+        description=(
+            "Frame-by-frame labeler for squash wall hits, floor bounces, "
+            "and sidewall bounces."
+        )
     )
     parser.add_argument(
         "--video",
@@ -284,6 +363,8 @@ def main():
     cv2.namedWindow(WINDOW_NAME, cv2.WINDOW_NORMAL)
     print("Controls:")
     print("  h: mark/unmark current frame as a wall hit")
+    print("  f: mark/unmark current frame as a floor bounce")
+    print("  p: mark/unmark current frame as a sidewall bounce")
     print("  Left/a: previous frame")
     print("  Right/d: next frame")
     print("  [: jump back 10 frames    ]: jump forward 10 frames")
@@ -321,13 +402,26 @@ def main():
 
             if key_char == " ":
                 playing = not playing
-            elif key_char == "h":
-                if frame_index in labels:
-                    labels.remove(frame_index)
-                    print(f"Removed hit label at frame {frame_index}")
+            elif key_char in LABEL_SHORTCUTS:
+                event_type = LABEL_SHORTCUTS[key_char]
+                previous_type = labels.get(frame_index)
+                selected_type = toggle_label(labels, frame_index, event_type)
+                if selected_type is None:
+                    print(
+                        f"Removed {LABEL_DISPLAY_NAMES[event_type].lower()} "
+                        f"label at frame {frame_index}"
+                    )
+                elif previous_type and previous_type != selected_type:
+                    print(
+                        f"Changed frame {frame_index} from "
+                        f"{LABEL_DISPLAY_NAMES[previous_type].lower()} to "
+                        f"{LABEL_DISPLAY_NAMES[selected_type].lower()}"
+                    )
                 else:
-                    labels.add(frame_index)
-                    print(f"Added hit label at frame {frame_index}")
+                    print(
+                        f"Added {LABEL_DISPLAY_NAMES[selected_type].lower()} "
+                        f"label at frame {frame_index}"
+                    )
                 dirty = True
             elif key_char == "s":
                 persist()

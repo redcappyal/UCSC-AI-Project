@@ -2,6 +2,7 @@ import hashlib
 import json
 import math
 import os
+import shutil
 import threading
 import time
 import urllib.error
@@ -54,6 +55,7 @@ from job_runner import (
     UPLOADS_DIR,
     build_target_zone_summary,
     create_job,
+    forget_job,
     get_job,
     is_serve_hit,
     request_cancel,
@@ -1686,6 +1688,38 @@ def list_runs():
             })
     runs.sort(key=lambda entry: entry["created"], reverse=True)
     return jsonify({"ok": True, "runs": runs})
+
+
+@app.delete("/api/runs/<run_id>")
+def delete_run(run_id):
+    """Permanently remove one completed analysis, never its shared upload."""
+    safe_run_id = secure_filename(run_id)
+    if not safe_run_id or safe_run_id != run_id:
+        return error_response("Run ID is invalid.", status=400)
+
+    run_dir = RUNS_DIR / safe_run_id
+    if not run_dir.is_dir():
+        return error_response("Run was not found.", status=404)
+
+    job = get_job(safe_run_id)
+    if job and job.get("status") in {"queued", "running"}:
+        return error_response(
+            "A session cannot be deleted while analysis is running.",
+            status=409,
+        )
+
+    try:
+        # video_path normally points into ui_runs/uploads/by-hash. Removing
+        # only run_dir preserves that shared source for other analyses.
+        shutil.rmtree(run_dir)
+    except OSError as error:
+        return error_response(f"Run could not be deleted: {error}", status=500)
+
+    forget_job(safe_run_id)
+    with BALL_POSITIONS_LOCK:
+        BALL_POSITIONS_CACHE.pop(safe_run_id, None)
+        RUN_HITS_CACHE.pop(safe_run_id, None)
+    return jsonify({"ok": True, "run_id": safe_run_id})
 
 
 @app.get("/api/runs/<run_id>/report")

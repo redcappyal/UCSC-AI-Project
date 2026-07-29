@@ -1,4 +1,4 @@
-"""Score observed serve attribution against human rally labels.
+"""Score deterministic player attribution against human rally labels.
 
 Usage:
     python eval_attribution.py --run-dir ui_runs/<id> \
@@ -14,10 +14,10 @@ from pathlib import Path
 
 
 def score_attribution(players_v1, labels):
-    observed = {
+    assigned = {
         r["rally_number"]: r["server_player_number"]
         for r in players_v1.get("rallies", [])
-        if r.get("server_source") == "observed"
+        if r.get("server_player_number") in (1, 2)
     }
     labeled = {
         r["rally_number"]: r["server"]
@@ -25,18 +25,18 @@ def score_attribution(players_v1, labels):
         if r.get("server") in (1, 2)
     }
     all_labeled = [r for r in labels.get("rallies", [])]
-    scored = [n for n in labeled if n in observed]
-    correct = sum(1 for n in scored if observed[n] == labeled[n])
+    scored = [n for n in labeled if n in assigned]
+    correct = sum(1 for n in scored if assigned[n] == labeled[n])
     return {
         "labeled_rallies": len(all_labeled),
-        "observed_rallies": len(observed),
+        "assigned_rallies": len(assigned),
         "scored_rallies": len(scored),
         "correct": correct,
         "accuracy": (correct / len(scored)) if scored else None,
-        "observed_coverage": (
+        "assigned_coverage": (
             len(scored) / len(all_labeled) if all_labeled else None
         ),
-        "mismatches": sorted(n for n in scored if observed[n] != labeled[n]),
+        "mismatches": sorted(n for n in scored if assigned[n] != labeled[n]),
     }
 
 
@@ -70,16 +70,16 @@ def render_report(run_dir, labels_path, players_v1, labels, report):
         f"- Run: `{run_dir}`",
         f"- Labels: `{labels_path}` ({report['labeled_rallies']} rallies)",
         f"- Detector backend: {players_v1.get('detector_backend')}",
-        f"- Observed rallies: {report['observed_rallies']}",
-        f"- Scored (observed AND labeled): {report['scored_rallies']}",
+        f"- Assigned rallies: {report['assigned_rallies']}",
+        f"- Scored (assigned AND labeled): {report['scored_rallies']}",
         f"- Correct: {report['correct']}",
         f"- Accuracy: {report['accuracy']}",
-        f"- Observed coverage of labeled rallies: {report['observed_coverage']}",
+        f"- Assigned coverage of labeled rallies: {report['assigned_coverage']}",
         f"- Mismatched rally numbers: {report['mismatches']}",
         "",
-        "Rallies without observed serves are excluded from accuracy —",
-        "coverage reports them honestly (spec §7: no pre-hit ball track ->",
-        "`server_track: null`, never a guess).",
+        "The production rule assumes Player A serves rally 1, alternates",
+        "front-wall contacts, and makes each inferred rally winner the next",
+        "server. Rallies without an assigned server are excluded from accuracy.",
     ]
     return "\n".join(lines) + "\n"
 

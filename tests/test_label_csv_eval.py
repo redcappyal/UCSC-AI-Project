@@ -11,7 +11,12 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from build_eval_set import build_eval_set, load_label_frames, write_eval_set
+from build_eval_set import (
+    build_eval_set,
+    load_label_events,
+    load_label_frames,
+    write_eval_set,
+)
 from eval_line_calls import evaluate_cases
 
 LABELED_SHA = "c" * 64
@@ -55,6 +60,39 @@ def test_label_frames_parse_from_csv(tmp_path):
     csv_path = write_labels(tmp_path, "hits", [59, 272, 59], LABELED_SHA)
 
     assert load_label_frames(csv_path) == [59, 272]
+
+
+def test_typed_csv_labels_reach_the_eval_set(tmp_path):
+    runs, labels = tmp_path / "runs", tmp_path / "labels"
+    write_tracked_run(runs, "run-a", LABELED_SHA, [10])
+    labels.mkdir()
+    csv_path = labels / "typed.csv"
+    csv_path.write_text(
+        "hit_frame,event_type\n10,wall\n20,floor\n30,side_wall\n",
+        encoding="utf-8",
+    )
+    csv_path.with_suffix(".meta.json").write_text(json.dumps({
+        "schema_version": "label-run-v1",
+        "video_path": "/anywhere/typed.mp4",
+        "video_sha": LABELED_SHA,
+        "fps": 60.0,
+        "frame_count": 100,
+        "label_count": 3,
+    }), encoding="utf-8")
+
+    assert load_label_events(csv_path) == [
+        {"frame": 10, "type": "wall"},
+        {"frame": 20, "type": "floor"},
+        {"frame": 30, "type": "side_wall"},
+    ]
+    cases, manifest = build_eval_set(runs, labels)
+
+    assert manifest["label_csv_cases"] == 3
+    assert {case["frame"]: case["human_type"] for case in cases} == {
+        10: "wall",
+        20: "floor",
+        30: "side_wall",
+    }
 
 
 def test_labels_join_the_missed_bounce_axis(tmp_path):

@@ -1021,6 +1021,12 @@ by watching who hit it. This component states, per rally, how much of that is ev
 and how much is a guess — it is the honest counterweight to a report that otherwise
 reads as fact.
 
+For new runs, Player A is defined as the first server. Front-wall contacts alternate
+A/B within a rally, and the inferred winner becomes the next rally's server. Person
+detection maintains tracks and supplies the two naming photos; it does not override
+the serving sequence. Consequently new runs use `attr-assumed`. The other states below
+remain supported so previously stored observed-attribution runs still render honestly.
+
 **Ribbon states** — modifier classes on the rally segmentation ribbon's `.rallySegment`
 (§16, `p-track`):
 
