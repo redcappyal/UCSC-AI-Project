@@ -877,7 +877,7 @@
             <circle cx="20" cy="20" r="16.5" stroke="rgba(255,255,255,.14)" stroke-width="3.5"/>
             <circle id="heroRingArc" cx="20" cy="20" r="16.5" stroke="#D9F04A" stroke-width="3.5" stroke-linecap="round" stroke-dasharray="0 103.7"/>
           </svg>
-          <span class="rv" id="heroRingVal">0/5</span>
+          <span class="rv" id="heroRingVal">0</span>
         </div>
       </div>
       <div class="statgrid">
@@ -1409,7 +1409,7 @@
             <circle cx="20" cy="20" r="16.5" stroke="rgba(255,255,255,.14)" stroke-width="3.5"/>
             <circle id="coachRingArc" cx="20" cy="20" r="16.5" stroke="#D9F04A" stroke-width="3.5" stroke-linecap="round" stroke-dasharray="0 103.7"/>
           </svg>
-          <span class="rv" id="coachRingVal">0/5</span>
+          <span class="rv" id="coachRingVal">0</span>
         </div>
       </div>
     </div>
@@ -7733,17 +7733,19 @@ function refreshLiveViews(){
   if(p === 'coach') renderCoachHero();
   if(p === 'progress') renderProgressView();
 }
-function setRing(arcId, valId, count, target){
-  const frac = Math.min(1, count/target);
-  $(arcId).setAttribute('stroke-dasharray', `${(103.7*frac).toFixed(1)} 103.7`);
-  $(valId).textContent = `${count}/${target}`;
+/* A plain count badge, not a gauge. There is no session target to measure
+   against — the old "x/5" invented one, and read as a failure at 4 and as
+   nonsense at 6 — so the ring is drawn whole and simply frames the number. */
+function setRing(arcId, valId, count){
+  $(arcId).setAttribute('stroke-dasharray', '103.7 103.7');
+  $(valId).textContent = `${count}`;
 }
 function renderDashboardLive(){
   const weekCount = weekRunCount();
-  setRing('heroRingArc','heroRingVal', weekCount, 5);
+  setRing('heroRingArc','heroRingVal', weekCount);
   if(!LIVE.runs.length) return;   // markup defaults are the empty state
   const latest = LIVE.runs[0], m = liveMetrics(latest.run_id);
-  $('heroT1').innerHTML = `${weekCount}<span class="ss">/5</span>`;
+  $('heroT1').innerHTML = `${weekCount}`;
   $('heroT2').innerHTML = m.inPct==null ? '—' : `${m.inPct}<span class="ss">%</span>`;
   $('heroT3').innerHTML = m.pace==null ? '—' : `${Math.round(m.pace)}<span class="ss">mph</span>`;
   $('heroSub').textContent = `From your last ${LIVE.runs.length} analyzed ${LIVE.runs.length===1?'clip':'clips'}`;
@@ -7799,7 +7801,7 @@ function renderCoachNotes(){
     </div>`).join('');
 }
 function renderCoachHero(){
-  setRing('coachRingArc','coachRingVal', weekRunCount(), 5);
+  setRing('coachRingArc','coachRingVal', weekRunCount());
   $('coachHeroSub').textContent = LIVE.runs.length
     ? `Built from your last ${LIVE.runs.length} analyzed ${LIVE.runs.length===1?'session':'sessions'}`
     : 'Built from your analyzed sessions';
