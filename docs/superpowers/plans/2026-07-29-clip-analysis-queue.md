@@ -85,22 +85,36 @@ Still genuinely missing: `media_probe.py`, `capabilities.py`, `rally_segmenter.p
 
 ## Queue
 
-### Task 1 — `media_probe.py` — TODO
+### Task 1 — `media_probe.py` — DONE (2026-07-29)
 
 Probe a clip for fps, resolution, duration, per-frame sharpness and audio presence, so
 later tasks can gate on footage quality instead of assuming our own 4K60 capture.
 
-Follow **MVP plan Task 1** for the contract. Key points: `cv2.VideoCapture` for
-fps/dims/count; sample frames at `np.linspace` indices; variance-of-Laplacian for
-sharpness; guard zero/absent fps to 30.0 the way `app.py:91-110` already does; audio
-presence via PyAV (`av` is in requirements.txt), returning `None` — not `False` — when the
-probe itself could not run, because "no audio track" and "could not look" are different
-answers and Principle 3 forbids conflating them.
+Follow **MVP plan Task 1** for the contract, exactly — `probe_video(video_path) -> dict`
+with keys `fps`, `width`, `height`, `frame_count`, `duration_s`, `sharpness`, `has_audio`.
+Key points: `cv2.VideoCapture` for fps/dims/count; sample ≤16 frames at `np.linspace`
+indices; sharpness = median variance-of-Laplacian on a centre crop, `None` if no frame
+decodes; guard zero/absent fps to 30.0 the way `app.py:91-110` already does; `has_audio`
+via PyAV (`av` is already in requirements.txt).
+
+`has_audio` stays a plain `bool` even though "no audio track" and "could not open the
+container" both land on `False`. That looks like a Principle 3 violation and is not one:
+audio is never a capability input (MVP plan Task 2 makes `rally_structure` unconditionally
+enabled), and whether audio actually yielded anything is reported at extraction time as
+`rally_timeline.audio_available` in Task 5. Do not widen this to tri-state — Task 2 and
+Task 5 consume the `bool`.
 
 Test with synthetic videos written by `cv2.VideoWriter` in `tmp_path`, following the
 existing pattern in `tests/test_ball_track_offline.py`.
 
 Commit: `feat: media probe (fps/size/sharpness/audio) for capability gating`
+
+**Result:** `media_probe.py` + `tests/test_media_probe.py`, commit `20c9195`. 8 tests,
+suite **481 passed, 2 skipped, 1 deselected**. `probe_video(path) -> dict` per the plan
+contract. Samples ≤16 frames by seek (asserted by a test that counts `read` calls) so
+ingest stays cheap on a full match. `sharpness` is `None` when nothing decoded;
+unopenable files raise `ValueError` rather than probing as all-zero. Not yet wired into
+any caller — Task 2 does that.
 
 ---
 
