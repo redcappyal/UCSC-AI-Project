@@ -6,17 +6,18 @@ empty success. The failure this prevents is specific and was real -- the
 pipeline used to finish a 30 fps clip with `hits=[]` and `status="complete"`,
 which is indistinguishable from a rally where nothing happened.
 
-The tiers form a ladder (design spec §3) and each rung stands on the one below:
+The analysis tiers share inputs, but player movement and ball tracking are
+sibling capabilities rather than a strict ladder:
 
     rally_structure   audio + frame motion        needs nothing
     player_movement   people through the floor    needs a solved court
-    ball_tracking     per-frame ball detection    needs a solved court + sharp, fast frames
+    ball_tracking     per-frame ball detection    needs sharp, fast frames
     line_calls        judge ball impacts          needs ball_tracking
 
-Tier N never requires tier N+1, so a phone-in-the-gallery clip still returns
-rally structure and movement while saying plainly that it cannot track the
-ball. Deriving each rung from the one below is what makes "line calls on, zero
-hits" unrepresentable rather than merely unlikely.
+A floor homography is useful for player movement and court-position metrics,
+but it is not required to locate a ball in image coordinates or judge it
+against the calibrated front-wall lines. Keeping those requirements separate
+prevents an optional floor solve from silently skipping the core tracker.
 """
 
 CAPABILITIES_SCHEMA = "capabilities-v1"
@@ -66,15 +67,13 @@ def _tier(reasons=()):
     return {"enabled": False, "reason": "; ".join(reasons)}
 
 
-def _ball_reasons(probe, court_solved):
+def _ball_reasons(probe):
     """Every failing ball gate, not just the first.
 
     A card reading only "30 fps" sends someone off to solve one of two
     problems and be surprised when the tier is still off.
     """
     reasons = []
-    if not court_solved:
-        reasons.append(_NO_COURT)
 
     if probe is None:
         reasons.append(_NO_PROBE)
@@ -127,9 +126,10 @@ def compute_capabilities(probe, *, court_solved):
     assuming is how an unqualified clip produces a plausible wrong number.
 
     `court_solved` means a floor homography exists, from the tap wizard or
-    from automatic detection; the caller resolves which.
+    from automatic detection. It gates player movement and floor-position
+    metrics only; ball tracking operates in image coordinates.
     """
-    ball = _tier(_ball_reasons(probe, court_solved))
+    ball = _tier(_ball_reasons(probe))
 
     return {
         # Unconditional by design. Audio absence is runtime information --

@@ -10,6 +10,7 @@ import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from judge_call import Point, WallCorners
 from detect_wall_hits import (
     detect_bounce,
     detect_bounce_legacy,
@@ -22,7 +23,11 @@ from train_bounce_classifier import (
     geometry_features,
     load_geometry,
 )
-from tracking_common import detect_floor_rebound, select_motion_consistent_ball_predictions
+from tracking_common import (
+    candidate_on_floor_rebound_trajectory,
+    detect_floor_rebound,
+    select_motion_consistent_ball_predictions,
+)
 from bounce_gb_model_detector import (
     calibrated_wall_gate,
     collapse_front_wall_chunks,
@@ -430,6 +435,161 @@ def test_floor_rebound_filter_keeps_front_wall_like_up_then_down_turn():
     assert not is_floor_rebound
 
 
+def test_delayed_floor_rebound_continuation_rejects_smooth_rising_candidate():
+    points = [
+        (430, 650),
+        (436, 665),
+        (442, 680),
+        (448, 695),
+        (454, 710),
+        (460, 725),
+        (466, 740),
+        (471, 730),
+        (476, 721),
+        (481, 713),
+        (486, 705),
+        (491, 698),
+        (496, 691),
+        (501, 685),
+        (506, 679),
+        (511, 674),
+        (516, 669),
+        (521, 664),
+        (526, 659),
+    ]
+    rows = rows_by_frame([
+        detector_row(frame, x, y)
+        for frame, (x, y) in enumerate(points)
+    ])
+
+    is_continuation, stats = candidate_on_floor_rebound_trajectory(
+        rows,
+        17,
+        Point(100, 720),
+        Point(900, 720),
+    )
+
+    assert is_continuation
+    assert stats["rebound"]["peak_frame"] == 6
+    assert stats["frame_offset_from_rebound"] == 11
+
+
+def test_delayed_floor_rebound_continuation_keeps_candidate_with_wall_turn():
+    points = [
+        (430, 650),
+        (436, 665),
+        (442, 680),
+        (448, 695),
+        (454, 710),
+        (460, 725),
+        (466, 740),
+        (471, 730),
+        (476, 721),
+        (481, 713),
+        (486, 705),
+        (491, 698),
+        (496, 691),
+        (501, 685),
+        (506, 679),
+        (511, 674),
+        (516, 669),
+        (521, 664),
+        (514, 660),
+        (507, 658),
+        (500, 657),
+        (493, 657),
+    ]
+    rows = rows_by_frame([
+        detector_row(frame, x, y)
+        for frame, (x, y) in enumerate(points)
+    ])
+
+    is_continuation, stats = candidate_on_floor_rebound_trajectory(
+        rows,
+        17,
+        Point(100, 720),
+        Point(900, 720),
+    )
+
+    assert not is_continuation
+    assert stats["reason"] == "candidate_has_impact_evidence"
+    assert stats["candidate_velocity"]["turn_degrees"] > 35.0
+
+
+def test_floor_rebound_trajectory_keeps_delayed_candidate_near_wall_turn():
+    points = [
+        (430, 650),
+        (436, 665),
+        (442, 680),
+        (448, 695),
+        (454, 710),
+        (460, 725),
+        (466, 740),
+        (471, 730),
+        (476, 721),
+        (481, 713),
+        (486, 705),
+        (491, 698),
+        (496, 691),
+        (501, 685),
+        (506, 679),
+        (511, 674),
+        (516, 669),
+        (521, 664),
+        (514, 659),
+        (507, 654),
+        (500, 649),
+        (493, 644),
+        (486, 639),
+        (479, 634),
+        (472, 629),
+        (465, 624),
+        (458, 619),
+        (451, 614),
+        (444, 609),
+        (437, 604),
+        (430, 599),
+    ]
+    rows = rows_by_frame([
+        detector_row(frame, x, y)
+        for frame, (x, y) in enumerate(points)
+    ])
+
+    is_floor_trajectory, stats = candidate_on_floor_rebound_trajectory(
+        rows,
+        24,
+        Point(100, 720),
+        Point(900, 720),
+    )
+
+    assert not is_floor_trajectory
+    assert stats["reason"] == "candidate_near_non_floor_impact"
+    assert stats["nearby_impact"]["frame"] >= 17
+
+
+def test_floor_rebound_trajectory_rejects_smooth_approach_candidate():
+    points = []
+    for frame in range(27):
+        x = 380 + frame * 6
+        y = 740 - abs(frame - 13) * 12
+        points.append((x, y))
+    rows = rows_by_frame([
+        detector_row(frame, x, y)
+        for frame, (x, y) in enumerate(points)
+    ])
+
+    is_floor_approach, stats = candidate_on_floor_rebound_trajectory(
+        rows,
+        5,
+        Point(100, 720),
+        Point(900, 720),
+    )
+
+    assert is_floor_approach
+    assert stats["reason"] == "smooth_floor_rebound_approach"
+    assert stats["frame_offset_from_rebound"] == -8
+
+
 def test_stationary_false_track_rejects_dust_like_detection():
     rows = rows_by_frame([
         detector_row(frame, 500 + (frame % 2) * 0.7, 300 + (frame % 3) * 0.5)
@@ -542,6 +702,14 @@ def test_training_runtime_eval_rejects_floor_rebound_signature():
         pd.DataFrame([feature_row]),
         np.array([0.90]),
         0.25,
+        geometry={
+            "wall_corners": WallCorners(
+                top_left=Point(100, 50),
+                top_right=Point(900, 50),
+                bottom_right=Point(900, 300),
+                bottom_left=Point(100, 300),
+            )
+        },
         spatial_filter=False,
         collapse_wall_area=False,
         min_gap=0,
@@ -549,6 +717,40 @@ def test_training_runtime_eval_rejects_floor_rebound_signature():
 
     assert predictions.tolist() == [0]
     assert stats["floor_rebound_rejections"] == 1
+
+
+def test_training_runtime_eval_keeps_rebound_shape_high_on_front_wall():
+    feature_row = {
+        "frame": 100,
+        "t+0_detected": 1.0,
+        "t+0_x": 500.0,
+        "t+0_y": 320.0,
+    }
+    for offset in range(-3, 4):
+        prefix = f"t{offset:+d}"
+        feature_row[f"{prefix}_detected"] = 1.0
+        feature_row[f"{prefix}_x"] = 500.0 + offset * 3.0
+        feature_row[f"{prefix}_y"] = 320.0 - abs(offset) * 10.0
+
+    predictions, stats = app_filtered_eval_predictions(
+        pd.DataFrame([feature_row]),
+        np.array([0.90]),
+        0.25,
+        geometry={
+            "wall_corners": WallCorners(
+                top_left=Point(100, 50),
+                top_right=Point(900, 50),
+                bottom_right=Point(900, 650),
+                bottom_left=Point(100, 650),
+            )
+        },
+        spatial_filter=False,
+        collapse_wall_area=False,
+        min_gap=0,
+    )
+
+    assert predictions.tolist() == [1]
+    assert stats["floor_rebound_rejections"] == 0
 
 
 def test_geometry_features_include_video_level_calibration_context(tmp_path):

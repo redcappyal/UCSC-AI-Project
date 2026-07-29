@@ -8,13 +8,24 @@ import pandas as pd
 
 from judge_call import Point, load_calibration_lines, load_wall_corners
 from tracking_common import (
+    FLOOR_REBOUND_CONTINUATION_WINDOW_FRAMES,
+    FLOOR_REBOUND_LOOKBACK_FRAMES,
+    FLOOR_REBOUND_MAX_CANDIDATE_TURN_DEGREES,
+    FLOOR_REBOUND_MAX_PATH_GAP_FRAMES,
+    FLOOR_REBOUND_MIN_CANDIDATE_SPEED_RATIO,
     FLOOR_REBOUND_MIN_DETECTIONS_PER_SIDE,
+    FLOOR_REBOUND_FLOOR_SEAM_MARGIN_PX,
+    FLOOR_REBOUND_MIN_HORIZONTAL_RETENTION,
     FLOOR_REBOUND_MIN_PROMINENCE_PX,
+    FLOOR_REBOUND_NEARBY_IMPACT_SEARCH_FRAMES,
+    FLOOR_REBOUND_NEARBY_IMPACT_TURN_DEGREES,
     FLOOR_REBOUND_MIN_REVERSAL_PX_PER_FRAME,
     FLOOR_REBOUND_MIN_Y_SPEED_PX_PER_FRAME,
     FLOOR_REBOUND_SEARCH_FRAMES,
     FLOOR_REBOUND_WINDOW_FRAMES,
+    candidate_on_floor_rebound_trajectory,
     detect_floor_rebound,
+    floor_rebound_is_near_floor_seam,
 )
 from train_bounce_classifier import (
     DEFAULT_MODEL_PATH as TRAIN_DEFAULT_MODEL_PATH,
@@ -534,6 +545,11 @@ def detect_hits_with_gb_model(
     )
     geometry = calibration_geometry(calibration) if include_geometry else None
     wall_gate = calibrated_wall_gate(calibration)
+    wall_corners = (
+        wall_gate[1]
+        if wall_gate is not None and wall_gate[0] == "wall_corners"
+        else None
+    )
 
     parsed_rows = rows_by_frame(rows)
     if not parsed_rows:
@@ -577,7 +593,7 @@ def detect_hits_with_gb_model(
             apply_floor_rebound_filter
             and env_int("BOUNCE_GB_FLOOR_REBOUND_FILTER", 1) != 0
         ):
-            floor_rebound, _ = detect_floor_rebound(
+            floor_rebound, floor_rebound_stats = detect_floor_rebound(
                 parsed_rows,
                 frame,
                 search_frames=env_int(
@@ -605,8 +621,65 @@ def detect_hits_with_gb_model(
                     FLOOR_REBOUND_MIN_PROMINENCE_PX,
                 ),
             )
-            if floor_rebound:
+            if (
+                floor_rebound
+                and wall_corners is not None
+                and floor_rebound_is_near_floor_seam(
+                    floor_rebound_stats,
+                    wall_corners.bottom_left,
+                    wall_corners.bottom_right,
+                    margin_px=env_float(
+                        "BOUNCE_GB_FLOOR_REBOUND_FLOOR_SEAM_MARGIN_PX",
+                        FLOOR_REBOUND_FLOOR_SEAM_MARGIN_PX,
+                    ),
+                )
+            ):
                 continue
+            if wall_corners is not None:
+                on_floor_rebound_trajectory, _ = candidate_on_floor_rebound_trajectory(
+                    parsed_rows,
+                    frame,
+                    wall_corners.bottom_left,
+                    wall_corners.bottom_right,
+                    lookback_frames=env_int(
+                        "BOUNCE_GB_FLOOR_REBOUND_LOOKBACK_FRAMES",
+                        FLOOR_REBOUND_LOOKBACK_FRAMES,
+                    ),
+                    continuation_window_frames=env_int(
+                        "BOUNCE_GB_FLOOR_REBOUND_CONTINUATION_WINDOW_FRAMES",
+                        FLOOR_REBOUND_CONTINUATION_WINDOW_FRAMES,
+                    ),
+                    min_horizontal_retention=env_float(
+                        "BOUNCE_GB_FLOOR_REBOUND_MIN_HORIZONTAL_RETENTION",
+                        FLOOR_REBOUND_MIN_HORIZONTAL_RETENTION,
+                    ),
+                    max_candidate_turn_degrees=env_float(
+                        "BOUNCE_GB_FLOOR_REBOUND_MAX_CANDIDATE_TURN_DEGREES",
+                        FLOOR_REBOUND_MAX_CANDIDATE_TURN_DEGREES,
+                    ),
+                    min_candidate_speed_ratio=env_float(
+                        "BOUNCE_GB_FLOOR_REBOUND_MIN_CANDIDATE_SPEED_RATIO",
+                        FLOOR_REBOUND_MIN_CANDIDATE_SPEED_RATIO,
+                    ),
+                    max_path_gap_frames=env_int(
+                        "BOUNCE_GB_FLOOR_REBOUND_MAX_PATH_GAP_FRAMES",
+                        FLOOR_REBOUND_MAX_PATH_GAP_FRAMES,
+                    ),
+                    nearby_impact_search_frames=env_int(
+                        "BOUNCE_GB_FLOOR_REBOUND_NEARBY_IMPACT_SEARCH_FRAMES",
+                        FLOOR_REBOUND_NEARBY_IMPACT_SEARCH_FRAMES,
+                    ),
+                    nearby_impact_turn_degrees=env_float(
+                        "BOUNCE_GB_FLOOR_REBOUND_NEARBY_IMPACT_TURN_DEGREES",
+                        FLOOR_REBOUND_NEARBY_IMPACT_TURN_DEGREES,
+                    ),
+                    seam_margin_px=env_float(
+                        "BOUNCE_GB_FLOOR_REBOUND_FLOOR_SEAM_MARGIN_PX",
+                        FLOOR_REBOUND_FLOOR_SEAM_MARGIN_PX,
+                    ),
+                )
+                if on_floor_rebound_trajectory:
+                    continue
         if apply_spatial_filter:
             if spatial_filter_mode == "sidewall":
                 inside_gate = inside_lenient_sidewall_gate(

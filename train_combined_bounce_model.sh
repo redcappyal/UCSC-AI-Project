@@ -11,7 +11,7 @@ PYTHON_BIN="${PYTHON_BIN:-python}"
 FORCE_TRACK="${FORCE_TRACK:-0}"
 FORCE_FEATURES="${FORCE_FEATURES:-0}"
 HARD_MINING_ROUNDS="${HARD_MINING_ROUNDS:-0}"
-RETRAIN_EXISTING_FEATURES_ONLY="${RETRAIN_EXISTING_FEATURES_ONLY:-1}"
+RETRAIN_EXISTING_FEATURES_ONLY="${RETRAIN_EXISTING_FEATURES_ONLY:-0}"
 TRAJECTORY_FILL_MAX_GAP="${TRAJECTORY_FILL_MAX_GAP:-4}"
 TRAJECTORY_FILL_EDGE_MARGIN="${TRAJECTORY_FILL_EDGE_MARGIN:-24}"
 
@@ -20,22 +20,10 @@ if [[ "${FORCE_TRACK}" == "1" || "${FORCE_FEATURES}" == "1" ]]; then
 fi
 
 MODELTRAIN_VIDEO="${MODELTRAIN_VIDEO:-ModelTrainTest.mp4}"
-MODELTRAIN_LABELS="${MODELTRAIN_LABELS:-wall_hits.csv}"
+MODELTRAIN_LABELS="${MODELTRAIN_LABELS:-wall_hits_copy.csv}"
 MODELTRAIN_START_FRAME="${MODELTRAIN_START_FRAME:-2245}"
-MODELTRAIN_END_FRAME="${MODELTRAIN_END_FRAME:-47308}"
+MODELTRAIN_END_FRAME="${MODELTRAIN_END_FRAME:-15469}"
 MODELTRAIN_CALIBRATION="${MODELTRAIN_CALIBRATION:-calibration.json}"
-
-BAYCLUB_VIDEO="${BAYCLUB_VIDEO:-Bay Club Squash 5min+audio.mov}"
-BAYCLUB_LABELS="${BAYCLUB_LABELS:-bayclub_wall_hits.csv}"
-BAYCLUB_START_FRAME="${BAYCLUB_START_FRAME:-0}"
-BAYCLUB_END_FRAME="${BAYCLUB_END_FRAME:-18000}"
-BAYCLUB_CALIBRATION="${BAYCLUB_CALIBRATION:-bayclub_calibration.json}"
-
-MATCHPLAY_VIDEO="${MATCHPLAY_VIDEO:-MatchplayEp3Clip2_h264.mp4}"
-MATCHPLAY_LABELS="${MATCHPLAY_LABELS:-matchplay_ep3_wall_hits.csv}"
-MATCHPLAY_START_FRAME="${MATCHPLAY_START_FRAME:-0}"
-MATCHPLAY_END_FRAME="${MATCHPLAY_END_FRAME:-7283}"
-MATCHPLAY_CALIBRATION="${MATCHPLAY_CALIBRATION:-calibration.json}"
 
 FEATURE_END_TOLERANCE_FRAMES="${FEATURE_END_TOLERANCE_FRAMES:-120}"
 
@@ -109,91 +97,43 @@ require_existing_features() {
   echo "Retrain-only mode: reusing ${feature_csv}."
 }
 
-echo "=== 1/5 ModelTrainTest feature rows ==="
+echo "=== 1/2 ModelTrainTest-only feature rows ==="
 if [[ "${RETRAIN_EXISTING_FEATURES_ONLY}" == "1" ]]; then
-  require_existing_features features_modeltraintest.csv
-elif should_generate_features features_modeltraintest.csv "${MODELTRAIN_END_FRAME}" "${FORCE_MODELTRAIN_FEATURES:-0}"; then
+  require_existing_features features_modeltraintest_wall_hits_copy.csv
+elif should_generate_features features_modeltraintest_wall_hits_copy.csv "${MODELTRAIN_END_FRAME}" "${FORCE_MODELTRAIN_FEATURES:-0}"; then
   "${PYTHON_BIN}" train_bounce_classifier.py \
     --video "${MODELTRAIN_VIDEO}" \
     --labels "${MODELTRAIN_LABELS}" \
-    --ball-csv ball_coordinates_modeltraintest.csv \
+    --ball-csv ball_coordinates_modeltraintest_wall_hits_copy.csv \
     --calibration "${MODELTRAIN_CALIBRATION}" \
-    --features-output features_modeltraintest.csv \
+    --features-output features_modeltraintest_wall_hits_copy.csv \
     --model-output /private/tmp/modeltrain_temp.pkl \
     --start-frame "${MODELTRAIN_START_FRAME}" \
     --end-frame "${MODELTRAIN_END_FRAME}" \
     --include-geometry \
     "${TRACK_FLAGS[@]}"
 else
-  echo "Reusing existing features_modeltraintest.csv. Set FORCE_FEATURES=1 to rebuild it."
+  echo "Reusing existing features_modeltraintest_wall_hits_copy.csv. Set FORCE_FEATURES=1 to rebuild it."
 fi
 
-echo "=== 2/5 Bay Club feature rows ==="
-if [[ "${RETRAIN_EXISTING_FEATURES_ONLY}" == "1" ]]; then
-  require_existing_features features_bayclub.csv
-elif should_generate_features features_bayclub.csv "${BAYCLUB_END_FRAME}" "${FORCE_BAYCLUB_FEATURES:-0}"; then
-  "${PYTHON_BIN}" train_bounce_classifier.py \
-    --video "${BAYCLUB_VIDEO}" \
-    --labels "${BAYCLUB_LABELS}" \
-    --ball-csv ball_coordinates_bayclub.csv \
-    --calibration "${BAYCLUB_CALIBRATION}" \
-    --features-output features_bayclub.csv \
-    --model-output /private/tmp/bayclub_temp.pkl \
-    --start-frame "${BAYCLUB_START_FRAME}" \
-    --end-frame "${BAYCLUB_END_FRAME}" \
-    --include-geometry \
-    "${TRACK_FLAGS[@]}"
-else
-  echo "Reusing existing features_bayclub.csv. Set FORCE_FEATURES=1 to rebuild it."
-fi
-
-echo "=== 3/5 Matchplay feature rows ==="
-if [[ "${RETRAIN_EXISTING_FEATURES_ONLY}" == "1" ]]; then
-  require_existing_features features_matchplay_ep3_clip2.csv
-elif should_generate_features features_matchplay_ep3_clip2.csv "${MATCHPLAY_END_FRAME}" "${FORCE_MATCHPLAY_FEATURES:-0}"; then
-  "${PYTHON_BIN}" train_bounce_classifier.py \
-    --video "${MATCHPLAY_VIDEO}" \
-    --labels "${MATCHPLAY_LABELS}" \
-    --ball-csv ball_coordinates_matchplay_ep3_clip2.csv \
-    --calibration "${MATCHPLAY_CALIBRATION}" \
-    --features-output features_matchplay_ep3_clip2.csv \
-    --model-output /private/tmp/matchplay_temp.pkl \
-    --start-frame "${MATCHPLAY_START_FRAME}" \
-    --end-frame "${MATCHPLAY_END_FRAME}" \
-    --include-geometry \
-    "${TRACK_FLAGS[@]}"
-else
-  echo "Reusing existing features_matchplay_ep3_clip2.csv. Set FORCE_FEATURES=1 to rebuild it."
-fi
-
-echo "=== 4/5 Combine feature rows from all videos ==="
+echo "=== 2/2 Train final app model on ModelTrainTest only ==="
 "${PYTHON_BIN}" -c "
 import pandas as pd
 
-modeltrain = pd.read_csv('features_modeltraintest.csv').assign(source_video='ModelTrainTest')
-bayclub = pd.read_csv('features_bayclub.csv').assign(source_video='BayClub')
-matchplay = pd.read_csv('features_matchplay_ep3_clip2.csv').assign(source_video='MatchplayEp3Clip2')
-
-feature_columns = [set(frame.columns) - {'source_video'} for frame in (modeltrain, bayclub, matchplay)]
-if feature_columns[1:] != feature_columns[:-1]:
-    raise ValueError('Source feature CSV schemas do not match; rebuild all three with FORCE_FEATURES=1.')
-
-combined = pd.concat([modeltrain, bayclub, matchplay], ignore_index=True)
-combined.to_csv('bounce_training_features_combined.csv', index=False)
+modeltrain = pd.read_csv('features_modeltraintest_wall_hits_copy.csv').assign(
+    source_video='ModelTrainTest'
+)
+modeltrain.to_csv('bounce_training_features_modeltraintest_only.csv', index=False)
 
 print(f'ModelTrainTest rows: {len(modeltrain)} ({int(modeltrain[\"is_wall_hit\"].sum())} positive)')
-print(f'Bay Club rows: {len(bayclub)} ({int(bayclub[\"is_wall_hit\"].sum())} positive)')
-print(f'Matchplay rows: {len(matchplay)} ({int(matchplay[\"is_wall_hit\"].sum())} positive)')
-print(f'Combined training rows: {len(combined)} ({int(combined[\"is_wall_hit\"].sum())} positive)')
 "
 
-echo "=== 5/5 Train final app model on combined data ==="
 "${PYTHON_BIN}" train_bounce_classifier.py \
-  --features-input bounce_training_features_combined.csv \
+  --features-input bounce_training_features_modeltraintest_only.csv \
   --features-output bounce_training_features.csv \
   --model-output bounce_gb_model.pkl \
   --calibration "${MODELTRAIN_CALIBRATION}" \
-  --source-calibration-map "ModelTrainTest=${MODELTRAIN_CALIBRATION},BayClub=${BAYCLUB_CALIBRATION},MatchplayEp3Clip2=${MATCHPLAY_CALIBRATION}" \
+  --source-calibration-map "ModelTrainTest=${MODELTRAIN_CALIBRATION}" \
   --hyperparameter-matrix \
   --gb-n-estimators-grid 100,200 \
   --gb-learning-rate-grid 0.05,0.1 \
@@ -208,5 +148,5 @@ echo "=== 5/5 Train final app model on combined data ==="
   --hit-threshold 0.25
 
 echo "=== Done ==="
-echo "Final app model saved to bounce_gb_model.pkl"
+echo "Final ModelTrainTest-only app model saved to bounce_gb_model.pkl"
 echo "Restart python app.py so the app reloads the updated model."

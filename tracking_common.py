@@ -35,6 +35,15 @@ FLOOR_REBOUND_MIN_DETECTIONS_PER_SIDE = 2
 FLOOR_REBOUND_MIN_Y_SPEED_PX_PER_FRAME = 1.25
 FLOOR_REBOUND_MIN_REVERSAL_PX_PER_FRAME = 3.0
 FLOOR_REBOUND_MIN_PROMINENCE_PX = 3.0
+FLOOR_REBOUND_FLOOR_SEAM_MARGIN_PX = 36.0
+FLOOR_REBOUND_LOOKBACK_FRAMES = 24
+FLOOR_REBOUND_CONTINUATION_WINDOW_FRAMES = 6
+FLOOR_REBOUND_MIN_HORIZONTAL_RETENTION = 0.50
+FLOOR_REBOUND_MAX_CANDIDATE_TURN_DEGREES = 35.0
+FLOOR_REBOUND_MIN_CANDIDATE_SPEED_RATIO = 0.45
+FLOOR_REBOUND_MAX_PATH_GAP_FRAMES = 6
+FLOOR_REBOUND_NEARBY_IMPACT_SEARCH_FRAMES = 8
+FLOOR_REBOUND_NEARBY_IMPACT_TURN_DEGREES = 45.0
 CSV_FIELDNAMES = [
     "source_frame",
     "timestamp_seconds",
@@ -121,6 +130,19 @@ def _trajectory_y_point(row):
     return y if math.isfinite(y) else None
 
 
+def _trajectory_xy_point(row):
+    if not row or not row.get("detected"):
+        return None
+    try:
+        x = float(row["x"])
+        y = float(row["y"])
+    except (KeyError, TypeError, ValueError):
+        return None
+    if not math.isfinite(x) or not math.isfinite(y):
+        return None
+    return x, y
+
+
 def _linear_slope(points):
     """Least-squares y/frame slope for a short trajectory segment."""
     if len(points) < 2:
@@ -146,6 +168,7 @@ def detect_floor_rebound(
     min_y_speed_px_per_frame=FLOOR_REBOUND_MIN_Y_SPEED_PX_PER_FRAME,
     min_reversal_px_per_frame=FLOOR_REBOUND_MIN_REVERSAL_PX_PER_FRAME,
     min_prominence_px=FLOOR_REBOUND_MIN_PROMINENCE_PX,
+    search_after_frames=None,
 ):
     """Detect a clear ground-bounce signature near a candidate frame.
 
@@ -156,6 +179,9 @@ def detect_floor_rebound(
     vetoing noisy or nearly flat front-wall trajectories.
     """
     search_frames = max(0, int(search_frames))
+    if search_after_frames is None:
+        search_after_frames = search_frames
+    search_after_frames = max(0, int(search_after_frames))
     window_frames = max(1, int(window_frames))
     min_detections_per_side = max(2, int(min_detections_per_side))
     best_stats = {
@@ -165,10 +191,16 @@ def detect_floor_rebound(
         "vy_after_px_per_frame": None,
         "reversal_px_per_frame": 0.0,
         "prominence_px": 0.0,
+        "peak_frame": None,
+        "peak_x": None,
+        "peak_y": None,
     }
     best_floor_stats = None
 
-    for center in range(int(frame) - search_frames, int(frame) + search_frames + 1):
+    for center in range(
+        int(frame) - search_frames,
+        int(frame) + search_after_frames + 1,
+    ):
         before = []
         after = []
         neighborhood = []
@@ -194,7 +226,14 @@ def detect_floor_rebound(
         if vy_before is None or vy_after is None:
             continue
 
-        peak_y = max(point[1] for point in neighborhood)
+        peak_frame, peak_y = max(neighborhood, key=lambda point: point[1])
+        peak_row = rows_by_frame.get(peak_frame) or {}
+        try:
+            peak_x = float(peak_row["x"])
+        except (KeyError, TypeError, ValueError):
+            peak_x = None
+        if peak_x is not None and not math.isfinite(peak_x):
+            peak_x = None
         shoulder_y = max(before[0][1], after[-1][1])
         prominence = peak_y - shoulder_y
         reversal = vy_before - vy_after
@@ -210,6 +249,9 @@ def detect_floor_rebound(
             "vy_after_px_per_frame": float(vy_after),
             "reversal_px_per_frame": float(reversal),
             "prominence_px": float(prominence),
+            "peak_frame": int(peak_frame),
+            "peak_x": peak_x,
+            "peak_y": float(peak_y),
         }
         if stats["is_floor_rebound"]:
             if best_floor_stats is None or (
@@ -229,6 +271,306 @@ def detect_floor_rebound(
     if best_floor_stats is not None:
         return True, best_floor_stats
     return False, best_stats
+
+
+def floor_rebound_is_near_floor_seam(
+    stats,
+    bottom_left,
+    bottom_right,
+    *,
+    margin_px=FLOOR_REBOUND_FLOOR_SEAM_MARGIN_PX,
+):
+    """Require a rebound peak to lie at/below the calibrated wall-floor seam."""
+    if not stats.get("is_floor_rebound"):
+        return False
+    try:
+        peak_x = float(stats["peak_x"])
+        peak_y = float(stats["peak_y"])
+        left_x = float(bottom_left.x)
+        left_y = float(bottom_left.y)
+        right_x = float(bottom_right.x)
+        right_y = float(bottom_right.y)
+    except (AttributeError, KeyError, TypeError, ValueError):
+        return False
+    if not all(math.isfinite(value) for value in (
+        peak_x,
+        peak_y,
+        left_x,
+        left_y,
+        right_x,
+        right_y,
+    )):
+        return False
+
+    dx = right_x - left_x
+    if abs(dx) <= 1e-9:
+        seam_y = (left_y + right_y) / 2.0
+    else:
+        progress = (peak_x - left_x) / dx
+        seam_y = left_y + progress * (right_y - left_y)
+    return peak_y >= seam_y - max(0.0, float(margin_px))
+
+
+def _trajectory_velocity_around_frame(rows_by_frame, frame, window_frames):
+    """Estimate image-plane velocity immediately before and after a frame."""
+    frame = int(frame)
+    window_frames = max(1, int(window_frames))
+    center = _trajectory_xy_point(rows_by_frame.get(frame))
+    if center is None:
+        return None
+
+    before = []
+    after = []
+    for sample_frame in range(frame - window_frames, frame + window_frames + 1):
+        point = _trajectory_xy_point(rows_by_frame.get(sample_frame))
+        if point is None:
+            continue
+        sample = (sample_frame, point)
+        if sample_frame <= frame:
+            before.append(sample)
+        if sample_frame >= frame:
+            after.append(sample)
+
+    if len(before) < 2 or len(after) < 2:
+        return None
+
+    vx_before = _linear_slope([(sample_frame, point[0]) for sample_frame, point in before])
+    vy_before = _linear_slope([(sample_frame, point[1]) for sample_frame, point in before])
+    vx_after = _linear_slope([(sample_frame, point[0]) for sample_frame, point in after])
+    vy_after = _linear_slope([(sample_frame, point[1]) for sample_frame, point in after])
+    if None in (vx_before, vy_before, vx_after, vy_after):
+        return None
+
+    speed_before = math.hypot(vx_before, vy_before)
+    speed_after = math.hypot(vx_after, vy_after)
+    if speed_before <= 1e-9 or speed_after <= 1e-9:
+        turn_degrees = 0.0
+        speed_ratio = 0.0
+    else:
+        cosine = (
+            vx_before * vx_after + vy_before * vy_after
+        ) / (speed_before * speed_after)
+        turn_degrees = math.degrees(math.acos(max(-1.0, min(1.0, cosine))))
+        speed_ratio = min(speed_before, speed_after) / max(speed_before, speed_after)
+
+    return {
+        "vx_before_px_per_frame": float(vx_before),
+        "vy_before_px_per_frame": float(vy_before),
+        "vx_after_px_per_frame": float(vx_after),
+        "vy_after_px_per_frame": float(vy_after),
+        "speed_before_px_per_frame": float(speed_before),
+        "speed_after_px_per_frame": float(speed_after),
+        "speed_ratio": float(speed_ratio),
+        "turn_degrees": float(turn_degrees),
+    }
+
+
+def candidate_on_floor_rebound_trajectory(
+    rows_by_frame,
+    frame,
+    bottom_left,
+    bottom_right,
+    *,
+    lookback_frames=FLOOR_REBOUND_LOOKBACK_FRAMES,
+    continuation_window_frames=FLOOR_REBOUND_CONTINUATION_WINDOW_FRAMES,
+    min_horizontal_retention=FLOOR_REBOUND_MIN_HORIZONTAL_RETENTION,
+    max_candidate_turn_degrees=FLOOR_REBOUND_MAX_CANDIDATE_TURN_DEGREES,
+    min_candidate_speed_ratio=FLOOR_REBOUND_MIN_CANDIDATE_SPEED_RATIO,
+    max_path_gap_frames=FLOOR_REBOUND_MAX_PATH_GAP_FRAMES,
+    nearby_impact_search_frames=FLOOR_REBOUND_NEARBY_IMPACT_SEARCH_FRAMES,
+    nearby_impact_turn_degrees=FLOOR_REBOUND_NEARBY_IMPACT_TURN_DEGREES,
+    seam_margin_px=FLOOR_REBOUND_FLOOR_SEAM_MARGIN_PX,
+    min_candidate_delay_frames=FLOOR_REBOUND_SEARCH_FRAMES + 1,
+):
+    """Identify a false hit on the approach to or exit from a ground bounce.
+
+    A larger blind rebound window removes real wall contacts that happen soon
+    after a floor bounce. This attribution is deliberately stricter: the floor
+    event must be at the calibrated seam, retain horizontal momentum, connect
+    continuously to the candidate, and the candidate itself must have no
+    visible impact turn or abrupt speed change.
+    """
+    frame = int(frame)
+    lookback_frames = max(1, int(lookback_frames))
+    continuation_window_frames = max(2, int(continuation_window_frames))
+    min_candidate_delay_frames = max(1, int(min_candidate_delay_frames))
+    max_path_gap_frames = max(1, int(max_path_gap_frames))
+    nearby_impact_search_frames = max(0, int(nearby_impact_search_frames))
+
+    is_rebound, rebound_stats = detect_floor_rebound(
+        rows_by_frame,
+        frame,
+        search_frames=lookback_frames,
+        search_after_frames=lookback_frames,
+    )
+    peak_frame = rebound_stats.get("peak_frame")
+    if not is_rebound or peak_frame is None:
+        return False, {"reason": "no_nearby_floor_rebound"}
+
+    frame_offset_from_rebound = frame - int(peak_frame)
+    distance_from_rebound = abs(frame_offset_from_rebound)
+    if (
+        distance_from_rebound < min_candidate_delay_frames
+        or distance_from_rebound > lookback_frames
+    ):
+        return False, {
+            "reason": "rebound_outside_delay_range",
+            "frame_offset_from_rebound": frame_offset_from_rebound,
+            "distance_from_rebound": distance_from_rebound,
+            "rebound": rebound_stats,
+        }
+    if not floor_rebound_is_near_floor_seam(
+        rebound_stats,
+        bottom_left,
+        bottom_right,
+        margin_px=seam_margin_px,
+    ):
+        return False, {
+            "reason": "rebound_not_at_floor_seam",
+            "frame_offset_from_rebound": frame_offset_from_rebound,
+            "distance_from_rebound": distance_from_rebound,
+            "rebound": rebound_stats,
+        }
+
+    rebound_velocity = _trajectory_velocity_around_frame(
+        rows_by_frame,
+        peak_frame,
+        continuation_window_frames,
+    )
+    candidate_velocity = _trajectory_velocity_around_frame(
+        rows_by_frame,
+        frame,
+        continuation_window_frames,
+    )
+    if rebound_velocity is None or candidate_velocity is None:
+        return False, {
+            "reason": "insufficient_velocity_context",
+            "frame_offset_from_rebound": frame_offset_from_rebound,
+            "distance_from_rebound": distance_from_rebound,
+            "rebound": rebound_stats,
+        }
+
+    vx_before = rebound_velocity["vx_before_px_per_frame"]
+    vx_after = rebound_velocity["vx_after_px_per_frame"]
+    horizontal_speed = max(abs(vx_before), abs(vx_after))
+    if horizontal_speed <= 1.0:
+        horizontal_retention = 1.0 if abs(vx_after - vx_before) <= 1.0 else 0.0
+        horizontal_direction_continues = horizontal_retention > 0.0
+    else:
+        horizontal_retention = min(abs(vx_before), abs(vx_after)) / horizontal_speed
+        horizontal_direction_continues = vx_before * vx_after > 0.0
+    if (
+        not horizontal_direction_continues
+        or horizontal_retention < max(0.0, float(min_horizontal_retention))
+    ):
+        return False, {
+            "reason": "horizontal_motion_changed_at_rebound",
+            "frame_offset_from_rebound": frame_offset_from_rebound,
+            "distance_from_rebound": distance_from_rebound,
+            "horizontal_retention": float(horizontal_retention),
+            "rebound": rebound_stats,
+            "rebound_velocity": rebound_velocity,
+        }
+
+    path_start = min(int(peak_frame), frame)
+    path_end = max(int(peak_frame), frame)
+    path_frames = [
+        sample_frame
+        for sample_frame in range(path_start, path_end + 1)
+        if _trajectory_xy_point(rows_by_frame.get(sample_frame)) is not None
+    ]
+    if len(path_frames) < 4:
+        return False, {
+            "reason": "insufficient_continuation_path",
+            "frame_offset_from_rebound": frame_offset_from_rebound,
+            "distance_from_rebound": distance_from_rebound,
+            "rebound": rebound_stats,
+        }
+    largest_gap = max(
+        (next_frame - previous_frame)
+        for previous_frame, next_frame in zip(path_frames, path_frames[1:])
+    )
+    if largest_gap > max_path_gap_frames:
+        return False, {
+            "reason": "continuation_path_gap",
+            "frame_offset_from_rebound": frame_offset_from_rebound,
+            "distance_from_rebound": distance_from_rebound,
+            "largest_path_gap_frames": int(largest_gap),
+            "rebound": rebound_stats,
+        }
+
+    candidate_turn = candidate_velocity["turn_degrees"]
+    candidate_speed_ratio = candidate_velocity["speed_ratio"]
+    candidate_has_impact_evidence = (
+        candidate_turn >= max(0.0, float(max_candidate_turn_degrees))
+        or candidate_speed_ratio < max(0.0, float(min_candidate_speed_ratio))
+    )
+    if candidate_has_impact_evidence:
+        return False, {
+            "reason": "candidate_has_impact_evidence",
+            "frame_offset_from_rebound": frame_offset_from_rebound,
+            "distance_from_rebound": distance_from_rebound,
+            "horizontal_retention": float(horizontal_retention),
+            "largest_path_gap_frames": int(largest_gap),
+            "rebound": rebound_stats,
+            "rebound_velocity": rebound_velocity,
+            "candidate_velocity": candidate_velocity,
+        }
+
+    nearby_impact = None
+    for impact_frame in range(
+        frame - nearby_impact_search_frames,
+        frame + nearby_impact_search_frames + 1,
+    ):
+        if abs(impact_frame - int(peak_frame)) <= FLOOR_REBOUND_WINDOW_FRAMES:
+            continue
+        impact_velocity = _trajectory_velocity_around_frame(
+            rows_by_frame,
+            impact_frame,
+            continuation_window_frames,
+        )
+        if impact_velocity is None:
+            continue
+        if (
+            impact_velocity["turn_degrees"]
+            >= max(0.0, float(nearby_impact_turn_degrees))
+        ):
+            if (
+                nearby_impact is None
+                or impact_velocity["turn_degrees"]
+                > nearby_impact["velocity"]["turn_degrees"]
+            ):
+                nearby_impact = {
+                    "frame": int(impact_frame),
+                    "velocity": impact_velocity,
+                }
+    if nearby_impact is not None:
+        return False, {
+            "reason": "candidate_near_non_floor_impact",
+            "frame_offset_from_rebound": frame_offset_from_rebound,
+            "distance_from_rebound": distance_from_rebound,
+            "horizontal_retention": float(horizontal_retention),
+            "largest_path_gap_frames": int(largest_gap),
+            "rebound": rebound_stats,
+            "rebound_velocity": rebound_velocity,
+            "candidate_velocity": candidate_velocity,
+            "nearby_impact": nearby_impact,
+        }
+
+    return True, {
+        "reason": (
+            "smooth_floor_rebound_continuation"
+            if frame_offset_from_rebound > 0
+            else "smooth_floor_rebound_approach"
+        ),
+        "frame_offset_from_rebound": frame_offset_from_rebound,
+        "distance_from_rebound": distance_from_rebound,
+        "horizontal_retention": float(horizontal_retention),
+        "largest_path_gap_frames": int(largest_gap),
+        "rebound": rebound_stats,
+        "rebound_velocity": rebound_velocity,
+        "candidate_velocity": candidate_velocity,
+    }
 
 
 def nearest_prediction(point, predictions):
