@@ -16,7 +16,7 @@ from pathlib import Path
 SCHEMA_VERSION = "ball-model-v1"
 SCHEMA_VERSION_V2 = "ball-model-v2"
 SCHEMA_VERSIONS = (SCHEMA_VERSION, SCHEMA_VERSION_V2)
-DEFAULT_MODEL_DIR = Path(__file__).resolve().parent / "models" / "crosscourt-ball-416-v1"
+DEFAULT_MODEL_DIR = Path(__file__).resolve().parent / "models" / "crosscourt-wasb-416-v1"
 _EXPORT_HINT = (
     "Produce it in the training environment with export_ball_model.py "
     "(see ios/MODEL.md §2b)."
@@ -168,6 +168,34 @@ def describe(model_dir=None):
     }
 
 
+def _resolve_device(torch_module):
+    """BALL_DEVICE -> torch device string.
+
+    Auto (unset or "auto") picks CUDA when available, else CPU. It never
+    picks MPS: HRNet over 32-tile batches on an 8 GB unified-memory machine
+    is a realistic memory-pressure panic, so MPS is opt-in only
+    (BALL_DEVICE=mps). An explicitly requested device that is unavailable
+    raises rather than falling back -- a silent CPU fallback would make a
+    "fast" run quietly 50x slower.
+    """
+    configured = os.environ.get("BALL_DEVICE", "").strip().lower()
+    if configured in ("", "auto"):
+        return "cuda" if torch_module.cuda.is_available() else "cpu"
+    if configured == "cpu":
+        return "cpu"
+    if configured == "cuda":
+        if not torch_module.cuda.is_available():
+            raise RuntimeError("BALL_DEVICE=cuda but torch reports no CUDA device")
+        return "cuda"
+    if configured == "mps":
+        mps = getattr(torch_module.backends, "mps", None)
+        if mps is None or not mps.is_available():
+            raise RuntimeError("BALL_DEVICE=mps but torch reports MPS unavailable")
+        return "mps"
+    raise ValueError(
+        f"Unknown BALL_DEVICE {configured!r}; expected auto, cpu, cuda or mps")
+
+
 class TorchScriptRunner:
     """Runs the traced ball model over a batch of tile crops.
 
@@ -178,10 +206,11 @@ class TorchScriptRunner:
     which is what manifest.decode distinguishes.
     """
 
-    def __init__(self, module, manifest, torch_module):
+    def __init__(self, module, manifest, torch_module, device="cpu"):
         self._module = module
         self._torch = torch_module
         self.manifest = manifest
+        self.device = device
 
     def run_batch(self, crops):
         import numpy as np
@@ -192,6 +221,8 @@ class TorchScriptRunner:
         # swap), so pass the channels through unchanged and do not rescale.
         stacked = np.stack(crops).astype("float32")
         tensor = torch.from_numpy(stacked).permute(0, 3, 1, 2).contiguous()
+        if self.device != "cpu":
+            tensor = tensor.to(self.device)
 
         with torch.no_grad():
             raw = self._module(tensor)
@@ -288,10 +319,11 @@ class HeatmapRunner:
     is invisible here.
     """
 
-    def __init__(self, module, manifest, torch_module):
+    def __init__(self, module, manifest, torch_module, device="cpu"):
         self._module = module
         self._torch = torch_module
         self.manifest = manifest
+        self.device = device
 
     def _decode_output(self, output):
         results = []
@@ -311,6 +343,8 @@ class HeatmapRunner:
         torch = self._torch
         stacked = np.stack(stacks).astype("float32")           # [B, H, W, 3*F]
         tensor = torch.from_numpy(stacked).permute(0, 3, 1, 2).contiguous()
+        if self.device != "cpu":
+            tensor = tensor.to(self.device)
         with torch.no_grad():
             raw = self._module(tensor)
         if isinstance(raw, (list, tuple)):
@@ -319,7 +353,12 @@ class HeatmapRunner:
 
 
 def load_detector(model_dir=None):
-    """Load the traced model. Raises loudly; never falls back to another detector."""
+    """Load the traced model. Raises loudly; never falls back to another detector.
+
+    BALL_DEVICE picks the compute device (see _resolve_device: CUDA auto,
+    MPS opt-in). It is read once per model_dir -- the runner is cached --
+    so changing it mid-process has no effect.
+    """
     model_dir = Path(model_dir) if model_dir is not None else model_dir_from_env()
     cached = _DETECTOR_CACHE.get(model_dir)
     if cached is not None:
@@ -335,11 +374,14 @@ def load_detector(model_dir=None):
             "deliberately torch-free; install the full requirements.txt."
         ) from exc
 
+    device = _resolve_device(torch)
     module = torch.jit.load(str(manifest.artifact_path), map_location="cpu")
     module.eval()
+    if device != "cpu":
+        module = module.to(device)
     if manifest.decode == "heatmap_peak":
-        runner = HeatmapRunner(module, manifest, torch)
+        runner = HeatmapRunner(module, manifest, torch, device=device)
     else:
-        runner = TorchScriptRunner(module, manifest, torch)
+        runner = TorchScriptRunner(module, manifest, torch, device=device)
     _DETECTOR_CACHE[model_dir] = runner
     return runner

@@ -40,7 +40,7 @@ video ──► ball detection ──► bounce detection ──► classificati
 
 | Stage | Where | What it does |
 |---|---|---|
-| Ball detection | `inference_engine.py`, `job_runner.py` | Per-frame ball boxes. Coarse strided pass, then a dense refine pass only around hit candidates. |
+| Ball detection | `ball_model.py`, `ball_detector.py`, `job_runner.py` | Per-frame ball positions. Default (`BALL_DETECTOR=local`) is the committed WASB temporal model: native-resolution 416px tiles, 3 consecutive frames per detection, strided coarse pass with true `t±1` neighbours, then a dense refine pass around hit candidates. `BALL_DETECTOR=rfdetr` keeps the hosted Roboflow RF-DETR (`inference_engine.py`) for A/B eval; that is the only path needing `ROBOFLOW_API_KEY`. Every run records which backend produced it (`ball_backend` in job.json and report-v1). **The WASB backend is wired but not yet measured; the line-call eval against `eval_set/BASELINE-2026-07-23.md` is the gate for any recall claim.** |
 | Bounce detection | `detect_wall_hits.py`, `bounce_gb_model_detector.py` | Finds impact frames from trajectory kinks. `detect_wall_hits` locates candidates for the refine pass; `bounce_gb_model_detector` labels the events. One path, not a choice — the selectable engines were removed 2026-07-27. |
 | Audio rescue | `audio_events.py` | Impact sounds recover bounces the trajectory missed. |
 | Classification | `classify_events.py` | Labels each hit wall / side wall / floor / racket. |
@@ -74,9 +74,12 @@ Useful environment variables:
 
 | Variable | Default | Effect |
 |---|---|---|
-| `ROBOFLOW_API_KEY` | — | Required for model inference. |
-| `ROBOFLOW_MODEL_ID` | `ai-squash-line-tracker/4` | Which detection model to load. |
-| `TRACKING_BACKEND` | `auto` | `torch` (GPU/MPS) or `onnx` (CPU). |
+| `BALL_DETECTOR` | `local` | Ball detector for analysis jobs: `local` (committed WASB temporal model) or `rfdetr` (hosted Roboflow). No silent fallback. |
+| `BALL_DEVICE` | `auto` | Device for the local ball detector: CUDA when available, else CPU. MPS is opt-in (`mps`), never auto. |
+| `BALL_MODEL_DIR` | `models/crosscourt-wasb-416-v1` | Override the local ball model directory. |
+| `ROBOFLOW_API_KEY` | — | Required only when `BALL_DETECTOR=rfdetr`. |
+| `ROBOFLOW_MODEL_ID` | `ai-squash-line-tracker/4` | Which hosted detection model to load (rfdetr backend). |
+| `TRACKING_BACKEND` | `auto` | rfdetr backend only: `torch` (GPU/MPS) or `onnx` (CPU). |
 | `COACH_LLM_PROVIDER` | OpenAI when an API key is present; otherwise local templates | `ollama`, `openai`, or `local`. |
 | `OLLAMA_COACH_MODEL` | `qwen3:8b` | Local model used for structured coaching reports. |
 | `OLLAMA_BASE_URL` | `http://127.0.0.1:11434` | Ollama server used by the Flask app. |
@@ -208,7 +211,7 @@ rows whose context windows straddle the cut.
 | `judge_call.py` | The IN/OUT decision, in pixel space against calibrated lines. |
 | `court_model.py` | Calibration geometry: the floor homography and the camera solve. |
 | `ios/` | Native SwiftUI app. Play records natively; Matches and Coach are webviews. |
-| `ball_track_offline.py` | Offline runner for the locally trained YOLOX ball detector. |
+| `ball_track_offline.py` | Offline runner for the local ball detector (WASB temporal by default; a YOLOX artifact via `BALL_MODEL_DIR`). |
 | `archive/stereo/` | The archived two-phone path. Inert, uncollected, restorable. |
 | `label_hits.py` | Offline frame-by-frame labeler. |
 | `build_eval_set.py`, `eval_line_calls.py` | Label distillation and evaluation replay. |

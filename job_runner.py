@@ -17,6 +17,7 @@ from pathlib import Path
 
 import cv2
 
+import ball_model
 import capabilities
 import court_model
 import movement_stats
@@ -24,11 +25,13 @@ import person_model
 import player_attribution
 import rally_segmenter
 from audio_events import extract_audio_candidates
+from ball_detector import detect_frame, detect_frame_stack
+from ball_track_offline import selected_detector
 from bounce_gb_model_detector import DEFAULT_MODEL_PATH as BOUNCE_GB_MODEL_PATH
 from bounce_gb_model_detector import detect_hits_with_gb_model
 from classify_events import classify_events
 from detect_wall_hits import detect_hits_from_rows, scale_frames_for_fps, scaled_hit_kwargs
-from inference_engine import get_tracking_model, infer_frame_predictions
+from inference_engine import DEFAULT_MODEL_ID, get_tracking_model, infer_frame_predictions
 from judge_call import (
     Point,
     judge_ball,
@@ -309,8 +312,20 @@ def start_tracking_job(run_id):
     return thread
 
 
-def decode_segments_to_queue(video_path, segments, frame_queue, stop_event, decode_errors):
-    """Producer thread: decode (start, end, stride) segments into frame_queue."""
+def decode_segments_to_queue(video_path, segments, frame_queue, stop_event,
+                             decode_errors, temporal=False):
+    """Producer thread: decode (start, end, stride) segments into frame_queue.
+
+    temporal=False enqueues (frame_idx, frame) -- the single-frame payload
+    the rfdetr backend consumes. temporal=True enqueues
+    (center_idx, [prev, cur, nxt]) for each strided center: CONSECUTIVE
+    frames (the temporal model was trained on t-1/t/t+1, never t-s/t/t+s),
+    decoded with read(); frames no window needs are skipped with grab()
+    exactly as before. Segment edges pad by repeating the first/last frame,
+    mirroring ball_track_offline._centered_windows so serving matches
+    training, and state resets per segment so a window never spans a
+    segment boundary.
+    """
 
     def enqueue(item):
         while not stop_event.is_set():
@@ -319,6 +334,11 @@ def decode_segments_to_queue(video_path, segments, frame_queue, stop_event, deco
                 return
             except queue.Full:
                 continue
+
+    def emit_window(center_idx, prev, center, nxt):
+        enqueue((center_idx, [prev if prev is not None else center,
+                              center,
+                              nxt if nxt is not None else center]))
 
     cap = cv2.VideoCapture(str(video_path))
     try:
@@ -331,9 +351,15 @@ def decode_segments_to_queue(video_path, segments, frame_queue, stop_event, deco
 
             cap.set(cv2.CAP_PROP_POS_FRAMES, seg_start)
             read_count = seg_start
+            last_decoded = None   # (idx, frame) -- prev-adjacency check
+            pending = None        # (center_idx, prev, frame) awaiting its nxt
 
             while read_count <= seg_end and not stop_event.is_set():
-                if (read_count - seg_start) % stride != 0:
+                offset = (read_count - seg_start) % stride
+                is_center = offset == 0
+                is_neighbour = stride >= 2 and offset in (1, stride - 1)
+                wanted = is_center or (temporal and (stride == 1 or is_neighbour))
+                if not wanted:
                     # grab() skips the decode-to-BGR step for strided-out frames.
                     if not cap.grab():
                         break
@@ -344,8 +370,29 @@ def decode_segments_to_queue(video_path, segments, frame_queue, stop_event, deco
                 if not ok:
                     break
 
-                enqueue((read_count, frame))
+                if not temporal:
+                    enqueue((read_count, frame))
+                    read_count += 1
+                    continue
+
+                if pending is not None:
+                    center_idx, prev, center = pending
+                    nxt = frame if read_count == center_idx + 1 else None
+                    emit_window(center_idx, prev, center, nxt)
+                    pending = None
+
+                if is_center:
+                    prev = None
+                    if last_decoded is not None and last_decoded[0] == read_count - 1:
+                        prev = last_decoded[1]
+                    pending = (read_count, prev, frame)
+
+                last_decoded = (read_count, frame)
                 read_count += 1
+
+            if temporal and pending is not None:
+                center_idx, prev, center = pending
+                emit_window(center_idx, prev, center, None)
     except Exception as error:
         decode_errors.append(error)
     finally:
@@ -353,22 +400,85 @@ def decode_segments_to_queue(video_path, segments, frame_queue, stop_event, deco
         enqueue(None)
 
 
+def load_ball_backend():
+    """Resolve BALL_DETECTOR into (backend, model) for this job.
+
+    "local" (the default) loads the committed WASB artifact via
+    ball_model.load_detector(); "rfdetr" keeps the hosted tracking model --
+    the only branch that needs ROBOFLOW_API_KEY. Loud on every failure;
+    never falls back, because a silent swap would make the local/rfdetr
+    split invisible in every downstream number.
+    """
+    backend = selected_detector()
+    if backend == "rfdetr":
+        return backend, get_tracking_model()
+    return backend, ball_model.load_detector()
+
+
+def ball_backend_summary(backend, model):
+    """The attribution block stored on the job and report (spec §7):
+    a run's numbers are attributable to the detector and device that
+    produced them, like players_v2.backend."""
+    if backend == "local":
+        manifest = model.manifest
+        return {
+            "backend": "local",
+            "name": manifest.name,
+            "version": manifest.version,
+            "artifact_sha256": manifest.artifact_sha256,
+            "device": getattr(model, "device", "cpu"),
+        }
+    return {
+        "backend": "rfdetr",
+        "model_id": os.getenv("ROBOFLOW_MODEL_ID", DEFAULT_MODEL_ID),
+    }
+
+
 def track_segments(model, video_path, segments, inference_width, source_fps, results, on_frame,
-                   frame_observer=None):
+                   frame_observer=None, backend="rfdetr"):
     """Consumer loop: infer frames from the decode queue into `results`.
 
     Decode runs on its own thread so it overlaps inference, which dominates.
     `frame_observer(frame_idx, frame)`, when given, is called for every
-    decoded frame in this call — callers wire it only on the coarse pass so
-    the person-detection cadence rides the coarse decode, never refine or
-    audio-rescue (spec §4.2).
+    decoded CENTER frame in this call — callers wire it only on the coarse
+    pass so the person-detection cadence rides the coarse decode, never
+    refine or audio-rescue (spec §4.2). Neighbour frames on the temporal
+    path are invisible to observers.
+
+    backend "rfdetr" (default) is the historical per-frame path. backend
+    "local" runs a ball_model runner (`model` has .manifest) at NATIVE
+    resolution — inference_width is deliberately ignored, tiling owns scale
+    (ios/MODEL.md §6) — and a temporal manifest (frames_per_input == 3)
+    consumes the 3-frame windows the temporal producer emits. The selection
+    floor becomes the manifest's own conf_threshold: the motion-consistency
+    selector is the low-confidence rescue mechanism (the ByteTrack idea,
+    absorbed), so the 0.40 rfdetr floor would silently discard the recall
+    the model was fine-tuned to recover.
     """
-    frame_queue = queue.Queue(maxsize=DECODE_QUEUE_SIZE)
+    temporal = False
+    confidence_floor = CONFIDENCE_THRESHOLD
+    if backend == "local":
+        frames_per_input = int(model.manifest.frames_per_input)
+        if frames_per_input not in (1, 3):
+            raise ValueError(
+                f"job_runner supports frames_per_input 1 or 3, got "
+                f"{frames_per_input}; widening the window is a deliberate "
+                f"change, not a default.")
+        temporal = frames_per_input == 3
+        confidence_floor = float(model.manifest.conf_threshold)
+    elif backend != "rfdetr":
+        raise ValueError(f"Unknown ball backend {backend!r}")
+
+    # A temporal item holds 3 frames; shrink the queue so worst-case
+    # buffered frame count stays in the same ballpark.
+    queue_size = max(2, DECODE_QUEUE_SIZE // 3) if temporal else DECODE_QUEUE_SIZE
+    frame_queue = queue.Queue(maxsize=queue_size)
     stop_event = threading.Event()
     decode_errors = []
     decoder = threading.Thread(
         target=decode_segments_to_queue,
         args=(video_path, segments, frame_queue, stop_event, decode_errors),
+        kwargs={"temporal": temporal},
         daemon=True,
     )
     decoder.start()
@@ -380,15 +490,22 @@ def track_segments(model, video_path, segments, inference_width, source_fps, res
             if item is None:
                 break
 
-            frame_idx, frame = item
+            frame_idx, payload = item
+            center = payload[1] if temporal else payload
             if frame_observer is not None:
-                frame_observer(frame_idx, frame)
-            predictions = infer_frame_predictions(
-                model,
-                frame,
-                CONFIDENCE_THRESHOLD,
-                inference_width,
-            )
+                frame_observer(frame_idx, center)
+            if backend == "local":
+                if temporal:
+                    predictions = detect_frame_stack(model, payload, model.manifest)
+                else:
+                    predictions = detect_frame(model, payload, model.manifest)
+            else:
+                predictions = infer_frame_predictions(
+                    model,
+                    payload,
+                    CONFIDENCE_THRESHOLD,
+                    inference_width,
+                )
             raw_predictions[frame_idx] = predictions
             on_frame(frame_idx)
     finally:
@@ -405,7 +522,7 @@ def track_segments(model, video_path, segments, inference_width, source_fps, res
 
     selected_predictions = select_motion_consistent_ball_predictions(
         raw_predictions,
-        CONFIDENCE_THRESHOLD,
+        confidence_floor,
         window_frames=scaled_window_frames(source_fps),
     )
     for frame_idx, ball_prediction in selected_predictions.items():
@@ -1560,8 +1677,17 @@ def run_tracking_job(run_id):
                 )
                 return
 
-            update_job(run_id, status="running", stage="coarse", message="Loading local model...")
-            model = get_tracking_model()
+            update_job(run_id, status="running", stage="coarse", message="Loading ball detector...")
+            ball_backend, model = load_ball_backend()
+            backend_summary = ball_backend_summary(ball_backend, model)
+            backend_label = (
+                f"local ({backend_summary['name']} v{backend_summary['version']}, "
+                f"{backend_summary['device']})"
+                if ball_backend == "local"
+                else f"rfdetr ({backend_summary['model_id']})"
+            )
+            update_job(run_id, ball_backend=backend_summary,
+                       message=f"Ball detector: {backend_label}")
             wall_x_range = tin_horizontal_range_from_run(run_dir)
 
             person_pass = build_person_pass(source_fps, frame_stride)
@@ -1575,6 +1701,8 @@ def run_tracking_job(run_id):
             results = {}
             # A pass at stride > 1 only needs to be good enough to locate hit
             # candidates, so it can also run at a reduced inference width.
+            # (rfdetr only: the local backend tiles at native resolution and
+            # ignores inference_width entirely -- MODEL.md §6.)
             coarse_width = COARSE_INFERENCE_WIDTH if frame_stride > 1 else inference_width
             track_segments(
                 model,
@@ -1588,6 +1716,7 @@ def run_tracking_job(run_id):
                     person_pass.observe if person_pass is not None else None,
                     motion.observe,
                 ),
+                backend=ball_backend,
             )
             write_results_csv(csv_path, results)
 
@@ -1644,6 +1773,7 @@ def run_tracking_job(run_id):
                     source_fps,
                     results,
                     make_progress_callback("Refine pass"),
+                    backend=ball_backend,
                 )
                 write_results_csv(csv_path, results)
 
@@ -1691,6 +1821,7 @@ def run_tracking_job(run_id):
                         source_fps,
                         results,
                         make_progress_callback("Audio rescue"),
+                        backend=ball_backend,
                     )
                     write_results_csv(csv_path, results)
 

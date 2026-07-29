@@ -13,6 +13,7 @@ import json
 
 import cv2
 import numpy as np
+import pytest
 
 import job_runner
 import person_model
@@ -75,6 +76,18 @@ def _make_job(tmp_path, run_id, video_path):
         total_frames=4,
     )
     return run_dir
+
+
+@pytest.fixture(autouse=True)
+def _default_to_rfdetr_backend(monkeypatch):
+    """Pin the historical rfdetr backend for this module.
+
+    These integration tests predate the local WASB default and stub the
+    rfdetr seams (get_tracking_model / infer_frame_predictions) -- on the
+    local default they would load the real committed artifact instead.
+    Tests about the local backend override this explicitly (delenv restores
+    the real default)."""
+    monkeypatch.setenv("BALL_DETECTOR", "rfdetr")
 
 
 def _stub_pipeline(monkeypatch):
@@ -539,3 +552,254 @@ def test_no_court_means_no_movement_stats_with_a_reason(tmp_path, monkeypatch):
     assert movement["enabled"] is False
     assert "court" in movement["reason"]
     assert job.get("players_v2") is None
+
+
+def _drain_decode(video_path, segments, temporal):
+    import queue as queue_module
+    import threading
+
+    frame_queue = queue_module.Queue()
+    stop_event = threading.Event()
+    errors = []
+    job_runner.decode_segments_to_queue(
+        video_path, segments, frame_queue, stop_event, errors,
+        temporal=temporal,
+    )
+    assert errors == []
+    items = []
+    while True:
+        item = frame_queue.get_nowait()
+        if item is None:
+            return items
+        items.append(item)
+
+
+def _frame_value(frame):
+    """Recover the frame's identity from its solid pixel value.
+
+    _write_clip paints frame i as solid i*20, but mp4 encoding is lossy
+    (value 20 can decode as 17), so snap to the nearest multiple of 20.
+    """
+    return round(int(frame[0, 0, 0]) / 20) * 20
+
+
+def test_temporal_decode_stride1_sliding_windows_and_edge_padding(tmp_path):
+    video = tmp_path / "clip.mp4"
+    _write_clip(video, frame_count=5)
+    items = _drain_decode(video, [(0, 4, 1)], temporal=True)
+    assert [idx for idx, _ in items] == [0, 1, 2, 3, 4]
+    values = {idx: [_frame_value(f) for f in frames] for idx, frames in items}
+    assert values[0] == [0, 0, 20]        # left edge pads prev with cur
+    assert values[2] == [20, 40, 60]      # interior: true neighbours
+    assert values[4] == [60, 80, 80]      # right edge pads nxt with cur
+
+
+def test_temporal_decode_stride4_centers_get_true_neighbours(tmp_path):
+    video = tmp_path / "clip.mp4"
+    _write_clip(video, frame_count=10)
+    items = _drain_decode(video, [(0, 9, 4)], temporal=True)
+    assert [idx for idx, _ in items] == [0, 4, 8]
+    values = {idx: [_frame_value(f) for f in frames] for idx, frames in items}
+    assert values[0] == [0, 0, 20]          # first center: padded prev, true nxt
+    assert values[4] == [60, 80, 100]       # strided center: TRUE t-1/t+1, not t-4/t+4
+    assert values[8] == [140, 160, 180]
+
+
+def test_temporal_decode_stride2_shared_neighbours(tmp_path):
+    video = tmp_path / "clip.mp4"
+    _write_clip(video, frame_count=5)
+    items = _drain_decode(video, [(0, 4, 2)], temporal=True)
+    assert [idx for idx, _ in items] == [0, 2, 4]
+    values = {idx: [_frame_value(f) for f in frames] for idx, frames in items}
+    assert values[2] == [20, 40, 60]
+    assert values[4] == [60, 80, 80]
+
+
+def test_temporal_decode_resets_across_segments(tmp_path):
+    video = tmp_path / "clip.mp4"
+    _write_clip(video, frame_count=12)
+    items = _drain_decode(video, [(0, 3, 1), (8, 11, 1)], temporal=True)
+    assert [idx for idx, _ in items] == [0, 1, 2, 3, 8, 9, 10, 11]
+    values = {idx: [_frame_value(f) for f in frames] for idx, frames in items}
+    assert values[3] == [40, 60, 60]        # segment end pads, never crosses
+    assert values[8] == [160, 160, 180]     # new segment starts padded
+
+
+def test_non_temporal_decode_payload_unchanged(tmp_path):
+    video = tmp_path / "clip.mp4"
+    _write_clip(video, frame_count=6)
+    items = _drain_decode(video, [(0, 5, 2)], temporal=False)
+    assert [idx for idx, _ in items] == [0, 2, 4]
+    assert all(isinstance(frame, np.ndarray) for _, frame in items)
+
+
+class _StubBallRunner:
+    """A ball_model-runner stand-in: manifest + recording run_batch."""
+
+    class _Manifest:
+        frames_per_input = 3
+        conf_threshold = 0.1
+        input_size = (416, 416)
+        tile_overlap_px = 64
+        max_batch_tiles = 32
+        nms_iou = 0.45
+        class_names = ("ball",)
+        name = "stub-wasb"
+        version = 1
+        artifact_sha256 = "deadbeef"
+
+    def __init__(self):
+        self.manifest = self._Manifest()
+        self.batches = []
+        self.device = "cpu"
+
+    def run_batch(self, stacks):
+        self.batches.append([s.shape for s in stacks])
+        return [[] for _ in stacks]
+
+
+def test_track_segments_local_temporal_feeds_stacks_and_observes_centers(tmp_path):
+    video = tmp_path / "clip.mp4"
+    _write_clip(video, frame_count=8)
+    runner = _StubBallRunner()
+    results = {}
+    observed = []
+    job_runner.track_segments(
+        runner, video, [(0, 7, 4)], 640, 30.0, results,
+        on_frame=lambda idx: None,
+        frame_observer=lambda idx, frame: observed.append(
+            (idx, _frame_value(frame))),
+        backend="local",
+    )
+    # Observer fired once per CENTER frame with the center frame itself.
+    assert observed == [(0, 0), (4, 80)]
+    # Every stack reaching the runner is one 9-channel tile (64x48 clip
+    # is smaller than one 416 tile, zero-padded).
+    for batch in runner.batches:
+        for shape in batch:
+            assert shape == (416, 416, 9)
+    # No detections -> empty rows for the two centers.
+    assert sorted(results) == [0, 4]
+    assert all(results[idx]["detected"] is False for idx in results)
+
+
+def test_track_segments_local_uses_manifest_confidence_floor(tmp_path, monkeypatch):
+    video = tmp_path / "clip.mp4"
+    _write_clip(video, frame_count=4)
+    runner = _StubBallRunner()
+    floors = []
+
+    def spy_select(predictions_by_frame, confidence_threshold, **kwargs):
+        floors.append(confidence_threshold)
+        return {frame: None for frame in predictions_by_frame}
+
+    monkeypatch.setattr(
+        job_runner, "select_motion_consistent_ball_predictions", spy_select)
+    job_runner.track_segments(
+        runner, video, [(0, 3, 1)], 640, 30.0, {},
+        on_frame=lambda idx: None, backend="local")
+    assert floors == [pytest.approx(0.1)]
+
+    monkeypatch.setattr(job_runner, "infer_frame_predictions",
+                        lambda model, frame, threshold, width: [])
+    job_runner.track_segments(
+        object(), video, [(0, 3, 1)], 640, 30.0, {},
+        on_frame=lambda idx: None, backend="rfdetr")
+    assert floors[-1] == pytest.approx(0.40)
+
+
+def test_track_segments_local_single_frame_manifest_uses_detect_frame(tmp_path, monkeypatch):
+    video = tmp_path / "clip.mp4"
+    _write_clip(video, frame_count=4)
+    runner = _StubBallRunner()
+    runner.manifest.frames_per_input = 1
+    calls = []
+    monkeypatch.setattr(
+        job_runner, "detect_frame",
+        lambda model, frame, manifest: calls.append(frame.shape) or [])
+    job_runner.track_segments(
+        runner, video, [(0, 3, 2)], 640, 30.0, {},
+        on_frame=lambda idx: None, backend="local")
+    assert len(calls) == 2          # frames 0 and 2 (stride 2), full frames
+
+
+def test_track_segments_rejects_unsupported_frames_per_input(tmp_path):
+    runner = _StubBallRunner()
+    runner.manifest.frames_per_input = 5
+    with pytest.raises(ValueError, match="frames_per_input"):
+        job_runner.track_segments(
+            runner, "unused.mp4", [(0, 3, 1)], 640, 30.0, {},
+            on_frame=lambda idx: None, backend="local")
+
+
+def test_track_segments_rejects_unknown_backend():
+    with pytest.raises(ValueError, match="backend"):
+        job_runner.track_segments(
+            object(), "unused.mp4", [(0, 3, 1)], 640, 30.0, {},
+            on_frame=lambda idx: None, backend="coreml")
+
+
+def test_load_ball_backend_local_never_touches_roboflow(monkeypatch):
+    monkeypatch.delenv("BALL_DETECTOR", raising=False)   # default is local
+    monkeypatch.delenv("ROBOFLOW_API_KEY", raising=False)
+    stub = _StubBallRunner()
+    monkeypatch.setattr(job_runner.ball_model, "load_detector", lambda: stub)
+
+    def explode():
+        raise AssertionError("rfdetr path must not load on the local backend")
+
+    monkeypatch.setattr(job_runner, "get_tracking_model", explode)
+    backend, model = job_runner.load_ball_backend()
+    assert backend == "local"
+    assert model is stub
+
+
+def test_load_ball_backend_rfdetr_branch(monkeypatch):
+    monkeypatch.setenv("BALL_DETECTOR", "rfdetr")
+    sentinel = object()
+    monkeypatch.setattr(job_runner, "get_tracking_model", lambda: sentinel)
+    backend, model = job_runner.load_ball_backend()
+    assert backend == "rfdetr"
+    assert model is sentinel
+
+
+def test_load_ball_backend_unknown_value_raises(monkeypatch):
+    monkeypatch.setenv("BALL_DETECTOR", "coreml")
+    with pytest.raises(ValueError, match="coreml"):
+        job_runner.load_ball_backend()
+
+
+def test_ball_backend_summary_shapes():
+    local = job_runner.ball_backend_summary("local", _StubBallRunner())
+    assert local == {
+        "backend": "local", "name": "stub-wasb", "version": 1,
+        "artifact_sha256": "deadbeef", "device": "cpu",
+    }
+    hosted = job_runner.ball_backend_summary("rfdetr", object())
+    assert hosted["backend"] == "rfdetr"
+    assert hosted["model_id"]          # squashai/1 or ROBOFLOW_MODEL_ID
+
+
+def test_run_tracking_job_local_backend_end_to_end(tmp_path, monkeypatch):
+    video_path = tmp_path / "clip.mp4"
+    _write_clip(video_path)
+    run_id = "test-job-runner-local-ball"
+    run_dir = _make_job(tmp_path, run_id, video_path)
+    _qualify_for_ball_tier(run_id, run_dir)
+
+    monkeypatch.delenv("BALL_DETECTOR", raising=False)
+    monkeypatch.delenv("ROBOFLOW_API_KEY", raising=False)
+    monkeypatch.setenv("PERSON_DETECTOR", "none")
+    stub = _StubBallRunner()
+    monkeypatch.setattr(job_runner.ball_model, "load_detector", lambda: stub)
+    monkeypatch.setattr(
+        job_runner, "extract_audio_candidates",
+        lambda video_path, start_frame, end_frame, fps: [])
+
+    job_runner.run_tracking_job(run_id)
+
+    job = job_runner.get_job(run_id)
+    assert job["status"] == "complete"
+    assert job["ball_backend"]["backend"] == "local"
+    assert job["ball_backend"]["name"] == "stub-wasb"
+    assert stub.batches            # the stub actually ran

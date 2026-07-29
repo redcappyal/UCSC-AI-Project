@@ -136,6 +136,7 @@ def build_report(run_dir, coach_builder=None):
         "capabilities": job.get("capabilities"),
         "tiers_enabled": tiers_enabled(job),
         "detection_coverage": job.get("detection_coverage"),
+        "ball_backend": job.get("ball_backend"),
         "rally_timeline": job.get("rally_timeline"),
         "players_v2": job.get("players_v2"),
         "shots": _shots(run_dir, job, coach_builder),
