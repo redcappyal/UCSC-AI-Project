@@ -141,7 +141,7 @@ iOS app in Safari (add-to-home-screen capable).
 ### 3.2 Shell anatomy (do not restructure)
 
 ```
-<header>        fixed-height top bar: back chevron · home button · step label · theme toggle · action pill
+<header>        fixed-height top bar: back chevron · step label · theme toggle · action pill
 #reviewSeg      match-review pane switcher (review phases only — §8.21)
 #instr          one-line contextual instruction strip (dim), directly under the header
 #stage          flex-growing black canvas area: video frame, overlays, zoom controls
@@ -469,14 +469,14 @@ in-between sizes, or put two primary-styled buttons on screen at once.
 
 ### 8.2 Header
 
-Back chevron (`‹`, 30/400, 44 px) — home button (`#hdrHome`, house stroke SVG, 44 px) —
-step label (ellipsizing) — theme toggle (animated sun/moon SVG, §10) — action pill. Hidden
-elements use `.hidden`, layout never reflows around them (label flexes).
+Back chevron (`‹`, 30/400, 44 px) — step label (ellipsizing) — theme toggle (animated
+sun/moon SVG, §10) — action pill. Hidden elements use `.hidden`, layout never reflows
+around them (label flexes).
 
-The back chevron steps up one phase; the home button is a shortcut straight to the load
-screen (hidden only on `load` itself, where you are already home). Both are header
-affordances on the single shell header — not new nav chrome (§18): the §8.3 nav pill
-remains the only section router.
+The back chevron steps up one phase (hidden on section roots, which are siblings) — a
+header affordance on the single shell header, not new nav chrome (§18): the §8.3 nav
+pill remains the only section router. There is no home shortcut; leaving a flow means
+stepping back through it.
 
 ### 8.3 Nav dock (`#navPill` — dark, icon-only)
 
@@ -1179,7 +1179,7 @@ Each phase: header shows step label + proxied primary; `#instr` gives the one-li
 | `p-player1-report` / `p-player2-report` | **Match review — Player 1 / Player 2 panes.** Per-player coaching report | Player N front-wall map (§8.10 court chart + `.targetMeta`; serves excluded) · Player N report panel (§8.17, opening with the §8.22 provenance line) · Player N movement panel (§8.17: distance / position split / speeds + court heatmap) · **P1 only:** the run's floor-bounce map (§8.10 `#floorMapSvg` + `.targetMeta`) — bounces are per-run, not per-player, so the panel renders once under the first report rather than twice | — (no primary) |
 | `p-label` | Human bounce labeling | overview · label timeline · transport+zoom · 2-col type grid (dot+label) · delete (destructive = plain secondary, disabled until selection) | — |
 | `p-matches` | Analysis section root — session library | view head ("Analysis" + `n runs · live pipeline`) · one head-row `.clipcard` per analyzed run, opening that match's analysis page (§8.20) · `.emptycard` when none | — (no chevron; section root) |
-| `p-match` | **Match analysis.** One analyzed match, read end to end | view head (match date + duration) · `#matchBody`: the §8.20 analysis stack (Rallies · Movement · ball tier when it ran · "What this clip could measure" · provenance line) · ghost "Open full review" · `.emptycard` when the run is gone | — (back chevron only — no home button, like the review panes; the native shell hides its tab bar and settings gear here, §3.2) |
+| `p-match` | **Match analysis.** One analyzed match, read end to end | view head (match date + duration) · `#matchBody`: the §8.20 analysis stack (Rallies · Movement · ball tier when it ran · "What this clip could measure" · provenance line) · ghost "Open full review" · `.emptycard` when the run is gone | — (back chevron only, like the review panes; the native shell hides its tab bar and settings gear here, §3.2) |
 | `p-coach` | Training section root (hub) | view head · ink hero (Coaching + sessions ring) · three feature cards (§8.13) | — (no chevron; section root) |
 | `p-progress` | Progress section root — cross-session trends | view head · range `.seg` · delta strip · trend cards · best-mark card (§8.20) · `.emptycard` under two runs | — (no chevron; section root) |
 | `p-live` | Placeholder: live match | placeholder hero · Planned card (§8.14) | — (back chevron only) |
@@ -1190,7 +1190,7 @@ Each phase: header shows step label + proxied primary; `#instr` gives the one-li
 **The match review page.** `p-track` + `p-player1-report` + `p-player2-report` are one
 page in three panes (§3.3), reached only by finishing an analysis or by opening a match
 from Analysis. Header on every pane: back chevron · the match date as `#stepLabel` ·
-theme toggle — **no home button and no step number**. The run is committed, so there is
+theme toggle — **no step number**. The run is committed, so there is
 no calibration behind the page to walk back into and no position in a flow to report;
 `stepSequence()` therefore ends at `clip`. Only the Call pane has a primary ("Judge
 frame", proxied per §3.4) — a report pane has nothing to act on. The §8.21 switcher is
