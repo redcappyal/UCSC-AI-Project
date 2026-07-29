@@ -15,11 +15,18 @@ pipeline -- not job_runner, not the detectors. A test asserts that. The moment
 this module *can* read a hit, something will make it, and tier 1 silently
 re-acquires the problem it was built to escape.
 
-Everything here is a pure function of two time series, which is what makes the
-thresholds testable without video.
+Segmentation itself is a pure function of two time series, which is what makes
+the thresholds testable without video. Two things sit alongside it:
+`motion_energy_step`, which produces one of those series from frames, and
+`build_rally_timeline`, which is allowed to *compare* the result against
+hit-derived rallies passed in as plain data. Reconciliation lives there
+precisely so the segmenting stays unable to see a ball.
 """
 
 import statistics
+
+import cv2
+import numpy as np
 
 # A rally shorter than this is a knock-up, a let, or a door closing. Two
 # seconds is roughly the shortest real exchange -- serve plus one return --
@@ -61,6 +68,13 @@ MOTION_ONLY_CONFIDENCE = 0.3
 # serve, a return, and a reply -- the point at which "someone hit something
 # twice" becomes "a rally happened".
 CONFIDENT_IMPACT_COUNT = 4
+
+# Frames are downscaled to this width before differencing. Motion energy must
+# mean the same thing at 1080p and 4K, or the same match filmed on two phones
+# segments into different rallies; a fixed working width is what makes the
+# threshold comparable across clips. It also makes the difference cheap enough
+# to run on every decoded frame.
+MOTION_WORK_WIDTH = 160
 
 
 def infer_gap_seconds(impact_times):
@@ -289,3 +303,84 @@ def segment_rallies(
         })
 
     return rallies
+
+
+# --- motion energy ----------------------------------------------------------
+# The only part of this module that touches pixels. It stays here rather than
+# in job_runner because it is the segmenter's input and nothing else consumes
+# it; cv2 is not the ball pipeline, and the import test above is about the
+# pipeline, not about images.
+
+
+def motion_energy_step(previous_small, frame_bgr):
+    """One frame's motion energy against its predecessor.
+
+    Returns `(small, energy)`: the downscaled grayscale frame to carry into the
+    next call, and the mean absolute difference from the previous one.
+
+    Energy is 0.0 when there is no predecessor. Seeding with the frame itself
+    would put a spike at the start of every clip, and a spike is exactly what
+    the segmenter reads as the beginning of a rally.
+    """
+    height, width = frame_bgr.shape[:2]
+    scale = MOTION_WORK_WIDTH / float(width)
+    small = cv2.cvtColor(
+        cv2.resize(frame_bgr, (MOTION_WORK_WIDTH, max(1, int(round(height * scale))))),
+        cv2.COLOR_BGR2GRAY,
+    )
+
+    if previous_small is None or previous_small.shape != small.shape:
+        return small, 0.0
+    return small, float(np.mean(cv2.absdiff(small, previous_small)))
+
+
+# --- timeline assembly ------------------------------------------------------
+
+
+def build_rally_timeline(impact_times_s, motion_series, duration_s,
+                         player_assignment):
+    """The rally timeline a run reports, plus how it squares with the ball tier.
+
+    `impact_times_s` is None when the clip's audio could not be read at all,
+    and an empty list when it was read and was quiet. Those are different
+    answers and are kept apart: collapsing them reports a clip with no audio
+    track as one where nobody hit anything.
+
+    `player_assignment` is the hit-derived rally structure, passed in as plain
+    data. This function may *compare* against it -- that is reconciliation, and
+    it happens here rather than in segment_rallies precisely so the segmenting
+    itself stays unable to see a ball.
+    """
+    impacts = list(impact_times_s or [])
+    rallies = segment_rallies(impacts, motion_series or [], duration_s)
+
+    return {
+        "rallies": rallies,
+        "gap_s": infer_gap_seconds(impacts),
+        "audio_available": impact_times_s is not None,
+        "agrees_with_hits": _agreement_with_hit_rallies(rallies, player_assignment),
+    }
+
+
+def _agreement_with_hit_rallies(rallies, player_assignment):
+    """Whether every hit-derived rally's midpoint falls inside a timeline span.
+
+    None when there are no hit-derived rallies to compare against -- with the
+    ball tier off there is nothing to agree with, and returning True would
+    claim a corroboration that never happened.
+
+    Midpoints rather than full containment: the two structures are built from
+    different signals and their edges legitimately differ by a second or so.
+    What matters is whether they found the same rallies, not the same borders.
+    """
+    hit_rallies = (player_assignment or {}).get("rallies") or []
+    if not hit_rallies:
+        return None
+
+    for hit_rally in hit_rallies:
+        start = float(hit_rally.get("start_time_seconds", 0.0))
+        end = float(hit_rally.get("end_time_seconds", start))
+        midpoint = (start + end) / 2.0
+        if not any(r["start_s"] <= midpoint <= r["end_s"] for r in rallies):
+            return False
+    return True

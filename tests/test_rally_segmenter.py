@@ -218,3 +218,131 @@ def test_threshold_uses_mad_when_it_is_usable():
     assert mad > 0, "fixture must exercise the MAD path"
 
     assert motion_threshold(energies) == median + MOTION_MAD_MULTIPLIER * mad
+
+
+# --- motion energy ----------------------------------------------------------
+
+
+def test_motion_energy_is_zero_between_identical_frames():
+    """A locked-off camera on a still court must read as no motion at all."""
+    import cv2
+    from rally_segmenter import motion_energy_step
+
+    frame = np.full((480, 640, 3), 120, dtype=np.uint8)
+
+    small, _ = motion_energy_step(None, frame)
+    _, energy = motion_energy_step(small, frame)
+
+    assert energy == 0.0
+
+
+def test_motion_energy_rises_with_how_much_of_the_frame_changed():
+    from rally_segmenter import motion_energy_step
+
+    base = np.full((480, 640, 3), 120, dtype=np.uint8)
+    small_change = base.copy()
+    small_change[0:40, 0:40] = 255
+    big_change = base.copy()
+    big_change[0:400, 0:600] = 255
+
+    reference, _ = motion_energy_step(None, base)
+    _, little = motion_energy_step(reference, small_change)
+    _, lots = motion_energy_step(reference, big_change)
+
+    assert 0.0 < little < lots
+
+
+def test_the_first_frame_has_no_predecessor_so_no_energy():
+    """Seeding must not invent a spike at frame zero that reads as a rally."""
+    from rally_segmenter import motion_energy_step
+
+    _, energy = motion_energy_step(None, np.zeros((480, 640, 3), dtype=np.uint8))
+
+    assert energy == 0.0
+
+
+def test_motion_energy_is_resolution_independent():
+    """1080p and 4K of the same scene must not produce different rally counts."""
+    from rally_segmenter import motion_energy_step
+
+    def energy_at(height, width):
+        base = np.full((height, width, 3), 120, dtype=np.uint8)
+        moved = base.copy()
+        moved[: height // 2, : width // 2] = 255
+        reference, _ = motion_energy_step(None, base)
+        return motion_energy_step(reference, moved)[1]
+
+    assert abs(energy_at(480, 640) - energy_at(1080, 1440)) < 2.0
+
+
+# --- the timeline -----------------------------------------------------------
+
+
+def _hit_rally(number, start, end):
+    return {"rally_number": number,
+            "start_time_seconds": start, "end_time_seconds": end}
+
+
+def test_timeline_reports_audio_unavailable_without_pretending_it_was_silent():
+    """None impacts means the audio could not be read; [] means it was quiet.
+
+    Collapsing them would report a clip with no audio track as one where
+    nobody hit anything.
+    """
+    from rally_segmenter import build_rally_timeline
+
+    timeline = build_rally_timeline(None, _motion([(10.0, 16.0)], duration=30.0),
+                                    30.0, None)
+
+    assert timeline["audio_available"] is False
+    assert timeline["rallies"]
+
+
+def test_timeline_agrees_when_every_hit_rally_lands_inside_one():
+    from rally_segmenter import build_rally_timeline
+
+    impacts = [5.0, 5.8, 6.9, 8.0, 9.2, 30.0, 30.7, 31.9, 33.0]
+    timeline = build_rally_timeline(
+        impacts, _motion([(4.5, 9.5), (29.5, 33.5)]), 60.0,
+        {"rallies": [_hit_rally(1, 5.0, 9.2), _hit_rally(2, 30.0, 33.0)]},
+    )
+
+    assert timeline["agrees_with_hits"] is True
+
+
+def test_timeline_disagrees_when_a_hit_rally_falls_outside_every_span():
+    from rally_segmenter import build_rally_timeline
+
+    impacts = [5.0, 5.8, 6.9, 8.0, 9.2]
+    timeline = build_rally_timeline(
+        impacts, _motion([(4.5, 9.5)], duration=60.0), 60.0,
+        {"rallies": [_hit_rally(1, 5.0, 9.2), _hit_rally(2, 48.0, 52.0)]},
+    )
+
+    assert timeline["agrees_with_hits"] is False
+
+
+def test_agreement_is_unknown_rather_than_true_when_there_are_no_hit_rallies():
+    """With the ball tier off there is nothing to agree with.
+
+    Reporting True would claim corroboration that never happened.
+    """
+    from rally_segmenter import build_rally_timeline
+
+    timeline = build_rally_timeline(
+        [5.0, 6.0, 7.0, 8.0], _motion([(4.5, 8.5)], duration=30.0), 30.0, None
+    )
+
+    assert timeline["agrees_with_hits"] is None
+
+
+def test_timeline_carries_the_gap_it_used():
+    """The gap is inferred per clip, so a reader cannot reconstruct it."""
+    from rally_segmenter import build_rally_timeline
+
+    timeline = build_rally_timeline(
+        [5.0, 6.0, 7.0, 8.0, 30.0, 31.0, 32.0, 33.0],
+        _motion([(4.5, 8.5), (29.5, 33.5)]), 60.0, None,
+    )
+
+    assert timeline["gap_s"] > 0

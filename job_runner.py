@@ -21,6 +21,7 @@ import capabilities
 import court_model
 import person_model
 import player_attribution
+import rally_segmenter
 from audio_events import extract_audio_candidates
 from bounce_gb_model_detector import DEFAULT_MODEL_PATH as BOUNCE_GB_MODEL_PATH
 from bounce_gb_model_detector import detect_hits_with_gb_model
@@ -137,6 +138,61 @@ def persist_job(job):
         os.replace(tmp_path, job_path)
     except OSError:
         pass
+
+
+class MotionAccumulator:
+    """Frame-motion energy gathered off whichever decode pass is running.
+
+    Samples are keyed by frame index, so a frame decoded twice -- the refine
+    and audio-rescue passes re-visit windows the coarse pass already saw --
+    contributes once. Without that the re-tracked windows would read as extra
+    motion precisely where the ball tier already found something, which is the
+    one place tier 1 must not be quietly influenced by tier 3.
+
+    `reset()` drops the reference frame at a segment boundary: consecutive
+    segments are not adjacent in time, and differencing across the seam
+    manufactures a spike that reads as the start of a rally.
+    """
+
+    def __init__(self, source_fps):
+        self.source_fps = float(source_fps) or 30.0
+        self._previous = None
+        self._energy_by_frame = {}
+
+    def reset(self):
+        self._previous = None
+
+    def observe(self, frame_idx, frame):
+        if frame_idx in self._energy_by_frame:
+            return
+        self._previous, energy = rally_segmenter.motion_energy_step(
+            self._previous, frame
+        )
+        self._energy_by_frame[frame_idx] = energy
+
+    def series(self):
+        """`(time_s, energy)` samples in frame order."""
+        return [
+            (frame_idx / self.source_fps, energy)
+            for frame_idx, energy in sorted(self._energy_by_frame.items())
+        ]
+
+
+def compose_frame_observers(*observers):
+    """One `frame_observer` callable fanning out to several.
+
+    track_segments takes a single observer, and both the person pass and the
+    motion accumulator want to ride the coarse decode.
+    """
+    live = [observer for observer in observers if observer is not None]
+    if not live:
+        return None
+
+    def observe(frame_idx, frame):
+        for observer in live:
+            observer(frame_idx, frame)
+
+    return observe
 
 
 def build_person_pass(source_fps, frame_stride):
@@ -1124,6 +1180,59 @@ def floor_zones_from_run(run_dir):
     return payload.get("floor_zones")
 
 
+# Motion samples per second when decoding for motion alone. Rally boundaries
+# are wanted to about half a second, so six samples a second is several times
+# the resolution the answer is read at -- and a 40-minute match decodes in a
+# fraction of the time a full pass would take.
+MOTION_ONLY_SAMPLES_PER_SECOND = 6
+
+# Audio peaks kept when building the rally timeline. The ball pipeline asks for
+# a handful because each one costs a re-track window; the timeline only needs
+# their times, so it can afford the density that makes rally boundaries sharp
+# across a long clip.
+AUDIO_TIMELINE_MAX_PEAKS = 512
+
+
+def accumulate_motion_only(video_path, start_frame, end_frame, source_fps):
+    """Decode for motion energy alone, running no model.
+
+    Used when the ball tier is off. Rally structure needs neither a ball nor a
+    court, so a clip that cannot support tier 3 must still get tier 1 -- and
+    the only thing standing in the way is that the motion series was, until
+    now, a by-product of the ball decode.
+
+    Best-effort: a decode failure costs the timeline, not the run.
+    """
+    stride = max(2, int(round(source_fps / MOTION_ONLY_SAMPLES_PER_SECOND)))
+    accumulator = MotionAccumulator(source_fps)
+    frame_queue = queue.Queue(maxsize=DECODE_QUEUE_SIZE)
+    stop_event = threading.Event()
+    decode_errors = []
+    decoder = threading.Thread(
+        target=decode_segments_to_queue,
+        args=(video_path, [(start_frame, end_frame, stride)], frame_queue,
+              stop_event, decode_errors),
+        daemon=True,
+    )
+    decoder.start()
+    try:
+        while True:
+            item = frame_queue.get()
+            if item is None:
+                break
+            accumulator.observe(*item)
+    finally:
+        stop_event.set()
+        while True:
+            try:
+                frame_queue.get_nowait()
+            except queue.Empty:
+                break
+        decoder.join(timeout=5)
+
+    return accumulator
+
+
 def detection_coverage(results):
     """Fraction of inferred frames that actually carried a ball.
 
@@ -1158,12 +1267,52 @@ def load_run_calibration(run_dir):
         return None
 
 
-def complete_without_ball_tier(run_id, run_dir, csv_path, caps):
+RALLY_TIMELINE_SCHEMA = "rally-timeline-v1"
+
+
+def build_and_write_rally_timeline(run_dir, audio_candidates, motion_series,
+                                   duration_s, player_assignment=None):
+    """Assemble the rally timeline and persist it beside the run.
+
+    Written to disk as well as returned because reports are assembled from the
+    run directory, not from the in-memory job -- a job that has been evicted
+    still has to render.
+
+    `audio_candidates` is None when the clip's audio could not be read at all,
+    which the timeline reports as `audio_available: false` rather than as
+    silence. Best-effort persistence, matching write_track_samples: an
+    unwritable run dir must not fail the job.
+    """
+    impact_times = None
+    if audio_candidates is not None:
+        impact_times = [
+            float(candidate["time_seconds"])
+            for candidate in audio_candidates
+            if "time_seconds" in candidate
+        ]
+
+    timeline = rally_segmenter.build_rally_timeline(
+        impact_times, motion_series, duration_s, player_assignment
+    )
+    timeline["schema"] = RALLY_TIMELINE_SCHEMA
+
+    try:
+        (Path(run_dir) / "rally_timeline.json").write_text(
+            json.dumps(timeline, indent=2), encoding="utf-8"
+        )
+    except OSError:
+        pass
+    return timeline
+
+
+def complete_without_ball_tier(run_id, run_dir, csv_path, caps, timeline=None):
     """Finish a run whose footage cannot support ball tracking.
 
     The ball stages are skipped rather than run to an empty result, which
     saves a model load and, more importantly, stops the run from presenting
-    as a rally in which nothing happened. `capabilities` carries the reason.
+    as a rally in which nothing happened. `capabilities` carries the reason,
+    and `timeline` carries what tier 1 found anyway -- rally structure needs
+    neither a ball nor a court, so it survives this path by design.
 
     A headers-only CSV is still written: readers open it unconditionally, and
     to them a missing file is an error path nobody wrote while an empty one is
@@ -1185,6 +1334,7 @@ def complete_without_ball_tier(run_id, run_dir, csv_path, caps):
         rows=0,
         hits=[],
         capabilities=caps,
+        rally_timeline=timeline,
         target_zones=build_target_zone_summary([]),
         target_zones_by_player=build_player_target_zone_summaries([]),
         player_assignment=player_assignment,
@@ -1273,7 +1423,25 @@ def run_tracking_job(run_id):
             update_job(run_id, capabilities=caps)
 
             if not caps["ball_tracking"]["enabled"]:
-                complete_without_ball_tier(run_id, run_dir, csv_path, caps)
+                # Tier 1 does not need the ball or the court, so it runs on its
+                # own decode rather than dying with the pass it used to ride.
+                update_job(run_id, status="running", stage="coarse",
+                           message="Reading rally structure...")
+                motion = accumulate_motion_only(
+                    video_path, start_frame, end_frame, source_fps
+                )
+                timeline = build_and_write_rally_timeline(
+                    run_dir,
+                    extract_audio_candidates(
+                        video_path, start_frame, end_frame, source_fps,
+                        max_peaks=AUDIO_TIMELINE_MAX_PEAKS,
+                    ),
+                    motion.series(),
+                    (end_frame - start_frame + 1) / source_fps,
+                )
+                complete_without_ball_tier(
+                    run_id, run_dir, csv_path, caps, timeline
+                )
                 return
 
             update_job(run_id, status="running", stage="coarse", message="Loading local model...")
@@ -1281,6 +1449,10 @@ def run_tracking_job(run_id):
             wall_x_range = tin_horizontal_range_from_run(run_dir)
 
             person_pass = build_person_pass(source_fps, frame_stride)
+            # Motion rides the coarse decode, which is the one contiguous pass
+            # over the whole range. Samples are keyed by frame index, so the
+            # refine and audio-rescue re-decodes cannot contribute twice.
+            motion = MotionAccumulator(source_fps)
             if person_pass is not None:
                 update_job(run_id, message="Person detector: rfdetr")
 
@@ -1296,7 +1468,10 @@ def run_tracking_job(run_id):
                 source_fps,
                 results,
                 make_progress_callback("Coarse pass"),
-                frame_observer=person_pass.observe if person_pass is not None else None,
+                frame_observer=compose_frame_observers(
+                    person_pass.observe if person_pass is not None else None,
+                    motion.observe,
+                ),
             )
             write_results_csv(csv_path, results)
 
@@ -1501,6 +1676,17 @@ def run_tracking_job(run_id):
             coverage = detection_coverage(results)
             if coverage is not None:
                 extra_fields["detection_coverage"] = coverage
+            # Built from audio and motion, then reconciled against the
+            # hit-derived rallies rather than replaced by them: the two come
+            # from different signals, and which one to trust is the report's
+            # decision to make with both in hand.
+            extra_fields["rally_timeline"] = build_and_write_rally_timeline(
+                run_dir,
+                audio_candidates,
+                motion.series(),
+                (end_frame - start_frame + 1) / source_fps,
+                player_assignment,
+            )
             update_job(
                 run_id,
                 status="complete",

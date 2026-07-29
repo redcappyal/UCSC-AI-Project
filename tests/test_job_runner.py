@@ -365,3 +365,88 @@ def test_audio_pads_shrink_on_slower_footage():
 
     assert slow[0][0] > fast[0][0]
     assert slow[0][1] < fast[0][1]
+
+
+# --- rally timeline ---------------------------------------------------------
+# Tier 1 must be emitted whether or not the ball tier ran. These are the tests
+# that stop rally structure from quietly becoming ball-dependent again.
+
+
+def test_a_qualified_run_emits_a_rally_timeline(tmp_path, monkeypatch):
+    video_path = tmp_path / "clip.mp4"
+    _write_clip(video_path)
+    run_id = "test-job-runner-timeline-on"
+    run_dir = _make_job(tmp_path, run_id, video_path)
+    _qualify_for_ball_tier(run_id, run_dir)
+    _stub_pipeline(monkeypatch)
+
+    job_runner.run_tracking_job(run_id)
+
+    timeline = job_runner.get_job(run_id)["rally_timeline"]
+    assert "rallies" in timeline
+    assert "audio_available" in timeline
+    assert "gap_s" in timeline
+
+
+def test_a_ball_tier_skipped_run_still_emits_a_rally_timeline(tmp_path, monkeypatch):
+    """The whole point of the ladder.
+
+    30 fps camera-roll footage cannot support ball tracking, and used to
+    produce a run with nothing in it. Rally structure needs neither the ball
+    nor a court, so it must survive the skip -- otherwise tier 1 is
+    ball-dependent by omission rather than by design.
+    """
+    video_path = tmp_path / "clip.mp4"
+    _write_clip(video_path)
+    run_id = "test-job-runner-timeline-off"
+    _make_job(tmp_path, run_id, video_path)
+    job_runner.update_job(run_id, probe=_unqualified_probe())
+    monkeypatch.setattr(
+        job_runner, "get_tracking_model",
+        lambda: (_ for _ in ()).throw(AssertionError("model loaded")),
+    )
+    monkeypatch.setattr(job_runner, "extract_audio_candidates",
+                        lambda *args, **kwargs: [])
+
+    job_runner.run_tracking_job(run_id)
+
+    job = job_runner.get_job(run_id)
+    assert job["status"] == "complete"
+    assert job["hits"] == []
+    assert "rally_timeline" in job, "tier 1 vanished with the ball tier"
+
+
+def test_unreadable_audio_is_reported_not_silently_treated_as_quiet(
+    tmp_path, monkeypatch
+):
+    video_path = tmp_path / "clip.mp4"
+    _write_clip(video_path)
+    run_id = "test-job-runner-timeline-no-audio"
+    run_dir = _make_job(tmp_path, run_id, video_path)
+    _qualify_for_ball_tier(run_id, run_dir)
+    monkeypatch.setattr(job_runner, "get_tracking_model", lambda: object())
+    monkeypatch.setattr(job_runner, "infer_frame_predictions",
+                        lambda model, frame, threshold, width: [])
+    monkeypatch.setattr(job_runner, "extract_audio_candidates",
+                        lambda *args, **kwargs: None)
+
+    job_runner.run_tracking_job(run_id)
+
+    timeline = job_runner.get_job(run_id)["rally_timeline"]
+    assert timeline["audio_available"] is False
+
+
+def test_the_timeline_is_written_to_the_run_directory(tmp_path, monkeypatch):
+    """Reports are assembled from the run dir, not from the in-memory job."""
+    video_path = tmp_path / "clip.mp4"
+    _write_clip(video_path)
+    run_id = "test-job-runner-timeline-file"
+    run_dir = _make_job(tmp_path, run_id, video_path)
+    _qualify_for_ball_tier(run_id, run_dir)
+    _stub_pipeline(monkeypatch)
+
+    job_runner.run_tracking_job(run_id)
+
+    written = json.loads((run_dir / "rally_timeline.json").read_text())
+    assert written["schema"] == "rally-timeline-v1"
+    assert "rallies" in written
