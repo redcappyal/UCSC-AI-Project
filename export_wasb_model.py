@@ -282,7 +282,18 @@ def main():
             self.wrapped = wrapped
 
         def forward(self, x):
-            return torch.sigmoid(self.wrapped(x))
+            out = self.wrapped(x)
+            # HRNet returns {scale: tensor} (out_scales [0] -> one entry),
+            # not a bare tensor -- verified against the real model 2026-07-29;
+            # the traced graph must emit the scale-0 TENSOR or sigmoid()
+            # explodes on a dict. Python-level unwrapping like this traces
+            # fine: the dict structure is constant, so the recorded graph is
+            # pure tensor ops.
+            if isinstance(out, dict):
+                out = out[min(out.keys())]
+            elif isinstance(out, (list, tuple)):
+                out = out[0]
+            return torch.sigmoid(out)
 
     cfg = AttrDict(yaml.safe_load(Path(args.wasb_cfg).read_text(encoding="utf-8")))
     model = HRNet(cfg)

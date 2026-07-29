@@ -776,6 +776,29 @@ def split_rallies_on_serve_fault(rallies):
     return split
 
 
+def flip_rally_parity(summary, rally_hits):
+    """Swap who served this rally, and re-alternate every hit in it.
+
+    Hit 1's player *is* the server, so a whole-rally parity flip and a server
+    flip are the same edit -- neither can be corrected without the other.
+
+    Deliberately not touched: winner_player_number is already the back-filled
+    observation, and the flip is precisely what makes the parity-derived
+    estimate agree with it; winner_reason has already been replaced by the
+    back-fill with "next_rally_serve_observed", so it no longer describes the
+    parity; last_call is a line call, independent of who hit.
+    """
+    server = other_player(summary["server_player_number"])
+    summary["server_player_number"] = server
+    for hit in rally_hits:
+        sequence = int(hit.get("rally_hit_sequence") or 1)
+        hit["server_player_number"] = server
+        hit["player_number"] = (
+            server if sequence % 2 == 1 else other_player(server)
+        )
+    summary["last_player_number"] = int(rally_hits[-1]["player_number"])
+
+
 def assign_front_wall_hit_players(hits, serve_resolver=None):
     for hit in hits:
         for key in (
@@ -876,6 +899,14 @@ def assign_front_wall_hit_players(hits, serve_resolver=None):
             "winner_reason": winner_reason,
             "winner_source": "est" if winner is not None else None,
             "winner_crosscheck_agrees": None,
+            # Provenance for the UI (spec §4). Seeded from the serve's own
+            # source; the back-fill below is the only thing that can promote
+            # "assumed" -> "repaired" or demote "observed" -> "conflict",
+            # because only a next observed serve can contradict this parity.
+            "attribution_state": (
+                "observed" if server_source == "observed" else "assumed"
+            ),
+            "parity_repaired": False,
             "last_call": last_call,
             "last_player_number": last_player,
             "serve_frame": (
@@ -904,6 +935,26 @@ def assign_front_wall_hit_players(hits, serve_resolver=None):
         summary["winner_crosscheck_agrees"] = (
             (est_winner == observed_winner) if est_winner is not None else None
         )
+        if summary["winner_crosscheck_agrees"] is not False:
+            continue
+        # A disagreement means this rally's parity is wrong: the est winner is
+        # a pure function of parity, so flipping the parity is exactly what
+        # reconciles it with the observation. Repair only a *propagated*
+        # serve -- there the flip trades an alternation guess for vision
+        # evidence, a strict upgrade. Flipping an observed serve would discard
+        # a direct observation, and if the true cause was a missed mid-rally
+        # hit it would only move the error to the start of the rally; those
+        # stay flagged. winner_crosscheck_agrees keeps its pre-repair value --
+        # it is the diagnostic that fired, and recomputing it would erase the
+        # only evidence that anything was wrong.
+        # No cascade: the back-fill runs only when rally N+1's serve is
+        # observed, so nothing downstream reads rally N's parity.
+        if summary["server_source"] == "observed":
+            summary["attribution_state"] = "conflict"
+        else:
+            flip_rally_parity(summary, rallies[index])
+            summary["attribution_state"] = "repaired"
+            summary["parity_repaired"] = True
 
     observed_serve_count = sum(
         1 for summary in rally_summaries if summary["server_source"] == "observed"

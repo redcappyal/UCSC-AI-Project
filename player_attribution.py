@@ -106,6 +106,13 @@ def build_players_v1(assignment, tracker_stats, detector_backend,
             "winner_player_number": winner,
             "winner_source": rally.get("winner_source"),
             "winner_crosscheck_agrees": rally.get("winner_crosscheck_agrees"),
+            # Provenance the rally ribbon renders (spec §4). server_source is
+            # deliberately NOT rewritten by a repair -- index.html's
+            # attributionAnchor() keys on it -- so a repaired rally still
+            # reads "propagated" there and only attribution_state tells the
+            # ribbon that its parity came from vision, not alternation.
+            "attribution_state": rally.get("attribution_state"),
+            "parity_repaired": bool(rally.get("parity_repaired")),
             "identity_confidence": rally.get("identity_confidence"),
             "score_after": dict(score),
         })

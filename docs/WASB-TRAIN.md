@@ -89,11 +89,27 @@ kernels, so `torch==1.11.0+cu113` will not run on this box at all. Since §0
 means we don't use Hydra or most of the repo's own plumbing, `hydra-core`
 isn't needed either. Install into the existing `.venv`
 (`C:\Users\alann\Code\ball-detector-train\.venv`, already has a working
-cu128 torch per `ios/MODEL.md`) — no new environment needed. `TODO(verify on
-clone)`: confirm `models/hrnet.py` and `losses/*.py` import cleanly with only
-`torch` + `torch.nn` (a skim of `hrnet.py` shows no Hydra/OmegaConf
-dependency at the class level — the `cfg` argument is a plain dict-like — but
-confirm no stray top-level `import hydra` in files you actually touch).
+cu128 torch per `ios/MODEL.md`) — no new environment needed.
+
+**Verified on clone (2026-07-28), with three corrections to the above:**
+
+1. **Configs live at `src/configs/`, not `configs/`.** Every config path in this
+   document (`configs/model/wasb.yaml`, `configs/loss/hm_wbce.yaml`,
+   `configs/dataloader/default.yaml`) is relative to `src/`. The repo root holds
+   only `src/` and whatever you create beside it. Confirmed absent:
+   `src/configs/runner/train.yaml` — §0's "training is unwired" finding holds.
+2. **`cfg` is not a plain dict.** `models/hrnet.py` imports cleanly with only
+   `torch`, but `HRNet(cfg)` *fails* on a `dict`: `__init__` subscripts
+   (`cfg['MODEL']['EXTRA']`) while `_make_deconv_layers` uses attribute access
+   (`cfg.MODEL.EXTRA`, `hrnet.py:334`). It is reached even with
+   `DECONV.NUM_DECONVS: 0`, because the attribute read happens before the loop.
+   Pass an `OmegaConf.load(...)` object — `pip install omegaconf` (standalone;
+   still no `hydra-core`).
+3. **`losses/` needs `pandas`.** `from losses.heatmap import HeatmapLoss` runs
+   `losses/__init__.py`, which pulls the whole loss zoo and transitively
+   `utils/utils.py` → `pandas`. Fails `ModuleNotFoundError` without it.
+
+Full extra install on the box: `pip install gdown pandas omegaconf pyyaml`.
 
 **Pretrained checkpoints.** Tennis and badminton are the closest regimes to
 squash: both are small-fast-ball racquet sports shot at broadcast-ish scale,
@@ -119,9 +135,14 @@ same key is what `detectors/detector.py` reads back
 (`checkpoint['model_state_dict']`) — this is the load key to use in §3, and
 it's consistent between how the repo trains and how the repo itself loads a
 checkpoint, which is the best evidence available that the released
-`wasb_tennis_best.pth.tar` follows this format too. `TODO(verify on clone)`:
-confirm by actually loading one and checking
-`set(checkpoint.keys())`.
+`wasb_tennis_best.pth.tar` follows this format too.
+
+**Verified on clone (2026-07-28)**: `wasb_tennis_best.pth.tar` is 6,102,633
+bytes (6.1 MB — small, it is a 1.48 M-param network), `torch.load` yields a
+`dict` whose *only* top-level key is `model_state_dict`, holding 428 entries.
+So `torch.load(ckpt)['model_state_dict']` is correct with no fallback needed.
+The stem is `conv1.weight` of shape `(64, 9, 3, 3)` — **9 input channels
+already**, confirming §2.1: `frames_in=3` × BGR needs no conv surgery.
 
 ---
 
@@ -261,6 +282,21 @@ label elsewhere — there's no ball in the window at all).
   detector uses — don't assume the conventional value. Whatever the actual
   trained config ends up being, derive `heatmap_stride` from the real output
   tensor shape at export time (`input_H / output_H`), never hardcode it.
+
+  **Measured on the box (2026-07-28)**, building `HRNet` from the shipped
+  `wasb.yaml` with only `inp_/out_height` and `inp_/out_width` set to 416 and
+  loading the tennis checkpoint: `load_state_dict` reports **0 missing and 0
+  unexpected keys**, and a `(1, 9, 416, 416)` input yields `(1, 3, 416, 416)`
+  — so **`heatmap_stride` is confirmed 1** (full-resolution heatmap) and the
+  416 change really is pure bookkeeping. Network is 1,481,427 params.
+- **Batch size on the 8 GB RTX 5060: use 4.** Measured peak allocation for a
+  full forward+backward+step at 416×416: batch 2 → 2.36 GB, batch 4 → 4.67 GB,
+  batch 8 → 9.32 GB, batch 16 → `OutOfMemoryError`. The card has ~8.55 GB, so
+  batch 8's 9.32 GB only "succeeds" by spilling into WDDM shared host memory
+  and will run far slower than its step count suggests — treat 8 as unusable,
+  not as a working option. The memory cost is activations, not weights: a
+  stride-1 network keeps full 416×416 feature maps through every stage, which
+  is why a 1.5 M-param model needs more VRAM than the 5 M-param YOLOX-Tiny.
 - **Loss**: `losses/heatmap.py`'s `HeatmapLoss` wrapping `losses/wbce.py`'s
   `WBCELoss` (`sub_name: wbce`) — this is the loss WASB's own model config
   pairs with in the shipped `hm_wbce.yaml`, i.e. the setup its released
@@ -292,15 +328,88 @@ five below exist verbatim; `--seq-frames` and `--clips-dir` are the ones this
 branch added — `--seq-frames` must be odd and requires `--clips-dir` or the
 script exits with `SystemExit`):
 
+**The source clips are gone (established 2026-07-28).** Nothing had needed them
+before: the 2026-07-24 build was single-frame, and `--clips-dir` is only
+required for `--seq-frames > 1`. A Spotlight sweep of the Mac turned up only the
+export JPEGs. So the neighbour frames come from the export itself, via
+`--seq-from-export`:
+
 ```bash
 .venv/bin/python prepare_ball_dataset.py \
     --source "~/Desktop/Annotated Data/SquashAI.coco" \
-    --clips-dir <dir-with-source-clips> \
     --seq-frames 3 \
+    --seq-from-export \
     --out ball-crops-seq-v1 \
     --val-clips "ModelTrainTest3" \
-    --test-clips "Bay Club Clip Compilation 1"
+    --test-clips "Bay Club Clip Compilation 1" \
+    --exclude-clips "Squash ｜ 5 Easy ways to INSTANTLY IMPROVE Your Game ｜ For Beginners -RhVGSsfFmGg-_f399"
 ```
+
+**Why this works at all.** Roboflow exports frames, and labelled frames arrive
+in contiguous runs, so an anchor inside a run already has its `t±1` on disk as
+plain export images. Measured on `ball-crops-2026-07-24`: both neighbours
+present for **92.2%** of `ModelTrainTest2`'s anchors, 44.3% of
+`ModelTrainTest3`'s, 64.1% of `Bay Club`'s. Anchors at a run boundary keep the
+side they have (repeat-anchor, the same convention the video path uses at a clip
+edge) and are dropped only when neither side exists.
+
+Three consequences, all favourable:
+
+- **No alignment probe and no `--frame-map`.** Both exist to translate export
+  indices into video frames; this path never leaves export space, so the
+  `Bay Club` variable-frame-rate problem in the note below simply does not
+  arise. Passing `--frame-map` with `--seq-from-export` is rejected.
+- **A cut cannot be sampled.** Shot boundaries fall at run boundaries, so the
+  cross-shot frame is unreachable by construction rather than by threshold.
+- **Neighbours often carry real labels**, unlike decoded video frames. Where
+  they do, `wasb_crops_dataset.py` can use a true Gaussian on that channel
+  instead of §2.2's mask — strictly more supervision than the video path
+  offers. Confirm the labelled fraction against the real export before relying
+  on it.
+
+The cost: a clip whose export was **not** sampled 1:1 with video frames gets a
+wider temporal baseline than the model sees at serving time — adjacent export
+frames are more than one video frame apart. That is `Bay Club Clip Compilation
+1` (export index 96 = video frame 163, 290 = 516), and it is the *test* split,
+so it costs eval fidelity rather than training correctness. `ModelTrainTest2/3`
+sampled 1:1 and are clean. Re-check this if `Bay Club` ever becomes a train
+clip.
+
+If the footage ever turns up, drop `--seq-from-export` and pass `--clips-dir`
+instead (the two are mutually exclusive): the video path restores the run-
+boundary anchors, which would roughly double the val split from 43 to 97
+anchors, at the price of reinstating the alignment probe and the `--frame-map`
+work.
+
+**Why the tutorial clip is excluded (decided 2026-07-28).** Its labelled frames
+are all court-view and perfectly good, but the surrounding video is an edited
+YouTube tutorial — cuts, text cards, talking head. Labelling therefore stops at
+every shot boundary, which puts a cut one frame from the last anchor of each
+burst, and `--seq-frames 3` pulls `t±1` straight from the video. Measured burst
+structure makes the difference stark: `ModelTrainTest2` is 412 labelled frames
+in **16 bursts** (avg 26 consecutive), while the tutorial is 175 frames in
+**51 bursts** (avg 3.4) — 53% of its anchors sit at a burst edge versus 7.8%
+for `ModelTrainTest2`. A cross-shot neighbour is worse than a missing one: §2.2
+masks the *target* for an unlabelled `t±1`, so the label side is safe, but the
+*input* stack still shows maximal inter-frame change co-occurring with a ball
+in the middle channel — training the exact inverse of §5(d)'s static-clutter
+lesson. Cost of excluding it: 961 of 2,936 train crops (33%).
+
+The two `｜` in that name are U+FF5C (fullwidth vertical line), not ASCII
+pipes — copy it, don't retype it.
+
+**Then read `splits.*.sequence_continuity` in the output manifest** before
+trusting the remaining clips. `prepare_ball_dataset.py` measures
+anchor-vs-neighbour mean|pixel diff| for every sequence it builds and reports
+per-clip `p50/p90/p99/max`. A flat spread means continuous footage and needs
+nothing; a long tail means shot boundaries next to labels, and
+`--seq-cut-threshold <N>` then replaces those neighbours with a repeated anchor
+(dropping the anchor entirely when neither side is usable, so three identical
+frames never carry a positive label). Pick `N` from the clip's own
+distribution — there is no good default, and a guessed one is worse than none.
+**`Bay Club Clip Compilation 1` is the one to check**: "Compilation" implies
+concatenated footage, and it is the test split, so a cut there corrupts the
+eval metric rather than the training set.
 
 Use the **same val/test clip split** as the last single-frame crop build
 (`ios/MODEL.md` §1's `ModelTrainTest3` / `Bay Club Clip Compilation 1` shown
@@ -393,6 +502,42 @@ actually made it into this training run's data, not just into the crop
 directory).
 
 ---
+
+## 5b. First run: crosscourt-ball-wasb-v1 (2026-07-29)
+
+Trained on `ball-crops-seq-v1` (export-path build, tutorial excluded: 1,975
+train / 89 val / 265 test sequence samples), init `wasb_tennis_best`, batch 4,
+Adam 1e-4. Early-stopped at epoch 41; **best val F1 0.710 at epoch 26
+(precision 1.000, recall 0.551)** at conf 0.5 / 5 px match radius. Same shape
+as the YOLOX precedent: val plateaued in the 20s, 15 more epochs bought
+nothing. Training scripts live on the box (`train_wasb.py`,
+`wasb_crops_dataset.py`, `check_gates.py` beside the WASB-SBDT clone).
+
+Gates: **(a) PASS** — one-batch overfit puts every supervised peak within
+1 px at ~0.7 conf (note: judge 5(a) by *peak placement*, never by loss ratio —
+416² targets are ~99.99% background, so "zero everywhere" already scores a
+microscopic loss). **(b) 7/16** contact-sheet peaks locked on, consistent with
+R 0.55. **(c) no inversion** — but no per-channel separation either: all three
+channels fire together, because outer channels are only ever supervised by
+repeats and negatives (§2.2 masks real neighbours), so they learn to echo the
+middle head. Harmless at serving time — `ball_model.py`'s HeatmapRunner
+decodes only the middle channel — but it means gate (c)'s strict
+"outers stay quiet" form cannot pass under this supervision scheme; the
+meaningful check is that the MIDDLE channel responds and no OUTER channel
+fires *instead*. **(d) PASS, unexpectedly well** — three identical frames
+containing a ball: middle-channel peak p50 0.014, max 0.038, 0% fire at 0.5.
+Static-clutter suppression emerged from motion statistics alone, before any
+§2.3 hard negatives exist.
+
+Read on val (single rig shared with train — memorisation, not accuracy):
+precision-limited nothing, recall-limited everything. When it fires it is
+essentially never wrong; it misses half the balls. The lever for v2 is
+recall: more independent bursts, §2.3 negatives, and production-mount footage.
+
+Exported to `models/crosscourt-wasb-416-v1` (traced sha256 `6eb5a6d3…`,
+measured stride 1). Round trip through the real serving path
+(`BALL_MODEL_DIR` + `load_detector().run_batch`): 60/89 val positives within
+5 px at the manifest's 0.1 floor, 52/89 at the caller's 0.4 bar.
 
 ## 6. Export (Task 7, not this document)
 

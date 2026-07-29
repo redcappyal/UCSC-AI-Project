@@ -95,7 +95,7 @@ training-app language). Its motifs, all now in the codebase:
 | Video-editor trim UI (accent handles, filmstrip, white playhead) | `.clipEditor`, `.clipHandle`, center-fixed `#clipCursor` |
 | Segmented range controls (`1W/1M/3M/6M`) | `.seg` segmented control, `.corrSeg` two-way segment (§8.18) |
 | Floating dark icon dock | `#navPill` section dock (§8.3) |
-| Expandable session cards with gauge + feedback rows | `.clipcard` on the Analysis root |
+| Session cards with gauge + feedback rows | `.clipcard` on the Analysis root (always open; the head row opens the review, §8.20) |
 | Zone/heat charts on a literal court | `.targetCourt` front-wall chart, `#floorMapSvg` bounce map |
 
 Tone target: **modern training companion** (TennisIQ-class sports apps) — warm but not
@@ -127,13 +127,23 @@ iOS app in Safari (add-to-home-screen capable).
   `body.phase-page` (`flex:1 1 auto; min-height:0; overflow-y:auto`); reports use
   `body.phase-target` and the Call page `body.phase-track`. Any new stage-less
   phase needs one of these, or its lower content silently becomes unreachable.
+- **A page that fixes `main`'s height must also floor the stage.**
+  `body.phase-track` sizes `main` from `--track-main-height`, measured from the
+  call controls; `preserveTrackStageHeight()` clamps that measurement to
+  `innerHeight − (header + #reviewSeg + #instr) − TRACK_MIN_STAGE_PX` (180 px)
+  and never below `TRACK_MIN_MAIN_PX` (240 px). Unclamped it is the same trap
+  reached from the other side: the taller Call pane measured past the viewport,
+  `#stage` collapsed to 0, and the tail of the page went off a body that never
+  scrolls. Any new chrome added between the header and `main` joins that
+  subtraction, and the clamp re-runs on `resize`.
 - `-webkit-tap-highlight-color:transparent` — we own press feedback (§11).
 
 ### 3.2 Shell anatomy (do not restructure)
 
 ```
 <header>        fixed-height top bar: back chevron · home button · step label · theme toggle · action pill
-#instr          one-line contextual instruction strip (dim), directly under header
+#reviewSeg      match-review pane switcher (review phases only — §8.21)
+#instr          one-line contextual instruction strip (dim), directly under the header
 #stage          flex-growing black canvas area: video frame, overlays, zoom controls
 <main>          the current phase <section> (controls, timelines, cards)
 #navPill        floating dark icon dock, bottom-center (section roots only)
@@ -162,11 +172,19 @@ native equivalent, so "Record a clip" takes the accent slot there.
 
 Each screen is a `<section id="p-…">` inside `<main>`, toggled with `.hidden`. The current
 phases: `p-load`, `p-record`, `p-frame`, `p-tap`, `p-review`, `p-tap-floor`, `p-clip`,
-`p-analyze`, `p-track`, `p-player1-report`, `p-player2-report`, `p-label`, `p-target`,
+`p-analyze`, `p-track`, `p-player1-report`, `p-player2-report`, `p-label`,
 the section roots `p-matches` (Analysis), `p-coach` (Training), `p-progress`, and the
 roadmap placeholders `p-live`, `p-stats`, `p-shot-bot`, `p-sharing` (blueprints in §16).
 To add a screen, add a section and follow §17 — never add a second header, tab bar, or
 routing chrome beyond the §8.3 nav dock.
+
+**One page may span several phases.** `p-track`, `p-player1-report` and
+`p-player2-report` are the three panes of the match review page (§16), not three steps:
+a `REVIEW_PHASES` constant groups them, the `#reviewSeg` switcher (§8.21) moves between
+them, the header carries the match date instead of a step number, and Back exits to
+Analysis from any pane. They stay separate `S.phase` values only because ~25 call sites
+key off `S.phase === 'track'` — the grouping is a routing fact, not a licence to spread
+one screen across phases whenever it is convenient.
 
 ### 3.4 The proxied-primary pattern
 
@@ -325,6 +343,15 @@ Won/lost, correct/incorrect and other **data** splits are not verdicts. Separate
 the solid-vs-dashed border grammar (§8.14, §13) plus an explicit label — never by
 borrowing `--in`/`--outcall` (§8.17 is the worked example).
 
+**How sure we are is also a data split.** Attribution provenance (§8.22 — whether a
+rally's shot labels were observed, repaired, assumed, or contradicted) is data quality,
+not a call and not a calibration edge: solid-vs-dashed carries *not confirmed*, and the
+quality tints carry the one contradicted state. It may never borrow `--in`/`--outcall`
+**or** the calibration hues (`--out`/`--service`/`--tin`). A draft flagged the conflict
+state with `--out` cyan, on the one page that also draws real calls and real fitted
+edges — where a borrowed hue stops meaning "we are unsure" and starts asserting
+something about the ball.
+
 ### 5.3 Contrast requirements
 
 - Body/primary text: ≥ 4.5:1 against its fill (`--text` on `--surface` ✓, ink on lime ✓).
@@ -413,7 +440,7 @@ disabled color), `:active{filter:brightness(.97)}`.
 | **Header pill** (`.pill`) | lime, width:auto, `min-height:40px`, padding `0 18px`, 14/600, `:disabled{opacity:.35}` | header action only |
 | **Start chip** (`button.startchip`) | lime, `min-height:32px`, padding `6px 16px`, 12/600, right-aligned in list rows | row-level actions in `.lrow` lists |
 | **Chip** (`.correctionRow button`) | width:auto, `min-height:34px`, 12/600, `1px --line` border, transparent; `.active` = lime fill + 700 | dense multi-choice rows (corrections) |
-| **Segmented** (`.seg`) | one `--seg-bg` capsule track, equal-flex 34 px pill buttons, active = `--surface` fill + small shadow | range/mode pickers (1W/1M/3M/6M) |
+| **Segmented** (`.seg`) | one `--seg-bg` capsule track, equal-flex 34 px pill buttons, active = `--surface` fill + small shadow | range/mode pickers (1W/1M/3M/6M); the review pane switcher (§8.21) |
 | **Two-way segment** (`.corrSeg`) | two separate equal-width pills, 6 px gap, no shared container; unselected `1px --line` transparent, selected `--accent-bg`/`--accent-text` 700 — full rules in §8.18 | binary choices (Bounce / Not bounce) |
 | **Stepper** (`.stepper button`) | 44×44 transparent circle, 26/400 glyph (−/+), `:active{background:var(--line)}`; groups divided by `1px --line`; center `.stepUnit` 13 dim label (`1 s`, `1 fr`) | frame/second nudging |
 | **Play** (`.playBtn`) | stepper-style circle with 22×22 stroke SVG | transport |
@@ -681,7 +708,10 @@ their markup defaults as the empty state — no fake sample data, ever.
 
 The per-player report body on `p-player1-report` / `p-player2-report`. A §8.9 card
 ("Player N report" + a right-aligned 13 dim source tag — `Local feedback` / `Ollama
-feedback` / `LLM feedback` / `Unavailable`) wrapping four stacked regions:
+feedback` / `LLM feedback` / `Unavailable`) wrapping the §8.22 provenance line and four
+stacked regions. The provenance line comes **first**, directly under the title: how much
+of this report rests on guessed attribution is stated before the numbers that rest on it,
+never appended after them as a caveat.
 
 1. `.coachIntro` — 14/400 `--dim` sentence naming what the report is built from.
 2. `.coachMetrics` — the **metric tile grid**: 2 columns (1 below 560 px), gap 10,
@@ -848,13 +878,17 @@ metrics) are **omitted entirely** when that tier did not run — drawing a zeroe
 three em-dashes reads as "we looked and found nothing", which is the single claim the
 capability card exists to prevent.
 
-- **Analysis run cards** (`.clipcard`): §8.9 card at padding 0. Collapsed row
+- **Analysis run cards** (`.clipcard`): §8.9 card at padding 0, rendered **open** —
+  every card shows its whole summary; there is no expand/collapse. Head row
   (`.cliptop`): 62×46 gradient thumb (hue rotates per run — the sanctioned gradient)
   with a court line-sketch + play glyph · run date 14/600 + duration `.metaline` ·
   right-aligned `.statechip` (`IN n%` in accent when calls exist, `ANALYZED`
-  otherwise). Tapping toggles `.clipbody` (max-height transition, §10 Micro).
-  Expanded, in ladder order — rally structure first because it is the tier that always
-  runs, ball detail last because it is the one most often gated off:
+  otherwise). **The head row is the card's one action:** tapping it opens that match's
+  review page (§16) by seeding the restore stash and rebooting — the same path the iOS
+  `#run` deep link takes. It is a `<div>`, so it carries `role="button"`,
+  `tabindex="0"` and an Enter/Space handler; without them a match would be reachable
+  by pointer only. Body, in ladder order — rally structure first because it is the tier
+  that always runs, ball detail last because it is the one most often gated off:
   **"Rallies"** — three `.scol` tiles (Count / Longest / In play %) and a `.metaline`
   naming the signal it came from ("From impact sounds and frame motion" / "From frame
   motion only — no audio track"), plus a disagreement note when the timeline and the
@@ -870,10 +904,9 @@ capability card exists to prevent.
   those frames"), which is what separates "found nothing" from "couldn't look" ·
   **"What this clip could measure"** — one `.fbrow` per tier, label left, `ON`/`OFF`
   `.statechip` right, and the reason as dim `.s` text under the label when off ·
-  primary **Open full review**
-  (seeds the §16 restore stash and reboots — the same path the iOS `#run` deep link
-  takes) · ghost "Watch source video" · a dim provenance `.metaline`
-  ("n front-wall hits · n judged · run id").
+  a dim provenance `.metaline` ("n front-wall hits · n judged · run id").
+  No buttons inside the card: the review page *is* "Open full review", and it owns
+  "Watch source video" (§16, `p-track`).
 - **Progress** (`p-progress`): `.seg` range picker (1W/1M/3M/6M) · `#deltastrip` —
   three `.delta` cards (radius 18) with 11 dim label, 20/700 value, and a `.chip`
   delta vs the previous run (`good`/`poor` tint, `flat` when unchanged) · `.trend`
@@ -882,6 +915,75 @@ capability card exists to prevent.
   accent line + soft area fill, accent end-dot with the value labeled · a `.bestrow`
   card (Best IN% to date). Baselines are the runs' own quartiles — never invented
   targets.
+
+### 8.21 Review pane switcher (`#reviewSeg`)
+
+The three-way `.seg` (§8.1) that moves between the match review page's panes:
+`Call | <player 1 name> | <player 2 name>`, labelled by `playerDisplayName(n)` so a run
+with saved names reads `Call | Ian | Sam`. Exactly one pill active; a tap calls
+`setPhase()` on that pane's phase.
+
+- **It sits between `<header>` and `#instr`, outside `<main>` — deliberately.** Every
+  review pane makes `main` its own scroller (`body.phase-track` / `body.phase-target`,
+  §3.1), so a switcher inside `main` would scroll away from the page whose whole purpose
+  is moving between panes.
+- It is chrome for **one page**, not a router: it renders only on the review phases and
+  the §8.3 dock remains the app's only section tab bar (§18). It takes the 14 px page
+  gutter (`margin:2px 14px 8px`) so it lines up with the content below it, and its
+  height is subtracted by the §3.1 stage clamp.
+- The §8.1 `.seg` recipe verbatim, no fork — which inherits `.seg`'s 34 px pills (42 px
+  including the track's 4 px padding). On a primary navigation control that is **§0.6
+  debt** of the same standing as `.corrSeg`'s 38 px (§8.18): a gap owed a fix, not a
+  precedent for sizing new controls at 34 px.
+- Pane labels are re-read on every pane entry and after a name is saved, so the switcher
+  and the report headings can never disagree about who Player 1 is.
+- The switcher is the only movement *between* panes. Back is not a pane control — it
+  leaves the page (§16).
+
+### 8.22 Rally attribution provenance (`.rallySegment.attr-*`, `.rallyLegend`, `.attrProvenance`)
+
+Every shot on the review page was assigned to a player by parity within its rally, not
+by watching who hit it. This component states, per rally, how much of that is evidence
+and how much is a guess — it is the honest counterweight to a report that otherwise
+reads as fact.
+
+**Ribbon states** — modifier classes on the rally segmentation ribbon's `.rallySegment`
+(§16, `p-track`):
+
+| State | Treatment | Means |
+|---|---|---|
+| `attr-observed` | the ribbon's plain neutral segment, no marker | serve was seen and the next rally's serve corroborates it |
+| `attr-repaired` | same neutral segment + a `↻` marker (10/700, top-right, `--dim`) | serve was a guess; the next observed serve corrected it |
+| `attr-assumed` | `--bg` fill, `--dim` ink, `1px dashed --line` | serve was a guess with nothing to check it against |
+| `attr-conflict` | `--tint-poor-bg` fill, `--tint-poor-fg` ink, dashed `--tint-poor-fg` border + a `!` marker | two independent observations disagree |
+
+`.active` — the rally under the playhead — still wins over all four. It marks position in
+the clip, a different axis from provenance, and the page would be unreadable if one axis
+could hide the other.
+
+**This is a data-quality split, not a verdict and not a calibration edge (§5.2).** Dashed
+vs solid carries *not confirmed* (§8.14, §13); the quality tints carry the one
+contradicted state; `--in`/`--outcall` and `--out`/`--service`/`--tin` are never borrowed
+here.
+
+Colour is never the only carrier (§0.3): each segment's `title` and `aria-label` name its
+state in words ("serve assumed", "attribution conflict"), and the `.rallyLegend` beneath
+the ribbon — 11 px dim rows, 12 px swatch + the same words — spells out the key. Each
+swatch is a **miniature of the segment it decodes**, marker glyph included (§8.11: the
+legend and the thing it decodes share tokens, or the legend lies). That is why `observed`
+and `repaired` swatches share the neutral segment fill and are told apart by the `↻` inside
+the swatch: accent belongs to `.active`, so a legend that painted these accent would decode
+a colour the ribbon never shows. The legend renders **only when two or more states are
+present**: a run where every rally was observed shows none, because a key full of warnings
+it never triggered makes a clean run look uncertain.
+
+**Provenance line** (`.attrProvenance`) — one 13/400 `--dim` sentence at the top of each
+player's report panel (§8.17), counting **rallies, not shots**, because the rally is the
+unit attribution is decided in: `Shot attribution across 4 rallies: 1 assumed · 1
+corrected from the next serve · 1 conflicting.` An all-observed run reads `Shot
+attribution observed across all 4 rallies.`; a run with no rallies hides the line
+entirely rather than printing a zero. It takes `.warn` when any rally conflicts —
+`--text` at 700, still no red (§13) — so the loud case is loud in weight, not in hue.
 
 ---
 
@@ -961,6 +1063,7 @@ Rules:
 | Working (known progress) | `.progressbox` with real stats (frames, fps, ETA) + determinate bar |
 | Working (unknown) | Indeterminate bar or stage scrim + pulsing uppercase label |
 | Inline status | `.status` line (14 dim), reserved height; `.warn` = 700 `--text` (still no red), `.ok` = `--text` |
+| Unverified / contradicted data | Dashed border + dim fill for *not confirmed*; `--tint-poor-*` only where two observations disagree; weight, never hue, for the loud case — never `--in`/`--outcall` or a calibration hue (§8.22 is the worked example) |
 | Error | `#errBanner` top banner: bold message + Dismiss. Recoverable, calm, specific |
 | Result | Verdict box state change within reserved space |
 | Placeholder | Dashed-border `.blank` treatment; full-page placeholders use `.placeholderHero` (§8.14) |
@@ -1014,11 +1117,10 @@ Each phase: header shows step label + proxied primary; `#instr` gives the one-li
 | `p-tap-floor` | Floor calibration wizard | `.floorRow`: diagram (progress marks) + prompt/side actions · skip-all / save-profile | "Use floor map" |
 | `p-clip` | Trim rally clip | overview · trim editor (accent handles) · transport+readout row · start/end nudge steppers · frame summary | "Track ball" |
 | `p-analyze` | Honest processing | `.progressbox` stats + bar (+ stage ANALYZING pulse) | — (auto-advances) |
-| `p-track` | Review track, judge calls | control area keeps its pre-rally-visualization height so the video stage does not shrink; the added content scrolls inside that footprint · scrub hint lives in the header `#instr` line (detection failures replace it, `.warn`) · rally segmentation card (proportional neutral ribbon, active segment in accent, text winner chip for every rally) · overview w/ marker minis · hit timeline (neon bars, center playhead) · readout · transport — **Review pane:** frame input + "Player maps" row · verdict box; **Challenge pane:** type dropdown (In/Out folded into the front-wall options) · Bounce / Not-bounce toggle (`.corrSeg`) · panes switched by a floating Review \| Challenge dock (`.callTabs`, same dark-dock shell as `#navPill` §8.3, fixed bottom-center) | "Judge frame" |
+| `p-track` | **Match review — Call pane.** Review track, judge calls, name the players | control area keeps its pre-rally-visualization height so the video stage does not shrink, floored against the stage per §3.1; the added content scrolls inside that footprint · scrub hint lives in the header `#instr` line (detection failures replace it, `.warn`) · rally segmentation card (proportional neutral ribbon, active segment in accent, `attr-*` provenance states + legend §8.22, text winner chip for every rally) · overview w/ marker minis · hit timeline (neon bars, center playhead) · readout · transport — **Review tab:** frame input + Judge row · verdict box · Players card (naming + serve crop) · ghost "Watch source video"; **Challenge tab:** type dropdown (In/Out folded into the front-wall options) · Bounce / Not-bounce toggle (`.corrSeg`) · tabs switched by a floating Review \| Challenge dock (`.callTabs`, same dark-dock shell as `#navPill` §8.3, fixed bottom-center) | "Judge frame" |
+| `p-player1-report` / `p-player2-report` | **Match review — Player 1 / Player 2 panes.** Per-player coaching report | Player N front-wall map (§8.10 court chart + `.targetMeta`; serves excluded) · Player N report panel (§8.17, opening with the §8.22 provenance line) · **P1 only:** the run's floor-bounce map (§8.10 `#floorMapSvg` + `.targetMeta`) — bounces are per-run, not per-player, so the panel renders once under the first report rather than twice | — (no primary) |
 | `p-label` | Human bounce labeling | overview · label timeline · transport+zoom · 2-col type grid (dot+label) · delete (destructive = plain secondary, disabled until selection) | — |
-| `p-target` | Stats: targets & bounces (debug) | Front-wall targets card (court chart + meta) · Floor bounces card (SVG map + meta) · Players card (naming + serve crop) | — |
-| `p-player1-report` / `p-player2-report` | Per-player coaching report — the last two steps of the judge flow | Player N front-wall map (§8.10 court chart + `.targetMeta`; serves excluded) · Player N report panel (§8.17) · P1 only: a `.row` "Player 2 report" secondary | — (back chevron only) |
-| `p-matches` | Analysis section root — session library | view head ("Analysis" + `n runs · live pipeline`) · expandable `.clipcard` per analyzed run (§8.20) · `.emptycard` when none | — (no chevron; section root) |
+| `p-matches` | Analysis section root — session library | view head ("Analysis" + `n runs · live pipeline`) · one always-open `.clipcard` per analyzed run, its head row opening that match's review (§8.20) · `.emptycard` when none | — (no chevron; section root) |
 | `p-coach` | Training section root (hub) | view head · ink hero (Coaching + sessions ring) · three feature cards (§8.13) | — (no chevron; section root) |
 | `p-progress` | Progress section root — cross-session trends | view head · range `.seg` · delta strip · trend cards · best-mark card (§8.20) · `.emptycard` under two runs | — (no chevron; section root) |
 | `p-live` | Placeholder: live match | placeholder hero · Planned card (§8.14) | — (back chevron only) |
@@ -1026,14 +1128,28 @@ Each phase: header shows step label + proxied primary; `#instr` gives the one-li
 | `p-shot-bot` | Placeholder: shot selection | placeholder hero · Planned card (§8.14) | — (back chevron only) |
 | `p-sharing` | Placeholder: your coach (coaching platform) | placeholder hero · Planned card (§8.14) | — (back chevron only) |
 
+**The match review page.** `p-track` + `p-player1-report` + `p-player2-report` are one
+page in three panes (§3.3), reached only by finishing an analysis or by opening a match
+from Analysis. Header on every pane: back chevron · the match date as `#stepLabel` ·
+theme toggle — **no home button and no step number**. The run is committed, so there is
+no calibration behind the page to walk back into and no position in a flow to report;
+`stepSequence()` therefore ends at `clip`. Only the Call pane has a primary ("Judge
+frame", proxied per §3.4) — a report pane has nothing to act on. The §8.21 switcher is
+the only movement between panes; Back exits to Analysis from **any** pane, never
+retreating P2 → P1 → Call.
+
 `p-load` is the **Dashboard section root** (§8.15). Sub-page back routes: `p-record` →
-Dashboard; `p-live` → Dashboard; `p-stats` / `p-shot-bot` / `p-sharing` → Training. The
-calibration wizard (`p-tap` → … → `p-tap-floor`) serves two flows: entered from
-`p-frame` it exits to `p-clip`; entered from `p-record` ("Calibrate court", on a frame
-frozen from the live camera) it exits back to `p-record` and the result rides along
-with each recording. The nav dock is the section tab bar and appears on the four
-section roots only (§8.3). Deep links: `#tab=matches|coach|progress` boot straight to a
-root; `#run=<id>` seeds the restore stash — the same stash "Open full review" uses.
+Dashboard; `p-live` → Dashboard; `p-stats` / `p-shot-bot` / `p-sharing` → Training; every
+review pane → Analysis. The calibration wizard (`p-tap` → … → `p-tap-floor`) serves two
+flows: entered from `p-frame` it exits to `p-clip`; entered from `p-record` ("Calibrate
+court", on a frame frozen from the live camera) it exits back to `p-record` and the
+result rides along with each recording. Analysis completion routes to the review page and
+tears the run's calibration and clip state down with it, so the wizard is unreachable for
+a committed run — starting a new analysis from the Dashboard is the only way back into
+it. The nav dock is the section tab bar and appears on the four section roots only
+(§8.3). Deep links: `#tab=matches|coach|progress` boot straight to a root; `#run=<id>`
+seeds the restore stash and lands on the review page — the same stash a `.clipcard` head
+row seeds (§8.20).
 
 Production surfaces (section roots and placeholder pages) carry **no `#instr` guidance
 copy** — the UI leads; onboarding will teach, later. The `#instr` strip remains for the
@@ -1097,7 +1213,9 @@ must still record exactly as it does today.
 - No spinners where real progress or evidence is possible; no fake progress.
 - No layout shift from appearing content; no moving playhead (the strip moves).
 - No page-transition animations; nothing animated longer than 500 ms except ambient
-  pulses and the Analysis card expand (§10 Micro at .28s).
+  pulses (§10 Micro at .28s). The Analysis card expand this used to sanction no longer
+  fires — every card renders open (§8.20) — though `.clipbody`'s transition is retained
+  for whatever next needs a card to open.
 - No hover-only affordances; no touch targets under 44 px; no removal of safe-area math.
 - No scrolling app shell; no second header/tab-bar/nav chrome.
 - No uppercase buttons or paragraphs (uppercase is for chips/tags/micro-labels/telemetry

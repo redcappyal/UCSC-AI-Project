@@ -891,3 +891,343 @@ def test_frame_map_without_seq_frames_is_fatal(tmp_path):
             tmp_path, tmp_path / "out", 16, 1, 0, 0.0, 0.5, 0, 1, 0,
             [], [], 0, 95, seq_frames=1,
             frame_maps={"Bay": {"video_frame_count": 1, "frames": {}}})
+
+
+# --- Clip exclusion (--exclude-clips) ----------------------------------
+
+def _tiny_export(tmp_path, np, cv2, clips, name="export"):
+    """Minimal Roboflow-shaped COCO export.
+
+    `clips` maps a clip name to either `[frame_number, ...]` (every frame a
+    solid 100) or `{frame_number: pixel_value}` when a test needs to tell the
+    frames apart by content.
+    """
+    root = tmp_path / name
+    split = root / "train"
+    split.mkdir(parents=True)
+    images, annotations = [], []
+    for clip, frames in clips.items():
+        values = frames if isinstance(frames, dict) else {f: 100 for f in frames}
+        for number, value in sorted(values.items()):
+            file_name = f"{clip}_mov-{number:04d}_jpg.jpg"
+            _imwrite_unicode(split / file_name, _solid_frame(np, value),
+                             [int(cv2.IMWRITE_JPEG_QUALITY), 95])
+            images.append({"id": len(images) + 1, "file_name": file_name,
+                           "width": 64, "height": 64})
+            annotations.append({"id": len(annotations) + 1,
+                                "image_id": len(images), "category_id": 0,
+                                "bbox": [24, 24, 8, 8]})
+    (split / "_annotations.coco.json").write_text(
+        json.dumps({"images": images, "annotations": annotations,
+                    "categories": [{"id": 0, "name": "ball"}]}),
+        encoding="utf-8")
+    return root
+
+
+def test_exclude_clips_drops_the_clip_and_records_the_cost(tmp_path):
+    cv2 = pytest.importorskip("cv2")
+    np = pytest.importorskip("numpy")
+    source = _tiny_export(tmp_path, np, cv2,
+                          {"Keep": [0, 1, 2], "Tutorial": [0, 1]})
+
+    baseline = prepare_ball_dataset.build(
+        source, tmp_path / "out", 16, 1, 0, 0.0, 0.5, 0, 1, 0,
+        [], [], 0, 95)
+    assert baseline["excluded_clips"] == {}
+    assert baseline["source_frames_kept"] == 5
+
+    manifest = prepare_ball_dataset.build(
+        source, tmp_path / "out2", 16, 1, 0, 0.0, 0.5, 0, 1, 0,
+        [], [], 0, 95, exclude_clips=["Tutorial"])
+
+    # `seen` still counts the whole export while `kept` drops to 3, and the
+    # difference is spelled out -- a shrunken dataset has to read as a
+    # decision, not as unexplained data loss.
+    assert manifest["source_frames_seen"] == 5
+    assert manifest["source_frames_kept"] == 3
+    assert manifest["excluded_clips"] == {"Tutorial": 2}
+    assert manifest["splits"]["train"]["clips"] == ["Keep"]
+
+
+def test_exclude_clips_rejects_an_unknown_name(tmp_path):
+    # A typo'd clip name silently keeping the clip is the failure this
+    # guards: the build would look like it succeeded.
+    cv2 = pytest.importorskip("cv2")
+    np = pytest.importorskip("numpy")
+    source = _tiny_export(tmp_path, np, cv2, {"Keep": [0, 1]})
+    with pytest.raises(SystemExit, match="not in the export"):
+        prepare_ball_dataset.build(
+            source, tmp_path / "out", 16, 1, 0, 0.0, 0.5, 0, 1, 0,
+            [], [], 0, 95, exclude_clips=["Tutorail"])
+
+
+def test_exclude_clips_removing_everything_is_fatal(tmp_path):
+    cv2 = pytest.importorskip("cv2")
+    np = pytest.importorskip("numpy")
+    source = _tiny_export(tmp_path, np, cv2, {"Only": [0, 1]})
+    with pytest.raises(SystemExit, match="every frame"):
+        prepare_ball_dataset.build(
+            source, tmp_path / "out", 16, 1, 0, 0.0, 0.5, 0, 1, 0,
+            [], [], 0, 95, exclude_clips=["Only"])
+
+
+# --- Sequence scene continuity (--seq-cut-threshold) -------------------
+
+def _seq_record(tmp_path, np, cv2, anchor_frame, anchor_value):
+    """One labelled record whose export image is a solid `anchor_value`."""
+    train_dir = tmp_path / "train"
+    train_dir.mkdir(exist_ok=True)
+    path = train_dir / f"Bay_mov-{anchor_frame:04d}_jpg.jpg"
+    _imwrite_unicode(path, _solid_frame(np, anchor_value),
+                     [int(cv2.IMWRITE_JPEG_QUALITY), 95])
+    record = {"path": path, "clip": "Bay", "frame": anchor_frame,
+              "width": 64, "height": 64,
+              "balls": [{"bbox": [24, 24, 8, 8], "streak": None}]}
+    plans = plan_crops(record, crop=16, scale=1.0, rng=random.Random(0),
+                       positives=1, negatives=0, jitter=0.0, min_visible=0.5)
+    return record, path, plans
+
+
+def _decode_values(np, monkeypatch, values, default=100):
+    def fake_decode(video_path, indices):
+        return {i: _solid_frame(np, values.get(i, default)) for i in indices}
+    monkeypatch.setattr(prepare_ball_dataset, "decode_frames", fake_decode)
+
+
+def test_sequence_continuity_is_measured_without_a_threshold(tmp_path, monkeypatch):
+    # Default build: tiles unchanged, but the anchor-vs-neighbour spread is
+    # reported anyway. This is what makes --seq-cut-threshold a measurement
+    # rather than a guess.
+    cv2 = pytest.importorskip("cv2")
+    np = pytest.importorskip("numpy")
+    _decode_values(np, monkeypatch, {4: 90, 5: 100, 6: 120})
+    record, path, plans = _seq_record(tmp_path, np, cv2, 5, 100)
+
+    slice_ = render_split([record], {path: plans}, tmp_path, "train", 16, 95,
+                          seq_frames=3, clip_videos={"Bay": Path("fake.mp4")},
+                          clip_last_frame={"Bay": 20})
+
+    cont = slice_["sequence_continuity"]["Bay"]
+    assert cont["neighbours_measured"] == 2
+    assert cont["cut_padded"] == 0
+    assert cont["dropped_no_neighbour"] == 0
+    # |90-100| = 10 and |120-100| = 20.
+    assert cont["neighbour_diff"]["p50"] == pytest.approx(20, abs=2)
+    assert cont["neighbour_diff"]["max"] == pytest.approx(20, abs=2)
+    assert slice_["sequence_crops"] == 1
+
+
+def test_sequence_cut_threshold_pads_only_the_discontinuous_side(tmp_path, monkeypatch):
+    # tm1 is the same shot, tp1 is a cut. tp1 must fall back to repeating the
+    # anchor -- identical to the existing clip-edge convention -- while tm1
+    # stays the real neighbour, so the sample keeps its temporal signal.
+    cv2 = pytest.importorskip("cv2")
+    np = pytest.importorskip("numpy")
+    _decode_values(np, monkeypatch, {4: 90, 5: 100, 6: 250})
+    record, path, plans = _seq_record(tmp_path, np, cv2, 5, 100)
+
+    slice_ = render_split([record], {path: plans}, tmp_path, "train", 16, 95,
+                          seq_frames=3, clip_videos={"Bay": Path("fake.mp4")},
+                          clip_last_frame={"Bay": 20}, cut_threshold=50.0)
+
+    anchor_name = crop_file_name(path.stem, 0)
+    stem = anchor_name[:-len(".jpg")]
+    train_dir = tmp_path / "train"
+    assert (_imread_unicode(train_dir / f"{stem}.tm1.jpg").mean()
+            == pytest.approx(90, abs=5))
+    assert (_imread_unicode(train_dir / f"{stem}.tp1.jpg").mean()
+            == pytest.approx(_imread_unicode(train_dir / anchor_name).mean(), abs=2))
+
+    cont = slice_["sequence_continuity"]["Bay"]
+    assert cont["cut_padded"] == 1
+    assert cont["dropped_no_neighbour"] == 0
+    assert slice_["sequence_crops"] == 1
+
+
+def test_sequence_drops_the_anchor_when_both_neighbours_are_cuts(tmp_path, monkeypatch):
+    # Both sides cut -> the stack would be three IDENTICAL frames carrying a
+    # positive ball label, which is exactly what WASB-TRAIN.md 5(d) wants to
+    # predict EMPTY. No tiles are written and the COCO entry carries no
+    # "sequence", so the sequence dataset skips it; the anchor survives as a
+    # plain single-frame crop.
+    cv2 = pytest.importorskip("cv2")
+    np = pytest.importorskip("numpy")
+    _decode_values(np, monkeypatch, {4: 250, 5: 100, 6: 250})
+    record, path, plans = _seq_record(tmp_path, np, cv2, 5, 100)
+
+    slice_ = render_split([record], {path: plans}, tmp_path, "train", 16, 95,
+                          seq_frames=3, clip_videos={"Bay": Path("fake.mp4")},
+                          clip_last_frame={"Bay": 20}, cut_threshold=50.0)
+
+    anchor_name = crop_file_name(path.stem, 0)
+    stem = anchor_name[:-len(".jpg")]
+    train_dir = tmp_path / "train"
+    assert (train_dir / anchor_name).exists()
+    assert not (train_dir / f"{stem}.tm1.jpg").exists()
+    assert not (train_dir / f"{stem}.tp1.jpg").exists()
+
+    coco = json.loads(
+        (tmp_path / "annotations" / "instances_train.json").read_text())
+    image = next(i for i in coco["images"] if i["file_name"] == anchor_name)
+    assert "sequence" not in image
+
+    cont = slice_["sequence_continuity"]["Bay"]
+    # cut_padded counts neighbour SIDES replaced; dropped counts ANCHORS.
+    assert cont["cut_padded"] == 2
+    assert cont["dropped_no_neighbour"] == 1
+    assert slice_["sequence_crops"] == 0
+
+
+def test_continuity_report_percentiles_are_ordered():
+    stats = {"Bay": {"neighbour_diffs": [float(v) for v in range(100)],
+                     "cut_padded": 3, "dropped_no_neighbour": 1}}
+    report = prepare_ball_dataset._continuity_report(stats)["Bay"]
+    assert report["neighbours_measured"] == 100
+    assert report["cut_padded"] == 3
+    assert report["dropped_no_neighbour"] == 1
+    spread = report["neighbour_diff"]
+    assert spread["p50"] <= spread["p90"] <= spread["p99"] <= spread["max"]
+    assert spread["max"] == 99
+
+
+# --- Export-sourced sequences (--seq-from-export) ----------------------
+
+def _seq_names(tmp_path, split, source_frame):
+    """(anchor, tm1, tp1) crop filenames for a source frame, from the COCO."""
+    coco = json.loads(
+        (tmp_path / "annotations" / f"instances_{split}.json").read_text())
+    image = next(i for i in coco["images"] if i["source_frame"] == source_frame)
+    return image
+
+
+def test_seq_from_export_builds_sequences_with_no_video(tmp_path):
+    # The whole point: a 3-frame dataset from the export alone. Frame values
+    # differ per frame, so "which image landed in tm1" is checkable.
+    cv2 = pytest.importorskip("cv2")
+    np = pytest.importorskip("numpy")
+    source = _tiny_export(tmp_path, np, cv2, {"Bay": {0: 50, 1: 100, 2: 150}})
+    out = tmp_path / "out"
+
+    manifest = prepare_ball_dataset.build(
+        source, out, 16, 1, 0, 0.0, 0.5, 0, 1, 0,
+        [], [], 0, 95, seq_frames=3, seq_from_export=True)
+
+    assert manifest["params"]["seq_neighbour_source"] == "export"
+    assert manifest["schema_version"] == prepare_ball_dataset.SCHEMA_VERSION_SEQ
+
+    image = _seq_names(out, "train", 1)
+    tm1_name, anchor_name, tp1_name = image["sequence"]
+    train_dir = out / "train"
+    # Oldest-first: tm1 is frame 0's pixels, tp1 is frame 2's.
+    assert _imread_unicode(train_dir / tm1_name).mean() == pytest.approx(50, abs=5)
+    assert _imread_unicode(train_dir / anchor_name).mean() == pytest.approx(100, abs=5)
+    assert _imread_unicode(train_dir / tp1_name).mean() == pytest.approx(150, abs=5)
+
+
+def test_seq_from_export_repeats_the_anchor_at_a_run_boundary(tmp_path):
+    # Frame 0 has no predecessor in the export. That side repeats the anchor
+    # -- the same convention the video path uses at a clip edge -- rather than
+    # dropping a usable sample.
+    cv2 = pytest.importorskip("cv2")
+    np = pytest.importorskip("numpy")
+    source = _tiny_export(tmp_path, np, cv2, {"Bay": {0: 50, 1: 100, 2: 150}})
+    out = tmp_path / "out"
+
+    prepare_ball_dataset.build(
+        source, out, 16, 1, 0, 0.0, 0.5, 0, 1, 0,
+        [], [], 0, 95, seq_frames=3, seq_from_export=True)
+
+    image = _seq_names(out, "train", 0)
+    tm1_name, anchor_name, tp1_name = image["sequence"]
+    train_dir = out / "train"
+    anchor_mean = _imread_unicode(train_dir / anchor_name).mean()
+    assert _imread_unicode(train_dir / tm1_name).mean() == pytest.approx(anchor_mean, abs=2)
+    assert _imread_unicode(train_dir / tp1_name).mean() == pytest.approx(100, abs=5)
+
+
+def test_seq_from_export_drops_an_isolated_frame(tmp_path):
+    # Neither neighbour exists -> three identical frames under a positive
+    # label, which 5(d) wants to read as EMPTY. Dropped from the sequence set;
+    # the anchor still ships as a plain single-frame crop.
+    cv2 = pytest.importorskip("cv2")
+    np = pytest.importorskip("numpy")
+    source = _tiny_export(tmp_path, np, cv2, {"Bay": {0: 50, 9: 150}})
+    out = tmp_path / "out"
+
+    manifest = prepare_ball_dataset.build(
+        source, out, 16, 1, 0, 0.0, 0.5, 0, 1, 0,
+        [], [], 0, 95, seq_frames=3, seq_from_export=True)
+
+    train = manifest["splits"]["train"]
+    assert train["sequence_crops"] == 0
+    assert train["crops"] == 2               # both anchors still written
+    assert train["sequence_continuity"]["Bay"]["dropped_no_neighbour"] == 2
+
+    coco = json.loads(
+        (out / "annotations" / "instances_train.json").read_text())
+    assert all("sequence" not in i for i in coco["images"])
+
+
+def test_seq_from_export_neighbours_survive_burst_thinning(tmp_path):
+    # --min-frame-gap thins which frames become ANCHORS; it must not delete
+    # frames from the neighbour index. With gap 2 the anchors are 0/2/4, and
+    # anchor 2's neighbours are the thinned-away frames 1 and 3 -- which are
+    # still on disk and still the correct t-1/t+1.
+    cv2 = pytest.importorskip("cv2")
+    np = pytest.importorskip("numpy")
+    source = _tiny_export(
+        tmp_path, np, cv2, {"Bay": {0: 20, 1: 40, 2: 60, 3: 80, 4: 100}})
+    out = tmp_path / "out"
+
+    prepare_ball_dataset.build(
+        source, out, 16, 1, 0, 0.0, 0.5, 0, 2, 0,
+        [], [], 0, 95, seq_frames=3, seq_from_export=True)
+
+    image = _seq_names(out, "train", 2)
+    tm1_name, _, tp1_name = image["sequence"]
+    train_dir = out / "train"
+    assert _imread_unicode(train_dir / tm1_name).mean() == pytest.approx(40, abs=5)
+    assert _imread_unicode(train_dir / tp1_name).mean() == pytest.approx(80, abs=5)
+
+
+def test_seq_from_export_rejects_clips_dir(tmp_path):
+    with pytest.raises(SystemExit, match="mutually exclusive"):
+        prepare_ball_dataset.build(
+            tmp_path, tmp_path / "out", 16, 1, 0, 0.0, 0.5, 0, 1, 0,
+            [], [], 0, 95, seq_frames=3, clips_dir=tmp_path,
+            seq_from_export=True)
+
+
+def test_seq_from_export_without_seq_frames_is_fatal(tmp_path):
+    with pytest.raises(SystemExit, match="only applies"):
+        prepare_ball_dataset.build(
+            tmp_path, tmp_path / "out", 16, 1, 0, 0.0, 0.5, 0, 1, 0,
+            [], [], 0, 95, seq_frames=1, seq_from_export=True)
+
+
+def test_seq_from_export_rejects_a_frame_map(tmp_path):
+    with pytest.raises(SystemExit, match="meaningless"):
+        prepare_ball_dataset.build(
+            tmp_path, tmp_path / "out", 16, 1, 0, 0.0, 0.5, 0, 1, 0,
+            [], [], 0, 95, seq_frames=3, seq_from_export=True,
+            frame_maps={"Bay": {"video_frame_count": 1, "frames": {}}})
+
+
+def test_seq_frames_without_a_neighbour_source_names_both_options(tmp_path):
+    # The error an operator with no footage hits first -- it has to point at
+    # --seq-from-export, not just demand --clips-dir.
+    with pytest.raises(SystemExit, match="seq-from-export"):
+        prepare_ball_dataset.build(
+            tmp_path, tmp_path / "out", 16, 1, 0, 0.0, 0.5, 0, 1, 0,
+            [], [], 0, 95, seq_frames=3, clips_dir=None)
+
+
+def test_continuity_report_survives_a_clip_with_no_measurements():
+    # Every anchor dropped at a clip edge -> no diffs to summarise, but the
+    # clip must still appear with its counts rather than vanishing.
+    stats = {"Bay": {"neighbour_diffs": [], "cut_padded": 0,
+                     "dropped_no_neighbour": 2}}
+    report = prepare_ball_dataset._continuity_report(stats)["Bay"]
+    assert report["neighbours_measured"] == 0
+    assert report["dropped_no_neighbour"] == 2
+    assert "neighbour_diff" not in report

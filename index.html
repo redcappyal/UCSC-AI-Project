@@ -97,6 +97,12 @@
   #instr.warn{color:var(--text); font-weight:700}
   #instr b.out{color:var(--out)} #instr b.service{color:var(--service)} #instr b.tin{color:var(--tin)}
 
+  /* Match review pane switcher. Sits between the header and #instr — outside
+     <main> deliberately, because every review pane makes main its own scroller
+     (phase-track / phase-target), and a switcher inside main would scroll away
+     from a page whose whole point is moving between panes. */
+  #reviewSeg{flex:0 0 auto; margin:2px 14px 8px}
+
   #stage{position:relative; flex:1 1 0; min-height:0; display:flex; align-items:center;
     justify-content:center; overflow:hidden; background:var(--strip-bg)}
   #view{max-width:100%; max-height:100%; touch-action:none;
@@ -280,6 +286,39 @@
   .rallySegment span{max-width:100%; overflow:hidden; text-overflow:ellipsis;
     font-size:11px; line-height:1.2; white-space:nowrap}
   .rallySegment.active{background:var(--accent-bg); color:var(--accent-text)}
+  /* Attribution provenance per rally (job_runner attribution_state). A rally
+     whose shot labels were guessed must not read the same as one the person
+     detector actually observed. This is a DATA-QUALITY split, not a verdict
+     and not a calibration edge (§5.2): it uses the dashed-vs-solid grammar
+     (§13) for "not confirmed" plus the quality tints for the loud case, and
+     never borrows --in/--outcall or the calibration hues. 'active' still wins
+     — it marks the playhead, which is a different axis. */
+  .rallySegment.attr-assumed{background:var(--bg); color:var(--dim);
+    border:1px dashed var(--line)}
+  .rallySegment.attr-conflict{background:var(--tint-poor-bg); color:var(--tint-poor-fg);
+    border:1px dashed var(--tint-poor-fg)}
+  .rallySegment.attr-repaired::after,
+  .rallySegment.attr-conflict::after{position:absolute; top:2px; right:4px;
+    font-size:10px; font-weight:700; line-height:1}
+  .rallySegment.attr-repaired::after{content:'\21BB'; color:var(--dim)}
+  .rallySegment.attr-conflict::after{content:'!'; color:var(--tint-poor-fg)}
+  /* Each swatch is a miniature of the ribbon segment it decodes (§8.11: the
+     legend and the thing decoded share tokens). Observed and repaired share
+     the neutral segment fill — accent belongs to .active, which is the
+     playhead, not a provenance state — so repaired is told apart by carrying
+     its own marker glyph inside the swatch rather than by a colour the ribbon
+     never paints. */
+  .rallyLegend{display:flex; flex-wrap:wrap; gap:4px 12px; padding:0 12px 8px;
+    font-size:11px; color:var(--dim)}
+  .rallyLegend span{display:inline-flex; align-items:center; gap:5px}
+  .rallyLegend i{width:12px; height:12px; border-radius:3px; flex:0 0 auto;
+    display:inline-flex; align-items:center; justify-content:center;
+    font-size:9px; font-weight:700; line-height:1; font-style:normal}
+  .rallyLegend i.observed{background:var(--line); color:var(--text)}
+  .rallyLegend i.repaired{background:var(--line); color:var(--dim)}
+  .rallyLegend i.assumed{background:var(--bg); border:1px dashed var(--line)}
+  .rallyLegend i.conflict{background:var(--tint-poor-bg); color:var(--tint-poor-fg);
+    border:1px dashed var(--tint-poor-fg)}
   .rallyWinners{display:flex; gap:8px; overflow-x:auto; padding:0 12px 8px;
     scrollbar-width:none; -webkit-overflow-scrolling:touch}
   .rallyWinners::-webkit-scrollbar{display:none}
@@ -481,6 +520,10 @@
     font-variant-numeric:tabular-nums; overflow-wrap:anywhere}
   .coachMetric small{display:block; color:var(--dim); font-size:12px; line-height:1.35; margin-top:7px}
   .coachIntro{padding:12px 14px 0; color:var(--dim); font-size:14px; line-height:1.45}
+  /* How much of this report rests on guessed attribution. Sits above the
+     coaching copy so it is read before the numbers, not after them. */
+  .attrProvenance{padding:12px 14px 0; font-size:13px; line-height:1.4; color:var(--dim)}
+  .attrProvenance.warn{color:var(--text); font-weight:700}   /* §13: warn is weight, never hue */
   .coachOutcomeComparison{display:grid; grid-template-columns:repeat(2, minmax(0, 1fr)); gap:12px;
     padding:14px; border-top:1px solid var(--line)}
   /* Won/lost is a data split, not a call: the two sections separate by the
@@ -687,7 +730,10 @@
   .statechip.done{background:var(--accent-bg); color:var(--accent-text)}
   .statechip.todo{background:var(--bg); color:var(--dim)}
   .clipbody{max-height:0; overflow:hidden; transition:max-height .28s ease}
-  .clipcard.open .clipbody{max-height:1600px}
+  /* The card no longer toggles, so the open body must not be clamped: the
+     rally/movement/capability sections push a two-player summary past any
+     fixed height, and overflow:hidden would silently cut it off. */
+  .clipcard.open .clipbody{max-height:none}
   .clipbody .inner{padding:14px 16px 16px; display:flex; flex-direction:column; gap:14px;
     border-top:1px solid var(--line)}
   /* gauge + score columns + feedback rows */
@@ -795,6 +841,11 @@
   </button>
   <button class="pill hidden" id="hdrAction" type="button"></button>
 </header>
+<div id="reviewSeg" class="seg hidden">
+  <button type="button" id="reviewSegCall" class="active">Call</button>
+  <button type="button" id="reviewSegP1">Player 1</button>
+  <button type="button" id="reviewSegP2">Player 2</button>
+</div>
 <p id="instr" class="hidden"></p>
 
 <div id="stage" class="hidden">
@@ -1063,6 +1114,7 @@
       </div>
       <div class="rallyRibbon" id="rallyRibbon"
            role="img" aria-label="Model-inferred rally boundaries"></div>
+      <div class="rallyLegend hidden" id="rallyLegend"></div>
       <div class="rallyWinners" id="rallyWinners" aria-label="Winner for every rally"></div>
     </div>
     <div class="clipOverview hidden" id="trackOverview">
@@ -1096,10 +1148,39 @@
       <div class="sliderlabel"><span>Frame to judge</span><output id="judgeFrameOut"></output></div>
       <div class="row">
         <input type="number" id="judgeFrame" step="1">
-        <button id="targetBtn" type="button">Player maps</button>
         <button class="primary proxied" id="judgeBtn">Judge frame</button>
       </div>
       <div class="verdict blank" id="judgeResult"><div>No line call yet</div></div>
+      <!-- Players naming: was stranded on the unreachable p-target page until
+           this review page gave it a home. It is the only surface that admits
+           when attribution was guessed rather than observed. -->
+      <div class="targetZones hidden" id="playersCard">
+        <div class="targetHead">
+          <strong>Players</strong>
+        </div>
+        <p class="playersNote" id="playersBackendNote"></p>
+        <div class="labelGrid playersFields">
+          <label class="playersField">Player A name
+            <input type="text" id="playerNameA" maxlength="40" autocomplete="off" placeholder="Player A">
+          </label>
+          <label class="playersField">Player B name
+            <input type="text" id="playerNameB" maxlength="40" autocomplete="off" placeholder="Player B">
+          </label>
+        </div>
+        <div class="playersCrop hidden" id="serveCropBlock">
+          <img id="serveCropImg" alt="First server at the rally 1 serve">
+          <p class="playersCropPrompt">Who is this? (server at the first attributed serve)</p>
+          <div class="row">
+            <button type="button" id="cropIsA"></button>
+            <button type="button" id="cropIsB"></button>
+          </div>
+        </div>
+        <div class="playersSave">
+          <button type="button" id="savePlayersBtn">Save players</button>
+          <p class="status" id="playersSaveStatus"></p>
+        </div>
+      </div>
+      <button class="ghostbtn" type="button" id="reviewSourceVideoBtn">Watch source video</button>
     </div>
     <div class="callTabPane hidden" id="challengeTab">
       <p class="status" id="corrEmpty">Judge a hit first — then challenge its call here.</p>
@@ -1185,75 +1266,8 @@
     <p class="status" id="labelStatus"></p>
   </section>
 
-  <!-- PHASE: target zones -->
-  <section class="hidden" id="p-target">
-    <div class="targetZones hidden" id="targetZones">
-      <div class="targetHead">
-        <strong>Front wall targets</strong>
-        <span id="targetTotal"></span>
-      </div>
-      <div class="targetCourt" aria-label="Squash front wall target zone chart">
-        <div class="courtSide left"></div>
-        <div class="courtSide right"></div>
-        <div class="courtFloor"></div>
-        <div class="courtWall">
-          <div class="targetGrid" id="targetGrid"></div>
-          <div class="courtLine out"></div>
-          <div class="courtLine service"></div>
-          <div class="courtLine tin"></div>
-          <span class="courtText out">Out line</span>
-          <span class="courtText service">Service line</span>
-          <span class="courtText tin">Tin</span>
-        </div>
-      </div>
-      <div class="targetMeta">
-        <div><strong>Most used</strong><span id="targetCommon"></span></div>
-        <div><strong>Unused</strong><span id="targetMissing"></span></div>
-      </div>
-    </div>
-    <div class="targetZones hidden" id="floorMapPanel">
-      <div class="targetHead">
-        <strong>Floor bounces</strong>
-        <span id="floorMapTotal"></span>
-      </div>
-      <div class="floorMap"><svg id="floorMapSvg" viewBox="-1.5 -1.5 24 35"></svg></div>
-      <div class="targetMeta">
-        <div><strong>Most bounced zones</strong><span id="floorCommon"></span></div>
-        <div><strong>Untouched zones</strong><span id="floorMissing"></span></div>
-      </div>
-    </div>
-    <div class="targetZones hidden" id="playersCard">
-      <div class="targetHead">
-        <strong>Players</strong>
-      </div>
-      <p class="playersNote" id="playersBackendNote"></p>
-      <div class="labelGrid playersFields">
-        <label class="playersField">Player A name
-          <input type="text" id="playerNameA" maxlength="40" autocomplete="off" placeholder="Player A">
-        </label>
-        <label class="playersField">Player B name
-          <input type="text" id="playerNameB" maxlength="40" autocomplete="off" placeholder="Player B">
-        </label>
-      </div>
-      <div class="playersCrop hidden" id="serveCropBlock">
-        <img id="serveCropImg" alt="First server at the rally 1 serve">
-        <p class="playersCropPrompt">Who is this? (server at the first attributed serve)</p>
-        <div class="row">
-          <button type="button" id="cropIsA"></button>
-          <button type="button" id="cropIsB"></button>
-        </div>
-      </div>
-      <div class="playersSave">
-        <button type="button" id="savePlayersBtn">Save players</button>
-        <p class="status" id="playersSaveStatus"></p>
-      </div>
-    </div>
-    <div class="row">
-      <button id="player1ReportBtn" type="button">Player 1 report</button>
-      <button id="player2ReportBtn" type="button">Player 2 report</button>
-    </div>
-    <p class="status" id="targetStatus"></p>
-  </section>
+  <!-- The floor-bounce map lives on the Player 1 pane; it is per-run, not
+       per-player, so it renders once under the first report. -->
 
   <!-- PHASE: player 1 coaching report -->
   <section class="hidden" id="p-player1-report">
@@ -1286,14 +1300,25 @@
         <strong id="coachTitleP1">Player 1 report</strong>
         <span id="coachSourceP1"></span>
       </div>
+      <p class="attrProvenance hidden" id="coachProvenanceP1"></p>
       <div class="coachIntro" id="coachIntroP1"></div>
       <div class="coachMetrics" id="coachMetricsP1"></div>
       <div class="coachOutcomeComparison" id="coachOutcomesP1"></div>
       <div class="coachFeedback" id="coachFeedbackP1"></div>
       <div class="coachDrills" id="coachDrillsP1"></div>
     </div>
-    <div class="row">
-      <button id="player2NextBtn" type="button">Player 2 report</button>
+    <!-- Floor bounces are a property of the run, not of one player, so this
+         panel renders once — under the first report rather than duplicated. -->
+    <div class="targetZones hidden" id="floorMapPanel">
+      <div class="targetHead">
+        <strong>Floor bounces</strong>
+        <span id="floorMapTotal"></span>
+      </div>
+      <div class="floorMap"><svg id="floorMapSvg" viewBox="-1.5 -1.5 24 35"></svg></div>
+      <div class="targetMeta">
+        <div><strong>Most bounced zones</strong><span id="floorCommon"></span></div>
+        <div><strong>Untouched zones</strong><span id="floorMissing"></span></div>
+      </div>
     </div>
   </section>
 
@@ -1328,6 +1353,7 @@
         <strong id="coachTitleP2">Player 2 report</strong>
         <span id="coachSourceP2"></span>
       </div>
+      <p class="attrProvenance hidden" id="coachProvenanceP2"></p>
       <div class="coachIntro" id="coachIntroP2"></div>
       <div class="coachMetrics" id="coachMetricsP2"></div>
       <div class="coachOutcomeComparison" id="coachOutcomesP2"></div>
@@ -1606,7 +1632,7 @@ const STEP_META = {
   track:  {label:'Call', instr:'Tap a bar to jump to the bounce frame, or drag anywhere on the strip to scrub.',
            action:{btn:'judgeBtn', label:'Judge'}},
   label:  {label:'Label bounces', instr:'Drag the strip to the exact impact frame, then tap its bounce type. Tap a marker to revisit it — labels save automatically.'},
-  target: {label:'Targets', instr:''},
+  // Review panes: stepLabelFor() overrides these labels with the match date.
   player1_report: {label:'Player 1', instr:''},
   player2_report: {label:'Player 2', instr:''},
   // Section roots (Matches, Coach hub) + roadmap placeholder pages. No action key (no
@@ -1625,25 +1651,46 @@ const roadmapSection = p => 'p-' + p.replace('_','-');
 /* Section roots: the nav pill switches between them, so they get no back chevron */
 const SECTION_ROOTS = ['load','matches','coach','progress'];
 
+/* The match review page. These three phases are panes of ONE page, not steps:
+   the #reviewSeg switcher moves between them, the header shows the match date
+   instead of a step number, and Back exits to Analysis from any of them rather
+   than retreating through the pane order. They stay separate S.phase values
+   because ~25 call sites (transport, strip rendering, the restore stash) key
+   off S.phase === 'track'; collapsing them into one phase would rewrite all of
+   that for no user-visible gain. */
+const REVIEW_PHASES = ['track','player1_report','player2_report'];
+const REVIEW_PANE_BTN = {track:'reviewSegCall', player1_report:'reviewSegP1', player2_report:'reviewSegP2'};
+
 /* The numbered judge flow, in order. The floor-map step only exists when the
-   court model loaded, so the total is 10 with it and 9 without — computed here
+   court model loaded, so the total is 8 with it and 7 without — computed here
    rather than baked into the labels, which go stale whenever a step is added
-   or skipped. The combined 'target' page is not in the flow: the per-player
-   report pages replace it (Call -> Player 1 -> Player 2). Phases not in this
-   list (load, record, label, target, hubs) get no number. */
+   or skipped. The flow ENDS at 'clip': once Analyze is pressed the run is
+   committed and its calibration is unreachable, so the review panes are not
+   steps and carry no number. Phases not in this list (load, record, label,
+   review panes, hubs) get no number. */
 function stepSequence(){
   const seq = ['frame','tap_out','tap_tin','tap_service','review','tap_wall'];
   if(COURT) seq.push('tap_floor');
-  return [...seq, 'clip','track','player1_report','player2_report'];
+  return [...seq, 'clip'];
 }
 function stepLabelFor(p){
+  /* The review page is identified by WHICH MATCH it is, not by position in a
+     flow the user can no longer walk back through. */
+  if(REVIEW_PHASES.includes(p)) return reviewMatchLabel();
   const seq = stepSequence();
   const idx = seq.indexOf(p);
-  const label = p === 'player1_report' ? playerDisplayName(1)
-    : p === 'player2_report' ? playerDisplayName(2)
-    : STEP_META[p].label;
-  return idx === -1 ? label
-                    : `${idx + 1}/${seq.length} · ${label}`;
+  return idx === -1 ? STEP_META[p].label
+                    : `${idx + 1}/${seq.length} · ${STEP_META[p].label}`;
+}
+/* Match identity for the review header. /api/track/status (public_job) carries
+   no timestamp, so the date comes from the runs list — which is populated for
+   anything opened from Analysis or restored. A just-analyzed run may not be in
+   that list yet, hence the clip-name fallback. */
+function reviewMatchLabel(){
+  const runId = S.run && S.run.run_id;
+  const entry = runId ? LIVE.runs.find(r => r.run_id === runId) : null;
+  if(entry && Number.isFinite(Number(entry.created))) return fmtRunDate(Number(entry.created));
+  return S.videoName || 'Match review';
 }
 
 /* Post-hoc player naming (spec §4.6): the anchor is the FIRST rally whose
@@ -1705,6 +1752,45 @@ function playerDisplayName(playerNumber){
   return name || ('Player ' + playerNumber);
 }
 
+/* Review pane switcher: active capsule + player names on the two report tabs,
+   so a run with saved names reads "Ian | Sam" rather than "Player 1 | Player 2". */
+function syncReviewSeg(p){
+  $('reviewSegP1').textContent = playerDisplayName(1);
+  $('reviewSegP2').textContent = playerDisplayName(2);
+  for(const [phase, id] of Object.entries(REVIEW_PANE_BTN)){
+    $(id).classList.toggle('active', phase === p);
+  }
+}
+for(const [phase, id] of Object.entries(REVIEW_PANE_BTN)){
+  $(id).onclick = () => { if(S.phase !== phase) setPhase(phase); };
+}
+
+/* Leaving the review page. Analysis is the only exit: the run is committed, so
+   its calibration and clip state are gone (see commitRunAndReview) and there is
+   nothing behind this page to step back into. */
+function exitReviewToMatches(){
+  transportStop();
+  vid.pause();
+  S.restoredSession = false;
+  clearRestoreStash();
+  S.base = null;
+  $('fileIn').value = '';
+  setPhase('matches');
+}
+
+/* Analyze -> review. Tearing the calibration state down here is what makes the
+   wizard unreachable for this run: Back exits to Analysis, and there is no
+   longer any fitted line, wall, or floor state to return to even if it didn't. */
+function commitRunAndReview(){
+  S.work = null;
+  S.lines = {out:null, tin:null, service:null};
+  S.wall = null;
+  S.floor = null;
+  S.base = null;
+  $('fileIn').value = '';
+  setPhase('track');
+}
+
 /* Header action pill: proxies the current phase's primary button, which stays
    the source of truth for behavior and disabled state. */
 const hdrAction = $('hdrAction');
@@ -1727,20 +1813,25 @@ function setPhase(p){
   transportStop();
   S.phase = p;
   resetZoom();
-  const reportPhase = p === 'target' || p === 'player1_report' || p === 'player2_report';
+  const reportPhase = p === 'player1_report' || p === 'player2_report';
   stage.classList.toggle('hidden', p === 'load' || reportPhase || ROADMAP_PHASES.includes(p));
   document.body.classList.toggle('phase-load', p === 'load');
   document.body.classList.toggle('phase-target', reportPhase);
   document.body.classList.toggle('phase-track', p === 'track');
   document.body.classList.toggle('phase-page', ROADMAP_PHASES.includes(p));
-  for(const id of ['p-load','p-record','p-frame','p-tap','p-review','p-wall-corners','p-tap-floor','p-confirm','p-clip','p-analyze','p-track','p-label','p-target',
+  for(const id of ['p-load','p-record','p-frame','p-tap','p-review','p-wall-corners','p-tap-floor','p-confirm','p-clip','p-analyze','p-track','p-label',
                    'p-player1-report','p-player2-report',
                    'p-live','p-matches','p-coach','p-progress','p-stats','p-shot-bot','p-sharing']) $(id).classList.add('hidden');
   $('camVid').classList.toggle('hidden', p !== 'record');   // live preview only on the record screen
   $('analyzeOverlay').classList.toggle('hidden', p !== 'analyze');
   $('stepLabel').textContent = stepLabelFor(p);
   $('hdrBack').classList.toggle('hidden', SECTION_ROOTS.includes(p));
-  $('hdrHome').classList.toggle('hidden', p === 'load');   // shortcut to the load screen from anywhere else
+  // The review page is a destination, not a stop on the way home: its only
+  // navigation is the back chevron to Analysis and the pane switcher.
+  const reviewPhase = REVIEW_PHASES.includes(p);
+  $('hdrHome').classList.toggle('hidden', p === 'load' || reviewPhase);
+  $('reviewSeg').classList.toggle('hidden', !reviewPhase);
+  if(reviewPhase) syncReviewSeg(p);
   syncHeaderAction(STEP_META[p].action);
 
   $('instr').classList.remove('warn');
@@ -1785,7 +1876,6 @@ function setPhase(p){
   else { stopAnalyzePreview(); }
   if(p === 'track'){ $('p-track').classList.remove('hidden'); buildTrackView(); }
   if(p === 'label'){ $('p-label').classList.remove('hidden'); buildLabelView(); }
-  if(p === 'target'){ $('p-target').classList.remove('hidden'); buildTargetView(); }
   if(p === 'player1_report'){ $('p-player1-report').classList.remove('hidden'); buildPlayerReportView(1); }
   if(p === 'player2_report'){ $('p-player2-report').classList.remove('hidden'); buildPlayerReportView(2); }
   if(ROADMAP_PHASES.includes(p)){ $(roadmapSection(p)).classList.remove('hidden'); }
@@ -2683,24 +2773,13 @@ $('hdrBack').onclick = () => {
   } else if(S.phase === 'analyze'){
     cancelPendingTrack();   // stop the job, not just its screen
     setPhase('clip');
-  } else if(S.phase === 'track'){
-    if(S.restoredSession){
-      // A restored session has no calibration/clip state behind it — exit to
-      // the home page and forget the stash so the next boot starts clean.
-      S.restoredSession = false;
-      clearRestoreStash();
-      vid.pause(); S.base = null; $('fileIn').value = ''; setPhase('load');
-    } else {
-      setPhase('clip');
-    }
+  } else if(REVIEW_PHASES.includes(S.phase)){
+    // Every review pane exits the same way: to Analysis. The panes are one
+    // page, so Back is not a retreat through P2 -> P1 -> Call, and the run's
+    // calibration no longer exists to return to.
+    exitReviewToMatches();
   } else if(S.phase === 'label'){
     vid.pause(); S.base = null; $('fileIn').value = ''; setPhase('load');
-  } else if(S.phase === 'target'){
-    setPhase(S.run ? 'track' : 'load');
-  } else if(S.phase === 'player1_report'){
-    setPhase(S.run ? 'track' : 'load');
-  } else if(S.phase === 'player2_report'){
-    setPhase('player1_report');
   } else if(ROADMAP_PHASES.includes(S.phase)){
     // Sub-pages hold no video/calibration state: Live sits under Play,
     // the rest under the Coach hub. (Section roots have no back chevron.)
@@ -5283,7 +5362,7 @@ $('runTrackBtn').onclick = async () => {
     loadBallPositions(data.run_id);
     $('trackStatus').textContent = `Tracked ${data.rows} frame rows.`;
     $('trackStatus').className = 'status ok';
-    setPhase('track');
+    commitRunAndReview();
   } catch(error){
     if(S.phase === 'analyze') setPhase('clip');   // return to the clip editor to show the error
     // Cancelling is a deliberate exit, not a failure — no error banner.
@@ -5348,14 +5427,9 @@ function placeTargetCell(cell, placement){
   cell.classList.toggle('mirror', !!placement.mirror);
 }
 
+/* Per-player front-wall maps only. The combined 'aggregate' map went with the
+   p-target page — every surviving caller renders one player's map. */
 const TARGET_MAP_IDS = {
-  aggregate: {
-    panel:'targetZones',
-    grid:'targetGrid',
-    total:'targetTotal',
-    common:'targetCommon',
-    missing:'targetMissing',
-  },
   1: {
     panel:'targetZonesP1',
     grid:'targetGridP1',
@@ -5372,7 +5446,7 @@ const TARGET_MAP_IDS = {
   },
 };
 
-function renderTargetZones(summary, ids = TARGET_MAP_IDS.aggregate){
+function renderTargetZones(summary, ids){
   const panel = $(ids.panel);
   if(!summary || !summary.total_wall_hits || !summary.zones || !summary.zones.length){
     panel.classList.add('hidden');
@@ -5797,7 +5871,7 @@ function setCoachLoading(playerNumber){
 
 async function loadCoachReport(playerNumber){
   const runId = S.run && S.run.run_id;
-  if(S.debugTargetZones || !runId){
+  if(!runId){
     hidePlayerCoachPanels();
     return;
   }
@@ -5866,16 +5940,56 @@ function buildPlayerReportView(playerNumber){
   $(`targetTitleP${playerNumber}`).textContent = `${playerDisplayName(playerNumber)} front-wall map`;
   $(`coachTitleP${playerNumber}`).textContent = `${playerDisplayName(playerNumber)} report`;
   renderTargetZones(playerTargetSummary(playerNumber), TARGET_MAP_IDS[playerNumber]);
+  // Floor bounces are per-run, not per-player — rendered once, under P1.
+  if(playerNumber === 1) renderFloorMap();
+  renderAttributionProvenance(playerNumber);
   loadCoachReport(playerNumber);
 }
 
-/* Player report tab labels + header step label (stepLabelFor) share this one
-   naming source. Safe to call even when players_v1 is absent — playerDisplayName
-   falls back to 'Player N'. */
+/* How much of this report rests on guessed attribution.
+
+   Every shot on this page was assigned by parity within its rally, not by
+   seeing who hit it (player_attribution.py) — so the honest unit is the rally,
+   and the states come straight from job_runner's attribution_state:
+     observed  serve was seen and the next rally's serve corroborates it
+     repaired  serve was a guess; the next rally's observed serve corrected it
+     assumed   serve was a guess with nothing available to check it against
+     conflict  two independent observations disagree — the loud one */
+function attributionCounts(){
+  const rallies = (S.run && S.run.players_v1 && S.run.players_v1.rallies) || [];
+  const counts = {observed:0, repaired:0, assumed:0, conflict:0, total:rallies.length};
+  for(const rally of rallies){
+    const state = rally.attribution_state;
+    if(state in counts) counts[state] += 1;
+    else if(rally.server_source === 'observed') counts.observed += 1;
+    else counts.assumed += 1;   // pre-attribution_state runs still read sensibly
+  }
+  return counts;
+}
+function renderAttributionProvenance(playerNumber){
+  const el = $(`coachProvenanceP${playerNumber}`);
+  const counts = attributionCounts();
+  if(!counts.total){
+    el.classList.add('hidden');
+    return;
+  }
+  const notes = [];
+  if(counts.assumed) notes.push(`${counts.assumed} assumed`);
+  if(counts.repaired) notes.push(`${counts.repaired} corrected from the next serve`);
+  if(counts.conflict) notes.push(`${counts.conflict} conflicting`);
+  const rallyWord = counts.total === 1 ? 'rally' : 'rallies';
+  el.textContent = notes.length
+    ? `Shot attribution across ${counts.total} ${rallyWord}: ${notes.join(' · ')}.`
+    : `Shot attribution observed across all ${counts.total} ${rallyWord}.`;
+  el.classList.toggle('warn', counts.conflict > 0);
+  el.classList.remove('hidden');
+}
+
+/* Review pane labels and the report headings share this one naming source, so
+   saving a name updates the switcher without a reload. Safe to call even when
+   players_v1 is absent — playerDisplayName falls back to 'Player N'. */
 function updatePlayerReportButtonLabels(){
-  $('player1ReportBtn').textContent = `${playerDisplayName(1)} report`;
-  $('player2ReportBtn').textContent = `${playerDisplayName(2)} report`;
-  $('player2NextBtn').textContent = `${playerDisplayName(2)} report`;
+  if(REVIEW_PHASES.includes(S.phase)) syncReviewSeg(S.phase);
 }
 
 /* Players card (spec §4.6): post-hoc naming of tracks A/B. Renders only when
@@ -5970,32 +6084,6 @@ $('savePlayersBtn').onclick = async () => {
   }
 };
 
-function buildTargetView(){
-  const summary = S.debugTargetZones ||
-    targetSummaryFromMetricHits(S.run && S.run.hits) ||
-    (S.run && S.run.target_zones);
-  renderTargetZones(summary);
-  const hasFloor = renderFloorMap();
-  renderPlayersCard();
-  const total = summary ? summary.total_wall_hits : 0;
-  const canReport = !!(!S.debugTargetZones && S.run && total);
-  $('player1ReportBtn').disabled = !canReport;
-  $('player2ReportBtn').disabled = !canReport;
-  if(total){
-    $('targetStatus').textContent = S.debugTargetZones
-      ? 'Debug target data is random and temporary.'
-      : 'Percentages are based on detected front-wall hits in this clip.' +
-        (hasFloor ? ' The court map shows where floor bounces landed (front wall at the top).' : '');
-    $('targetStatus').className = 'status';
-  } else if(hasFloor){
-    $('targetStatus').textContent = 'No front-wall hits, but floor bounces are mapped below (front wall at the top).';
-    $('targetStatus').className = 'status';
-  } else {
-    $('targetStatus').textContent = 'No target-zone data is available for this clip.';
-    $('targetStatus').className = 'status warn';
-  }
-}
-
 function buildTrackView(){
   if(!S.run) return;
   transportStop();
@@ -6008,14 +6096,8 @@ function buildTrackView(){
   clearJudgeResult();
   buildRallyVisualization(initialFrame);
   buildHitTimeline(hits, initialFrame);
+  renderPlayersCard();   // naming lives on this pane now that p-target is gone
   preserveTrackStageHeight();
-  const playerSummaries = (S.run && S.run.target_zones_by_player) || {};
-  const hasPlayerTargets = Object.values(playerSummaries)
-    .some(summary => summary && summary.total_wall_hits);
-  $('targetBtn').disabled = !(
-    hasPlayerTargets ||
-    (S.run && S.run.target_zones && S.run.target_zones.total_wall_hits)
-  );
 }
 
 function preserveTrackStageHeight(){
@@ -6028,23 +6110,34 @@ function preserveTrackStageHeight(){
   const mainStyle = getComputedStyle(main);
   const padding = parseFloat(mainStyle.paddingTop) + parseFloat(mainStyle.paddingBottom);
   const originalControlsHeight = Math.ceil(section.scrollHeight + padding);
-  main.style.setProperty('--track-main-height', `${originalControlsHeight}px`);
+
+  /* Clamp against the space the shell actually has. This measures the section's
+     natural height, which is only a sane stage-preserving value while the
+     section stays short — the Players card pushed it past the viewport, which
+     collapsed #stage to 0 and pushed the tail of the page off a body that never
+     scrolls. Reserve a floor for the video and let the surplus scroll inside
+     main, which is what its overflow-y:auto is for. */
+  const chrome = [document.querySelector('header'), $('reviewSeg'), $('instr')]
+    .reduce((total, el) => total + (el && !el.classList.contains('hidden')
+      ? el.getBoundingClientRect().height : 0), 0);
+  const available = window.innerHeight - chrome - TRACK_MIN_STAGE_PX;
+  const height = Math.max(TRACK_MIN_MAIN_PX, Math.min(originalControlsHeight, available));
+  main.style.setProperty('--track-main-height', `${Math.ceil(height)}px`);
 
   if(!rallyWasHidden) rallyPanel.classList.remove('hidden');
 }
-
-$('targetBtn').onclick = () => {
-  S.debugTargetZones = null;
-  setPhase('player1_report');
-};
+/* The video is the evidence on this page — never let the controls squeeze it
+   out entirely. The main floor keeps the judge row reachable on short screens. */
+const TRACK_MIN_STAGE_PX = 180;
+const TRACK_MIN_MAIN_PX = 240;
 
 addEventListener('resize', () => {
   if(S.phase === 'track') preserveTrackStageHeight();
 });
 
-$('player1ReportBtn').onclick = () => setPhase('player1_report');
-$('player2ReportBtn').onclick = () => setPhase('player2_report');
-$('player2NextBtn').onclick = () => setPhase('player2_report');
+$('reviewSourceVideoBtn').onclick = () => {
+  if(S.run && S.run.run_id) window.open(`/api/runs/${encodeURIComponent(S.run.run_id)}/source_video`);
+};
 
 
 function frameToRunPct(frame){
@@ -6154,15 +6247,16 @@ function buildRallyVisualization(initialFrame){
   for(const {rally, start, end} of bounds){
     const number = Number(rally.rally_number);
     const winner = rallyWinnerText(rally);
+    const state = rallyAttributionState(number);
     const segment = document.createElement('div');
-    segment.className = 'rallySegment';
+    segment.className = `rallySegment attr-${state}`;
     segment.dataset.start = start;
     segment.dataset.end = end;
     segment.style.left = `${(start - runStart) / runSpan * 100}%`;
     segment.style.width = `${Math.max(0, end - start) / runSpan * 100}%`;
     segment.setAttribute('aria-label',
-      `Rally ${number}, ${winner}, frames ${rally.start_frame} to ${rally.end_frame}`);
-    segment.title = segment.getAttribute('aria-label');
+      `Rally ${number}, ${winner}, ${ATTR_STATE_TEXT[state]}, frames ${rally.start_frame} to ${rally.end_frame}`);
+    segment.title = `Rally ${number} · ${winner} · ${ATTR_STATE_TEXT[state]}`;
     segment.innerHTML = `<strong>R${number}</strong><span>${escapeHtml(winner.replace('Player ', 'P'))}</span>`;
     ribbon.appendChild(segment);
 
@@ -6185,7 +6279,46 @@ function buildRallyVisualization(initialFrame){
     };
     winners.appendChild(chip);
   }
+  renderRallyLegend();
   syncActiveRally(initialFrame);
+}
+
+/* Per-rally attribution provenance, keyed by rally number. players_v1 is the
+   carrier (player_assignment holds the same rallies, but players_v1 is what
+   survives into the restored-session payload the UI reads). Runs analyzed
+   before attribution_state existed fall back to the serve source, so an old
+   run still renders as observed/assumed rather than blank. */
+const ATTR_STATE_TEXT = {
+  observed: 'serve observed',
+  repaired: 'serve corrected from the next rally',
+  assumed:  'serve assumed',
+  conflict: 'attribution conflict',
+};
+/* The glyph each state stamps on its ribbon segment, repeated in the legend
+   swatch so the two never decode to different marks. */
+const ATTR_STATE_MARK = {observed:'', repaired:'↻', assumed:'', conflict:'!'};
+function rallyAttributionState(rallyNumber){
+  const rallies = (S.run && S.run.players_v1 && S.run.players_v1.rallies) || [];
+  const match = rallies.find(r => Number(r.rally_number) === Number(rallyNumber));
+  if(!match) return 'assumed';
+  if(match.attribution_state in ATTR_STATE_TEXT) return match.attribution_state;
+  return match.server_source === 'observed' ? 'observed' : 'assumed';
+}
+/* Only legend the states actually present — a clean run should not be made to
+   look uncertain by a key full of warnings it never triggered. */
+function renderRallyLegend(){
+  const legend = $('rallyLegend');
+  const counts = attributionCounts();
+  const present = ['observed','repaired','assumed','conflict'].filter(s => counts[s] > 0);
+  if(present.length < 2){
+    legend.classList.add('hidden');
+    legend.innerHTML = '';
+    return;
+  }
+  legend.innerHTML = present
+    .map(s => `<span><i class="${s}">${ATTR_STATE_MARK[s]}</i>${escapeHtml(ATTR_STATE_TEXT[s])}</span>`)
+    .join('');
+  legend.classList.remove('hidden');
 }
 
 /* Coarse-fine timeline (same pattern as the clip page): the overview strip
@@ -7493,7 +7626,6 @@ const LIVE = { runs:[], coach:{}, report:{}, loading:null, range:'1M' };
 const LIVE_MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 const LIVE_DAYS = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
 const LIVE_HUES = [205,150,30,280,110,255,20,180,60,320];
-let openClipId = null;
 
 function fmtRunDate(ts){
   const d = new Date(ts*1000), now = new Date();
@@ -7792,6 +7924,10 @@ function renderClipCards(){
         <div class="scol"><span class="sl">Floor bounces</span><span class="sv num">${m.bounces==null?'—':m.bounces}</span></div>
       </div>
       ${coverageLine(rep)}`;
+    // Ladder order: rally structure first because that tier always runs, ball
+    // detail last because it is the one most often gated off. No buttons at the
+    // foot — the head row is the card's one action, and the review page owns
+    // both "Open full review" and "Watch source video".
     const body = `
       <div class="cardtitle" style="font-size:14px">Rallies</div>
       ${rallySection(rep)}
@@ -7800,12 +7936,11 @@ function renderClipCards(){
       ${ballBlock}
       <div class="cardtitle" style="font-size:14px">What this clip could measure</div>
       ${capabilityRows(rep)}
-      <button class="primary" type="button" data-review="${escapeHtml(id)}">Open full review</button>
-      <button class="ghostbtn" type="button" data-video="${escapeHtml(id)}">Watch source video</button>
       <div class="metaline">${m.hits} front-wall hits · ${m.calls} judged · run ${escapeHtml(id)}</div>`;
     return `
-      <div class="card clipcard ${openClipId===id?'open':''}" data-clip="${escapeHtml(id)}">
-        <div class="cliptop" data-toggle="${escapeHtml(id)}">
+      <div class="card clipcard open" data-clip="${escapeHtml(id)}">
+        <div class="cliptop" data-review="${escapeHtml(id)}" role="button" tabindex="0"
+             aria-label="Open the review for ${escapeHtml(fmtRunDate(r.created))}">
           <div class="thumb" style="background:${grad}">${COURT_THUMB}${PLAY_ICON}</div>
           <div class="info">
             <span class="name">${fmtRunDate(r.created)}</span>
@@ -7816,14 +7951,15 @@ function renderClipCards(){
         <div class="clipbody"><div class="inner">${body}</div></div>
       </div>`;
   }).join('');
-  list.querySelectorAll('[data-toggle]').forEach(el => el.onclick = () => {
-    const id = el.dataset.toggle;
-    openClipId = (openClipId === id) ? null : id;
-    renderClipCards();
+  // Tapping a match opens its review page. The card keeps its summary open
+  // rather than toggling: the expand/collapse existed to reach "Open full
+  // review", and the review page is now one tap away from the card itself.
+  list.querySelectorAll('[data-review]').forEach(el => {
+    el.onclick = () => openRunReview(el.dataset.review);
+    el.onkeydown = e => {
+      if(e.key === 'Enter' || e.key === ' '){ e.preventDefault(); openRunReview(el.dataset.review); }
+    };
   });
-  list.querySelectorAll('[data-review]').forEach(el => el.onclick = () => openRunReview(el.dataset.review));
-  list.querySelectorAll('[data-video]').forEach(el => el.onclick = () =>
-    window.open(`/api/runs/${encodeURIComponent(el.dataset.video)}/source_video`));
 }
 /* Open the full call page for a run: seed the restore stash and reboot —
    the exact path the iOS #run deep link takes, so rehydration is identical. */
