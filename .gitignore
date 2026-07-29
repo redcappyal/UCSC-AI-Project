@@ -70,6 +70,15 @@ venv/
 # inert by construction, not by being untracked — pytest ignores it, no runtime
 # module imports it, and ios/project.yml does not list it as a source.
 !archive/**
+# The exported WASB temporal ball model (6.4 MB traced TorchScript + its
+# ball-model-v2 manifest). Committed deliberately, unlike the YOLOX artifact
+# (models/crosscourt-ball-416-v1 stays ignored): teammates cannot regenerate
+# this one -- the checkpoint, training scripts, and CUDA env live only on the
+# training box -- and the serving pipeline needs the directory to run with
+# BALL_MODEL_DIR. The manifest's artifact_sha256 pins the binary.
+!models/crosscourt-wasb-416-v1/manifest.json
+!models/crosscourt-wasb-416-v1/model.torchscript
+
 # Native iOS app and deploy artifacts (ios/.gitignore re-excludes the
 # generated .xcodeproj and Info.plist)
 !ios/**

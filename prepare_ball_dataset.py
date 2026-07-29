@@ -569,10 +569,28 @@ def _resolve_clip_offset(clip, clip_records, decoded, export_images, last_frame,
 
 
 def _decode_sequences(records, plans_by_record, clip_videos, clip_last_frame, crop,
-                      tolerance=ALIGNMENT_MAX_ABS_DIFF, frame_maps=None):
-    """{(record.path, plan_index): (tm1_tile, tp1_tile)} cropped-to-window
-    neighbour-frame patches for every planned crop of every record with a
-    matched video.
+                      tolerance=ALIGNMENT_MAX_ABS_DIFF, frame_maps=None,
+                      cut_threshold=None):
+    """`(tiles, stats)`, where tiles is {(record.path, plan_index): (tm1_tile,
+    tp1_tile)} cropped-to-window neighbour-frame patches for every planned
+    crop of every record with a matched video, and stats is the per-clip
+    scene-continuity report (see `cut_threshold`).
+
+    `cut_threshold` guards against a neighbour frame from a DIFFERENT SHOT,
+    which is worse than no neighbour at all. The 3-frame stack exists to teach
+    "a mark identical in all three frames is not the ball"; a cut is maximal
+    inter-frame change, so a cut-adjacent anchor teaches the inverse -- that a
+    huge frame-to-frame difference is compatible with a ball in the middle
+    channel -- which is precisely the lesson `docs/WASB-TRAIN.md` §5(d)'s
+    static-clutter gate tests for. Cuts land next to labelled frames in edited
+    footage (tutorials, "compilation" reels) because labelling stops at the
+    shot boundary, so the last anchor of a burst is exactly where the risk is.
+
+    Anchor-vs-neighbour mean|diff| is **always measured** -- the frames are
+    decoded either way, so it is nearly free -- and returned per clip, so the
+    threshold can be read off real footage instead of guessed. It is only
+    **enforced** when `cut_threshold` is not None; left None, every tile is
+    byte-identical to the un-guarded build.
 
     Clips present in `frame_maps` skip the 0/-1/+1 offset probe entirely: the
     map supplies each labelled frame's true video index (for clips whose
@@ -613,8 +631,11 @@ def _decode_sequences(records, plans_by_record, clip_videos, clip_last_frame, cr
                 and record["clip"] in clip_videos):
             by_clip[record["clip"]].append(record)
 
-    tiles = {}
+    tiles, stats = {}, {}
     for clip, clip_records in sorted(by_clip.items()):
+        clip_stats = stats.setdefault(
+            clip, {"neighbour_diffs": [], "cut_padded": 0,
+                   "dropped_no_neighbour": 0})
         video = clip_videos[clip]
         last_frame = clip_last_frame.get(clip)
         # Read each record's export image once here -- shared by the offset
@@ -692,14 +713,36 @@ def _decode_sequences(records, plans_by_record, clip_videos, clip_last_frame, cr
             scale = plans[0]["scale"]
             interp = cv2.INTER_AREA if scale < 1 else cv2.INTER_CUBIC
 
-            tm1_raw = decoded.get(true_t - 1)
-            tp1_raw = decoded.get(true_t + 1)
-            tm1_frame = _prepare(
-                tm1_raw if tm1_raw is not None else export_image,
-                native_shape, scale, interp)
-            tp1_frame = _prepare(
-                tp1_raw if tp1_raw is not None else export_image,
-                native_shape, scale, interp)
+            def _neighbour(raw):
+                """`(frame, was_repeat)`: the real neighbour, or the anchor
+                repeated when there isn't one -- either because the index was
+                never fetched (clip edge, the pre-existing repeat-ANCHOR case)
+                or because it failed the scene-continuity check above."""
+                if raw is None:
+                    return export_image, True
+                diff = verify_frame_alignment(raw, export_image)
+                clip_stats["neighbour_diffs"].append(round(float(diff), 2))
+                if cut_threshold is not None and diff > cut_threshold:
+                    clip_stats["cut_padded"] += 1
+                    return export_image, True
+                return raw, False
+
+            tm1_src, tm1_repeat = _neighbour(decoded.get(true_t - 1))
+            tp1_src, tp1_repeat = _neighbour(decoded.get(true_t + 1))
+            if tm1_repeat and tp1_repeat:
+                # Both sides repeat the anchor, so the stack would be three
+                # IDENTICAL frames carrying a positive ball label -- the
+                # literal negative case of §5(d)'s static-clutter gate, which
+                # wants three identical frames to predict near-EMPTY. Emitting
+                # no tiles makes render_split fall through to a plain
+                # single-frame crop with no "sequence" field, so the sequence
+                # dataset skips this anchor rather than training the
+                # contradiction. Reachable without any cut: a clip with a
+                # single labelled frame already hits it.
+                clip_stats["dropped_no_neighbour"] += 1
+                continue
+            tm1_frame = _prepare(tm1_src, native_shape, scale, interp)
+            tp1_frame = _prepare(tp1_src, native_shape, scale, interp)
 
             for index, plan in enumerate(plans):
                 ox, oy = plan["origin"]
@@ -716,7 +759,125 @@ def _decode_sequences(records, plans_by_record, clip_videos, clip_last_frame, cr
         # out of scope here as the loop advances to the next clip -- nothing
         # from this clip is retained past this point except the small tiles
         # already copied into `tiles`.
-    return tiles
+    return tiles, stats
+
+
+def _continuity_report(stats):
+    """Per-clip anchor-vs-neighbour mean|diff| percentiles plus the guard's
+    effect, for the manifest.
+
+    The percentiles are the whole point: on continuous footage they cluster
+    low (adjacent frames of a fixed-mount shot barely differ), and a cut shows
+    up as a long tail. Reading p50 against p99 is how `--seq-cut-threshold`
+    gets chosen from the real distribution instead of guessed -- and if p99 is
+    close to p50, that clip has no cuts and needs no threshold at all.
+    """
+    report = {}
+    for clip, entry in sorted(stats.items()):
+        diffs = sorted(entry["neighbour_diffs"])
+        summary = {"neighbours_measured": len(diffs),
+                   "cut_padded": entry["cut_padded"],
+                   "dropped_no_neighbour": entry["dropped_no_neighbour"]}
+        if diffs:
+            def pct(q):
+                return diffs[min(len(diffs) - 1, int(len(diffs) * q))]
+            summary["neighbour_diff"] = {
+                "p50": pct(0.50), "p90": pct(0.90), "p99": pct(0.99),
+                "max": diffs[-1]}
+        report[clip] = summary
+    return report
+
+
+def _export_sequences(records, plans_by_record, frame_index, crop,
+                      cut_threshold=None):
+    """Same `(tiles, stats)` contract as `_decode_sequences`, but sourcing the
+    t-1/t+1 neighbours from the export's OWN adjacent frames instead of
+    decoding the source video.
+
+    Roboflow exports frames, and labelled frames arrive in contiguous runs, so
+    an anchor in the interior of a run already has its neighbours on disk as
+    plain export images. That makes the source footage optional: measured on
+    `ball-crops-2026-07-24`, 92% of `ModelTrainTest2`'s anchors have both
+    neighbours present.
+
+    Three things fall away versus the video path, all of them load-bearing:
+
+    - **No alignment probe.** There is no export-index-to-video-frame mapping
+      to resolve, because we never leave export space. `--frame-map` and the
+      0/-1/+1 offset search are both irrelevant here.
+    - **Cuts cannot be sampled.** A shot boundary always falls at a burst
+      boundary, and a burst-boundary anchor has no adjacent export frame on
+      that side, so the cross-shot frame is unreachable by construction rather
+      than by threshold.
+    - **Neighbours may carry real labels.** Unlike a decoded video frame, an
+      adjacent export frame is often annotated itself, which lets the adapter
+      use a true Gaussian on that channel instead of §2.2's mask.
+
+    The cost: a clip whose export was not sampled 1:1 with video frames gets a
+    wider temporal baseline than the model sees at serving time (adjacent
+    export frames are >1 video frame apart). `cut_threshold` still applies --
+    a large anchor-vs-neighbour difference is worth catching even here, since
+    it means the "adjacent" frames are not really adjacent.
+    """
+    import cv2                            # lazy: geometry is testable without it
+
+    tiles, stats = {}, {}
+    for record in records:
+        plans = plans_by_record.get(record["path"])
+        if not plans or record["frame"] is None:
+            continue
+        clip_stats = stats.setdefault(
+            record["clip"], {"neighbour_diffs": [], "cut_padded": 0,
+                             "dropped_no_neighbour": 0})
+        anchor = _imread_unicode(record["path"])
+        if anchor is None:
+            continue
+        native_shape = anchor.shape[:2]
+        scale = plans[0]["scale"]
+        interp = cv2.INTER_AREA if scale < 1 else cv2.INTER_CUBIC
+
+        def _neighbour(delta):
+            """`(frame, was_repeat)` for the neighbour `delta` frames away."""
+            path = frame_index.get((record["clip"], record["frame"] + delta))
+            if path is None:
+                return anchor, True
+            image = _imread_unicode(path)
+            if image is None:
+                return anchor, True
+            diff = verify_frame_alignment(image, anchor)
+            clip_stats["neighbour_diffs"].append(round(float(diff), 2))
+            if cut_threshold is not None and diff > cut_threshold:
+                clip_stats["cut_padded"] += 1
+                return anchor, True
+            return image, False
+
+        tm1_src, tm1_repeat = _neighbour(-1)
+        tp1_src, tp1_repeat = _neighbour(+1)
+        if tm1_repeat and tp1_repeat:
+            # Neither side usable -> three identical frames under a positive
+            # label, i.e. §5(d)'s static-clutter negative. Same rule as the
+            # video path: emit nothing and let render_split fall back to a
+            # plain single-frame crop.
+            clip_stats["dropped_no_neighbour"] += 1
+            continue
+
+        def _prepare(frame):
+            if frame.shape[:2] != native_shape:
+                frame = cv2.resize(frame, (native_shape[1], native_shape[0]))
+            if scale != 1.0:
+                frame = cv2.resize(frame, None, fx=scale, fy=scale,
+                                   interpolation=interp)
+            return frame
+
+        tm1_frame, tp1_frame = _prepare(tm1_src), _prepare(tp1_src)
+        for index, plan in enumerate(plans):
+            ox, oy = plan["origin"]
+            # .copy() for the same reason _decode_sequences does it: a slice is
+            # a view that would pin the full-resolution frame in memory.
+            tiles[(record["path"], index)] = (
+                tm1_frame[oy:oy + crop, ox:ox + crop].copy(),
+                tp1_frame[oy:oy + crop, ox:ox + crop].copy())
+    return tiles, stats
 
 
 def load_frame_map(path):
@@ -758,7 +919,7 @@ def load_frame_map(path):
 
 def render_split(records, plans_by_record, out_dir, split, crop, quality,
                  *, seq_frames=1, clip_videos=None, clip_last_frame=None,
-                 frame_maps=None):
+                 frame_maps=None, cut_threshold=None, frame_index=None):
     """Write crop JPEGs and the split's COCO json. Returns the manifest slice.
 
     `crop_file_name` keys off `record["path"].stem`, dropping the parent
@@ -785,11 +946,17 @@ def render_split(records, plans_by_record, out_dir, split, crop, quality,
     # the planned window and dataset-scale by _decode_sequences, one clip's
     # native frames at a time, so this dict holds only small tiles rather
     # than full-resolution frames for the whole split.
-    tiles = {}
-    if seq_frames > 1 and clip_videos:
-        tiles = _decode_sequences(
+    tiles, seq_stats = {}, {}
+    if seq_frames > 1 and frame_index is not None:
+        # Export-sourced neighbours: no video needed. Mutually exclusive with
+        # the video path -- build() picks one.
+        tiles, seq_stats = _export_sequences(
+            records, plans_by_record, frame_index, crop,
+            cut_threshold=cut_threshold)
+    elif seq_frames > 1 and clip_videos:
+        tiles, seq_stats = _decode_sequences(
             records, plans_by_record, clip_videos, clip_last_frame or {}, crop,
-            frame_maps=frame_maps)
+            frame_maps=frame_maps, cut_threshold=cut_threshold)
 
     for record in records:
         plans = plans_by_record.get(record["path"])
@@ -859,7 +1026,7 @@ def render_split(records, plans_by_record, out_dir, split, crop, quality,
                     "categories": [{"id": 0, "name": CLASS_NAME,
                                     "supercategory": "none"}]},
                    sort_keys=True) + "\n", encoding="utf-8")
-    return {
+    slice_ = {
         "crops": len(images),
         "annotations": len(annotations),
         "negative_crops": sum(1 for i in images
@@ -868,20 +1035,44 @@ def render_split(records, plans_by_record, out_dir, split, crop, quality,
         "source_frames": len(records),
         "source_bursts": burst_count(records),
     }
+    if seq_stats:
+        # Only present for sequence builds, and never silently: a dropped or
+        # cut-padded anchor has to be countable from the manifest alone.
+        slice_["sequence_continuity"] = _continuity_report(seq_stats)
+        slice_["sequence_crops"] = sum(
+            1 for i in images if i.get("sequence"))
+    return slice_
 
 
 def build(source, out, crop, positives, negatives, jitter, min_visible,
           min_source_width, min_frame_gap, target_ball_px, val_clips, test_clips,
-          seed, quality, *, seq_frames=1, clips_dir=None, frame_maps=None):
+          seed, quality, *, seq_frames=1, clips_dir=None, frame_maps=None,
+          exclude_clips=None, cut_threshold=None, seq_from_export=False):
     if seq_frames % 2 == 0:
         raise SystemExit(
             f"--seq-frames must be odd (got {seq_frames}): sequence length "
             f"must be odd -- the labeled frame sits in the middle of a "
             f"centered window.")
-    if seq_frames > 1 and not clips_dir:
+    if seq_frames > 1 and not clips_dir and not seq_from_export:
         raise SystemExit(
             f"--seq-frames {seq_frames} needs --clips-dir pointing at the "
-            f"source videos, to decode the t-1/t+1 neighbour frames.")
+            f"source videos, to decode the t-1/t+1 neighbour frames -- or "
+            f"--seq-from-export to take the neighbours from the export's own "
+            f"adjacent frames instead, when the source footage is gone.")
+    if seq_from_export and clips_dir:
+        raise SystemExit(
+            "--seq-from-export and --clips-dir are mutually exclusive: pick "
+            "one source for the t-1/t+1 neighbours. The video path gives a "
+            "uniform one-frame baseline; the export path needs no footage.")
+    if seq_from_export and seq_frames == 1:
+        raise SystemExit(
+            "--seq-from-export only applies with --seq-frames > 1: there are "
+            "no neighbour frames to source for single-frame crops.")
+    if seq_from_export and frame_maps:
+        raise SystemExit(
+            "--frame-map is meaningless with --seq-from-export: the map exists "
+            "to translate export indices into video frames, and this path "
+            "never leaves export space.")
     if frame_maps and seq_frames == 1:
         raise SystemExit(
             "--frame-map only applies with --seq-frames > 1: it exists to "
@@ -891,17 +1082,50 @@ def build(source, out, crop, positives, negatives, jitter, min_visible,
     records, categories = load_export(source)
     total_frames = len(records)
 
+    # Clip exclusion runs FIRST, before every other filter and before the
+    # split assignment, so an excluded clip cannot influence anything
+    # downstream -- not the per-clip scale factors, not burst thinning, and
+    # not the ball-width percentiles that size the crops. Excluding by
+    # deleting from the Roboflow export instead would lose the annotations.
+    excluded = {}
+    if exclude_clips:
+        wanted = set(exclude_clips)
+        present = {r["clip"] for r in records}
+        unknown = sorted(wanted - present)
+        if unknown:
+            raise SystemExit(
+                f"--exclude-clips names clip(s) not in the export: {unknown}. "
+                f"Present: {sorted(present)}")
+        for record in records:
+            if record["clip"] in wanted:
+                excluded[record["clip"]] = excluded.get(record["clip"], 0) + 1
+        records = [r for r in records if r["clip"] not in wanted]
+        if not records:
+            raise SystemExit(
+                "--exclude-clips removed every frame in the export.")
+
     kept = [r for r in records if r["width"] >= min_source_width]
     dropped_low_res = defaultdict(int)
     for record in records:
         if record["width"] < min_source_width:
             dropped_low_res[f"{record['clip']} ({record['width']}x{record['height']})"] += 1
 
+    # Built BEFORE thin_bursts, deliberately: thinning chooses which frames
+    # become anchors, not which frames exist. A frame thinned out of the anchor
+    # set is still a perfectly good image on disk, and still the right t-1/t+1
+    # for a surviving anchor -- indexing after thinning would strand anchors
+    # next to gaps that only the sampler invented.
+    frame_index = None
+    if seq_from_export:
+        frame_index = {(r["clip"], r["frame"]): r["path"]
+                       for r in kept if r["frame"] is not None}
+
     kept, thinned = thin_bursts(kept, min_frame_gap)
     scales = clip_scale_factors(kept, target_ball_px)
     splits = split_by_clip(kept, val_clips, test_clips)
 
-    clip_videos = find_clip_videos(clips_dir, kept) if seq_frames > 1 else None
+    clip_videos = (find_clip_videos(clips_dir, kept)
+                   if seq_frames > 1 and not seq_from_export else None)
     clip_last_frame = {}
     if seq_frames > 1:
         for record in kept:
@@ -932,7 +1156,8 @@ def build(source, out, crop, positives, negatives, jitter, min_visible,
         manifest_splits[split] = render_split(
             splits.get(split, []), plans_by_record, out, split, crop, quality,
             seq_frames=seq_frames, clip_videos=clip_videos,
-            clip_last_frame=clip_last_frame, frame_maps=frame_maps)
+            clip_last_frame=clip_last_frame, frame_maps=frame_maps,
+            cut_threshold=cut_threshold, frame_index=frame_index)
 
     ball_widths = sorted(b["bbox"][2] for r in kept for b in r["balls"])
     manifest = {
@@ -945,7 +1170,14 @@ def build(source, out, crop, positives, negatives, jitter, min_visible,
                    "jitter": jitter, "min_visible": min_visible,
                    "min_source_width": min_source_width,
                    "min_frame_gap": min_frame_gap,
-                   "target_ball_px": target_ball_px},
+                   "target_ball_px": target_ball_px,
+                   "seq_cut_threshold": cut_threshold,
+                   "seq_neighbour_source": (
+                       "export" if seq_from_export
+                       else "video" if seq_frames > 1 else None)},
+        # Which clips were deliberately left out, and how many frames each
+        # cost -- so a shrunken dataset reads as a decision, not as data loss.
+        "excluded_clips": dict(sorted(excluded.items())),
         "clip_scale_factors": {k: round(v, 3) for k, v in sorted(scales.items())},
         # The readable name lives in each image's `clip`; this flags the clips
         # whose crops therefore carry a digest suffix.
@@ -996,6 +1228,14 @@ def parse_args():
                              "matching training scale to the 4K rig. 0 = native.")
     parser.add_argument("--val-clips", nargs="*", default=[])
     parser.add_argument("--test-clips", nargs="*", default=[])
+    parser.add_argument("--exclude-clips", nargs="*", default=[],
+                        help="Clip names to drop from the build entirely, "
+                             "before every other filter. Use for footage whose "
+                             "labelled frames are fine but whose surrounding "
+                             "video is not -- e.g. edited tutorials, where a "
+                             "cut next to a labelled frame poisons the "
+                             "t-1/t+1 sequence. Dies if a name is not in the "
+                             "export, so a typo cannot silently keep a clip.")
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--jpeg-quality", type=int, default=95)
     parser.add_argument("--clips-dir", type=Path, default=None,
@@ -1011,6 +1251,26 @@ def parse_args():
                              "0/-1/+1 offset probe for clips whose export "
                              "sampling was not 1:1 with video frames. Mapped "
                              "anchors are still alignment-verified.")
+    parser.add_argument("--seq-from-export", action="store_true",
+                        help="Take t-1/t+1 from the export's own adjacent "
+                             "frames instead of decoding --clips-dir video. "
+                             "Use when the source footage is gone: labelled "
+                             "frames come in contiguous runs, so most anchors "
+                             "already have their neighbours on disk. Needs no "
+                             "video, no frame alignment and no --frame-map, "
+                             "and cannot sample across a cut. Anchors at a run "
+                             "boundary lose that side (repeat-anchor), and are "
+                             "dropped when neither side is available.")
+    parser.add_argument("--seq-cut-threshold", type=float, default=None,
+                        help="Anchor-vs-neighbour mean|pixel diff| above which "
+                             "a t-1/t+1 frame is treated as a different shot "
+                             "and replaced by repeating the anchor; an anchor "
+                             "with no usable neighbour on either side is "
+                             "dropped from the sequence set. Omit to measure "
+                             "without enforcing -- the distribution lands in "
+                             "the manifest under splits.*.sequence_continuity "
+                             "either way, so pick the number from a clip's own "
+                             "p50-vs-p99 spread rather than guessing.")
     return parser.parse_args()
 
 
@@ -1024,7 +1284,10 @@ def main():
         seq_frames=args.seq_frames,
         clips_dir=args.clips_dir.expanduser() if args.clips_dir else None,
         frame_maps=load_frame_map(args.frame_map.expanduser())
-        if args.frame_map else None)
+        if args.frame_map else None,
+        exclude_clips=args.exclude_clips,
+        cut_threshold=args.seq_cut_threshold,
+        seq_from_export=args.seq_from_export)
 
     print(f"{manifest['source_frames_kept']}/{manifest['source_frames_seen']} "
           f"source frames kept -> {args.out}")
@@ -1036,10 +1299,25 @@ def main():
           f"those frames — the real sample count")
     if manifest["ball_width_px"]:
         print(f"  ball width px: {manifest['ball_width_px']}")
+    for name, count in manifest["excluded_clips"].items():
+        print(f"  EXCLUDED {count} frame(s) by --exclude-clips: {name}")
     for split, stats in manifest["splits"].items():
         print(f"  {split:5}: {stats['crops']:5d} crops "
               f"({stats['negative_crops']} negative), "
               f"{stats['annotations']:5d} boxes, clips={stats['clips']}")
+        for clip, cont in stats.get("sequence_continuity", {}).items():
+            spread = cont.get("neighbour_diff")
+            if spread:
+                # p50 vs p99 is the read: a flat spread means continuous
+                # footage, a long tail means shot boundaries next to labels.
+                print(f"         seq {clip[:34]:36s} "
+                      f"neighbour|diff| p50={spread['p50']:6.2f} "
+                      f"p90={spread['p90']:6.2f} p99={spread['p99']:6.2f} "
+                      f"max={spread['max']:6.2f}")
+            if cont["cut_padded"] or cont["dropped_no_neighbour"]:
+                print(f"         seq {clip[:34]:36s} "
+                      f"cut-padded={cont['cut_padded']} "
+                      f"dropped={cont['dropped_no_neighbour']}")
     if not manifest["splits"]["val"]["crops"]:
         print("  WARNING no val split — pass --val-clips, or every number you "
               "measure will be on data the model trained on")
