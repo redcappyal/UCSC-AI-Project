@@ -150,7 +150,7 @@ pass over the video and re-enable it independently.
 
 ---
 
-### Task 3 — fps-normalize the time-domain constants — TODO
+### Task 3 — fps-normalize the time-domain constants — DONE (2026-07-29)
 
 `detect_wall_hits.py:12-41` and `tracking_common.py:12-21` hold frame-window constants
 tuned to 60 fps in native frame units. At 30 fps every window covers twice the wall-clock
@@ -166,6 +166,23 @@ The real gate for this task is not the unit tests: replay a real run at 60 fps a
 the judged output against the pre-refactor output. Identical, or it is not done.
 
 Commit: `refactor: fps-normalize time-domain hit/track windows (identity at 60fps, replay-verified)`
+
+**Result:** commit `b7ccd4f`. `REFERENCE_FPS` + `scale_frames_for_fps` +
+`scaled_hit_kwargs` in `detect_wall_hits.py`, `scaled_window_frames` in
+`tracking_common.py`, wired at the hit-detection, motion-selection and audio-pad sites in
+`job_runner.py`. New `tests/test_detect_wall_hits.py` (11 tests) + 3 wiring tests. Suite
+**519 passed, 2 skipped, 1 deselected**.
+
+Equivalence evidence: replayed `detect_hits` over the committed real
+`ball_coordinates.csv` at strides 1/2/4 before and after — **byte-identical**
+(4/4/6 hits, frames `[112, 247, 589, 1009]` and `[112, 168, 247, 258, 589, 1009]`).
+Line-call eval **identical to `BASELINE-2026-07-23.md`, zero drift**.
+
+Two notes for later tasks. The plan expected the replay to run against stored `ui_runs/`;
+those are gitignored and absent from a fresh worktree, so the committed CSV stood in — it
+is real captured data, not synthetic, but a richer replay corpus would be better. And the
+plan expected three `detect_hits_from_rows` call sites; there is one, the others having
+gone when the selectable bounce engines were removed.
 
 ---
 
