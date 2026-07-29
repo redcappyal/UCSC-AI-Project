@@ -215,7 +215,7 @@ eval axis exists to tune.
 
 ---
 
-### Task 5 — motion hook + pipeline integration — TODO
+### Task 5 — motion hook + pipeline integration — DONE (2026-07-29)
 
 Compute frame-motion energy during the existing decode pass (no second full decode), feed
 it plus `audio_events.extract_audio_candidates` into the segmenter, and emit the timeline
@@ -225,6 +225,23 @@ Follow **MVP plan Task 5**. When the ball tier is on, reconcile with hit-derived
 rather than replacing them — record both and which one the report should trust.
 
 Commit: `feat: rally timeline from audio+motion, emitted independent of ball tier`
+
+**Result:** commit `2ab98a8`. `motion_energy_step` + `build_rally_timeline` in
+`rally_segmenter.py`; `MotionAccumulator`, `compose_frame_observers`,
+`accumulate_motion_only` and `build_and_write_rally_timeline` in `job_runner.py`.
+Suite **549 passed, 2 skipped, 1 deselected**. Replay of `detect_hits` over the committed
+`ball_coordinates.csv` at strides 1/2/4 **byte-identical** to the pre-Task-3 fingerprint;
+line-call eval **identical to baseline, zero drift**.
+
+Both paths emit tier 1: motion rides the coarse decode via the existing `frame_observer`
+seam when the ball tier is on, and gets its own ~6 samples/second decode (no model) when
+it is off. Samples are keyed by frame index so refine/audio-rescue re-decodes cannot
+double-count. `rally_timeline` (schema `rally-timeline-v1`) goes to both the job and
+`<run_dir>/rally_timeline.json`. `agrees_with_hits` is `None` — not `True` — when there
+are no hit rallies to compare against.
+
+**Untuned, and the reason Task 6 is next:** every threshold in `rally_segmenter` is still
+a first guess. Nothing has scored these boundaries against a human yet.
 
 ---
 
