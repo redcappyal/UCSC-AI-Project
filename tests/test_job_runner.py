@@ -13,6 +13,7 @@ import json
 
 import cv2
 import numpy as np
+import pytest
 
 import job_runner
 import person_model
@@ -618,3 +619,109 @@ def test_non_temporal_decode_payload_unchanged(tmp_path):
     items = _drain_decode(video, [(0, 5, 2)], temporal=False)
     assert [idx for idx, _ in items] == [0, 2, 4]
     assert all(isinstance(frame, np.ndarray) for _, frame in items)
+
+
+class _StubBallRunner:
+    """A ball_model-runner stand-in: manifest + recording run_batch."""
+
+    class _Manifest:
+        frames_per_input = 3
+        conf_threshold = 0.1
+        input_size = (416, 416)
+        tile_overlap_px = 64
+        max_batch_tiles = 32
+        nms_iou = 0.45
+        class_names = ("ball",)
+        name = "stub-wasb"
+        version = 1
+        artifact_sha256 = "deadbeef"
+
+    def __init__(self):
+        self.manifest = self._Manifest()
+        self.batches = []
+        self.device = "cpu"
+
+    def run_batch(self, stacks):
+        self.batches.append([s.shape for s in stacks])
+        return [[] for _ in stacks]
+
+
+def test_track_segments_local_temporal_feeds_stacks_and_observes_centers(tmp_path):
+    video = tmp_path / "clip.mp4"
+    _write_clip(video, frame_count=8)
+    runner = _StubBallRunner()
+    results = {}
+    observed = []
+    job_runner.track_segments(
+        runner, video, [(0, 7, 4)], 640, 30.0, results,
+        on_frame=lambda idx: None,
+        frame_observer=lambda idx, frame: observed.append(
+            (idx, _frame_value(frame))),
+        backend="local",
+    )
+    # Observer fired once per CENTER frame with the center frame itself.
+    assert observed == [(0, 0), (4, 80)]
+    # Every stack reaching the runner is one 9-channel tile (64x48 clip
+    # is smaller than one 416 tile, zero-padded).
+    for batch in runner.batches:
+        for shape in batch:
+            assert shape == (416, 416, 9)
+    # No detections -> empty rows for the two centers.
+    assert sorted(results) == [0, 4]
+    assert all(results[idx]["detected"] is False for idx in results)
+
+
+def test_track_segments_local_uses_manifest_confidence_floor(tmp_path, monkeypatch):
+    video = tmp_path / "clip.mp4"
+    _write_clip(video, frame_count=4)
+    runner = _StubBallRunner()
+    floors = []
+
+    def spy_select(predictions_by_frame, confidence_threshold, **kwargs):
+        floors.append(confidence_threshold)
+        return {frame: None for frame in predictions_by_frame}
+
+    monkeypatch.setattr(
+        job_runner, "select_motion_consistent_ball_predictions", spy_select)
+    job_runner.track_segments(
+        runner, video, [(0, 3, 1)], 640, 30.0, {},
+        on_frame=lambda idx: None, backend="local")
+    assert floors == [pytest.approx(0.1)]
+
+    monkeypatch.setattr(job_runner, "infer_frame_predictions",
+                        lambda model, frame, threshold, width: [])
+    job_runner.track_segments(
+        object(), video, [(0, 3, 1)], 640, 30.0, {},
+        on_frame=lambda idx: None, backend="rfdetr")
+    assert floors[-1] == pytest.approx(0.40)
+
+
+def test_track_segments_local_single_frame_manifest_uses_detect_frame(tmp_path, monkeypatch):
+    video = tmp_path / "clip.mp4"
+    _write_clip(video, frame_count=4)
+    runner = _StubBallRunner()
+    runner.manifest.frames_per_input = 1
+    calls = []
+    monkeypatch.setattr(
+        job_runner, "detect_frame",
+        lambda model, frame, manifest: calls.append(frame.shape) or [])
+    job_runner.track_segments(
+        runner, video, [(0, 3, 2)], 640, 30.0, {},
+        on_frame=lambda idx: None, backend="local")
+    assert len(calls) == 2          # frames 0 and 2 (stride 2), full frames
+
+
+def test_track_segments_rejects_unsupported_frames_per_input(tmp_path):
+    runner = _StubBallRunner()
+    runner.manifest.frames_per_input = 5
+    with pytest.raises(ValueError, match="frames_per_input"):
+        job_runner.track_segments(
+            runner, "unused.mp4", [(0, 3, 1)], 640, 30.0, {},
+            on_frame=lambda idx: None, backend="local")
+
+
+def test_track_segments_rejects_unknown_backend():
+    with pytest.raises(ValueError, match="backend"):
+        job_runner.track_segments(
+            object(), "unused.mp4", [(0, 3, 1)], 640, 30.0, {},
+            on_frame=lambda idx: None, backend="coreml")

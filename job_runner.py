@@ -24,6 +24,7 @@ import person_model
 import player_attribution
 import rally_segmenter
 from audio_events import extract_audio_candidates
+from ball_detector import detect_frame, detect_frame_stack
 from bounce_gb_model_detector import DEFAULT_MODEL_PATH as BOUNCE_GB_MODEL_PATH
 from bounce_gb_model_detector import detect_hits_with_gb_model
 from classify_events import classify_events
@@ -398,21 +399,50 @@ def decode_segments_to_queue(video_path, segments, frame_queue, stop_event,
 
 
 def track_segments(model, video_path, segments, inference_width, source_fps, results, on_frame,
-                   frame_observer=None):
+                   frame_observer=None, backend="rfdetr"):
     """Consumer loop: infer frames from the decode queue into `results`.
 
     Decode runs on its own thread so it overlaps inference, which dominates.
     `frame_observer(frame_idx, frame)`, when given, is called for every
-    decoded frame in this call — callers wire it only on the coarse pass so
-    the person-detection cadence rides the coarse decode, never refine or
-    audio-rescue (spec §4.2).
+    decoded CENTER frame in this call — callers wire it only on the coarse
+    pass so the person-detection cadence rides the coarse decode, never
+    refine or audio-rescue (spec §4.2). Neighbour frames on the temporal
+    path are invisible to observers.
+
+    backend "rfdetr" (default) is the historical per-frame path. backend
+    "local" runs a ball_model runner (`model` has .manifest) at NATIVE
+    resolution — inference_width is deliberately ignored, tiling owns scale
+    (ios/MODEL.md §6) — and a temporal manifest (frames_per_input == 3)
+    consumes the 3-frame windows the temporal producer emits. The selection
+    floor becomes the manifest's own conf_threshold: the motion-consistency
+    selector is the low-confidence rescue mechanism (the ByteTrack idea,
+    absorbed), so the 0.40 rfdetr floor would silently discard the recall
+    the model was fine-tuned to recover.
     """
-    frame_queue = queue.Queue(maxsize=DECODE_QUEUE_SIZE)
+    temporal = False
+    confidence_floor = CONFIDENCE_THRESHOLD
+    if backend == "local":
+        frames_per_input = int(model.manifest.frames_per_input)
+        if frames_per_input not in (1, 3):
+            raise ValueError(
+                f"job_runner supports frames_per_input 1 or 3, got "
+                f"{frames_per_input}; widening the window is a deliberate "
+                f"change, not a default.")
+        temporal = frames_per_input == 3
+        confidence_floor = float(model.manifest.conf_threshold)
+    elif backend != "rfdetr":
+        raise ValueError(f"Unknown ball backend {backend!r}")
+
+    # A temporal item holds 3 frames; shrink the queue so worst-case
+    # buffered frame count stays in the same ballpark.
+    queue_size = max(2, DECODE_QUEUE_SIZE // 3) if temporal else DECODE_QUEUE_SIZE
+    frame_queue = queue.Queue(maxsize=queue_size)
     stop_event = threading.Event()
     decode_errors = []
     decoder = threading.Thread(
         target=decode_segments_to_queue,
         args=(video_path, segments, frame_queue, stop_event, decode_errors),
+        kwargs={"temporal": temporal},
         daemon=True,
     )
     decoder.start()
@@ -424,15 +454,22 @@ def track_segments(model, video_path, segments, inference_width, source_fps, res
             if item is None:
                 break
 
-            frame_idx, frame = item
+            frame_idx, payload = item
+            center = payload[1] if temporal else payload
             if frame_observer is not None:
-                frame_observer(frame_idx, frame)
-            predictions = infer_frame_predictions(
-                model,
-                frame,
-                CONFIDENCE_THRESHOLD,
-                inference_width,
-            )
+                frame_observer(frame_idx, center)
+            if backend == "local":
+                if temporal:
+                    predictions = detect_frame_stack(model, payload, model.manifest)
+                else:
+                    predictions = detect_frame(model, payload, model.manifest)
+            else:
+                predictions = infer_frame_predictions(
+                    model,
+                    payload,
+                    CONFIDENCE_THRESHOLD,
+                    inference_width,
+                )
             raw_predictions[frame_idx] = predictions
             on_frame(frame_idx)
     finally:
@@ -449,7 +486,7 @@ def track_segments(model, video_path, segments, inference_width, source_fps, res
 
     selected_predictions = select_motion_consistent_ball_predictions(
         raw_predictions,
-        CONFIDENCE_THRESHOLD,
+        confidence_floor,
         window_frames=scaled_window_frames(source_fps),
     )
     for frame_idx, ball_prediction in selected_predictions.items():
