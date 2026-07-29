@@ -5136,6 +5136,39 @@ function videoUploadKey(file){
   return `${file.name}:${file.size}:${file.lastModified}`;
 }
 
+/* Files above this go up in chunks. The single-POST route is capped at 2 GB
+   server-side (~5 minutes of 4K60), so a full match cannot be ingested at all
+   through it; below the threshold the one-shot path is simpler and faster. */
+const CHUNKED_UPLOAD_THRESHOLD = 512 * 1024 * 1024;
+const UPLOAD_CHUNK_BYTES = 16 * 1024 * 1024;
+
+async function uploadFileChunked(file, progressLabel){
+  const init = await fetch('/api/upload/init', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({filename:file.name, size:file.size}),
+  }).then(r => r.json());
+  if(!init.ok) throw new Error(init.error || 'Could not start the upload.');
+
+  const total = Math.ceil(file.size / UPLOAD_CHUNK_BYTES);
+  if(progressLabel) setTrackProgress(progressLabel, 0);
+  for(let index = 0; index < total; index++){
+    const slice = file.slice(index*UPLOAD_CHUNK_BYTES, (index+1)*UPLOAD_CHUNK_BYTES);
+    const res = await fetch(`/api/upload/chunk/${init.upload_id}?index=${index}`, {
+      method:'POST', headers:{'Content-Type':'application/octet-stream'}, body: slice,
+    });
+    if(!res.ok){
+      const body = await res.json().catch(() => ({}));
+      throw new Error(body.error || `Upload failed on part ${index+1} of ${total}.`);
+    }
+    if(progressLabel) setTrackProgress(progressLabel, 100*(index+1)/total);
+  }
+
+  const done = await fetch(`/api/upload/complete/${init.upload_id}`, {method:'POST'})
+    .then(r => r.json());
+  if(!done.ok) throw new Error(done.error || 'Could not finish the upload.');
+  return done;
+}
+
 function ensureVideoUploaded(progressLabel = 'Uploading video'){
   const key = videoUploadKey(S.videoFile);
   if(S.uploadedVideoId && S.uploadedVideoKey === key) return Promise.resolve(S.uploadedVideoId);
@@ -5144,7 +5177,9 @@ function ensureVideoUploaded(progressLabel = 'Uploading video'){
   const form = new FormData();
   form.append('video_file', S.videoFile);
   S.uploadPromiseKey = key;
-  S.uploadPromise = postFormRequest('/api/upload', form, progressLabel)
+  S.uploadPromise = (S.videoFile.size > CHUNKED_UPLOAD_THRESHOLD
+      ? uploadFileChunked(S.videoFile, progressLabel)
+      : postFormRequest('/api/upload', form, progressLabel))
     .then(data => {
       S.uploadedVideoId = data.video_id;
       S.uploadedVideoKey = key;

@@ -982,6 +982,158 @@ def upload_video():
     return jsonify(payload)
 
 
+# --- chunked upload ---------------------------------------------------------
+# /api/upload is a whole-file multipart POST capped at 2 GB -- roughly five
+# minutes of our own 4K60 capture. A forty-minute match cannot be ingested at
+# all, which makes "record a session and analyze it" false for real sessions,
+# and nothing downstream can fix that.
+
+# Largest single chunk accepted. Comfortably under MAX_CONTENT_LENGTH and small
+# enough that a dropped connection costs one retry rather than the upload.
+UPLOAD_CHUNK_MAX_BYTES = 32 * 1024 * 1024
+
+UPLOAD_ID_BYTES = 16
+
+
+def partial_dir():
+    """Where in-progress uploads accumulate.
+
+    Derived from BY_HASH_DIR rather than being a module-level constant so the
+    `runs_dir` test fixture sandboxes it -- otherwise a test run writes real
+    files into the developer's upload store, which is the exact shared state
+    that fixture exists to remove.
+    """
+    return BY_HASH_DIR.parent / "partial"
+
+
+def partial_path(upload_id):
+    return partial_dir() / f"{upload_id}.part"
+
+
+def partial_meta_path(upload_id):
+    return partial_dir() / f"{upload_id}.json"
+
+
+@app.post("/api/upload/init")
+def upload_init():
+    """Open a chunked upload. Returns the id every later call carries."""
+    body = request.get_json(silent=True) or {}
+    filename = secure_filename(str(body.get("filename") or "")) or "upload.mp4"
+    # The suffix is captured now and carried to the assembled file because
+    # video_path_for_id resolves ids by globbing `<id>.*`. An extensionless
+    # assembly uploads and hashes correctly and is then unresolvable -- a
+    # failure that only surfaces one screen later, at TRACK.
+    suffix = Path(filename).suffix or ".mp4"
+
+    upload_id = os.urandom(UPLOAD_ID_BYTES).hex()
+    partial_dir().mkdir(parents=True, exist_ok=True)
+    partial_path(upload_id).write_bytes(b"")
+    partial_meta_path(upload_id).write_text(
+        json.dumps({"suffix": suffix, "next_index": 0,
+                    "declared_size": int(body.get("size") or 0)}),
+        encoding="utf-8",
+    )
+    return jsonify({"ok": True, "upload_id": upload_id,
+                    "chunk_max_bytes": UPLOAD_CHUNK_MAX_BYTES})
+
+
+def _load_partial_meta(upload_id):
+    meta_path = partial_meta_path(upload_id)
+    if not meta_path.exists():
+        return None
+    try:
+        return json.loads(meta_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+
+
+@app.post("/api/upload/chunk/<upload_id>")
+def upload_chunk(upload_id):
+    """Append one strictly-sequential chunk.
+
+    Strict sequencing is the integrity guarantee. Accepting a gap would
+    assemble a file with a hole in it, and that file still decodes, still
+    analyses, and produces statistics about corrupted frames -- nothing
+    downstream could tell. A repeat is refused for the same reason: a client
+    retrying after a timeout must not double its bytes.
+    """
+    upload_id = secure_filename(upload_id)
+    meta = _load_partial_meta(upload_id)
+    if meta is None:
+        return error_response("Upload was not found.", status=404)
+
+    try:
+        index = int(request.args.get("index", ""))
+    except ValueError:
+        return error_response("Chunk index must be a number.")
+
+    chunk = request.get_data(cache=False)
+    if len(chunk) > UPLOAD_CHUNK_MAX_BYTES:
+        return error_response(
+            f"Chunk exceeds {UPLOAD_CHUNK_MAX_BYTES} bytes.", status=413
+        )
+
+    if index != meta["next_index"]:
+        return error_response(
+            f"Expected chunk {meta['next_index']}, got {index}.", status=409
+        )
+
+    with partial_path(upload_id).open("ab") as out:
+        out.write(chunk)
+
+    meta["next_index"] = index + 1
+    partial_meta_path(upload_id).write_text(json.dumps(meta), encoding="utf-8")
+    return jsonify({"ok": True, "received_index": index,
+                    "bytes": partial_path(upload_id).stat().st_size})
+
+
+@app.post("/api/upload/complete/<upload_id>")
+def upload_complete(upload_id):
+    """Hash the assembly, move it into the by-hash store, answer like /api/upload.
+
+    Same content-addressed store, so re-uploading a file already present costs
+    a hash and nothing else.
+    """
+    upload_id = secure_filename(upload_id)
+    meta = _load_partial_meta(upload_id)
+    part_path = partial_path(upload_id)
+    if meta is None or not part_path.exists():
+        return error_response("Upload was not found.", status=404)
+
+    hasher = hashlib.sha256()
+    with part_path.open("rb") as handle:
+        while True:
+            block = handle.read(1024 * 1024)
+            if not block:
+                break
+            hasher.update(block)
+
+    video_id = hasher.hexdigest()
+    BY_HASH_DIR.mkdir(parents=True, exist_ok=True)
+    final_path = BY_HASH_DIR / f"{video_id}{meta['suffix']}"
+    try:
+        if final_path.exists():
+            part_path.unlink()
+        else:
+            os.replace(part_path, final_path)
+    finally:
+        # Abandoned partials of a forty-minute match are not small.
+        part_path.unlink(missing_ok=True)
+        partial_meta_path(upload_id).unlink(missing_ok=True)
+
+    payload = {"ok": True, "video_id": video_id}
+    try:
+        info = video_info(final_path)
+        payload.update(fps=info["fps"], frame_count=info["frame_count"],
+                       duration=info["duration"])
+    except ValueError:
+        # Not decodable as video. The bytes are stored and addressable; the
+        # caller finds out at track time, exactly as /api/upload behaves.
+        pass
+
+    return jsonify(payload)
+
+
 @app.get("/api/court-model")
 def get_court_model():
     """Court dimensions, landmarks, and wireframe for the calibration wizard."""
