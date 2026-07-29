@@ -55,21 +55,33 @@ All 2-D projective constructs; no pose, no hue, no learned model.
   projective equation per column, two columns give the line).
 - **The stack's pencil gives VP_x** (vanishing point of court-x). Every other court-x
   line — the short line, box back lines — must pass through it.
-- **The side-wall out stripes give VP_y.** They run along court-y, as do the side
-  seams and the half-court line. Their intersection is VP_y.
-- **Occluded side seams are reconstructed, not found**: seam corner = front seam
-  evaluated at the wall's edge column; side seam = the line joining that corner to
-  VP_y. When real steep seam lines ARE detected (fin mount), they are used directly and
-  VP_y is taken from them instead.
+- **The floor homography is fit from points AND infinite lines (mixed DLT).** The side
+  seams are NOT required. Available floor correspondences: the two seam corner points
+  ((0,0) and (21,0) ft), the front seam as a line (court y=0), the short line as a line
+  (y=17.918), the half-court line as a line (x=10.5), and the side seams as lines
+  (x=0 / x=21) whenever they ARE detected (fin mount). A line correspondence
+  contributes 2 DOF and is immune to endpoint occlusion — exactly the straight-line
+  fill the product needs. Corners + seam + short + half-court reaches full rank with
+  no side seam at all; extra detected features over-determine the fit and make its
+  residuals carry real information (today's 4-point fit is exact by construction).
+  Rank/conditioning of the DLT system is checked; below full rank the detector refuses.
+  The seams, the short-line endpoints, and every other anchor the payload needs are
+  then *outputs* of the fitted homography, so the payload schema is unchanged.
+
+  (A note for the record: an earlier draft reconstructed occluded side seams from the
+  vanishing point of the side-wall out stripes. That is wrong — squash side-wall out
+  lines slope from 15 ft at the front to 7 ft at the back, so they are not court-y
+  parallel and their intersection is not VP_y. The mixed DLT needs no VP_y at all.)
 - **Wall edge columns** come from the stack fits' shared x-extent (the paint physically
   ends at the corners), refined by corner verticals and side-out × front-out
   intersections when present.
-- **The short line is chosen by hypothesis, not by length.** Candidates = horizontals
-  below the seam, VP_x-consistent, with paint inside the reconstructed seams (this
-  kills the frit band, whose paint extends outside the court). Each surviving candidate
-  fits a floor homography and is scored by the existing self-verification checks; the
-  best verified candidate wins. Ties without independent verification stay
-  low-confidence, as today.
+- **The short line and half-court line are chosen by hypothesis, not by length.**
+  Short-line candidates = horizontals below the seam, VP_x-consistent, with paint
+  inside the court region (this kills the glass frit band, whose paint extends outside
+  it); half-court candidates = steep lines below the seam that cross a short candidate
+  inside the wall's span. Each surviving pair fits a floor homography and is scored by
+  the existing self-verification checks against the paint mask; the best verified pair
+  wins. Ties without independent verification stay low-confidence, as today.
 
 ## 4. Occlusion contract (the user-facing promise)
 
