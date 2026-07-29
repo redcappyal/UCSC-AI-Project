@@ -1,0 +1,220 @@
+"""Rally structure from audio and motion, with the ball nowhere in sight.
+
+This is the module the analysis ladder stands on. Today rallies are segmented
+from front-wall *hits* (job_runner.segment_front_wall_hits_into_rallies), so
+rally counts, lengths and tempo inherit the ball detector's recall -- which the
+standing baseline puts near 35%. A rally count computed from a third of the
+events reads exactly as plausible as a correct one, which is the failure mode
+CLAUDE.md names as worse in a coaching product than a missed line call.
+
+Audio transients and frame-motion energy are available on any clip at any
+frame rate. So the tests here feed the segmenter deterministic synthetic
+series and never a detection: if any assertion below could only be satisfied
+by knowing where the ball was, the module has been built wrong.
+"""
+
+import sys
+from pathlib import Path
+
+import numpy as np
+import pytest
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from rally_segmenter import MIN_RALLY_S, segment_rallies
+
+
+def _motion(spans, duration=60.0, dt=0.2, hi=8.0, lo=0.4):
+    """A motion-energy series that is `hi` inside `spans` and `lo` outside."""
+    ts = np.arange(0.0, duration, dt)
+    energy = np.full(ts.shape, lo)
+    for start, end in spans:
+        energy[(ts >= start) & (ts <= end)] = hi
+    return list(zip(ts.tolist(), energy.tolist()))
+
+
+def test_two_rallies_from_impacts_and_motion():
+    impacts = [5.0, 5.8, 6.9, 8.0, 9.2, 30.0, 30.7, 31.9, 33.0]
+
+    rallies = segment_rallies(impacts, _motion([(4.5, 9.5), (29.5, 33.5)]), 60.0)
+
+    assert len(rallies) == 2
+    assert rallies[0]["start_s"] <= 5.0
+    assert rallies[0]["end_s"] >= 9.2
+    assert rallies[0]["impact_count"] == 5
+    assert rallies[0]["source"] == "audio+motion"
+
+
+def test_motion_only_rally_low_confidence():
+    """No audio at all still yields structure, flagged as less trustworthy."""
+    rallies = segment_rallies([], _motion([(10.0, 16.0)], duration=30.0), 30.0)
+
+    assert len(rallies) == 1
+    assert rallies[0]["source"] == "motion"
+    assert rallies[0]["confidence"] == 0.3
+
+
+def test_short_blips_dropped():
+    """A single knock is not a rally; a door closing must not become one."""
+    assert segment_rallies([12.0], _motion([(12.0, 12.6)], duration=30.0), 30.0) == []
+
+
+def test_rallies_are_sorted_and_non_overlapping():
+    """Downstream code indexes and sums these; overlaps double-count time."""
+    impacts = [5.0, 6.0, 7.0, 8.0, 20.0, 21.0, 22.0, 23.0, 40.0, 41.0, 42.0, 43.0]
+    spans = [(4.5, 8.5), (19.5, 23.5), (39.5, 43.5)]
+
+    rallies = segment_rallies(impacts, _motion(spans), 60.0)
+
+    starts = [r["start_s"] for r in rallies]
+    assert starts == sorted(starts)
+    for earlier, later in zip(rallies, rallies[1:]):
+        assert earlier["end_s"] <= later["start_s"]
+
+
+def test_rallies_stay_inside_the_clip():
+    """Padding must not invent time before 0 or past the end of the video."""
+    impacts = [0.2, 0.9, 1.8, 2.9]
+
+    rallies = segment_rallies(impacts, _motion([(0.0, 3.2)], duration=4.0), 4.0)
+
+    assert rallies
+    assert rallies[0]["start_s"] >= 0.0
+    assert rallies[-1]["end_s"] <= 4.0
+
+
+def test_silence_produces_no_rallies_rather_than_one_long_one():
+    """"Nothing happened" and "the whole clip was a rally" are different."""
+    ts = np.arange(0.0, 30.0, 0.2)
+    flat = list(zip(ts.tolist(), np.full(ts.shape, 0.5).tolist()))
+
+    assert segment_rallies([], flat, 30.0) == []
+
+
+def test_impacts_with_no_motion_signal_still_segment():
+    """Motion can be unusable -- a locked-off camera on a dark court.
+
+    Impacts alone must still yield rallies, or tier 1 depends on both inputs
+    when the design says it needs either.
+    """
+    ts = np.arange(0.0, 60.0, 0.2)
+    flat = list(zip(ts.tolist(), np.full(ts.shape, 1.0).tolist()))
+    impacts = [5.0, 6.0, 7.0, 8.0, 9.0, 30.0, 31.0, 32.0, 33.0]
+
+    rallies = segment_rallies(impacts, flat, 60.0)
+
+    assert len(rallies) == 2
+    assert all(r["source"] == "audio" for r in rallies)
+
+
+def test_no_inputs_at_all_is_empty_not_an_error():
+    assert segment_rallies([], [], 30.0) == []
+
+
+def test_confidence_rises_with_impact_count_and_is_capped():
+    short = segment_rallies(
+        [5.0, 6.0, 7.0], _motion([(4.5, 7.5)], duration=20.0), 20.0
+    )
+    long = segment_rallies(
+        [5.0, 5.5, 6.0, 6.5, 7.0, 7.5, 8.0, 8.5, 9.0],
+        _motion([(4.5, 9.5)], duration=20.0), 20.0,
+    )
+
+    assert short and long
+    assert short[0]["confidence"] < long[0]["confidence"]
+    assert long[0]["confidence"] <= 1.0
+
+
+def test_every_rally_is_at_least_the_minimum_length():
+    impacts = [5.0, 5.4, 5.9, 6.4, 20.0, 20.4, 20.9, 21.4]
+
+    rallies = segment_rallies(impacts, _motion([(4.5, 6.9), (19.5, 21.9)]), 40.0)
+
+    for rally in rallies:
+        assert rally["end_s"] - rally["start_s"] >= MIN_RALLY_S
+
+
+def test_a_long_pause_splits_one_run_of_impacts_into_two_rallies():
+    """The gap threshold is the whole definition of a rally boundary."""
+    impacts = [5.0, 5.8, 6.6, 7.4, 25.0, 25.8, 26.6, 27.4]
+
+    rallies = segment_rallies(impacts, _motion([(4.5, 7.9), (24.5, 27.9)]), 40.0)
+
+    assert len(rallies) == 2
+
+
+def test_the_module_never_reaches_for_a_ball():
+    """The ladder's first principle, enforced rather than documented.
+
+    Tier 1 must work where per-frame ball detection is hopeless. The moment
+    this module *can* read a hit, something will make it, and rally structure
+    silently re-acquires the detector's recall.
+
+    Imports are the binding constraint, not prose -- the docstring is allowed
+    to say "ball" in order to explain why there isn't one.
+    """
+    import ast
+
+    source = (Path(__file__).resolve().parents[1] / "rally_segmenter.py").read_text()
+    tree = ast.parse(source)
+
+    imported = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            imported.update(alias.name.split(".")[0] for alias in node.names)
+        elif isinstance(node, ast.ImportFrom) and node.module:
+            imported.add(node.module.split(".")[0])
+
+    pipeline_modules = {
+        "job_runner", "detect_wall_hits", "judge_call", "inference_engine",
+        "tracking_common", "bounce_gb_model_detector", "classify_events",
+        "ball_detector", "ball_model", "court_model", "app",
+    }
+    assert not (imported & pipeline_modules), sorted(imported & pipeline_modules)
+
+
+@pytest.mark.parametrize("duration", [0.0, -1.0])
+def test_a_zero_length_clip_is_empty_not_an_error(duration):
+    assert segment_rallies([1.0, 2.0], [], duration) == []
+
+
+# --- the motion threshold ---------------------------------------------------
+
+
+def test_threshold_survives_the_median_being_a_plateau():
+    """MAD is exactly zero whenever most samples share the median value.
+
+    That is the ordinary case for a match clip, not a pathological one: idle
+    time dominates, so the median IS the idle level and more than half the
+    deviations are zero. A median+3*MAD threshold therefore lands exactly on
+    the idle floor -- and with a strict > comparison, finds nothing at all.
+    Every rally in the clip disappears and the run reports "no rallies", which
+    is indistinguishable from a clip where nobody played.
+    """
+    from rally_segmenter import motion_threshold
+
+    idle_dominated = [0.4] * 254 + [8.0] * 46
+
+    threshold = motion_threshold(idle_dominated)
+
+    assert threshold is not None
+    assert 0.4 < threshold < 8.0
+
+
+def test_threshold_is_none_when_nothing_rises_above_the_floor():
+    from rally_segmenter import motion_threshold
+
+    assert motion_threshold([0.5] * 100) is None
+
+
+def test_threshold_uses_mad_when_it_is_usable():
+    """Continuous real energy has a non-zero MAD; that path is the default."""
+    from rally_segmenter import MOTION_MAD_MULTIPLIER, motion_threshold
+    import statistics
+
+    energies = [float(value % 7) + 0.5 for value in range(200)]
+    median = statistics.median(energies)
+    mad = statistics.median([abs(energy - median) for energy in energies])
+    assert mad > 0, "fixture must exercise the MAD path"
+
+    assert motion_threshold(energies) == median + MOTION_MAD_MULTIPLIER * mad
