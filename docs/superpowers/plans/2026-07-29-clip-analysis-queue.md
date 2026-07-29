@@ -233,9 +233,29 @@ Commit: `feat: chunked upload so a full match can be ingested`
 
 ---
 
+## How the loop runs this file
+
+Each iteration:
+
+1. **Read this file first.** It is the only record of where the loop got to; the
+   conversation may have been compacted away.
+2. Pick the **first task still marked `TODO`** and do that one task, completely.
+3. Follow *Standing rules for every task* above — TDD, full suite green, one commit.
+4. Then edit this file: change that task's heading from `TODO` to `DONE (2026-07-29)` and
+   append a short `**Result:**` paragraph saying what shipped and the **real** numbers it
+   scored. Commit that edit too.
+5. If the task cannot be finished, mark it `BLOCKED` with the reason and move to the next.
+   Never mark `DONE` what is not done and verified.
+
+Environment: this is the Windows box, so the interpreter is `.venv/Scripts/python.exe`
+(CLAUDE.md's `.venv/bin/python` is the macOS path). Suite command:
+`.venv/Scripts/python.exe -m pytest tests/ -q`.
+
 ## When the queue is empty
 
 Do **not** invent new scope. Write `docs/HANDOFF-clip-analysis.md` recording, for each
 task: what shipped, the numbers it actually scored, and the exact human steps left
-(person-detector weights provision, silver-label spot check, ball-detector retrain). Then
-output the completion promise.
+(person-detector weights provision, silver-label spot check, ball-detector retrain).
+
+Then output the completion promise, which is the literal tag:
+`<promise>CLIP ANALYSIS QUEUE COMPLETE</promise>`
