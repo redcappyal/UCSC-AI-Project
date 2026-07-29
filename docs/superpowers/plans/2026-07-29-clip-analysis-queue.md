@@ -285,7 +285,7 @@ That is a smoke result, not a score — there are no labels for that clip.
 
 ---
 
-### Task 7 — `movement_stats.py` + pipeline integration — TODO
+### Task 7 — `movement_stats.py` + pipeline integration — DONE (2026-07-29)
 
 Tier 2 output: per-player distance, mean/peak speed, T-occupancy, front/back split and a
 floor heatmap, from `player_tracker` tracks projected through `court_model.FloorMap`.
@@ -296,6 +296,32 @@ which detector backend produced the stats, because the motion-blob fallback and 
 weights are not equally trustworthy and the report must not pretend otherwise.
 
 Commit: `feat: per-player movement stats behind capability gate`
+
+**Result:** `movement_stats.py` + `tests/test_movement_stats.py` (12 tests), wired in
+`job_runner.py` as `players_v2` (schema `players-v2`), commit `7133a4a`. Suite
+**579 passed, 2 skipped, 1 deselected**; line-call eval unmoved.
+
+**The Task 2 coupling is broken.** The person pass now rides the motion-only decode as
+well as the coarse ball decode, so a 30 fps clip with a solved court returns
+`ball_tracking: off, player_movement: on` with real stats. A test asserts exactly that.
+
+**Two measured findings worth carrying forward.** The smoothing window was chosen from a
+jitter sweep, not assumed: unsmoothed distance *diverges* (104% error at 1 ft of jitter,
+because jitter is a random walk), while over-smoothing rounds off the corners that in
+squash *are* the movement. `SMOOTH_WINDOW_S = 0.2` centered has the smallest worst case;
+the plan's 0.5 s costs ~17% of the headline number. And the window edges were being
+compared against accumulated float times, so the window silently held 2 samples at one
+timestamp and 3 at the next — enough instability to move measured distance by 5%, and it
+briefly produced a table of numbers that were themselves artifacts.
+
+**Known bias, documented and pinned by a test:** distance under-reads by ~7.5% on sharp
+direction changes. The test asserts the *direction* of the bias, so a drift to
+over-counting — crediting a player with distance nobody ran — fails loudly.
+
+**Not yet done:** no eval axis for movement. `sample_coverage` is reported per player but
+nothing scores the stats against ground truth, and there is no `BASELINE-MOVEMENT-*`.
+Person-detector weights remain the standing human gate (`backend` names what produced the
+numbers, so the report can say so).
 
 ---
 
