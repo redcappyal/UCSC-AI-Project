@@ -325,7 +325,7 @@ numbers, so the report can say so).
 
 ---
 
-### Task 8 — `match_report.py` + endpoints — TODO
+### Task 8 — `match_report.py` + endpoints — DONE (2026-07-29)
 
 Assemble `report-v1` from whatever tiers ran, and serve it:
 `GET /api/runs/<run_id>/report`. Must be **legacy-tolerant** — runs recorded before any of
@@ -336,6 +336,21 @@ movement stats, and the existing shot/coach data when tier 3 is on. Rally *winne
 labeled "est." — it is inferred, not observed (design spec §6).
 
 Commit: `feat: report-v1 assembly + runs index/report endpoints (legacy-tolerant)`
+
+**Result:** `match_report.py` + `tests/test_match_report.py` (16 tests),
+`GET /api/runs/<run_id>/report`, `tiers_enabled` added additively to `GET /api/runs`,
+commit `e73bfc6`. Suite **595 passed, 2 skipped, 1 deselected**.
+
+`build_report(run_dir, coach_builder=None)` → `report-v1`. Legacy runs render with
+`legacy: true` and a stated reason rather than an empty card. A failing `coach_builder`
+costs the coaching, not the report. The endpoint passes derived analytics only, never LLM
+narration — a report is fetched on every view.
+
+**What Task 9 needs from this:** the report shape is
+`{schema, run_id, created_ms, status, legacy, legacy_reason, video, probe, capabilities,
+tiers_enabled, detection_coverage, rally_timeline, players_v2, shots}`. Any of `probe`,
+`capabilities`, `rally_timeline`, `players_v2`, `shots` may be `null`, and the UI must
+render each absence as its stated reason (or the legacy card), never as an empty section.
 
 ---
 
