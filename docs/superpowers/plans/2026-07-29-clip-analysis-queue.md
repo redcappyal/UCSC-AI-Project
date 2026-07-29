@@ -186,7 +186,7 @@ gone when the selectable bounce engines were removed.
 
 ---
 
-### Task 4 — `rally_segmenter.py` (pure core) — TODO
+### Task 4 — `rally_segmenter.py` (pure core) — DONE (2026-07-29)
 
 The keystone. Rally boundaries from audio transients + frame-motion energy, with **no
 reference to ball detections anywhere in the module**.
@@ -197,6 +197,21 @@ are named constants with an eval that exercises them (task 6) — "tuned by eval
 silently.
 
 Commit: `feat: audio+motion rally segmenter (pure, ball-independent)`
+
+**Result:** `rally_segmenter.py` + `tests/test_rally_segmenter.py`, commit `2887b1a`.
+17 tests, suite **536 passed, 2 skipped, 1 deselected**. `segment_rallies(impacts, motion,
+duration)` → sorted, non-overlapping spans with `impact_count`, `source`
+(`audio` / `motion` / `audio+motion`) and `confidence`. Either input alone suffices.
+A test parses the module's AST and asserts it imports nothing from the pipeline.
+
+**Worth knowing before Task 6 tunes this:** the motion threshold is `median + 3*MAD`, and
+MAD degenerates to exactly zero whenever more than half the samples sit at the median —
+the *ordinary* case here, since idle time dominates a match clip. When it collapses the
+scale falls back to half the distance from the floor to the active level
+(`motion_threshold`, with its own regression tests). `motion_threshold` returns `None`
+when nothing rises above the floor, so a still camera on an empty court yields no rallies
+rather than one long one. These thresholds are provisional and are exactly what the rally
+eval axis exists to tune.
 
 ---
 
