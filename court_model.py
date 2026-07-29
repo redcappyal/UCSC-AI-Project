@@ -197,6 +197,7 @@ def court_model_public():
         "length_ft": COURT_LENGTH_FT,
         "short_line_from_front_ft": SHORT_LINE_FROM_FRONT_FT,
         "service_box_ft": SERVICE_BOX_FT,
+        "front_wall_line_heights_ft": dict(_WALL_LINE_HEIGHTS_FT),
         "landmarks": FLOOR_LANDMARKS,
         "wireframe": FLOOR_WIREFRAME,
         "zone_rows": FLOOR_ZONE_ROWS,

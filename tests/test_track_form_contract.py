@@ -210,11 +210,11 @@ def test_status_response_passes_capabilities_through(monkeypatch, tmp_path):
     run_id = response.get_json()["run_id"]
     try:
         job_runner.update_job(run_id, capabilities={
-            "ball_tracking": {"enabled": False, "reason": "needs >=50 fps (got 30)"},
+            "ball_tracking": {"enabled": False, "reason": "needs >=1600 px wide (got 1280)"},
         })
         status = app_module.app.test_client().get(f"/api/track/status/{run_id}")
         body = status.get_json()
         assert body["capabilities"]["ball_tracking"]["enabled"] is False
-        assert "50 fps" in body["capabilities"]["ball_tracking"]["reason"]
+        assert "1600" in body["capabilities"]["ball_tracking"]["reason"]
     finally:
         _cleanup(run_id)

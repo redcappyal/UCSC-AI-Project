@@ -87,7 +87,8 @@ def rally_identity_confidences(ambiguity_times, rallies):
 
 
 def build_players_v1(assignment, tracker_stats, detector_backend,
-                     serve_crop_relpath=None, player_names=None):
+                     serve_crop_relpath=None, player_names=None,
+                     player_crop_relpaths=None):
     observed = any(
         rally.get("server_source") == "observed"
         for rally in assignment.get("rallies", [])
@@ -122,8 +123,78 @@ def build_players_v1(assignment, tracker_stats, detector_backend,
         "tracker": tracker_stats,
         "rallies": rallies,
         "serve_crop": serve_crop_relpath,
+        "player_crops": {
+            track: (player_crop_relpaths or {}).get(track)
+            for track in ("A", "B")
+        },
         "player_names": dict(player_names) if player_names else {"A": None, "B": None},
     }
+
+
+def _first_observed_serve(assignment):
+    return next(
+        (rally for rally in (assignment.get("rallies") or [])
+         if rally.get("server_source") == "observed"
+         and rally.get("server_track") in ("A", "B")),
+        None,
+    )
+
+
+def player_crop_targets(assignment, samples_by_track):
+    """-> {"A": (frame_idx, sample), "B": (...)} for identity photos.
+
+    Both crops prefer the moment of the first observed serve. Keeping the
+    photos near the same instant avoids showing the same physical player twice
+    after a later tracker identity swap. If no serve was observed, use the
+    earliest instant where both tracks have live samples. A track that is never
+    jointly visible still gets its strongest live sample so the naming UI
+    degrades to one useful photo rather than hiding both.
+    """
+    live = {
+        track: [sample for sample in samples_by_track.get(track, [])
+                if not sample.coasted]
+        for track in ("A", "B")
+    }
+    anchor = _first_observed_serve(assignment)
+    reference_t = (
+        float(anchor.get("start_time_seconds", 0.0))
+        if anchor is not None
+        else None
+    )
+
+    if reference_t is None:
+        candidate_times = sorted(
+            {float(sample.t_s) for samples in live.values() for sample in samples}
+        )
+        for candidate_t in candidate_times:
+            if all(
+                samples
+                and min(abs(float(sample.t_s) - candidate_t) for sample in samples)
+                <= MAX_SERVE_TRACK_GAP_S
+                for samples in live.values()
+            ):
+                reference_t = candidate_t
+                break
+
+    targets = {}
+    for track, samples in live.items():
+        if not samples:
+            continue
+        if reference_t is not None:
+            nearest = min(samples, key=lambda sample: abs(sample.t_s - reference_t))
+            if abs(nearest.t_s - reference_t) <= MAX_SERVE_TRACK_GAP_S:
+                targets[track] = (nearest.frame_idx, nearest)
+                continue
+        strongest = max(
+            samples,
+            key=lambda sample: (
+                float(sample.confidence),
+                float(sample.bbox[2]) * float(sample.bbox[3]),
+                -float(sample.t_s),
+            ),
+        )
+        targets[track] = (strongest.frame_idx, strongest)
+    return targets
 
 
 def serve_crop_target(assignment, samples_by_track):
@@ -133,13 +204,7 @@ def serve_crop_target(assignment, samples_by_track):
     server_track — same anchor rule as index.html's attributionAnchor() —
     not unconditionally rally 1, since rally 1's serve can go unobserved
     while a later rally's is."""
-    rallies = assignment.get("rallies") or []
-    anchor = next(
-        (rally for rally in rallies
-         if rally.get("server_source") == "observed"
-         and rally.get("server_track") in ("A", "B")),
-        None,
-    )
+    anchor = _first_observed_serve(assignment)
     if anchor is None:
         return None
     track = anchor.get("server_track")

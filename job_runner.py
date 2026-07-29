@@ -1480,6 +1480,8 @@ def build_players_v2(person_pass, calibration, rallies, identity_confidence=None
         "schema": PLAYERS_V2_SCHEMA,
         "backend": person_pass.detector.backend,
         "identity_confidence": identity_confidence,
+        "movement_scope": "first_to_last_hit_per_rally",
+        "movement_rally_count": len(rallies or []),
         **stats,
     }
 
@@ -1670,9 +1672,10 @@ def run_tracking_job(run_id):
                 )
                 complete_without_ball_tier(
                     run_id, run_dir, csv_path, caps, timeline,
-                    build_players_v2(
-                        movement_pass, calibration, timeline["rallies"]
-                    ),
+                    # There are no hit-bounded rallies when the ball tier is
+                    # unavailable, so publish zero/zero-coverage movement
+                    # rather than widening the scope to inferred activity.
+                    build_players_v2(movement_pass, calibration, []),
                 )
                 return
 
@@ -1885,27 +1888,43 @@ def run_tracking_job(run_id):
                 for rally in player_assignment["rallies"]:
                     rally["identity_confidence"] = confidences.get(rally["rally_number"])
                 write_track_samples(run_dir, samples_by_track, ambiguity_times)
-                serve_crop_relpath = None
-                crop_target = player_attribution.serve_crop_target(
+                player_crop_relpaths = {}
+                crop_targets = player_attribution.player_crop_targets(
                     player_assignment, samples_by_track
                 )
-                if crop_target is not None:
-                    crop_frame_idx, crop_sample = crop_target
+                for track, (crop_frame_idx, crop_sample) in crop_targets.items():
                     crop_detection = person_model.PersonDetection(
                         x=crop_sample.bbox[0], y=crop_sample.bbox[1],
                         width=crop_sample.bbox[2], height=crop_sample.bbox[3],
                         confidence=crop_sample.confidence, keypoints=(),
                     )
+                    relpath = f"players/player_{track}.jpg"
                     if person_model.save_person_crop(
                         video_path, crop_frame_idx, crop_detection,
-                        run_dir / "players" / "serve_rally1.jpg",
+                        run_dir / relpath,
                     ):
-                        serve_crop_relpath = "players/serve_rally1.jpg"
+                        player_crop_relpaths[track] = relpath
+
+                # Compatibility for stored clients that still understand only
+                # the first-server crop. It aliases that server's player photo;
+                # new clients read player_crops directly.
+                serve_crop_relpath = None
+                anchor = next(
+                    (rally for rally in player_assignment.get("rallies", [])
+                     if rally.get("server_source") == "observed"
+                     and rally.get("server_track") in ("A", "B")),
+                    None,
+                )
+                if anchor is not None:
+                    serve_crop_relpath = player_crop_relpaths.get(
+                        anchor["server_track"]
+                    )
                 players_v1 = player_attribution.build_players_v1(
                     player_assignment,
                     person_pass.stats(),
                     detector_backend=person_pass.detector.backend,
                     serve_crop_relpath=serve_crop_relpath,
+                    player_crop_relpaths=player_crop_relpaths,
                 )
                 if person_pass.detect_failures:
                     players_v1["detector_error"] = person_pass.detect_error
@@ -1933,15 +1952,14 @@ def run_tracking_job(run_id):
                 (end_frame - start_frame + 1) / source_fps,
                 player_assignment,
             )
-            # Movement is scoped to the audio+motion rallies rather than the
-            # hit-derived ones: with recall where it is, hit rallies miss whole
-            # exchanges, and a distance scoped to them would silently omit the
-            # court covered during every rally the ball tier did not see.
+            # Movement is deliberately scoped to the first and last detected
+            # hits of each rally. Audio/motion padding is useful for the review
+            # timeline, but would count preparation and ball-retrieval steps.
             if caps["player_movement"]["enabled"]:
                 players_v2 = build_players_v2(
                     person_pass,
                     calibration,
-                    extra_fields["rally_timeline"]["rallies"],
+                    player_assignment["rallies"],
                 )
                 if players_v2 is not None:
                     extra_fields["players_v2"] = players_v2

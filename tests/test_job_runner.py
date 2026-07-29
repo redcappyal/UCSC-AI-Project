@@ -122,6 +122,12 @@ def test_run_tracking_job_with_stub_person_detector(tmp_path, monkeypatch):
     # patching it here keeps PersonFramePass (the real tracker/cadence logic)
     # in the loop, wired to a fake backend instead of rfdetr.
     monkeypatch.setattr(person_model, "load_person_detector", lambda: StubDetector())
+    saved_crops = []
+    monkeypatch.setattr(
+        person_model,
+        "save_person_crop",
+        lambda video, frame, detection, path: saved_crops.append(path.name) or True,
+    )
     _stub_pipeline(monkeypatch)
 
     job_runner.run_tracking_job(run_id)
@@ -131,6 +137,11 @@ def test_run_tracking_job_with_stub_person_detector(tmp_path, monkeypatch):
     players_v1 = job["players_v1"]
     assert players_v1["detector_backend"] == "stub"
     assert players_v1["attribution_backend"] in ("observed", "assumed")
+    assert players_v1["player_crops"] == {
+        "A": "players/player_A.jpg",
+        "B": "players/player_B.jpg",
+    }
+    assert saved_crops == ["player_A.jpg", "player_B.jpg"]
     assert (run_dir / "players" / "track_samples.json").exists()
 
 
@@ -234,7 +245,7 @@ def test_the_reason_the_ball_tier_is_off_reaches_the_job(tmp_path, monkeypatch):
     job_runner.run_tracking_job(run_id)
 
     reason = job_runner.get_job(run_id)["capabilities"]["ball_tracking"]["reason"]
-    assert "50 fps" in reason
+    assert "1600" in reason
 
 
 def test_a_qualified_clip_still_runs_the_ball_stages(tmp_path, monkeypatch):
@@ -262,6 +273,39 @@ def test_a_qualified_clip_still_runs_the_ball_stages(tmp_path, monkeypatch):
 
     assert loaded, "ball model was not loaded for qualified footage"
     assert job_runner.get_job(run_id)["capabilities"]["ball_tracking"]["enabled"] is True
+
+
+def test_a_30_fps_clip_still_runs_the_ball_stages(tmp_path, monkeypatch):
+    """Lower frame rate reduces temporal precision; it must not skip tracking."""
+    video_path = tmp_path / "clip.mp4"
+    _write_clip(video_path, fps=30.0)
+    run_id = "test-job-runner-ball-on-30fps"
+    run_dir = _make_job(tmp_path, run_id, video_path)
+    (run_dir / "calibration.json").write_text(
+        json.dumps(make_v2_calibration()), encoding="utf-8"
+    )
+    job_runner.update_job(run_id, probe=dict(QUALIFIED_PROBE, fps=30.0))
+
+    loaded = []
+    monkeypatch.setattr(
+        job_runner, "get_tracking_model", lambda: loaded.append(1) or object()
+    )
+    monkeypatch.setattr(
+        job_runner,
+        "infer_frame_predictions",
+        lambda model, frame, threshold, width: [],
+    )
+    monkeypatch.setattr(
+        job_runner, "extract_audio_candidates", lambda *args, **kwargs: []
+    )
+
+    job_runner.run_tracking_job(run_id)
+
+    job = job_runner.get_job(run_id)
+    assert loaded, "ball model was skipped solely because the clip was 30 fps"
+    assert job["processed_frames"] > 0
+    assert job["capabilities"]["ball_tracking"]["enabled"] is True
+    assert job["capabilities"]["line_calls"]["enabled"] is True
 
 
 def test_front_wall_calibration_without_floor_still_runs_ball_tracking(
@@ -445,10 +489,10 @@ def test_a_qualified_run_emits_a_rally_timeline(tmp_path, monkeypatch):
 def test_a_ball_tier_skipped_run_still_emits_a_rally_timeline(tmp_path, monkeypatch):
     """The whole point of the ladder.
 
-    30 fps camera-roll footage cannot support ball tracking, and used to
-    produce a run with nothing in it. Rally structure needs neither the ball
-    nor a court, so it must survive the skip -- otherwise tier 1 is
-    ball-dependent by omission rather than by design.
+    Footage that is too small and blurry for ball tracking still needs rally
+    structure. That tier needs neither the ball nor a court, so it must survive
+    the skip -- otherwise tier 1 is ball-dependent by omission rather than by
+    design.
     """
     video_path = tmp_path / "clip.mp4"
     _write_clip(video_path)

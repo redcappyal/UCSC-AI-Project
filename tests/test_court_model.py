@@ -472,6 +472,11 @@ def test_court_model_public_is_json_safe():
     payload = court_model.court_model_public()
     encoded = json.loads(json.dumps(payload))
     assert encoded["width_ft"] == 21.0
+    assert encoded["front_wall_line_heights_ft"] == {
+        "out_line_lower_edge": court_model.OUT_LINE_HEIGHT_FT,
+        "service_line_top_edge": court_model.SERVICE_LINE_HEIGHT_FT,
+        "tin_top_edge": court_model.TIN_TOP_HEIGHT_FT,
+    }
     assert len(encoded["landmarks"]) == len(FLOOR_LANDMARKS)
     assert encoded["landmarks"][0]["id"] == "short_line_left"
     assert len(encoded["wireframe"]) == len(court_model.FLOOR_WIREFRAME)

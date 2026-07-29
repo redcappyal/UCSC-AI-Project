@@ -137,7 +137,7 @@ iOS app in Safari (add-to-home-screen capable).
 - **A page that fixes `main`'s height must also floor the stage.**
   `body.phase-track` sizes `main` from `--track-main-height`, measured from the
   call controls; `preserveTrackStageHeight()` clamps that measurement to
-  `innerHeight − (header + #reviewSeg + #instr) − TRACK_MIN_STAGE_PX` (180 px)
+  `innerHeight − (header + #reviewSeg + #instr) − TRACK_MIN_STAGE_PX` (400 px)
   and never below `TRACK_MIN_MAIN_PX` (240 px). Unclamped it is the same trap
   reached from the other side: the taller Call pane measured past the viewport,
   `#stage` collapsed to 0, and the tail of the page went off a body that never
@@ -322,7 +322,7 @@ Values drawn on the video canvas and SVG overlays. These are fixed — reuse, do
 | `18px` | secondary cards (feature cards, delta tiles, rail cards, verdict box, error banner, progress box) |
 | `14px` | inner tiles (stat tiles, `.scol`, `.coachMetric`, thumbs), inputs, selects |
 | `12px` | wall-corner list chips |
-| `8px` | film strips, floor diagram, serve crop |
+| `8px` | film strips, floor diagram, player crops |
 | `6px` | trim selection frame |
 | `4px` | tiny tags (court text), viewport indicators |
 
@@ -1186,7 +1186,7 @@ Each phase: header shows step label + proxied primary; `#instr` gives the one-li
 | `p-tap-floor` | Floor calibration wizard | `.floorRow`: diagram (progress marks) + prompt/side actions · skip-all / save-profile | "Use floor map" |
 | `p-clip` | Trim rally clip | overview · trim editor (accent handles) · transport+readout row · start/end nudge steppers · frame summary | "Track ball" |
 | `p-analyze` | Honest processing | `.progressbox` stats + bar (+ stage ANALYZING pulse) | — (auto-advances) |
-| `p-track` | **Match review — Call pane.** Review track, judge calls, name the players | control area keeps its pre-rally-visualization height so the video stage does not shrink, floored against the stage per §3.1; the added content scrolls inside that footprint · scrub hint lives in the header `#instr` line (detection failures replace it, `.warn`) · rally segmentation card (proportional neutral ribbon, active segment in accent, `attr-*` provenance states + legend §8.22; per-rally winners/scores stay backend-only per the 2026-07-29 review) · overview w/ marker minis · hit timeline (neon bars, center playhead) · readout · transport · frame input + Judge row · verdict box · Players card (naming + serve crop) · ghost "Watch source video". One pane, no switcher — the Challenge pane and its dock were archived 2026-07-29 (`archive/challenge-ui/`) | "Judge frame" |
+| `p-track` | **Match review — Call pane.** Review track, judge calls, name the players | control area keeps its pre-rally-visualization height so the video stage does not shrink, floored against the stage per §3.1; the added content scrolls inside that footprint · scrub hint lives in the header `#instr` line (detection failures replace it, `.warn`) · per-rally front-wall impact mini-map · rally segmentation card (proportional neutral ribbon, active segment in accent, `attr-*` provenance states + legend §8.22; per-rally winners/scores stay backend-only per the 2026-07-29 review) · overview w/ marker minis · hit timeline (neon bars, center playhead) · readout · transport · frame input + Judge row · verdict box · Players card (two equal-width detected-player cards, each with a 4:5 crop directly above its own name field; a quiet "No photo available" placeholder preserves the pair when an old run has only one crop) · ghost "Watch source video". One pane, no switcher — the Challenge pane and its dock were archived 2026-07-29 (`archive/challenge-ui/`) | "Judge frame" |
 | `p-player1-report` / `p-player2-report` | **Match review — Player 1 / Player 2 panes.** Per-player coaching report | Player N front-wall map (§8.10 court chart + `.targetMeta`; serves excluded) · Player N report panel (§8.17, opening with the §8.22 provenance line) · Player N movement panel (§8.17: distance / position split / speeds + court heatmap) · **P1 only:** the run's floor-bounce map (§8.10 `#floorMapSvg` + `.targetMeta`) — bounces are per-run, not per-player, so the panel renders once under the first report rather than twice | — (no primary) |
 | `p-label` | Human bounce labeling | overview · label timeline · transport+zoom · 2-col type grid (dot+label) · delete (destructive = plain secondary, disabled until selection) | — |
 | `p-matches` | Analysis section root — session library | view head ("Analysis" + `n runs · live pipeline`) · one head-row `.clipcard` per analyzed run, opening that match's analysis page (§8.20) · `.emptycard` when none | — (no chevron; section root) |

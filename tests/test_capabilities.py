@@ -36,12 +36,12 @@ def test_qualified_footage_enables_every_tier():
     assert all(tier["reason"] is None for tier in caps.values())
 
 
-def test_ball_tier_gated_by_fps():
+def test_sub_50_fps_footage_still_enables_ball_tracking():
     caps = cap.compute_capabilities(PROBE_30, court_solved=True)
 
-    assert caps["ball_tracking"]["enabled"] is False
-    assert "50 fps" in caps["ball_tracking"]["reason"]
-    assert "30" in caps["ball_tracking"]["reason"]
+    assert caps["ball_tracking"]["enabled"] is True
+    assert caps["ball_tracking"]["reason"] is None
+    assert caps["line_calls"]["enabled"] is True
 
 
 def test_a_slow_clip_still_gets_rally_structure_and_movement():
@@ -115,19 +115,21 @@ def test_unmeasured_sharpness_disables_the_ball_tier_saying_so():
 
 
 def test_every_failing_gate_is_named_not_just_the_first():
-    """A card that says only "30 fps" sends someone to fix one of two problems."""
+    """A card names every actual disqualifier, not just the first."""
     caps = cap.compute_capabilities(
-        dict(PROBE_60, fps=30.0, width=1280), court_solved=True
+        dict(PROBE_60, width=1280, sharpness=5.0), court_solved=True
     )
 
     reason = caps["ball_tracking"]["reason"]
-    assert "50 fps" in reason
     assert "1600" in reason
+    assert "blur" in reason.lower()
 
 
 def test_line_calls_follow_the_ball_tier():
     """Line calls judge ball hits, so they cannot outlive the tier producing them."""
-    caps = cap.compute_capabilities(PROBE_30, court_solved=True)
+    caps = cap.compute_capabilities(
+        dict(PROBE_60, width=1280), court_solved=True
+    )
 
     assert caps["line_calls"]["enabled"] is False
     assert "ball" in caps["line_calls"]["reason"].lower()

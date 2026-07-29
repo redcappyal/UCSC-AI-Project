@@ -11,7 +11,7 @@ sibling capabilities rather than a strict ladder:
 
     rally_structure   audio + frame motion        needs nothing
     player_movement   people through the floor    needs a solved court
-    ball_tracking     per-frame ball detection    needs sharp, fast frames
+    ball_tracking     per-frame ball detection    needs sharp, usable-size frames
     line_calls        judge ball impacts          needs ball_tracking
 
 A floor homography is useful for player movement and court-position metrics,
@@ -31,11 +31,6 @@ CAPABILITIES_SCHEMA = "capabilities-v1"
 # the standing eval headline (71/109 missed). 1600 px wide is the point below
 # which the ball is smaller than the detector was ever shown.
 BALL_MIN_WIDTH_PX = 1600
-
-# Below 50 fps a squash ball moves far enough between frames that the
-# trajectory kinks bounce detection looks for are aliased away, and the
-# time-domain windows in detect_wall_hits stop covering a real impact.
-BALL_MIN_FPS = 50.0
 
 # Variance-of-Laplacian on a centre crop. Provisional: set from the sharp/soft
 # separation the synthetic probe fixtures show, to be validated against the
@@ -70,18 +65,14 @@ def _tier(reasons=()):
 def _ball_reasons(probe):
     """Every failing ball gate, not just the first.
 
-    A card reading only "30 fps" sends someone off to solve one of two
-    problems and be surprised when the tier is still off.
+    A card naming only low resolution sends someone to fix one of two
+    problems and be surprised when motion blur still keeps the tier off.
     """
     reasons = []
 
     if probe is None:
         reasons.append(_NO_PROBE)
         return reasons
-
-    fps = probe.get("fps") or 0.0
-    if fps < BALL_MIN_FPS:
-        reasons.append(f"needs >={BALL_MIN_FPS:.0f} fps (got {fps:.0f})")
 
     width = probe.get("width") or 0
     if width < BALL_MIN_WIDTH_PX:
