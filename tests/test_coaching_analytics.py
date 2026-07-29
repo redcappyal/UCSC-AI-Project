@@ -167,6 +167,8 @@ def test_player_error_metrics_classifies_lost_rallies_and_calculates_percentage(
 
     assert player_error_metrics(rallies, 1) == {
         "unforced_errors": 1,
+        "unforced_errors_out": 0,
+        "unforced_errors_tin": 0,
         "forced_errors": 1,
         "total_errors": 2,
         "average_rally_duration_seconds": None,
@@ -174,6 +176,8 @@ def test_player_error_metrics_classifies_lost_rallies_and_calculates_percentage(
     }
     assert player_error_metrics(rallies, 2) == {
         "unforced_errors": 1,
+        "unforced_errors_out": 0,
+        "unforced_errors_tin": 0,
         "forced_errors": 0,
         "total_errors": 1,
         "average_rally_duration_seconds": None,
@@ -184,11 +188,56 @@ def test_player_error_metrics_classifies_lost_rallies_and_calculates_percentage(
 def test_player_error_metrics_has_no_percentage_without_a_rally_loss():
     assert player_error_metrics([], 1) == {
         "unforced_errors": 0,
+        "unforced_errors_out": 0,
+        "unforced_errors_tin": 0,
         "forced_errors": 0,
         "total_errors": 0,
         "average_rally_duration_seconds": None,
         "unforced_error_percentage": None,
     }
+
+
+def test_player_error_metrics_splits_unforced_errors_into_out_and_tin():
+    """The judge's per-hit reason tells whether the losing shot went out
+    (above the out line) or hit the tin; serve faults stay unclassified."""
+    rallies = [
+        {
+            "rally_number": 1,
+            "winner_player_number": 2,
+            "last_player_number": 1,
+            "last_call": "OUT",
+        },
+        {
+            "rally_number": 2,
+            "winner_player_number": 2,
+            "last_player_number": 1,
+            "last_call": "OUT",
+        },
+        {
+            "rally_number": 3,
+            "winner_player_number": 2,
+            "last_player_number": 1,
+            "last_call": "OUT",
+        },
+    ]
+    hits = [
+        {"rally_number": 1, "frame": 10, "call": "IN",
+         "reason": "between_lines"},
+        {"rally_number": 1, "frame": 40, "call": "OUT",
+         "reason": "above_or_on_top_line"},
+        {"rally_number": 2, "frame": 90, "call": "OUT",
+         "reason": "below_or_on_bottom_line"},
+        # Rally 3's losing hit was a serve fault below the service line —
+        # neither out nor tin, so it is counted but not classified.
+        {"rally_number": 3, "frame": 140, "call": "OUT",
+         "reason": "below_or_on_service_line"},
+    ]
+
+    metrics = player_error_metrics(rallies, 1, hits)
+
+    assert metrics["unforced_errors"] == 3
+    assert metrics["unforced_errors_out"] == 1
+    assert metrics["unforced_errors_tin"] == 1
 
 
 def test_player_error_metrics_averages_duration_of_rallies_won_by_each_player():
