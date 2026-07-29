@@ -78,6 +78,18 @@ def _make_job(tmp_path, run_id, video_path):
     return run_dir
 
 
+@pytest.fixture(autouse=True)
+def _default_to_rfdetr_backend(monkeypatch):
+    """Pin the historical rfdetr backend for this module.
+
+    These integration tests predate the local WASB default and stub the
+    rfdetr seams (get_tracking_model / infer_frame_predictions) -- on the
+    local default they would load the real committed artifact instead.
+    Tests about the local backend override this explicitly (delenv restores
+    the real default)."""
+    monkeypatch.setenv("BALL_DETECTOR", "rfdetr")
+
+
 def _stub_pipeline(monkeypatch):
     """No ball model, no audio -- both are off-topic for this test, and
     keeping them out avoids pulling in real model weights."""
@@ -725,3 +737,69 @@ def test_track_segments_rejects_unknown_backend():
         job_runner.track_segments(
             object(), "unused.mp4", [(0, 3, 1)], 640, 30.0, {},
             on_frame=lambda idx: None, backend="coreml")
+
+
+def test_load_ball_backend_local_never_touches_roboflow(monkeypatch):
+    monkeypatch.delenv("BALL_DETECTOR", raising=False)   # default is local
+    monkeypatch.delenv("ROBOFLOW_API_KEY", raising=False)
+    stub = _StubBallRunner()
+    monkeypatch.setattr(job_runner.ball_model, "load_detector", lambda: stub)
+
+    def explode():
+        raise AssertionError("rfdetr path must not load on the local backend")
+
+    monkeypatch.setattr(job_runner, "get_tracking_model", explode)
+    backend, model = job_runner.load_ball_backend()
+    assert backend == "local"
+    assert model is stub
+
+
+def test_load_ball_backend_rfdetr_branch(monkeypatch):
+    monkeypatch.setenv("BALL_DETECTOR", "rfdetr")
+    sentinel = object()
+    monkeypatch.setattr(job_runner, "get_tracking_model", lambda: sentinel)
+    backend, model = job_runner.load_ball_backend()
+    assert backend == "rfdetr"
+    assert model is sentinel
+
+
+def test_load_ball_backend_unknown_value_raises(monkeypatch):
+    monkeypatch.setenv("BALL_DETECTOR", "coreml")
+    with pytest.raises(ValueError, match="coreml"):
+        job_runner.load_ball_backend()
+
+
+def test_ball_backend_summary_shapes():
+    local = job_runner.ball_backend_summary("local", _StubBallRunner())
+    assert local == {
+        "backend": "local", "name": "stub-wasb", "version": 1,
+        "artifact_sha256": "deadbeef", "device": "cpu",
+    }
+    hosted = job_runner.ball_backend_summary("rfdetr", object())
+    assert hosted["backend"] == "rfdetr"
+    assert hosted["model_id"]          # squashai/1 or ROBOFLOW_MODEL_ID
+
+
+def test_run_tracking_job_local_backend_end_to_end(tmp_path, monkeypatch):
+    video_path = tmp_path / "clip.mp4"
+    _write_clip(video_path)
+    run_id = "test-job-runner-local-ball"
+    run_dir = _make_job(tmp_path, run_id, video_path)
+    _qualify_for_ball_tier(run_id, run_dir)
+
+    monkeypatch.delenv("BALL_DETECTOR", raising=False)
+    monkeypatch.delenv("ROBOFLOW_API_KEY", raising=False)
+    monkeypatch.setenv("PERSON_DETECTOR", "none")
+    stub = _StubBallRunner()
+    monkeypatch.setattr(job_runner.ball_model, "load_detector", lambda: stub)
+    monkeypatch.setattr(
+        job_runner, "extract_audio_candidates",
+        lambda video_path, start_frame, end_frame, fps: [])
+
+    job_runner.run_tracking_job(run_id)
+
+    job = job_runner.get_job(run_id)
+    assert job["status"] == "complete"
+    assert job["ball_backend"]["backend"] == "local"
+    assert job["ball_backend"]["name"] == "stub-wasb"
+    assert stub.batches            # the stub actually ran

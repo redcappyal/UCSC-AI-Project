@@ -17,6 +17,7 @@ from pathlib import Path
 
 import cv2
 
+import ball_model
 import capabilities
 import court_model
 import movement_stats
@@ -25,11 +26,12 @@ import player_attribution
 import rally_segmenter
 from audio_events import extract_audio_candidates
 from ball_detector import detect_frame, detect_frame_stack
+from ball_track_offline import selected_detector
 from bounce_gb_model_detector import DEFAULT_MODEL_PATH as BOUNCE_GB_MODEL_PATH
 from bounce_gb_model_detector import detect_hits_with_gb_model
 from classify_events import classify_events
 from detect_wall_hits import detect_hits_from_rows, scale_frames_for_fps, scaled_hit_kwargs
-from inference_engine import get_tracking_model, infer_frame_predictions
+from inference_engine import DEFAULT_MODEL_ID, get_tracking_model, infer_frame_predictions
 from judge_call import (
     Point,
     judge_ball,
@@ -396,6 +398,40 @@ def decode_segments_to_queue(video_path, segments, frame_queue, stop_event,
     finally:
         cap.release()
         enqueue(None)
+
+
+def load_ball_backend():
+    """Resolve BALL_DETECTOR into (backend, model) for this job.
+
+    "local" (the default) loads the committed WASB artifact via
+    ball_model.load_detector(); "rfdetr" keeps the hosted tracking model --
+    the only branch that needs ROBOFLOW_API_KEY. Loud on every failure;
+    never falls back, because a silent swap would make the local/rfdetr
+    split invisible in every downstream number.
+    """
+    backend = selected_detector()
+    if backend == "rfdetr":
+        return backend, get_tracking_model()
+    return backend, ball_model.load_detector()
+
+
+def ball_backend_summary(backend, model):
+    """The attribution block stored on the job and report (spec §7):
+    a run's numbers are attributable to the detector and device that
+    produced them, like players_v2.backend."""
+    if backend == "local":
+        manifest = model.manifest
+        return {
+            "backend": "local",
+            "name": manifest.name,
+            "version": manifest.version,
+            "artifact_sha256": manifest.artifact_sha256,
+            "device": getattr(model, "device", "cpu"),
+        }
+    return {
+        "backend": "rfdetr",
+        "model_id": os.getenv("ROBOFLOW_MODEL_ID", DEFAULT_MODEL_ID),
+    }
 
 
 def track_segments(model, video_path, segments, inference_width, source_fps, results, on_frame,
@@ -1641,8 +1677,17 @@ def run_tracking_job(run_id):
                 )
                 return
 
-            update_job(run_id, status="running", stage="coarse", message="Loading local model...")
-            model = get_tracking_model()
+            update_job(run_id, status="running", stage="coarse", message="Loading ball detector...")
+            ball_backend, model = load_ball_backend()
+            backend_summary = ball_backend_summary(ball_backend, model)
+            backend_label = (
+                f"local ({backend_summary['name']} v{backend_summary['version']}, "
+                f"{backend_summary['device']})"
+                if ball_backend == "local"
+                else f"rfdetr ({backend_summary['model_id']})"
+            )
+            update_job(run_id, ball_backend=backend_summary,
+                       message=f"Ball detector: {backend_label}")
             wall_x_range = tin_horizontal_range_from_run(run_dir)
 
             person_pass = build_person_pass(source_fps, frame_stride)
@@ -1656,6 +1701,8 @@ def run_tracking_job(run_id):
             results = {}
             # A pass at stride > 1 only needs to be good enough to locate hit
             # candidates, so it can also run at a reduced inference width.
+            # (rfdetr only: the local backend tiles at native resolution and
+            # ignores inference_width entirely -- MODEL.md §6.)
             coarse_width = COARSE_INFERENCE_WIDTH if frame_stride > 1 else inference_width
             track_segments(
                 model,
@@ -1669,6 +1716,7 @@ def run_tracking_job(run_id):
                     person_pass.observe if person_pass is not None else None,
                     motion.observe,
                 ),
+                backend=ball_backend,
             )
             write_results_csv(csv_path, results)
 
@@ -1725,6 +1773,7 @@ def run_tracking_job(run_id):
                     source_fps,
                     results,
                     make_progress_callback("Refine pass"),
+                    backend=ball_backend,
                 )
                 write_results_csv(csv_path, results)
 
@@ -1772,6 +1821,7 @@ def run_tracking_job(run_id):
                         source_fps,
                         results,
                         make_progress_callback("Audio rescue"),
+                        backend=ball_backend,
                     )
                     write_results_csv(csv_path, results)
 
