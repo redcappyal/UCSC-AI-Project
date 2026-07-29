@@ -127,6 +127,11 @@ iOS app in Safari (add-to-home-screen capable).
   the button that was pressed. Any future cross-page setting needs the same two hooks.
 - `body{height:100dvh; overflow:hidden}` — the app is a fixed shell, not a scrolling page.
   Individual panels may scroll internally if they must; the shell never does.
+- `body{touch-action:manipulation}` — no double-tap smart zoom, anywhere. WebKit (and the
+  native shell's webviews, which honor the viewport meta) otherwise swallows a fast second
+  tap on a control — the −/+ steppers especially — as a zoom gesture instead of a second
+  click. Panning/scrolling is unaffected, and the stage + strips keep their stricter
+  `touch-action:none`. Don't relax this per-element; a native app never double-tap zooms.
 - **A content page that can outgrow the viewport must be given an internal
   scroller.** `main` is `flex:0 0 auto; overflow:hidden`, so a tall page does not
   clip-and-scroll — it grows straight past the bottom of a body that never
