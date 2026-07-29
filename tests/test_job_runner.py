@@ -27,12 +27,11 @@ QUALIFIED_PROBE = {
 
 
 def _qualify_for_ball_tier(run_id, run_dir):
-    """Give a run footage and a court good enough to enable ball tracking.
+    """Give a run footage and court good enough for every analysis tier.
 
-    The ball tier is gated on frame rate, size, sharpness *and* a solved
-    court. The person-detector seam below rides on the ball decode pass, so
-    without this the gate skips the very stages those tests exercise -- they
-    would still pass while testing nothing.
+    The ball tier is gated on frame rate, size, and sharpness. The solved
+    floor court additionally enables player movement, which the
+    person-detector tests below exercise.
     """
     (run_dir / "calibration.json").write_text(
         json.dumps(make_v2_calibration()), encoding="utf-8"
@@ -263,6 +262,48 @@ def test_a_qualified_clip_still_runs_the_ball_stages(tmp_path, monkeypatch):
 
     assert loaded, "ball model was not loaded for qualified footage"
     assert job_runner.get_job(run_id)["capabilities"]["ball_tracking"]["enabled"] is True
+
+
+def test_front_wall_calibration_without_floor_still_runs_ball_tracking(
+    tmp_path, monkeypatch
+):
+    """Skipping optional floor calibration must not skip the core tracker."""
+    video_path = tmp_path / "clip.mp4"
+    _write_clip(video_path)
+    run_id = "test-job-runner-front-wall-only"
+    run_dir = _make_job(tmp_path, run_id, video_path)
+
+    calibration = make_v2_calibration()
+    calibration["planes"].pop("floor")
+    (run_dir / "calibration.json").write_text(
+        json.dumps(calibration), encoding="utf-8"
+    )
+    job_runner.update_job(run_id, probe=dict(QUALIFIED_PROBE))
+
+    loaded = []
+    monkeypatch.setattr(
+        job_runner, "get_tracking_model", lambda: loaded.append(1) or object()
+    )
+    monkeypatch.setattr(
+        job_runner,
+        "infer_frame_predictions",
+        lambda model, frame, threshold, width: [],
+    )
+    monkeypatch.setattr(
+        job_runner,
+        "extract_audio_candidates",
+        lambda video_path, start_frame, end_frame, fps: [],
+    )
+
+    job_runner.run_tracking_job(run_id)
+
+    job = job_runner.get_job(run_id)
+    assert loaded, "ball model was skipped because floor calibration was absent"
+    assert job["status"] == "complete"
+    assert job["processed_frames"] > 0
+    assert job["capabilities"]["player_movement"]["enabled"] is False
+    assert job["capabilities"]["ball_tracking"]["enabled"] is True
+    assert job["capabilities"]["line_calls"]["enabled"] is True
 
 
 def test_a_run_with_no_probe_records_capabilities_anyway(tmp_path, monkeypatch):

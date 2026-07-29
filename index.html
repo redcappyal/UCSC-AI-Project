@@ -611,6 +611,10 @@
   .wallCornerList span.done{color:var(--text); border-color:color-mix(in srgb, var(--accent-bg) 70%, var(--line))}
   .wallCornerList span.active{background:var(--accent-bg); color:var(--accent-text); border-color:transparent; font-weight:700}
   .wallCornerList span.warned{border-color:#f5c518; color:var(--text)}
+  #confirmAnchorHelp{margin:0; padding:10px 14px 0; text-align:left; line-height:1.35}
+  #confirmAnchorList{padding:10px 14px 14px}
+  #confirmAnchorList span{line-height:1.35; font-variant-numeric:tabular-nums}
+  #confirmAnchorList b{color:var(--text)}
   #floorDiagram{width:118px; flex:none; background:var(--surface); border:1px solid var(--line);
     border-radius:8px; padding:4px}
   #floorDiagram .courtLine{stroke:var(--dim); stroke-width:.45; fill:none}
@@ -1032,6 +1036,7 @@
     <p class="status" id="confirmSummary">&nbsp;</p>
     <div class="targetZones">
       <div class="targetHead"><strong>Court anchors</strong><span id="confirmCount"></span></div>
+      <p class="instruction" id="confirmAnchorHelp">Drag each numbered circle to the matching court point.</p>
       <div class="wallCornerList" id="confirmAnchorList"></div>
     </div>
     <button class="primary proxied" id="confirmUseBtn">Use this calibration</button>
@@ -2555,8 +2560,18 @@ function sentenceCaseId(id){
 function confirmAnchorPoints(){
   const points = [];
   if(S.wall) WALL_CORNERS.forEach((corner, i) => {
-    if(S.wall.points[i]) points.push({key:`wall:${i}`, label:corner.label,
-                                      xy:S.wall.points[i]});
+    if(S.wall.points[i]) points.push({
+      key:`wall:${i}`,
+      number:i + 1,
+      label:corner.label,
+      guide:[
+        'Out line at left side wall',
+        'Out line at right side wall',
+        'Front-wall/floor seam · right corner',
+        'Front-wall/floor seam · left corner',
+      ][i],
+      xy:S.wall.points[i],
+    });
   });
   if(S.floor) for(const landmark of S.floor.landmarks){
     if((landmark.id === 'short_line_left' || landmark.id === 'short_line_right')
@@ -2566,10 +2581,17 @@ function confirmAnchorPoints(){
       // landmark.label — the court model's labels are full tap instructions
       // ("Where the MIDDLE of the short line's width meets the LEFT side
       // wall"), written for the floor wizard's prompt line, not for a chip.
-      points.push({key:`floor:${landmark.id}`,
-                   label:sentenceCaseId(landmark.id), xy:landmark.refined_px});
+      points.push({
+        key:`floor:${landmark.id}`,
+        number:landmark.id === 'short_line_left' ? 5 : 6,
+        label:sentenceCaseId(landmark.id),
+        guide:landmark.id === 'short_line_left'
+          ? 'Short line at left side wall'
+          : 'Short line at right side wall',
+        xy:landmark.refined_px,
+      });
   }
-  return points;
+  return points.sort((a, b) => a.number - b.number);
 }
 
 function confirmOffChecks(){
@@ -2621,12 +2643,14 @@ function drawConfirmOverlay(){
       ctx.stroke();
     }
   }
-  // Floor the puck at 6 CSS px radius so it is visible on the glass rather
+  // Floor the puck at 10 CSS px radius so its stable 1-6 label is legible
+  // on the glass rather
   // than only in the pixel buffer (S.W/110 alone drew a 7 CSS px dot on a
   // 1080p clip at 390px wide). Still far smaller than its 44 px hit target —
   // this screen exists to show whether the overlay sits on the real paint, so
   // the puck must not cover the paint it is being judged against.
-  const radius = Math.max(9, S.W / 110, 6 * canvasPxPerCssPx());
+  const cssScale = canvasPxPerCssPx();
+  const radius = Math.max(9, S.W / 110, 10 * cssScale);
   for(const anchor of confirmAnchorPoints()){
     ctx.beginPath();
     ctx.arc(anchor.xy[0], anchor.xy[1], radius, 0, Math.PI * 2);
@@ -2635,6 +2659,11 @@ function drawConfirmOverlay(){
     ctx.strokeStyle = 'rgba(0,0,0,.6)';
     ctx.lineWidth = Math.max(1.5, S.W / 1400);
     ctx.stroke();
+    ctx.fillStyle = '#000';
+    ctx.font = `700 ${Math.max(radius, 11 * cssScale)}px "Chakra Petch", sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(String(anchor.number), anchor.xy[0], anchor.xy[1]);
   }
   ctx.restore();
 }
@@ -2645,7 +2674,7 @@ function buildConfirmView(){
   const anchors = confirmAnchorPoints();
   $('confirmCount').textContent = `${anchors.length} placed`;
   $('confirmAnchorList').innerHTML = anchors.map(anchor =>
-    `<span class="done">${anchor.label} set</span>`).join('');
+    `<span class="done"><b>${anchor.number}.</b> ${anchor.guide}</span>`).join('');
 
   // The green line is the earned state, not the default. It used to be what
   // this screen said whenever no check had gone 'off' — which included
@@ -4049,7 +4078,7 @@ $('floorDoneBtn').onclick = () => {
   finishCalWizard();
 };
 
-$('confirmUseBtn').onclick = () => { finishCalWizard(); };
+$('confirmUseBtn').onclick = finishCalWizard;
 $('confirmUndoBtn').onclick = () => {
   const last = S.confirmUndo.pop();
   if(!last) return;

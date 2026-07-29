@@ -56,14 +56,15 @@ def test_a_slow_clip_still_gets_rally_structure_and_movement():
     assert caps["player_movement"]["enabled"] is True
 
 
-def test_no_court_disables_movement_and_ball_but_not_rallies():
+def test_no_floor_solve_disables_movement_but_not_ball_or_line_calls():
     caps = cap.compute_capabilities(PROBE_60, court_solved=False)
 
     assert caps["player_movement"]["enabled"] is False
-    assert caps["ball_tracking"]["enabled"] is False
-    assert caps["line_calls"]["enabled"] is False
+    assert caps["ball_tracking"]["enabled"] is True
+    assert caps["line_calls"]["enabled"] is True
     assert caps["rally_structure"]["enabled"] is True
     assert "court" in caps["player_movement"]["reason"]
+    assert caps["ball_tracking"]["reason"] is None
 
 
 def test_rally_structure_is_enabled_even_without_audio():

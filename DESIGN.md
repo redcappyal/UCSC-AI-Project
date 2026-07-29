@@ -788,6 +788,14 @@ draggable anchor pucks at the four wall corners and the two short-line ends.
   the detection is trusted, `#f5c518` otherwise. **Never red** — §0.3 reserves
   red for OUT verdicts. Colour is never the only carrier: `#confirmWarn` names
   every reason in words, so the screen reads correctly in greyscale.
+- Every draggable puck carries a stable black numeral, paired with the numbered
+  location guide below the frame: **1** out line at left wall, **2** out line at
+  right wall, **3** front-wall/floor seam at the right corner, **4** the same
+  seam at the left corner, **5** short line at left wall, and **6** short line
+  at right wall. Numbers belong to the court landmark rather than the current
+  array position, so a missing derived anchor never renumbers the remaining
+  pucks. The visible puck is 20 CSS px in diameter for numeral legibility; its
+  effective drag target remains the independent 44 CSS px target below.
 - **Green is earned, never defaulted into.** The `.status ok` line
   ("Court detected — the overlay should sit on the real lines.") requires all
   of: a detection is loaded, its `status` is `ok`, its `confidence` is `high`,
@@ -829,7 +837,7 @@ draggable anchor pucks at the four wall corners and the two short-line ends.
   target stays 44 px on the glass at any zoom. A canvas-pixel constant cannot
   do this — the previous `Math.max(18, S.W/60)` measured 13.0 CSS px at
   390×844 on a 1080p clip, and its `S.W` terms cancel, so resolution never
-  helped. Because the target is now much larger than the 12 CSS px puck, the
+  helped. Because the target is still larger than the 20 CSS px puck, the
   grab carries an **offset**: the anchor tracks the finger's movement rather
   than jumping to it, so the bigger target costs no placement precision.
 - **Drags are undoable.** `UNDO DRAG` sits beside `TAP IT MANUALLY`, matching

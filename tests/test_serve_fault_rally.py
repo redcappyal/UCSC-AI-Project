@@ -90,6 +90,9 @@ def test_serve_fault_is_charged_to_the_server_as_an_unforced_error(monkeypatch):
     assert fault["server_player_number"] == 2
     assert fault["last_player_number"] == 2, "the fault belongs to the server"
     assert fault["winner_player_number"] == 1, "the opponent wins a serve fault"
+    followup = rallies[1]
+    assert followup["server_player_number"] == 1, "the fault winner serves next"
+    assert hits[1]["player_number"] == 1, "the next rally starts with its server"
 
     import app
     errors = app.player_error_metrics(rallies, player_number=2)

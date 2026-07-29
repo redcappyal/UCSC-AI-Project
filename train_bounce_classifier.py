@@ -43,10 +43,16 @@ from inference_engine import (
     get_tracking_model,
     infer_frame_predictions,
 )
-from judge_call import Point, judge_ball, load_calibration_lines, load_wall_corners
+from judge_call import (
+    Point,
+    judge_ball,
+    load_calibration_lines,
+    load_wall_corners,
+)
 from tracking_common import (
     CONFIDENCE_THRESHOLD,
     CSV_FIELDNAMES,
+    FLOOR_REBOUND_FLOOR_SEAM_MARGIN_PX,
     FLOOR_REBOUND_MIN_DETECTIONS_PER_SIDE,
     FLOOR_REBOUND_MIN_PROMINENCE_PX,
     FLOOR_REBOUND_MIN_REVERSAL_PX_PER_FRAME,
@@ -56,6 +62,7 @@ from tracking_common import (
     ball_csv_row,
     detect_floor_rebound,
     fill_short_trajectory_gaps,
+    floor_rebound_is_near_floor_seam,
     select_motion_consistent_ball_predictions,
     TRAJECTORY_FILL_EDGE_MARGIN_PX,
     TRAJECTORY_FILL_MAX_GAP_FRAMES,
@@ -464,6 +471,7 @@ def load_geometry(calibration_path):
         + abs(math.degrees(math.atan2(bottom_line.dy, bottom_line.dx)))
     ) / 2
     perspective_shear = (right_height - left_height) / mean_height if mean_height > 0.0 else 0.0
+    wall_corners = load_wall_corners(calibration)
     return {
         "top_line": top_line,
         "bottom_line": bottom_line,
@@ -473,7 +481,7 @@ def load_geometry(calibration_path):
         "wall_width_px": max(0.0, bottom_line.length),
         "roll_degrees": roll_degrees,
         "perspective_shear": perspective_shear,
-        "wall_corners": load_wall_corners(calibration),
+        "wall_corners": wall_corners,
     }
 
 
@@ -1248,9 +1256,13 @@ def app_filtered_eval_predictions(
         y = float(row.get("t+0_y", 0.0))
         if not math.isfinite(x) or not math.isfinite(y):
             continue
+        row_geometry = geometry
+        if geometry_by_source and "source_video" in row:
+            row_geometry = geometry_by_source.get(str(row.get("source_video")), geometry)
+        context_rows = runtime_eval_context_rows(row)
         if floor_rebound_filter:
-            floor_rebound, _ = detect_floor_rebound(
-                runtime_eval_context_rows(row),
+            floor_rebound, floor_rebound_stats = detect_floor_rebound(
+                context_rows,
                 0,
                 search_frames=FLOOR_REBOUND_SEARCH_FRAMES,
                 window_frames=FLOOR_REBOUND_WINDOW_FRAMES,
@@ -1259,12 +1271,23 @@ def app_filtered_eval_predictions(
                 min_reversal_px_per_frame=FLOOR_REBOUND_MIN_REVERSAL_PX_PER_FRAME,
                 min_prominence_px=FLOOR_REBOUND_MIN_PROMINENCE_PX,
             )
-            if floor_rebound:
+            wall_corners = (
+                row_geometry.get("wall_corners")
+                if row_geometry is not None
+                else None
+            )
+            if (
+                floor_rebound
+                and wall_corners is not None
+                and floor_rebound_is_near_floor_seam(
+                    floor_rebound_stats,
+                    wall_corners.bottom_left,
+                    wall_corners.bottom_right,
+                    margin_px=FLOOR_REBOUND_FLOOR_SEAM_MARGIN_PX,
+                )
+            ):
                 floor_rebound_rejections += 1
                 continue
-        row_geometry = geometry
-        if geometry_by_source and "source_video" in row:
-            row_geometry = geometry_by_source.get(str(row.get("source_video")), geometry)
         if spatial_filter and not runtime_eval_inside_gate(x, y, row_geometry, spatial_filter_mode):
             continue
 

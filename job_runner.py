@@ -1630,10 +1630,9 @@ def run_tracking_job(run_id):
             return on_frame
 
         try:
-            # Read before anything expensive starts: the calibration decides
-            # more than judging now. Whether a floor homography exists is a
-            # capability input, and the answer has to be known before the
-            # decision to load a model that costs minutes and gigabytes.
+            # Read before anything expensive starts. A floor homography gates
+            # player movement, but front-wall ball tracking remains available
+            # from the line calibration and qualifying video alone.
             calibration = load_run_calibration(run_dir)
             caps = capabilities.compute_capabilities(
                 job.get("probe"),
