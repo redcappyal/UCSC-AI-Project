@@ -283,8 +283,6 @@
     font-variant-numeric:tabular-nums}
   .rallySegment:last-child{border-right:0}
   .rallySegment strong{font-size:13px; line-height:1.1; white-space:nowrap}
-  .rallySegment span{max-width:100%; overflow:hidden; text-overflow:ellipsis;
-    font-size:11px; line-height:1.2; white-space:nowrap}
   .rallySegment.active{background:var(--accent-bg); color:var(--accent-text)}
   /* Attribution provenance per rally (job_runner attribution_state). A rally
      whose shot labels were guessed must not read the same as one the person
@@ -319,16 +317,6 @@
   .rallyLegend i.assumed{background:var(--bg); border:1px dashed var(--line)}
   .rallyLegend i.conflict{background:var(--tint-poor-bg); color:var(--tint-poor-fg);
     border:1px dashed var(--tint-poor-fg)}
-  .rallyWinners{display:flex; gap:8px; overflow-x:auto; padding:0 12px 8px;
-    scrollbar-width:none; -webkit-overflow-scrolling:touch}
-  .rallyWinners::-webkit-scrollbar{display:none}
-  button.rallyWinner{flex:0 0 auto; width:auto; min-height:44px; padding:6px 12px;
-    border:1px solid var(--line); background:var(--bg); color:var(--text); box-shadow:none;
-    font-size:12px; font-weight:600; letter-spacing:0;
-    font-variant-numeric:tabular-nums}
-  button.rallyWinner.active{background:var(--accent-bg); border-color:var(--accent-bg);
-    color:var(--accent-text)}
-
   /* Floating dark docks (lab nav): the section tab bar is icon-only circles;
      Review/Challenge on the call page keeps its text labels in the same shell. */
   #navPill, .callTabs{position:fixed; left:50%; bottom:calc(14px + env(safe-area-inset-bottom));
@@ -629,8 +617,8 @@
 
   /* floor bounce map on the targets page */
   .floorMap{border:1px solid var(--line); border-radius:8px; overflow:hidden; background:var(--surface)}
-  #floorMapSvg{display:block; width:100%; max-height:340px}
-  #floorMapSvg .courtLine{stroke:var(--dim); stroke-width:.28; fill:none}
+  #floorMapSvg, .heatmapSvg{display:block; width:100%; max-height:340px}
+  #floorMapSvg .courtLine, .heatmapSvg .courtLine{stroke:var(--dim); stroke-width:.28; fill:none}
   #floorMapSvg .bounceDot{fill:#f5c518; stroke:rgba(0,0,0,.5); stroke-width:.14}
 
   /* ---- lab components (design-lab/crosscourt-lab.html) ---- */
@@ -711,8 +699,6 @@
   .aicard .ic svg{width:14px; height:14px}
   .aicard .t{font-size:13px; font-weight:600; letter-spacing:-.01em}
   .aicard .s{font-size:12px; color:var(--dim); line-height:1.45}
-  /* weekly report bars */
-  .weekly svg{display:block; width:100%; height:auto; margin-top:8px}
   /* segmented control */
   .seg{display:flex; background:var(--seg-bg); border-radius:999px; padding:4px; gap:2px}
   .seg button{flex:1; border:0; background:none; box-shadow:none; border-radius:999px;
@@ -740,9 +726,7 @@
   .clipcard.open .clipbody{max-height:none}
   .clipbody .inner{padding:14px 16px 16px; display:flex; flex-direction:column; gap:14px;
     border-top:1px solid var(--line)}
-  /* gauge + score columns + feedback rows */
-  .gauge{display:flex; justify-content:center; padding:2px 0 0}
-  .gauge svg{display:block}
+  /* score columns + feedback rows */
   .scorecols{display:grid; grid-template-columns:1fr 1fr 1fr; gap:8px}
   .scol{border:1px solid var(--line); border-radius:14px; padding:10px 12px; display:flex;
     flex-direction:column; gap:3px; align-items:flex-start}
@@ -884,10 +868,11 @@
           <span class="rv" id="heroRingVal">0</span>
         </div>
       </div>
-      <div class="statgrid">
+      <!-- Two tiles for now: the third slot is deliberately unassigned until
+           the next useful headline metric is decided (2026-07-29 review). -->
+      <div class="statgrid" style="grid-template-columns:1fr 1fr">
         <div class="stattile"><span class="sl">Sessions</span><span class="sv" id="heroT1">&#8212;</span></div>
-        <div class="stattile"><span class="sl">Front-wall IN</span><span class="sv" id="heroT2">&#8212;</span></div>
-        <div class="stattile"><span class="sl">Avg pace</span><span class="sv" id="heroT3">&#8212;</span></div>
+        <div class="stattile"><span class="sl">Unforced errors</span><span class="sv" id="heroT2">&#8212;</span></div>
       </div>
       <div class="heronote" id="heroNote">Record a rally on court, upload it here, and the pipeline turns it into calls, stats, and coaching.</div>
     </div>
@@ -916,11 +901,6 @@
       <span class="fcTag">Soon</span>
     </button>
     <p class="status" id="loadStatus"></p>
-    <div class="card weekly hidden" id="weeklyCard" style="padding-top:14px;padding-bottom:12px">
-      <div class="cardtitle">Weekly Report</div>
-      <div class="dim" style="font-size:12px;margin-top:2px">Active minutes</div>
-      <svg viewBox="0 0 326 150" id="weeklySvg" aria-label="Active minutes per day over the last week"></svg>
-    </div>
     <div class="sectionhead hidden" id="aiRecsHead"><span class="cardtitle">Coach Notes</span></div>
     <div class="airow hidden" id="aiRecsRow"></div>
     <hr class="hairline">
@@ -1120,7 +1100,6 @@
       <div class="rallyRibbon" id="rallyRibbon"
            role="img" aria-label="Model-inferred rally boundaries"></div>
       <div class="rallyLegend hidden" id="rallyLegend"></div>
-      <div class="rallyWinners" id="rallyWinners" aria-label="Winner for every rally"></div>
     </div>
     <div class="clipOverview hidden" id="trackOverview">
       <canvas id="trackOverviewStrip"></canvas>
@@ -1312,6 +1291,17 @@
       <div class="coachFeedback" id="coachFeedbackP1"></div>
       <div class="coachDrills" id="coachDrillsP1"></div>
     </div>
+    <!-- Per-player movement (players_v2): distance, position split, speeds,
+         and a court heatmap. Promoted to the UI in the 2026-07-29 review. -->
+    <div class="targetZones hidden" id="movementPanelP1">
+      <div class="targetHead">
+        <strong id="movementTitleP1">Player 1 movement</strong>
+        <span id="movementCoverageP1"></span>
+      </div>
+      <div class="coachMetrics" id="movementMetricsP1"></div>
+      <div class="floorMap"><svg id="movementHeatmapP1" class="heatmapSvg" viewBox="-1.5 -1.5 24 35" aria-label="Player 1 court position heatmap"></svg></div>
+      <p class="metaline" id="movementNoteP1" style="padding:10px 14px 12px; margin:0"></p>
+    </div>
     <!-- Floor bounces are a property of the run, not of one player, so this
          panel renders once — under the first report rather than duplicated. -->
     <div class="targetZones hidden" id="floorMapPanel">
@@ -1364,6 +1354,15 @@
       <div class="coachOutcomeComparison" id="coachOutcomesP2"></div>
       <div class="coachFeedback" id="coachFeedbackP2"></div>
       <div class="coachDrills" id="coachDrillsP2"></div>
+    </div>
+    <div class="targetZones hidden" id="movementPanelP2">
+      <div class="targetHead">
+        <strong id="movementTitleP2">Player 2 movement</strong>
+        <span id="movementCoverageP2"></span>
+      </div>
+      <div class="coachMetrics" id="movementMetricsP2"></div>
+      <div class="floorMap"><svg id="movementHeatmapP2" class="heatmapSvg" viewBox="-1.5 -1.5 24 35" aria-label="Player 2 court position heatmap"></svg></div>
+      <p class="metaline" id="movementNoteP2" style="padding:10px 14px 12px; margin:0"></p>
     </div>
   </section>
 
@@ -5541,6 +5540,53 @@ function renderFloorMap(){
   return true;
 }
 
+/* Per-player movement panel (players_v2, promoted 2026-07-29): distance,
+   front/T/back split, avg + p95 speed, and the 7×8 court-position heatmap the
+   backend has always computed. Track A/B maps to player 1/2 through the same
+   attribution anchor the naming card uses. */
+function renderPlayerMovement(playerNumber){
+  const panel = $(`movementPanelP${playerNumber}`);
+  const pv = S.run && S.run.players_v2;
+  const v1 = S.run && S.run.players_v1;
+  const track = v1 ? trackForPlayer(v1, playerNumber) : (playerNumber === 1 ? 'A' : 'B');
+  const stats = pv && track ? pv[track === 'A' ? 'player_a' : 'player_b'] : null;
+  if(!stats || !(stats.sample_coverage > 0)){
+    panel.classList.add('hidden');
+    return;
+  }
+  panel.classList.remove('hidden');
+  $(`movementTitleP${playerNumber}`).textContent = `${playerDisplayName(playerNumber)} movement`;
+  $(`movementCoverageP${playerNumber}`).textContent =
+    `${Math.round(100*stats.sample_coverage)}% of rally time observed`;
+  const pct = v => Math.round(100*(v || 0));
+  $(`movementMetricsP${playerNumber}`).innerHTML = [
+    coachMetric('Distance covered', metricValue(Math.round(stats.distance_ft || 0), ' ft'),
+      'Ground covered during rallies, in court feet.'),
+    coachMetric('On the T', metricValue(pct(stats.t_time_pct), '%'),
+      'Share of rally time spent within 6 ft of the T.'),
+    coachMetric('Front court', metricValue(pct(stats.front_pct), '%'),
+      'Share of rally time in the front 16 ft of the court.'),
+    coachMetric('Back court', metricValue(pct(stats.back_pct), '%'),
+      'Share of rally time in the back half, behind 16 ft from the front wall.'),
+    coachMetric('Average speed', metricValue(Math.round((stats.avg_speed_ftps || 0)*10)/10, ' ft/s'),
+      'Mean movement speed across rally time.'),
+    coachMetric('Peak speed', metricValue(Math.round((stats.p95_speed_ftps || 0)*10)/10, ' ft/s'),
+      '95th-percentile movement speed — sustained bursts, not one-frame spikes.'),
+  ].join('');
+  // Heatmap: 8 rows down the 32 ft length × 7 columns across the 21 ft width,
+  // cell opacity scaled to the busiest cell. Accent fill carries intensity;
+  // the wireframe keeps the court readable in both themes.
+  const grid = stats.heatmap || [];
+  const peak = Math.max(0, ...grid.flat());
+  const cellW = 21/7, cellH = 32/8;
+  const cells = peak > 0 ? grid.map((row, r) => row.map((v, c) => v > 0
+    ? `<rect x="${(c*cellW).toFixed(2)}" y="${(r*cellH).toFixed(2)}" width="${cellW.toFixed(2)}" height="${cellH.toFixed(2)}" fill="var(--accent-bg)" fill-opacity="${(0.85*v/peak).toFixed(3)}"/>`
+    : '').join('')).join('') : '';
+  $(`movementHeatmapP${playerNumber}`).innerHTML = cells + courtWireframeSvg('courtLine');
+  $(`movementNoteP${playerNumber}`).textContent =
+    `Where ${playerDisplayName(playerNumber)} stood during rallies — stronger color means more time. Detector: ${(pv.backend || 'unknown')}.`;
+}
+
 function summaryFromPlayerAnalytics(player){
   if(!player) return null;
   const zones = (player.target_zone_percentages || []).map(zone => ({
@@ -5692,21 +5738,6 @@ function renderOutcomeMetricSection(player, outcome){
       `${player.labelHtml}'s most-used front-wall areas in ${context}.`
     ),
     coachMetric(
-      'Average shot height',
-      metricValue(metrics.average_wall_height_ft, ' ft'),
-      `Average front-wall contact height across ${player.labelHtml}'s shots in ${context}.`
-    ),
-    coachMetric(
-      'Average pace into front wall',
-      metricValue(metrics.average_incoming_speed_mph, ' mph'),
-      `Mean incoming pace across shots with a usable speed estimate in ${context}.`
-    ),
-    coachMetric(
-      'Average pace off front wall',
-      metricValue(metrics.average_exit_speed_mph, ' mph'),
-      `Mean rebound pace across shots with a usable speed estimate in ${context}.`
-    ),
-    coachMetric(
       'Middle usage',
       metricValue(metrics.center_target_rate, '%'),
       `Share of ${player.labelHtml}'s analyzed shots that used middle targets in ${context}.`
@@ -5757,6 +5788,12 @@ function renderPlayerCoachPanel(data, playerNumber, sourceText){
   $(`coachSourceP${playerNumber}`).textContent = sourceText;
   $(`coachIntroP${playerNumber}`).textContent =
     playerAssignmentText(playerNumber, analytics.player_assignment);
+  // Tile set per the 2026-07-29 metric review: errors, rally length, and
+  // zone usage. Shot height and pace are still computed and persisted by the
+  // backend (and fed to the LLM coach) but are no longer user-facing tiles.
+  const errorBreakdown = (player.unforced_errors_out || player.unforced_errors_tin)
+    ? ` Of these, ${player.unforced_errors_out || 0} went out and ${player.unforced_errors_tin || 0} hit the tin.`
+    : '';
   $(`coachMetricsP${playerNumber}`).innerHTML = [
     coachMetric(
       'Shots analyzed',
@@ -5766,7 +5803,7 @@ function renderPlayerCoachPanel(data, playerNumber, sourceText){
     coachMetric(
       'Unforced errors',
       metricValue(player.unforced_errors),
-      `Number of rally losses where ${player.labelHtml}'s final front-wall shot was OUT.`
+      `Rally losses where ${player.labelHtml}'s final shot went out or hit the tin — not losses to the opponent's winner.${errorBreakdown}`
     ),
     coachMetric(
       'Unforced error rate',
@@ -5782,21 +5819,6 @@ function renderPlayerCoachPanel(data, playerNumber, sourceText){
       'Main targets',
       formatZoneList(player.common_target_zones, 3),
       `The wall areas ${player.labelHtml} used most often.`
-    ),
-    coachMetric(
-      'Typical shot height',
-      metricValue(player.average_wall_height_ft, ' ft'),
-      `Where ${player.labelHtml}'s shots usually struck the front wall, measured from the floor.`
-    ),
-    coachMetric(
-      'Average pace into front wall',
-      metricValue(player.average_incoming_speed_mph, ' mph'),
-      `The mean speed across ${player.labelHtml}'s analyzed shots with a usable estimate as the ball approached the front wall.`
-    ),
-    coachMetric(
-      'Average pace off front wall',
-      metricValue(player.average_exit_speed_mph, ' mph'),
-      `The mean speed across ${player.labelHtml}'s analyzed shots with a usable estimate immediately after the ball rebounded from the front wall.`
     ),
     coachMetric(
       'Middle usage',
@@ -5891,12 +5913,10 @@ function setCoachLoading(playerNumber){
   $(`coachIntroP${playerNumber}`).textContent = `Building the ${playerDisplayName(playerNumber)} report from detected front-wall contacts.`;
   $(`coachMetricsP${playerNumber}`).innerHTML = [
     coachMetric('Shots analyzed', '—', 'Reliable front-wall contacts included in the report.'),
-    coachMetric('Unforced errors', '—', 'Number of rally losses ending with this player hitting OUT.'),
+    coachMetric('Unforced errors', '—', 'Rally losses ending with this player hitting out or the tin.'),
     coachMetric('Unforced error rate', '—', 'Unforced errors as a percentage of all rally losses.'),
     coachMetric('Average rally duration', '—', 'Average length of rallies won by this player.'),
     coachMetric('Main targets', '—', 'The wall areas you used most often.'),
-    coachMetric('Typical shot height', '—', 'Where your shots usually struck the front wall.'),
-    coachMetric('Average pace into front wall', '—', 'Mean speed across analyzed shots with a usable estimate approaching the front wall.'),
   ].join('');
   const loadingLabel = playerDisplayName(playerNumber);
   $(`coachOutcomesP${playerNumber}`).innerHTML =
@@ -5984,6 +6004,7 @@ function buildPlayerReportView(playerNumber){
   $(`targetTitleP${playerNumber}`).textContent = `${playerDisplayName(playerNumber)} front-wall map`;
   $(`coachTitleP${playerNumber}`).textContent = `${playerDisplayName(playerNumber)} report`;
   renderTargetZones(playerTargetSummary(playerNumber), TARGET_MAP_IDS[playerNumber]);
+  renderPlayerMovement(playerNumber);
   // Floor bounces are per-run, not per-player — rendered once, under P1.
   if(playerNumber === 1) renderFloorMap();
   renderAttributionProvenance(playerNumber);
@@ -6197,46 +6218,10 @@ function runRallies(){
     .sort((a, b) => Number(a.rally_number || 0) - Number(b.rally_number || 0));
 }
 
-function rallyWinnerText(rally){
-  const winner = Number(rally.winner_player_number);
-  return winner === 1 || winner === 2 ? `${playerDisplayName(winner)} wins` : 'Winner TBD';
-}
-
-function rallyWinnerDetail(rally){
-  const winner = rallyWinnerText(rally);
-  // Back-filled winners (job_runner's next-serve rule) contradict last_call/
-  // last_player_number below — this rally's est. winner was silently
-  // overridden by who actually served next, so explain THAT, not the stale
-  // front-wall call.
-  if(rally.winner_source === 'next_serve') return `${winner}; served the next rally`;
-  const server = Number(rally.server_player_number);
-  if(rally.winner_reason === 'serve_out' && (server === 1 || server === 2))
-    return `${winner}; ${playerDisplayName(server)}'s serve was OUT`;
-  const lastPlayer = Number(rally.last_player_number);
-  if(rally.last_call === 'OUT' && (lastPlayer === 1 || lastPlayer === 2))
-    return `${winner}; ${playerDisplayName(lastPlayer)}'s final front-wall hit was OUT`;
-  if(rally.last_call === 'IN') return `${winner}; final front-wall hit was IN`;
-  return `${winner}; final front-wall hit was not judged`;
-}
-
-/* Running score (spec §4.6 item 3): players_v1 carries its own rallies array
-   with score_after, separate from S.run.rallies (player_assignment's rallies,
-   used for timing/segmentation above) — look the matching rally up by number.
-   winner_source 'est' rows are marked so the score never asserts more
-   confidence than the front-wall judging actually has; back-filled
-   (next_serve) rows are not, since those were corrected by stronger evidence. */
-function rallyScoreText(rally){
-  const v1Rallies = S.run && S.run.players_v1 && S.run.players_v1.rallies;
-  if(!Array.isArray(v1Rallies)) return '';
-  const match = v1Rallies.find(r => Number(r.rally_number) === Number(rally.rally_number));
-  const scoreAfter = match && match.score_after;
-  if(!scoreAfter) return '';
-  const p1 = Number(scoreAfter['1'] || 0);
-  const p2 = Number(scoreAfter['2'] || 0);
-  const score = `${playerDisplayName(1)} ${p1}–${playerDisplayName(2)} ${p2}`;
-  return match.winner_source === 'est' ? `${score} (est.)` : score;
-}
-
+/* Winner chips and the running-score strip were removed in the 2026-07-29
+   metric review: per-rally winners and scores stay in the backend payload
+   (players_v1.rallies) but are no longer a user-facing surface. The ribbon
+   keeps rally navigation and attribution provenance only. */
 function rallyDisplayBounds(rallies){
   const runStart = Number(S.run.start_frame || 0);
   const runEnd = Math.max(runStart + 1, Number(S.run.end_frame || runStart) + 1);
@@ -6258,7 +6243,7 @@ function rallyDisplayBounds(rallies){
 }
 
 function syncActiveRally(frame){
-  for(const el of document.querySelectorAll('#rallyRibbon .rallySegment, #rallyWinners .rallyWinner')){
+  for(const el of document.querySelectorAll('#rallyRibbon .rallySegment')){
     const start = Number(el.dataset.start);
     const end = Number(el.dataset.end);
     el.classList.toggle('active', frame >= start && frame < end);
@@ -6268,9 +6253,7 @@ function syncActiveRally(frame){
 function buildRallyVisualization(initialFrame){
   const panel = $('rallyViz');
   const ribbon = $('rallyRibbon');
-  const winners = $('rallyWinners');
   ribbon.innerHTML = '';
-  winners.innerHTML = '';
   const rallies = runRallies();
   if(!rallies.length){
     panel.classList.add('hidden');
@@ -6290,7 +6273,6 @@ function buildRallyVisualization(initialFrame){
   const runSpan = runEnd - runStart;
   for(const {rally, start, end} of bounds){
     const number = Number(rally.rally_number);
-    const winner = rallyWinnerText(rally);
     const state = rallyAttributionState(number);
     const segment = document.createElement('div');
     segment.className = `rallySegment attr-${state}`;
@@ -6299,29 +6281,10 @@ function buildRallyVisualization(initialFrame){
     segment.style.left = `${(start - runStart) / runSpan * 100}%`;
     segment.style.width = `${Math.max(0, end - start) / runSpan * 100}%`;
     segment.setAttribute('aria-label',
-      `Rally ${number}, ${winner}, ${ATTR_STATE_TEXT[state]}, frames ${rally.start_frame} to ${rally.end_frame}`);
-    segment.title = `Rally ${number} · ${winner} · ${ATTR_STATE_TEXT[state]}`;
-    segment.innerHTML = `<strong>R${number}</strong><span>${escapeHtml(winner.replace('Player ', 'P'))}</span>`;
+      `Rally ${number}, ${ATTR_STATE_TEXT[state]}, frames ${rally.start_frame} to ${rally.end_frame}`);
+    segment.title = `Rally ${number} · ${ATTR_STATE_TEXT[state]}`;
+    segment.innerHTML = `<strong>R${number}</strong>`;
     ribbon.appendChild(segment);
-
-    const chip = document.createElement('button');
-    chip.type = 'button';
-    chip.className = 'rallyWinner';
-    chip.dataset.start = start;
-    chip.dataset.end = end;
-    const scoreText = rallyScoreText(rally);
-    chip.textContent = scoreText ? `R${number} · ${winner} · ${scoreText}` : `R${number} · ${winner}`;
-    const hitCount = Number(rally.front_wall_hit_count || 0);
-    chip.title = scoreText
-      ? `${rallyWinnerDetail(rally)} · ${scoreText} · ${hitCount} front-wall hit${hitCount === 1 ? '' : 's'}`
-      : `${rallyWinnerDetail(rally)} · ${hitCount} front-wall hit${hitCount === 1 ? '' : 's'}`;
-    chip.setAttribute('aria-label',
-      `Rally ${number}: ${rallyWinnerDetail(rally)}${scoreText ? '. ' + scoreText : ''}. Jump to rally.`);
-    chip.onclick = () => {
-      transportStop();
-      seekSourceFrameToCanvas(Number(rally.start_frame));
-    };
-    winners.appendChild(chip);
   }
   renderRallyLegend();
   syncActiveRally(initialFrame);
@@ -7668,7 +7631,6 @@ async function startDevReloadPoller(){
    with the sample data removed — screens show honest empty states instead. */
 const LIVE = { runs:[], coach:{}, report:{}, loading:null, range:'1M' };
 const LIVE_MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-const LIVE_DAYS = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
 const LIVE_HUES = [205,150,30,280,110,255,20,180,60,320];
 
 function fmtRunDate(ts){
@@ -7685,15 +7647,66 @@ function fmtRunDur(sec){
 function splitSentences(text){
   return (text||'').split(/(?<=\.)\s+/).map(s=>s.trim()).filter(Boolean);
 }
+/* Per-run headline metrics. The 2026-07-29 metric review decided what users
+   see: unforced errors, movement (T-time, distance), zone usage, floor
+   bounces, and the longest rally — not line-call rates or ball pace, which
+   the backend still computes and persists but the UI no longer surfaces. */
 function liveMetrics(id){
   const a = (LIVE.coach[id]||{}).analytics || {};
-  const calls = (a.in_count||0) + (a.out_count||0);
+  const players = a.players || [];
+  const unforced = players.reduce((s,p)=>s+(p.unforced_errors||0),0);
+  const errors = players.reduce((s,p)=>s+(p.total_errors||0),0);
+  const pv = (LIVE.report[id]||{}).players_v2;
+  const movers = pv
+    ? [pv.player_a, pv.player_b].filter(s => s && (s.sample_coverage||0) > 0)
+    : [];
+  const mean = vals => vals.length ? vals.reduce((s,v)=>s+v,0)/vals.length : null;
   return {
-    inPct: calls ? Math.round(100*(a.in_count||0)/calls) : null,
-    height: a.average_wall_height_ft, pace: a.average_incoming_speed_mph,
-    top: a.max_incoming_speed_mph, side: a.side_target_rate,
-    bounces: a.total_floor_bounces, hits: a.total_wall_hits||0, calls
+    unforced, errors,
+    unforcedPct: errors ? Math.round(100*unforced/errors) : null,
+    wide: a.side_target_rate, low: a.low_target_rate,
+    bounces: a.total_floor_bounces, hits: a.total_wall_hits||0,
+    tPct: mean(movers.map(s => 100*(s.t_time_pct||0))),
+    dist: mean(movers.map(s => s.distance_ft||0)),
   };
+}
+/* Longest rally of a run, with the point it happened at when the hit-derived
+   rallies can name it. Duration prefers the audio/motion timeline (whole-rally
+   spans); the score context comes from players_v1's running score. */
+function longestRallyInfo(rep){
+  if(!rep) return null;
+  const hitRallies = ((rep.shots||{}).rallies) || [];
+  const v1Rallies = (((rep.shots||{}).players_v1)||{}).rallies || [];
+  let best = null;
+  for(const r of ((rep.rally_timeline||{}).rallies || [])){
+    const dur = (r.end_s||0) - (r.start_s||0);
+    if(dur > 0 && (!best || dur > best.dur)) best = {dur, start:r.start_s, end:r.end_s};
+  }
+  if(best){
+    // The last hit-derived rally inside the window carries the score the
+    // stretch ended at.
+    const inside = hitRallies.filter(r => {
+      const mid = ((r.start_time_seconds||0) + (r.end_time_seconds||0)) / 2;
+      return mid >= best.start && mid <= best.end;
+    });
+    if(inside.length) best.rally = Number(inside[inside.length-1].rally_number);
+  } else {
+    for(const r of hitRallies){
+      const dur = r.duration_seconds != null
+        ? Number(r.duration_seconds)
+        : (r.end_time_seconds||0) - (r.start_time_seconds||0);
+      if(dur > 0 && (!best || dur > best.dur)) best = {dur, rally:Number(r.rally_number)};
+    }
+  }
+  if(best && best.rally != null){
+    const match = v1Rallies.find(r => Number(r.rally_number) === best.rally);
+    const after = match && match.score_after;
+    if(after){
+      best.score = `${Number(after['1']||0)}–${Number(after['2']||0)}`;
+      if(match.winner_source === 'est') best.score += ' (est.)';
+    }
+  }
+  return best;
 }
 function weekRunCount(){
   const now = Date.now()/1000;
@@ -7724,8 +7737,7 @@ function loadLiveRuns(){
   LIVE.loading = (async () => {
     try{
       const idx = await fetchLiveJSON('/api/runs');
-      const candidates = (idx.runs||[])
-        .filter(r => r.status === 'complete').slice(0,10);
+      const candidates = (idx.runs||[]).filter(r => r.status === 'complete');
       const reports = await Promise.all(candidates.map(r =>
         LIVE.report[r.run_id] ? Promise.resolve({report:LIVE.report[r.run_id]})
           : fetchLiveJSON(`/api/runs/${r.run_id}/report`).catch(()=>null)));
@@ -7775,40 +7787,13 @@ function renderDashboardLive(){
   if(!LIVE.runs.length) return;   // markup defaults are the empty state
   const latest = LIVE.runs[0], m = liveMetrics(latest.run_id);
   $('heroT1').innerHTML = `${weekCount}`;
-  $('heroT2').innerHTML = m.inPct==null ? '—' : `${m.inPct}<span class="ss">%</span>`;
-  $('heroT3').innerHTML = m.pace==null ? '—' : `${Math.round(m.pace)}<span class="ss">mph</span>`;
+  // Share of the last match's decided rallies lost to an unforced error
+  // (final shot out or tin) rather than to the opponent's winner.
+  $('heroT2').innerHTML = m.unforcedPct==null ? '—' : `${m.unforcedPct}<span class="ss">%</span>`;
   $('heroSub').textContent = `From your last ${LIVE.runs.length} analyzed ${LIVE.runs.length===1?'clip':'clips'}`;
   const note = splitSentences((LIVE.coach[latest.run_id]||{}).feedback).slice(0,2).join(' ');
   if(note) $('heroNote').textContent = note;
-  renderWeeklyBars();
   renderCoachNotes();
-}
-function renderWeeklyBars(){
-  $('weeklyCard').classList.remove('hidden');
-  const mins = [0,0,0,0,0,0,0], labels = [];
-  const dayStart = new Date(); dayStart.setHours(0,0,0,0);
-  for(let i=6;i>=0;i--){
-    const d = new Date(dayStart); d.setDate(d.getDate()-i);
-    labels.push(LIVE_DAYS[d.getDay()]);
-  }
-  LIVE.runs.forEach(r => {
-    const d = new Date(r.created*1000); d.setHours(0,0,0,0);
-    const slot = 6 - Math.round((dayStart - d)/86400000);
-    if(slot>=0 && slot<7) mins[slot] += (r.duration_seconds||0)/60;
-  });
-  const W=326, top=8, bottom=124, span=bottom-top;
-  const maxV = Math.max(30, Math.ceil(Math.max(...mins)/10)*10);
-  const y = v => bottom - (v/maxV)*span;
-  let out = [maxV, maxV/2, 0].map(v =>
-    `<text x="26" y="${(y(v)+4).toFixed(1)}" text-anchor="end" font-size="10" fill="var(--dim)" opacity=".7">${Math.round(v)}</text>`).join('');
-  const active = 6;
-  mins.forEach((v,i) => {
-    const x = 34 + i*41 + 8.5;
-    const h = Math.max(4, (v/maxV)*span);
-    out += `<rect x="${x}" y="${(bottom-h).toFixed(1)}" width="24" height="${h.toFixed(1)}" rx="7" fill="${i===active?'var(--accent-bg)':'var(--seg-bg)'}"/>`;
-    out += `<text x="${x+12}" y="142" text-anchor="middle" font-size="10" fill="var(--dim)"${i===active?' font-weight="600"':' opacity=".7"'}>${labels[i]}</text>`;
-  });
-  $('weeklySvg').innerHTML = out;
 }
 const NOTE_ICONS = [
   '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="8.5"/><circle cx="12" cy="12" r="4"/><circle cx="12" cy="12" r=".8" fill="currentColor"/></svg>',
@@ -7836,27 +7821,7 @@ function renderCoachHero(){
     : 'Built from your analyzed sessions';
 }
 /* Analysis: one expandable card per analyzed run. */
-function gaugeSVG(score, label){
-  const N = 13, cx = 105, cy = 84, r = 64, tick = 19, w = 9;
-  const start = 205, sweep = 230;
-  const filled = Math.round(score/100*N);
-  let ticks = '';
-  for(let i=0;i<N;i++){
-    const a = (start - i*(sweep/(N-1))) * Math.PI/180;
-    const x1 = cx + Math.cos(a)*(r-tick/2), y1 = cy - Math.sin(a)*(r-tick/2);
-    const x2 = cx + Math.cos(a)*(r+tick/2), y2 = cy - Math.sin(a)*(r+tick/2);
-    const on = i < filled;
-    const op = on ? (0.45 + 0.55*((i+1)/filled)) : 1;
-    const col = on ? 'var(--accent-bg)' : 'var(--seg-bg)';
-    ticks += `<line x1="${x1.toFixed(1)}" y1="${y1.toFixed(1)}" x2="${x2.toFixed(1)}" y2="${y2.toFixed(1)}" stroke="${col}" stroke-opacity="${op.toFixed(2)}" stroke-width="${w}" stroke-linecap="round"/>`;
-  }
-  return `<svg width="210" height="126" viewBox="0 0 210 126" aria-label="${label} ${score} out of 100">
-    ${ticks}
-    <text x="${cx}" y="${cy-8}" text-anchor="middle" font-size="11" fill="var(--dim)" font-weight="500">${label}</text>
-    <text x="${cx}" y="${cy+22}" text-anchor="middle" font-size="30" font-weight="800" fill="var(--text)">${score}%</text>
-  </svg>`;
-}
-const COURT_THUMB = '<svg class="court" viewBox="0 0 62 46" fill="none" stroke="#fff" stroke-width="1.2" aria-hidden="true"><rect x="9" y="8" width="44" height="26" rx="1"/><path d="M9 21h44"/><path d="M9 28h44"/></svg>';
+const COURT_THUMB ='<svg class="court" viewBox="0 0 62 46" fill="none" stroke="#fff" stroke-width="1.2" aria-hidden="true"><rect x="9" y="8" width="44" height="26" rx="1"/><path d="M9 21h44"/><path d="M9 28h44"/></svg>';
 /* thumbnail play glyph reuses the transport PLAY_ICON declared above */
 const FB_NOTE_ICON ='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 8v5"/><circle cx="12" cy="16.5" r=".5" fill="currentColor"/><circle cx="12" cy="12" r="9"/></svg>';
 /* ---------- report-v1 sections (capabilities, rallies, movement) ----------
@@ -7894,14 +7859,12 @@ function rallySection(rep){
   if(!rallies.length){
     return `<div class="metaline">No rallies found${tl.audio_available ? '' : ' (clip has no audio track, so this used frame motion alone)'}.</div>`;
   }
-  const play = rallies.reduce((s,r) => s + (r.end_s - r.start_s), 0);
-  const dur = (rep.video||{}).duration_s || 0;
-  const work = dur ? Math.round(100*play/dur) : null;
-  const longest = Math.max(...rallies.map(r => r.end_s - r.start_s));
-  return `<div class="scorecols">
-      <div class="scol"><span class="sl">Count</span><span class="sv num">${rallies.length}</span></div>
-      <div class="scol"><span class="sl">Longest</span><span class="sv num">${longest.toFixed(1)}<span class="ss">s</span></span></div>
-      <div class="scol"><span class="sl">In play</span><span class="sv num">${work==null?'—':work}<span class="ss">%</span></span></div>
+  const longest = longestRallyInfo(rep);
+  const where = longest && longest.rally != null
+    ? ` · Rally ${longest.rally}${longest.score ? ' · at ' + escapeHtml(longest.score) : ''}`
+    : '';
+  return `<div class="scorecols" style="grid-template-columns:1fr">
+      <div class="scol"><span class="sl">Longest rally${where}</span><span class="sv num">${longest ? longest.dur.toFixed(1) : '—'}<span class="ss">s</span></span></div>
     </div>
     <div class="metaline">${escapeHtml(tl.audio_available ? 'From impact sounds and frame motion' : 'From frame motion only — no audio track')}${tl.agrees_with_hits === false ? ' · disagrees with the hit-derived rallies' : ''}</div>`;
 }
@@ -7911,20 +7874,15 @@ function movementSection(rep){
     const why = ((rep.capabilities||{}).player_movement||{}).reason;
     return `<div class="metaline">${escapeHtml(why ? 'Movement not measured: ' + why : 'Movement was not measured for this run.')}</div>`;
   }
-  const row = (label, s) => `<div class="scorecols" style="grid-template-columns:1fr 1fr 1fr">
+  const row = (label, s) => `<div class="scorecols" style="grid-template-columns:1.2fr 1fr 1fr 1fr">
       <div class="scol"><span class="sl">${label} distance</span><span class="sv num">${Math.round(s.distance_ft||0)}<span class="ss">ft</span></span></div>
       <div class="scol"><span class="sl">On the T</span><span class="sv num">${Math.round(100*(s.t_time_pct||0))}<span class="ss">%</span></span></div>
       <div class="scol"><span class="sl">Front</span><span class="sv num">${Math.round(100*(s.front_pct||0))}<span class="ss">%</span></span></div>
+      <div class="scol"><span class="sl">Back</span><span class="sv num">${Math.round(100*(s.back_pct||0))}<span class="ss">%</span></span></div>
     </div>`;
   const cov = Math.round(100*((pv.player_a||{}).sample_coverage||0));
   return row('P1', pv.player_a||{}) + row('P2', pv.player_b||{}) +
     `<div class="metaline">Detector: ${escapeHtml(pv.backend||'unknown')} · ${cov}% of rally time observed</div>`;
-}
-function coverageLine(rep){
-  if(rep.detection_coverage == null) return '';
-  // Position-independent wording: this line sits after the ball metrics, so
-  // "below" would point at the capability card instead of what it describes.
-  return `<div class="metaline">Ball found in ${Math.round(100*rep.detection_coverage)}% of inspected frames — the ball metrics use only those frames.</div>`;
 }
 
 function renderClipCards(){
@@ -7935,14 +7893,10 @@ function renderClipCards(){
     return;
   }
   $('clipMeta').textContent = `${LIVE.runs.length} runs · live pipeline`;
-  const fmt = (v,d) => v==null ? '—' : (Math.round(v*10)/10).toFixed(d);
   list.innerHTML = LIVE.runs.map((r,i) => {
     const id = r.run_id, m = liveMetrics(id);
     const hue = LIVE_HUES[i%LIVE_HUES.length];
     const grad = `linear-gradient(140deg, hsl(${hue} 28% 74%), hsl(${hue} 26% 48%))`;
-    const state = m.inPct != null
-      ? `<span class="statechip done">IN <span class="num">${m.inPct}%</span></span>`
-      : `<span class="statechip done">ANALYZED</span>`;
     const sentences = splitSentences((LIVE.coach[id]||{}).feedback).slice(0,3);
     const fb = sentences.map(s => `
       <div class="fbrow">
@@ -7952,24 +7906,15 @@ function renderClipCards(){
     const rep = LIVE.report[id] || {};
     const ballRan = !!rep.shots || m.hits > 0;
     // The ball tier's own surfaces are drawn only when that tier ran. Drawing
-    // an empty gauge and three em-dashes for a clip that was never eligible
-    // reads as "we looked and found nothing", which is the one thing the
-    // capability card exists to prevent.
+    // em-dashes for a clip that was never eligible reads as "we looked and
+    // found nothing", which is the one thing the capability card exists to
+    // prevent.
     const ballBlock = !ballRan ? '' : `
-      <div class="gauge">${m.inPct != null ? gaugeSVG(m.inPct,'Front-wall IN')
-        : '<div class="metaline">No judged front-wall calls in this clip.</div>'}</div>
-      <div class="scorecols">
-        <div class="scol"><span class="sl">Avg height</span><span class="sv">${fmt(m.height,1)}<span class="ss">ft</span></span></div>
-        <div class="scol"><span class="sl">Avg pace</span><span class="sv">${fmt(m.pace,0)}<span class="ss">mph</span></span></div>
-        <div class="scol"><span class="sl">Width</span><span class="sv">${fmt(m.side,0)}<span class="ss">%</span></span></div>
-      </div>
-      ${fb}
-      <div class="cardtitle" style="font-size:14px">Ball metrics</div>
       <div class="scorecols" style="grid-template-columns:1fr 1fr">
-        <div class="scol"><span class="sl">Top pace</span><span class="sv num">${fmt(m.top,0)}<span class="ss">mph</span></span></div>
+        <div class="scol"><span class="sl">Unforced errors</span><span class="sv num">${m.errors ? m.unforced : '—'}</span></div>
         <div class="scol"><span class="sl">Floor bounces</span><span class="sv num">${m.bounces==null?'—':m.bounces}</span></div>
       </div>
-      ${coverageLine(rep)}`;
+      ${fb}`;
     // Ladder order: rally structure first because that tier always runs, ball
     // detail last because it is the one most often gated off. No buttons at the
     // foot — the head row is the card's one action, and the review page owns
@@ -7982,7 +7927,7 @@ function renderClipCards(){
       ${ballBlock}
       <div class="cardtitle" style="font-size:14px">What this clip could measure</div>
       ${capabilityRows(rep)}
-      <div class="metaline">${m.hits} front-wall hits · ${m.calls} judged · run ${escapeHtml(id)}</div>`;
+      <div class="metaline">run ${escapeHtml(id)}</div>`;
     return `
       <div class="card clipcard open" data-clip="${escapeHtml(id)}">
         <div class="cliptop" data-review="${escapeHtml(id)}" role="button" tabindex="0"
@@ -7990,9 +7935,9 @@ function renderClipCards(){
           <div class="thumb" style="background:${grad}">${COURT_THUMB}${PLAY_ICON}</div>
           <div class="info">
             <span class="name">${fmtRunDate(r.created)}</span>
-            <span class="metaline"><span class="num" style="font-weight:500">${fmtRunDur(r.duration_seconds)}</span>· rally clip</span>
+            <span class="metaline"><span class="num" style="font-weight:500">${fmtRunDur(r.duration_seconds)}</span></span>
           </div>
-          ${state}
+          <span class="statechip done">ANALYZED</span>
         </div>
         <div class="clipbody"><div class="inner">${body}</div></div>
       </div>`;
@@ -8036,10 +7981,20 @@ function quantile(sorted, p){
 }
 const TREND_RANGES = ['1W','1M','3M','6M'];
 const TREND_SPANS = {'1W':7,'1M':30,'3M':90,'6M':180};
+/* Trend metrics per the 2026-07-29 metric review: error rate, movement, and
+   zone spread. lowerBetter flips the good/bad coloring — fewer unforced
+   errors is the improvement. */
 const TREND_DEFS = [
-  {key:'inpct',  label:'Front-wall IN %', unit:'%',   get:id=>liveMetrics(id).inPct},
-  {key:'height', label:'Avg wall height', unit:'ft',  get:id=>liveMetrics(id).height},
-  {key:'pace',   label:'Avg pace',        unit:'mph', get:id=>liveMetrics(id).pace}
+  {key:'unforced', label:'Unforced error share', unit:'%',  lowerBetter:true,
+   get:id=>liveMetrics(id).unforcedPct},
+  {key:'ttime',    label:'Time on the T',        unit:'%',
+   get:id=>liveMetrics(id).tPct},
+  {key:'dist',     label:'Distance covered',     unit:'ft',
+   get:id=>liveMetrics(id).dist},
+  {key:'wide',     label:'Wide usage',           unit:'%',
+   get:id=>liveMetrics(id).wide},
+  {key:'low',      label:'Low attacking',        unit:'%',
+   get:id=>liveMetrics(id).low}
 ];
 function buildTrendMetrics(){
   const runsAsc = [...LIVE.runs].reverse();
@@ -8049,19 +8004,18 @@ function buildTrendMetrics(){
       .map(r => ({t:r.created, v:d.get(r.run_id)}))
       .filter(p => p.v != null)
       .map(p => ({t:p.t, v:Math.round(p.v*10)/10}));
+    // A window with fewer than two sessions has no trend — the card says so
+    // instead of silently substituting the all-time series.
     const data = {};
     for(const [k, days] of Object.entries(TREND_SPANS)){
-      let pts = series.filter(p => now-p.t < days*86400).map(p=>p.v);
-      if(pts.length < 2) pts = series.map(p=>p.v);
-      if(pts.length === 1) pts = [pts[0], pts[0]];
-      if(!pts.length) pts = [0, 0];
-      data[k] = pts;
+      const pts = series.filter(p => now-p.t < days*86400).map(p=>p.v);
+      data[k] = pts.length >= 2 ? pts : null;
     }
     const sorted = series.map(p=>p.v).sort((a,b)=>a-b);
-    let baseline = [quantile(sorted,.25), quantile(sorted,.75)];
-    if(baseline[0] === baseline[1]) baseline = [baseline[0]-1, baseline[1]+1];
-    return {label:d.label, unit:d.unit, baseline, data, count:series.length};
-  }).filter(m => m.count >= 1 && m.data['6M'].some(v=>v));
+    const baseline = [quantile(sorted,.25), quantile(sorted,.75)];
+    return {label:d.label, unit:d.unit, lowerBetter:!!d.lowerBetter,
+            baseline, data, count:series.length};
+  }).filter(m => m.count >= 2);
 }
 function renderProgressView(){
   const body = $('progressBody');
@@ -8072,11 +8026,12 @@ function renderProgressView(){
   }
   const latest = liveMetrics(LIVE.runs[0].run_id);
   const prev = LIVE.runs[1] ? liveMetrics(LIVE.runs[1].run_id) : null;
-  const deltaTile = (label, val, unit, prevVal) => {
+  const deltaTile = (label, val, unit, prevVal, lowerBetter) => {
     let chip = '<span class="chip flat">—</span>';
     if(val!=null && prevVal!=null && Math.round(val)!==Math.round(prevVal)){
       const up = val > prevVal;
-      chip = `<span class="chip ${up?'good':'poor'}">${up?'▲':'▼'}${Math.abs(Math.round(val-prevVal))}</span>`;
+      const good = lowerBetter ? !up : up;
+      chip = `<span class="chip ${good?'good':'poor'}">${up?'▲':'▼'}${Math.abs(Math.round(val-prevVal))}</span>`;
     }
     return `<div class="delta"><span class="lbl">${label}</span>
       <span class="valrow"><span class="val num">${val==null?'—':Math.round(val)+unit}</span>${chip}</span></div>`;
@@ -8086,6 +8041,13 @@ function renderProgressView(){
   const W = 326, H = 118, PADL = 30, PADR = 12, PADY = 10;
   const trendCards = metrics.map(m => {
     const vals = m.data[LIVE.range];
+    if(!vals){
+      return `
+      <div class="card trend">
+        <div class="lbl">${m.label}</div>
+        <div class="metaline">Fewer than two sessions in this window — pick a longer range.</div>
+      </div>`;
+    }
     const lo = Math.min(...vals, m.baseline[0]), hi = Math.max(...vals, m.baseline[1]);
     const span = (hi - lo) || 1, pad = span * 0.12;
     const y = v => H - PADY - ((v - (lo - pad)) / (span + 2*pad)) * (H - 2*PADY);
@@ -8099,6 +8061,7 @@ function renderProgressView(){
     const baseMid = (m.baseline[0]+m.baseline[1])/2;
     const diff = lastVal - baseMid;
     const vs = diff >= 0 ? `+${Math.round(diff)} vs typical` : `${Math.round(diff)} vs typical`;
+    const improved = m.lowerBetter ? diff <= 0 : diff >= 0;
     const yLabels = [hi, Math.round((hi+lo)/2), lo].map(v =>
       `<text x="${PADL-8}" y="${(y(v)+3).toFixed(1)}" text-anchor="end" font-size="10" fill="var(--dim)" opacity=".7" font-variant-numeric="tabular-nums">${v}</text>`).join('');
     return `
@@ -8106,7 +8069,7 @@ function renderProgressView(){
         <div class="lbl">${m.label}</div>
         <div class="valrow">
           <span class="val num">${lastVal}</span><span class="unit">${m.unit}</span>
-          <span class="vsbase ${diff>=0?'up':'down'}">${vs}</span>
+          <span class="vsbase ${improved?'up':'down'}">${vs}</span>
         </div>
         <svg viewBox="0 0 ${W} ${H}" aria-label="${m.label} trend">
           ${yLabels}
@@ -8121,21 +8084,27 @@ function renderProgressView(){
   }).join('');
   let best = null;
   LIVE.runs.forEach(r => {
-    const mm = liveMetrics(r.run_id);
-    if(mm.inPct != null && (!best || mm.inPct > best.v)) best = {v:mm.inPct, t:r.created};
+    const info = longestRallyInfo(LIVE.report[r.run_id]);
+    if(info && (!best || info.dur > best.dur)) best = {...info, t:r.created};
   });
+  const bestMeta = best ? [
+    `${LIVE_MONTHS[new Date(best.t*1000).getMonth()]} ${new Date(best.t*1000).getDate()}`,
+    best.rally != null ? `Rally ${best.rally}` : null,
+    best.score ? `at ${escapeHtml(best.score)}` : null,
+    'outlast it to set a new mark',
+  ].filter(Boolean).join(' · ') : '';
   const bestCard = best ? `
     <div class="card bestrow">
       <div class="iconcircle">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M8 21h8"/><path d="M12 17v4"/><path d="M7 4h10v6a5 5 0 0 1-10 0z"/><path d="M7 6H4a1 1 0 0 0-1 1c0 2.2 1.8 4 4 4"/><path d="M17 6h3a1 1 0 0 1 1 1c0 2.2-1.8 4-4 4"/></svg>
       </div>
       <div class="info">
-        <span class="name">Best IN% to date — <span class="num">${best.v}%</span></span>
-        <span class="meta">${LIVE_MONTHS[new Date(best.t*1000).getMonth()]} ${new Date(best.t*1000).getDate()} · beat it to set a new mark</span>
+        <span class="name">Longest rally to date — <span class="num">${best.dur.toFixed(1)}s</span></span>
+        <span class="meta">${bestMeta}</span>
       </div>
     </div>` : '';
   body.innerHTML = seg
-    + `<div id="deltastrip">${deltaTile('Front-wall IN', latest.inPct, '%', prev && prev.inPct)}${deltaTile('Avg height', latest.height, 'ft', prev && prev.height)}${deltaTile('Avg pace', latest.pace, 'mph', prev && prev.pace)}</div>`
+    + `<div id="deltastrip">${deltaTile('Unforced errors', latest.unforcedPct, '%', prev && prev.unforcedPct, true)}${deltaTile('Time on the T', latest.tPct, '%', prev && prev.tPct)}${deltaTile('Wide usage', latest.wide, '%', prev && prev.wide)}</div>`
     + `<div style="display:flex;flex-direction:column;gap:12px">${trendCards}</div>`
     + bestCard;
   body.querySelectorAll('#rangeSeg button').forEach(b => b.onclick = () => {

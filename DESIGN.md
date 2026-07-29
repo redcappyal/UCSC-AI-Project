@@ -90,12 +90,12 @@ training-app language). Its motifs, all now in the codebase:
 | Soft canvas, white cards on soft shadows | `--bg` canvas + `.card`/`.targetZones` with `--shadow-card` |
 | One lime accent on ink | `--accent-bg:#D9F04A` capsules, active dock circle, trim handles |
 | Ink-dark hero panel with stat tiles + progress ring | `.hero` + `.statgrid`/`.stattile` + `.ringbadge` |
-| Giant stat numerals (`68%`, `84`) | Verdict 28 px, stat tiles 22 px, gauge 30 px, 700 weight, tabular |
+| Giant stat numerals (`68%`, `84`) | Verdict 28 px, stat tiles 22 px, 700 weight, tabular |
 | Tinted status chips (good/avg/poor) | `.chip.good/.avg/.poor` on `--tint-*` pairs |
 | Video-editor trim UI (accent handles, filmstrip, white playhead) | `.clipEditor`, `.clipHandle`, center-fixed `#clipCursor` |
 | Segmented range controls (`1W/1M/3M/6M`) | `.seg` segmented control, `.corrSeg` two-way segment (§8.18) |
 | Floating dark icon dock | `#navPill` section dock (§8.3) |
-| Session cards with gauge + feedback rows | `.clipcard` on the Analysis root (always open; the head row opens the review, §8.20) |
+| Session cards with stat tiles + feedback rows | `.clipcard` on the Analysis root (always open; the head row opens the review, §8.20) |
 | Zone/heat charts on a literal court | `.targetCourt` front-wall chart, `#floorMapSvg` bounce map |
 
 Tone target: **modern training companion** (TennisIQ-class sports apps) — warm but not
@@ -315,7 +315,7 @@ row gap `10`; chip gap `6`.
 ### 4.6 Type, weight, motion tokens
 
 See §6 (type scale) and §10 (motion table). System stack; weights **400, 500, 600, 700,
-800** (500 for quiet tile labels, 800 for gauge/metric numerals only).
+800** (500 for quiet tile labels, 800 for metric numerals only).
 
 ---
 
@@ -383,7 +383,6 @@ remotely.
 
 | Role | Spec | Used by |
 |---|---|---|
-| Gauge numeral | 30 / 800, tabular | Analysis gauge center |
 | Verdict word | 28 / 700, uppercase, tracking `.04em` | `.verdict strong` |
 | Stat numeral | 26 / 700, tabular | `.targetPct`, `.trend .val` |
 | Tile numeral | 20–22 / 700, tabular | `.stattile .sv`, `.scol .sv`, `.coachMetric span` |
@@ -669,16 +668,17 @@ The Dashboard is the section root the app boots into. Top → bottom:
   `.herotop` row = 38 px translucent-white icon circle (accent-colored icon) · title
   15/600 + 12 dim-white subtitle · right-aligned `.ringbadge` progress ring (40 px,
   lime arc on `rgba(255,255,255,.14)` track, centered 11/700 tabular value —
-  sessions-this-week / 5). `.statgrid` = three `.stattile`s (`--tile` fill, radius 14):
+  sessions-this-week / 5). `.statgrid` = two `.stattile`s (`--tile` fill, radius 14):
   11/500 dim-white label over 22/700 tabular value with a small unit suffix
-  (Sessions · Front-wall IN · Avg pace). `.heronote` = 12 px dim-white sentence — the
-  latest run's first coach sentences when live, honest guidance copy otherwise.
+  (Sessions · Unforced errors — the share of the last match's decided rallies lost to
+  an unforced error; the third slot is deliberately unassigned until the next useful
+  headline metric is decided, per the 2026-07-29 metric review). `.heronote` = 12 px
+  dim-white sentence — the latest run's first coach sentences when live, honest
+  guidance copy otherwise.
 - **Action row** (`.btnrow`): the accent `label.filebtn` "Analyze a clip" (it *is* the
   file input, recast around the hidden `<input type=file>`). Exactly one accent action
   per screen, ever. The archived Record / Live cards (`.heroCard`, hidden) keep the old
   card recipe so un-hiding them is still one attribute.
-- **Weekly Report** (`.card.weekly`, hidden until live data exists): "Active minutes"
-  bar chart — inline SVG, `--seg-bg` bars with today in accent, 10 px dim axis text.
 - **Coach Notes rail** (`.airow`, hidden until live data exists): horizontally scrolling
   212 px `.aicard`s (radius 18, `--shadow-card`) — 28 px `--accent-soft` icon circle +
   13/600 title + 12 dim sentence, filled from the latest run's coach feedback.
@@ -727,6 +727,10 @@ never appended after them as a caveat.
    radius 8, `1px --line`, `color-mix(--surface 86%, --bg)` fill, padding `10px 12px` —
    holding a 13/400 `--dim` label, a 22/800 value, and a 12/400 `--dim` caption. Absent
    values render as `—`, never a blank tile or a hidden row (reserved height, §0).
+   The tile set (2026-07-29 metric review): Shots analyzed · Unforced errors (caption
+   carries the out/tin split when known) · Unforced error rate · Average rally
+   duration · Main targets · the five zone-usage rates. Shot height and pace tiles were
+   removed — those values persist in the backend and the LLM prompt only.
 3. `.coachOutcomeComparison` — the **won/lost split**: two `.coachOutcomeSection` peers
    side by side (stacking below 560 px), each a nested card (radius 8, `1px --line`,
    `color-mix(--surface 92%, --bg)`) with a `.coachOutcomeHead` (17/700 title left,
@@ -737,6 +741,17 @@ never appended after them as a caveat.
    `.coachOutcomeEmpty` (13 dim sentence) in place of the tiles, so both sections are
    always present.
 4. `.coachFeedback` — 16/400 prose, `white-space:pre-wrap`, above a hairline.
+
+Below the report card sits the **per-player movement panel** (`#movementPanelPn`,
+2026-07-29 review): a `.targetZones` card ("Player N movement" + right-aligned
+coverage tag "n% of rally time observed") holding a `.coachMetrics` grid (Distance
+covered · On the T · Front court · Back court · Average speed · Peak speed, the last
+two in ft/s from players_v2) over the **court-position heatmap** — the §8.10 flat SVG
+court with the backend's 7×8 grid drawn as `--accent-bg` cells whose opacity scales to
+the busiest cell (≤ .85 so the wireframe stays legible), and a `.metaline` naming the
+detector. Track A/B maps to player 1/2 through the same attribution anchor as the
+naming card (§16); the panel hides entirely when players_v2 is absent or the player's
+track has no observed coverage — absence over zeros, per Principle 3.
 
 The local template renders immediately; the LLM narration is fetched afterwards and
 **replaces the text in place** — the panel never shows a spinner and never changes
@@ -889,48 +904,59 @@ had nothing to show and appeared as "no analyzed sessions".
 **Absence is always rendered as its reason, never as an empty result.** This is
 Principle 3 of the analysis design carried into the UI. A tier that could not run shows
 its `capabilities[tier].reason`; a run predating capability gating shows its
-`legacy_reason`. The ball-tier surfaces (gauge, Avg height / Avg pace / Width, Ball
-metrics) are **omitted entirely** when that tier did not run — drawing a zeroed gauge and
-three em-dashes reads as "we looked and found nothing", which is the single claim the
-capability card exists to prevent.
+`legacy_reason`. The ball-tier surfaces (Unforced errors / Floor bounces, feedback rows)
+are **omitted entirely** when that tier did not run — drawing em-dashes reads as "we
+looked and found nothing", which is the single claim the capability card exists to
+prevent.
+
+**Which metrics are user-facing was decided in the 2026-07-29 metric review.** Unforced
+errors (out + tin), rally length, zone usage, floor bounces, and player movement are the
+coaching surface; line-call rates (IN %), ball pace, and shot height are still computed,
+persisted, and fed to the LLM coach, but are **not** shown as tiles, gauges, or trends.
+Do not reintroduce them to the UI without a deliberate DESIGN.md change.
 
 - **Analysis run cards** (`.clipcard`): §8.9 card at padding 0, rendered **open** —
   every card shows its whole summary; there is no expand/collapse. Head row
   (`.cliptop`): 62×46 gradient thumb (hue rotates per run — the sanctioned gradient)
   with a court line-sketch + play glyph · run date 14/600 + duration `.metaline` ·
-  right-aligned `.statechip` (`IN n%` in accent when calls exist, `ANALYZED`
-  otherwise). **The head row is the card's one action:** tapping it opens that match's
-  review page (§16) by seeding the restore stash and rebooting — the same path the iOS
-  `#run` deep link takes. It is a `<div>`, so it carries `role="button"`,
-  `tabindex="0"` and an Enter/Space handler; without them a match would be reachable
-  by pointer only. Body, in ladder order — rally structure first because it is the tier
-  that always runs, ball detail last because it is the one most often gated off:
-  **"Rallies"** — three `.scol` tiles (Count / Longest / In play %) and a `.metaline`
-  naming the signal it came from ("From impact sounds and frame motion" / "From frame
-  motion only — no audio track"), plus a disagreement note when the timeline and the
-  hit-derived rallies differ ·
-  **"Movement"** — one three-tile `.scorecols` row per player (distance / On the T /
-  Front %) and a `.metaline` naming the detector backend and the fraction of rally time
-  actually observed, because a motion-blob fallback and real weights are not equally
-  trustworthy and the card must not present them as if they were ·
-  **ball tier, only when it ran** — tick **gauge** (13 ticks, accent-filled arc, 30/800
-  center value) · three `.scol` tiles (Avg height / Avg pace / Width) · `.fbrow` feedback
-  sentences · "Ball metrics" tiles (Top pace / Floor bounces) · a `.metaline` stating
-  `detection_coverage` ("Ball found in n% of inspected frames — the ball metrics use only
-  those frames"), which is what separates "found nothing" from "couldn't look" ·
+  right-aligned `ANALYZED` `.statechip`. **The head row is the card's one action:**
+  tapping it opens that match's review page (§16) by seeding the restore stash and
+  rebooting — the same path the iOS `#run` deep link takes. It is a `<div>`, so it
+  carries `role="button"`, `tabindex="0"` and an Enter/Space handler; without them a
+  match would be reachable by pointer only. Body, in ladder order — rally structure
+  first because it is the tier that always runs, ball detail last because it is the one
+  most often gated off:
+  **"Rallies"** — one full-width `.scol` tile: **Longest rally**, labeled with the
+  rally number and the running score it happened at when the hit-derived rallies can
+  name it ("Longest rally · Rally 7 · at 4–3"), and a `.metaline` naming the signal it
+  came from ("From impact sounds and frame motion" / "From frame motion only — no
+  audio track"), plus a disagreement note when the timeline and the hit-derived
+  rallies differ ·
+  **"Movement"** — one four-tile `.scorecols` row per player (distance / On the T /
+  Front % / Back %) and a `.metaline` naming the detector backend and the fraction of
+  rally time actually observed, because a motion-blob fallback and real weights are not
+  equally trustworthy and the card must not present them as if they were ·
+  **ball tier, only when it ran** — two `.scol` tiles (Unforced errors / Floor
+  bounces) · `.fbrow` feedback sentences ·
   **"What this clip could measure"** — one `.fbrow` per tier, label left, `ON`/`OFF`
   `.statechip` right, and the reason as dim `.s` text under the label when off ·
-  a dim provenance `.metaline` ("n front-wall hits · n judged · run id").
+  a dim provenance `.metaline` ("run id").
   No buttons inside the card: the review page *is* "Open full review", and it owns
   "Watch source video" (§16, `p-track`).
 - **Progress** (`p-progress`): `.seg` range picker (1W/1M/3M/6M) · `#deltastrip` —
   three `.delta` cards (radius 18) with 11 dim label, 20/700 value, and a `.chip`
-  delta vs the previous run (`good`/`poor` tint, `flat` when unchanged) · `.trend`
-  cards — 15/600 label, 26/700 value + unit + `vs typical` (tint-colored), and an
-  inline-SVG spline chart: quartile "typical band" (`--seg-bg`), dashed midline,
-  accent line + soft area fill, accent end-dot with the value labeled · a `.bestrow`
-  card (Best IN% to date). Baselines are the runs' own quartiles — never invented
-  targets.
+  delta vs the previous run (`good`/`poor` tint, `flat` when unchanged; direction-aware
+  — for Unforced errors *down* is `good`) over Unforced errors / Time on the T / Wide
+  usage · `.trend` cards (Unforced error share, Time on the T, Distance covered, Wide
+  usage, Low attacking) — 15/600 label, 26/700 value + unit + `vs typical`
+  (tint-colored, direction-aware), and an inline-SVG spline chart: quartile "typical
+  band" (`--seg-bg`), dashed midline, accent line + soft area fill, accent end-dot with
+  the value labeled. A range window holding fewer than two sessions says so in the card
+  — it never silently substitutes the all-time series. · a `.bestrow` card (Longest
+  rally to date, with the rally number and score when known). Baselines are the runs'
+  own quartiles — never invented targets. Movement trends (T-time, distance) average
+  the tracked players with observed coverage, since track→player identity is not
+  stable across runs.
 
 ### 8.21 Review pane switcher (`#reviewSeg`)
 
@@ -1125,7 +1151,7 @@ Each phase: header shows step label + proxied primary; `#instr` gives the one-li
 
 | Phase | Purpose | Body (top→bottom) | Primary (proxied) |
 |---|---|---|---|
-| `p-load` | Dashboard section root | ink hero (focus + ring + stat tiles + note) · accent "Analyze a clip" file action · Weekly Report card · Coach Notes rail · dev row — full spec §8.15 (native replaces the file action with its record screen — see §3.2's native-shell note) | — (no chevron; section root) |
+| `p-load` | Dashboard section root | ink hero (focus + ring + stat tiles + note) · accent "Analyze a clip" file action · Coach Notes rail · dev row — full spec §8.15 (native replaces the file action with its record screen — see §3.2's native-shell note) | — (no chevron; section root) |
 | `p-record` | Record rallies + on-site calibration | stage = live camera preview · REC readout · Calibrate court + calibration status · Recordings card (§8.16) | "Record" ↔ "Stop" |
 | `p-frame` | Pick a clean calibration frame | overview rail · editor strip w/ playhead · readout · transport+steppers | "Use this frame" |
 | `p-tap` | Tap out line, tin, then service line on frame | stage-driven; clear-selection small button | "Looks right" (disabled until the current line has a fit) |
@@ -1133,8 +1159,8 @@ Each phase: header shows step label + proxied primary; `#instr` gives the one-li
 | `p-tap-floor` | Floor calibration wizard | `.floorRow`: diagram (progress marks) + prompt/side actions · skip-all / save-profile | "Use floor map" |
 | `p-clip` | Trim rally clip | overview · trim editor (accent handles) · transport+readout row · start/end nudge steppers · frame summary | "Track ball" |
 | `p-analyze` | Honest processing | `.progressbox` stats + bar (+ stage ANALYZING pulse) | — (auto-advances) |
-| `p-track` | **Match review — Call pane.** Review track, judge calls, name the players | control area keeps its pre-rally-visualization height so the video stage does not shrink, floored against the stage per §3.1; the added content scrolls inside that footprint · scrub hint lives in the header `#instr` line (detection failures replace it, `.warn`) · rally segmentation card (proportional neutral ribbon, active segment in accent, `attr-*` provenance states + legend §8.22, text winner chip for every rally) · overview w/ marker minis · hit timeline (neon bars, center playhead) · readout · transport — **Review tab:** frame input + Judge row · verdict box · Players card (naming + serve crop) · ghost "Watch source video"; **Challenge tab:** type dropdown (In/Out folded into the front-wall options) · Bounce / Not-bounce toggle (`.corrSeg`) · tabs switched by a floating Review \| Challenge dock (`.callTabs`, same dark-dock shell as `#navPill` §8.3, fixed bottom-center) | "Judge frame" |
-| `p-player1-report` / `p-player2-report` | **Match review — Player 1 / Player 2 panes.** Per-player coaching report | Player N front-wall map (§8.10 court chart + `.targetMeta`; serves excluded) · Player N report panel (§8.17, opening with the §8.22 provenance line) · **P1 only:** the run's floor-bounce map (§8.10 `#floorMapSvg` + `.targetMeta`) — bounces are per-run, not per-player, so the panel renders once under the first report rather than twice | — (no primary) |
+| `p-track` | **Match review — Call pane.** Review track, judge calls, name the players | control area keeps its pre-rally-visualization height so the video stage does not shrink, floored against the stage per §3.1; the added content scrolls inside that footprint · scrub hint lives in the header `#instr` line (detection failures replace it, `.warn`) · rally segmentation card (proportional neutral ribbon, active segment in accent, `attr-*` provenance states + legend §8.22; per-rally winners/scores stay backend-only per the 2026-07-29 review) · overview w/ marker minis · hit timeline (neon bars, center playhead) · readout · transport — **Review tab:** frame input + Judge row · verdict box · Players card (naming + serve crop) · ghost "Watch source video"; **Challenge tab:** type dropdown (In/Out folded into the front-wall options) · Bounce / Not-bounce toggle (`.corrSeg`) · tabs switched by a floating Review \| Challenge dock (`.callTabs`, same dark-dock shell as `#navPill` §8.3, fixed bottom-center) | "Judge frame" |
+| `p-player1-report` / `p-player2-report` | **Match review — Player 1 / Player 2 panes.** Per-player coaching report | Player N front-wall map (§8.10 court chart + `.targetMeta`; serves excluded) · Player N report panel (§8.17, opening with the §8.22 provenance line) · Player N movement panel (§8.17: distance / position split / speeds + court heatmap) · **P1 only:** the run's floor-bounce map (§8.10 `#floorMapSvg` + `.targetMeta`) — bounces are per-run, not per-player, so the panel renders once under the first report rather than twice | — (no primary) |
 | `p-label` | Human bounce labeling | overview · label timeline · transport+zoom · 2-col type grid (dot+label) · delete (destructive = plain secondary, disabled until selection) | — |
 | `p-matches` | Analysis section root — session library | view head ("Analysis" + `n runs · live pipeline`) · one always-open `.clipcard` per analyzed run, its head row opening that match's review (§8.20) · `.emptycard` when none | — (no chevron; section root) |
 | `p-coach` | Training section root (hub) | view head · ink hero (Coaching + sessions ring) · three feature cards (§8.13) | — (no chevron; section root) |

@@ -327,17 +327,43 @@ def rally_duration_seconds(rally):
     return duration if math.isfinite(duration) and duration >= 0 else None
 
 
-def player_error_metrics(rallies, player_number):
+def last_hit_reason_by_rally(front_wall_hits):
+    """Map rally_number -> the judge reason of that rally's final hit."""
+    last_hits = {}
+    for hit in front_wall_hits or []:
+        try:
+            rally_number = int(hit.get("rally_number"))
+        except (TypeError, ValueError):
+            continue
+        order = (
+            float(hit.get("timestamp_seconds") or 0.0),
+            int(hit.get("frame") or 0),
+        )
+        existing = last_hits.get(rally_number)
+        if existing is None or order >= existing[0]:
+            last_hits[rally_number] = (order, hit.get("reason"))
+    return {number: reason for number, (_, reason) in last_hits.items()}
+
+
+def player_error_metrics(rallies, player_number, front_wall_hits=None):
     """Summarize a player's lost-rally errors and won-rally durations.
 
     An OUT shot by the loser is an unforced error. When the winner made the
     final IN shot, the loser's failure to return it is a forced error. Rally
     duration is averaged over rallies won by this player so each player's
     value describes their own results.
+
+    When hits are supplied, unforced errors split by the judge's per-hit
+    reason: above the out line vs on/below the tin. Serve faults (below the
+    service line) and rallies whose final hit is unmatched stay in the
+    unforced total without a sub-bucket.
     """
     unforced_errors = 0
+    unforced_out = 0
+    unforced_tin = 0
     forced_errors = 0
     won_rally_durations = []
+    last_reasons = last_hit_reason_by_rally(front_wall_hits)
     for rally in rallies or []:
         winner = int(rally.get("winner_player_number") or 0)
         if winner not in (1, 2):
@@ -352,12 +378,22 @@ def player_error_metrics(rallies, player_number):
         last_player = int(rally.get("last_player_number") or 0)
         if rally.get("last_call") == "OUT" and last_player == loser:
             unforced_errors += 1
+            try:
+                reason = last_reasons.get(int(rally.get("rally_number")))
+            except (TypeError, ValueError):
+                reason = None
+            if reason == "above_or_on_top_line":
+                unforced_out += 1
+            elif reason == "below_or_on_bottom_line":
+                unforced_tin += 1
         else:
             forced_errors += 1
 
     total_errors = unforced_errors + forced_errors
     return {
         "unforced_errors": unforced_errors,
+        "unforced_errors_out": unforced_out,
+        "unforced_errors_tin": unforced_tin,
         "forced_errors": forced_errors,
         "total_errors": total_errors,
         "average_rally_duration_seconds": rounded(average(won_rally_durations), 1),
@@ -470,7 +506,9 @@ def build_coaching_analytics(payload):
         player_analytics = coaching_analytics_for_hits(player_hits, player_summary)
         player_analytics["player_number"] = player_number
         player_analytics["label"] = f"Player {player_number}"
-        player_analytics.update(player_error_metrics(rallies, player_number))
+        player_analytics.update(
+            player_error_metrics(rallies, player_number, front_wall_hits)
+        )
         player_analytics["rally_outcome_analytics"] = player_rally_outcome_analytics(
             front_wall_hits,
             rallies,
