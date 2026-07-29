@@ -118,7 +118,7 @@ any caller — Task 2 does that.
 
 ---
 
-### Task 2 — `capabilities.py` + pipeline threading — TODO
+### Task 2 — `capabilities.py` + pipeline threading — DONE (2026-07-29)
 
 Turn a probe into a capability set with *stated reasons*, and make the ball stages skip
 themselves on footage that cannot support them.
@@ -131,6 +131,22 @@ probe into `job["probe"]` at track start and the capability set into `job["capab
 Gate values must be named constants with a comment saying what evidence set them.
 
 Commit: `feat: capability gating with honest reasons; ball stages skipped on unqualified footage`
+
+**Result:** `capabilities.py` + `tests/test_capabilities.py`, threaded through `app.py`
+and `job_runner.py`, commit `30446f4`. 24 new tests, suite **505 passed, 2 skipped,
+1 deselected**. Line-call eval re-run: **identical to `BASELINE-2026-07-23.md`, zero
+drift**. `compute_capabilities(probe, court_solved=)` → four tiers, each `enabled` +
+`reason`, reason set exactly when disabled. `/api/track` probes and stores `job["probe"]`;
+`run_tracking_job` resolves the calibration before the model load, and skips the ball
+stages (writing a headers-only CSV) when the tier is off. Runs emit `detection_coverage`.
+`public_job` now passes `probe`, `capabilities`, `detection_coverage`, `rally_timeline`
+and `players_v2` through.
+
+**Carried limitation, for Task 7:** the skip takes the player-movement tier down with it,
+which the ladder says it should not. The person detector observes frames via
+`frame_observer=` on the *ball* decode pass, so skipping that pass skips it too. It is
+commented at `job_runner.complete_without_ball_tier`. Task 7 must give tier 2 its own
+pass over the video and re-enable it independently.
 
 ---
 
