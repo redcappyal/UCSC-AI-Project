@@ -6654,6 +6654,9 @@ $('judgeFrame').addEventListener('input', () => {
 });
 
 function callWithMargin(call, marginPx){
+  // The API returns call:null routinely — a frame outside the calibrated line
+  // span has no verdict to report. Say so; never interpolate the word "null".
+  if(call == null) return 'No call';
   if(marginPx == null) return call;
   const px = Math.abs(marginPx).toFixed(0);
   if(call === 'IN') return `IN by ${px}px`;
@@ -6704,12 +6707,16 @@ function renderJudgeResult(data, selectedHit=null){
   });
   const callClass = data.call === 'IN' ? 'in' : data.call === 'OUT' ? 'out' : 'neutral';
   const isServe = !!(data.is_serve || (hit && hit.is_serve));
+  // `SERVE ` prefixes a verdict (SERVE IN / SERVE OUT), so it has nothing to
+  // qualify on a no-call; the serve stays named in the caption instead.
+  const noCall = data.call == null;
   const sourceText = data.source === 'impact_estimate' ? 'estimated impact point' : 'detected ball center';
   $('judgeResult').className = `verdict ${callClass}`;
   $('judgeResult').innerHTML =
     playerAttributionMarkup(hit) +
-    `<strong>${isServe ? 'SERVE ' : ''}${callWithMargin(data.call, data.margin_px)}</strong>` +
-    `<div>Frame ${data.frame} · ${sourceText} (${data.ball.x.toFixed(1)}, ${data.ball.y.toFixed(1)}) · ` +
+    `<strong>${isServe && !noCall ? 'SERVE ' : ''}${callWithMargin(data.call, data.margin_px)}</strong>` +
+    `<div>Frame ${data.frame} · ${isServe && noCall ? 'serve · ' : ''}` +
+    `${sourceText} (${data.ball.x.toFixed(1)}, ${data.ball.y.toFixed(1)}) · ` +
     `${data.reason}${data.outside_line_span ? ' · outside calibrated line span' : ''}</div>`;
 }
 
