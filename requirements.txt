@@ -1,7 +1,13 @@
 av
 flask
-inference-sdk
-inference
+# Pinned to what this project is actually developed against. Unpinned, pip on
+# Ubuntu's python 3.10 resolves inference 0.14.0 (the Mac's 3.12 gets 1.3.5),
+# and 0.14 calls sv.BoundingBoxAnnotator, which supervision 0.29 removed — so
+# the rfdetr ball backend dies at frame 0 on a Lambda box while working fine
+# locally. supervision is pinned with it because that pair is the constraint.
+inference-sdk==1.3.5
+inference==1.3.5
+supervision==0.29.1
 numpy
 opencv-python
 pandas
