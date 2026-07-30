@@ -454,7 +454,7 @@ rule at a time.
 | Stat numeral | 28 / 700, tabular | `.trend .val` |
 | Tile numeral | 22–24 / 700, tabular | `.stattile .sv`, `.scol .sv`, `.coachMetric span` |
 | Overlay status | 24 / 700, uppercase, tracking `.14em` | `.analyzePulse` |
-| View title | 22 / 700, tracking `-.02em` | `h2`, `.viewhead h2` |
+| View title | 22 / 700, tracking `-.02em` | `h2` — base rule, **no current user**: screen titles live in `#stepLabel` (§16) |
 | Step label | 18 / 700, tracking `-.02em` | `#stepLabel` |
 | Input value | 18 / 400, tabular | `input[type=number]` |
 | Body | 17 / 400 | default |
@@ -1339,13 +1339,18 @@ Each phase: header shows step label + proxied primary; `#instr` gives the one-li
 | `p-track` | **Match review — Call pane.** Review track, judge calls, name the players, identify yourself | control area keeps its pre-rally-visualization height so the video stage does not shrink, floored against the stage per §3.1; the added content scrolls inside that footprint · scrub hint lives in the header `#instr` line (detection failures replace it, `.warn`) · per-rally front-wall impact mini-map · rally segmentation card (proportional neutral ribbon, active segment in accent, `attr-*` provenance states + legend §8.22; per-rally winners/scores stay backend-only per the 2026-07-29 review) · overview w/ marker minis · hit timeline (neon bars, center playhead) · readout · transport · frame input + Judge row · verdict box · Players card (two equal-width detected-player cards, each with a 4:5 crop, its own name field, and a full-width "This is me" identity button; a quiet "No photo available" placeholder preserves the pair when an old run has only one crop) · ghost "Watch source video". One pane, no switcher — the Challenge pane and its dock were archived 2026-07-29 (`archive/challenge-ui/`) | "Judge frame" |
 | `p-player1-report` / `p-player2-report` | **Match review — Player 1 / Player 2 panes.** Per-player coaching report | Player N front-wall map (§8.10 court chart + `.targetMeta`; serves excluded) · Player N report panel (§8.17, opening with the §8.22 provenance line) · Player N movement panel (§8.17: distance / position split / speeds + court heatmap) · **P1 only:** the run's floor-bounce map (§8.10 `#floorMapSvg` + `.targetMeta`) — bounces are per-run, not per-player, so the panel renders once under the first report rather than twice | — (no primary) |
 | `p-label` | Human bounce labeling | overview · label timeline · transport+zoom · 2-col type grid (dot+label) · delete (destructive = plain secondary, disabled until selection) | — |
-| `p-matches` | Analysis section root — session library | view head ("Analysis" + `n runs · live pipeline`) · one `.clipcard` per analyzed run: head row opens that match's analysis page and `.selfSelector` identifies which player is the user (§8.20) · `.emptycard` when none | — (no chevron; section root) |
-| `p-match` | **Match analysis.** One analyzed match, read end to end | view head (match date + duration) · `#matchBody`: the §8.20 analysis stack (Rallies · Movement · ball tier when it ran · "What this clip could measure" · provenance line) · ghost "Open full review" · `.emptycard` when the run is gone | — (back chevron only, like the review panes; the native shell hides its tab bar and settings gear here, §3.2) |
-| `p-coach` | Training section root (hub) | view head · three feature cards (§8.13), including the live Your coach entry | — (no chevron; section root) |
+| `p-matches` | Analysis section root — session library | view head (`n runs · live pipeline` meta only) · one `.clipcard` per analyzed run: head row opens that match's analysis page and `.selfSelector` identifies which player is the user (§8.20) · `.emptycard` when none | — (no chevron; section root) |
+| `p-match` | **Match analysis.** One analyzed match, read end to end | view head (clip duration only — the match date is the header label) · `#matchBody`: the §8.20 analysis stack (Rallies · Movement · ball tier when it ran · "What this clip could measure" · provenance line) · ghost "Open full review" · `.emptycard` when the run is gone | — (back chevron only, like the review panes; the native shell hides its tab bar and settings gear here, §3.2) |
+| `p-coach` | Training section root (hub) | three feature cards (§8.13), including the live Your coach entry — no view head, it held only the title | — (no chevron; section root) |
 | `p-coach-advice` | Your coach — Ollama feedback and drills from the user's identified match history | provenance card (counts + source statement) · chronological observations · drill cards (§8.13a) | — (back chevron → Training hub) |
-| `p-progress` | Progress section root — personal cross-session trends | view head · range `.seg` · delta strip · trend cards · best-mark card (§8.20) · `.emptycard` under two identified runs | — (no chevron; section root) |
+| `p-progress` | Progress section root — personal cross-session trends | range `.seg` (no view head, it held only the title) · delta strip · trend cards · best-mark card (§8.20) · `.emptycard` under two identified runs | — (no chevron; section root) |
 | `p-live` | Placeholder: live match | placeholder hero · Planned card (§8.14) | — (back chevron only) |
-| `p-stats` | Personal training stats pooled across identified runs | view head · personal metric card · target summary · source statement | — (back chevron only) |
+| `p-stats` | Personal training stats pooled across identified runs | view head (pooled-session meta only) · personal metric card · target summary · source statement | — (back chevron only) |
+
+Section roots and their leaves carry **no in-page `<h2>`** — `#stepLabel` (an
+`<h1>`) is the screen's only title, as `p-load` has always done. A `.viewhead`
+survives only where it lays out a dim meta span carrying something the header
+does not say (run count, clip duration).
 
 **The match review page.** `p-track` + `p-player1-report` + `p-player2-report` are one
 page in three panes (§3.3), reached only by finishing an analysis or by opening a match

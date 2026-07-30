@@ -841,7 +841,6 @@
      These were picked against the pre-2026-07-30 ladder and are left as-is
      rather than bumped again — the base moved up under them, so each is still
      at or above its base size and compounding both changes would overshoot. */
-  #p-matches .viewhead h2{font-size:26px}
   #p-matches .viewhead .dim{font-size:15px}
   #p-matches .cliptop .name{font-size:18px}
   #p-matches .cliptop .metaline{font-size:15px}
@@ -895,7 +894,6 @@
   .bestrow .meta{font-size:13px; color:var(--dim)}
   .viewhead{display:flex; align-items:baseline; justify-content:space-between; min-height:32px;
     padding:2px 2px 0}
-  .viewhead h2{text-align:left}
   .viewhead .dim{font-size:13px}
   .emptycard{color:var(--dim); font-size:14px; line-height:1.5; text-align:center;
     padding:26px 16px}
@@ -928,7 +926,7 @@
 
 <header>
   <button class="hidden" id="hdrBack" type="button" aria-label="Back">&#8249;</button>
-  <div id="stepLabel">Squash Line Calling</div>
+  <h1 id="stepLabel">Squash Line Calling</h1>
   <button class="small" id="themeBtn" type="button" aria-label="Toggle light or dark theme">
     <svg class="sun-and-moon" width="24" height="24" viewBox="0 0 24 24" aria-hidden="true">
       <mask class="moonmask" id="moonMask">
@@ -1523,7 +1521,6 @@
   <!-- PHASE: matches (section root — lab view-analysis: live run cards) -->
   <section class="hidden" id="p-matches">
     <div class="viewhead">
-      <h2>Analysis</h2>
       <span class="dim" id="clipMeta"></span>
     </div>
     <div id="clipList" style="display:flex;flex-direction:column;gap:12px">
@@ -1536,7 +1533,6 @@
        and in the native shell the tab bar hides for it (DESIGN.md §3.2). -->
   <section class="hidden" id="p-match">
     <div class="viewhead">
-      <h2 id="matchTitle">Match</h2>
       <span class="dim" id="matchMeta"></span>
     </div>
     <div id="matchBody"></div>
@@ -1544,7 +1540,6 @@
 
   <!-- PHASE: coach (section root — Training hub; cards drill into the improvement pillars) -->
   <section class="hidden" id="p-coach">
-    <div class="viewhead"><h2>Training</h2></div>
     <button class="featureCard" type="button" data-phase="stats">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
         <path d="M5 20v-7M12 20V5M19 20v-11"/>
@@ -1576,7 +1571,6 @@
   <!-- PHASE: personal training stats, pooled only from identified sessions -->
   <section class="hidden" id="p-stats">
     <div class="viewhead">
-      <h2>Your stats</h2>
       <span class="dim" id="trainingStatsMeta"></span>
     </div>
     <div id="trainingStatsBody" style="display:flex;flex-direction:column;gap:14px">
@@ -1586,7 +1580,6 @@
 
   <!-- PHASE: progress (section root — lab view-progress: live cross-session trends) -->
   <section class="hidden" id="p-progress">
-    <div class="viewhead"><h2>Progress</h2></div>
     <div id="progressBody" style="display:flex;flex-direction:column;gap:14px">
       <div class="card emptycard">Loading sessions&#8230;</div>
     </div>
@@ -1779,7 +1772,7 @@ const STEP_META = {
   coach_advice:{label:'Your coach', instr:''},
   progress:{label:'Progress', instr:''},
   live:    {label:'Live match', instr:''},
-  stats:   {label:'Stats + trends', instr:''},
+  stats:   {label:'Your stats', instr:''},
 };
 /* Roadmap phases share one empty-stage treatment; section id = 'p-' + key with _ → - */
 const ROADMAP_PHASES = ['live','matches','coach','progress','stats'];
@@ -8566,7 +8559,6 @@ function matchDetailBody(id){
 function buildMatchView(){
   const id = LIVE.matchId;
   const r = LIVE.runs.find(x => x.run_id === id);
-  $('matchTitle').textContent = r ? fmtRunDate(r.created) : 'Match';
   $('matchMeta').textContent = r ? fmtRunDur(r.duration_seconds) : '';
   if(!r){
     // The runs list refreshes on every entry to Analysis, so a stale id here
