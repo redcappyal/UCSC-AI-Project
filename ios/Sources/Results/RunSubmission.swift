@@ -28,16 +28,21 @@ final class RunSubmission: ObservableObject {
     /// throws, and an uncapped loop never leaves `submit`, so the sheet the
     /// caller is presenting never resolves and only killing the app recovers.
     ///
-    /// Why 20 minutes, for a 4K60 rally clip:
+    /// Why 60 minutes, for a 4K60 rally clip:
     ///
     /// * `job_runner.TRACKING_JOB_SEMAPHORE` is `Semaphore(1)` — the server
     ///   tracks exactly one clip at a time, and `run_tracking_job` only sets
     ///   `status="running"` after acquiring it, so a clip can sit `queued`
     ///   behind whatever else is already in flight.
-    /// * One pass over a rally-length clip is minutes, not tens of minutes:
-    ///   the coarse stage strides frames (`frame_stride`, 4 by default) at
-    ///   `COARSE_INFERENCE_WIDTH` and only refines segments around candidate
-    ///   hits.
+    /// * The clip is tracked at `frame_stride` 1: every frame at the full
+    ///   `inference_width`, and `job_runner` skips the refine pass entirely at
+    ///   stride 1. That is roughly 4x the strided coarse-then-refine path the
+    ///   original 20 minutes was sized against, which is where 60 comes from —
+    ///   the same sizing, times the stride, rounded down to a round number.
+    /// * The local WASB backend tiles at *native* resolution and ignores
+    ///   `inference_width` (MODEL.md §6), so wall clock scales with the source
+    ///   pixels, not with 960. A 4K clip is ~4x a 1080p one through that
+    ///   backend and can still outlast this cap while perfectly healthy.
     /// * The same client already grants a single request on the same clip 15
     ///   minutes (`APIClient`'s `timeoutIntervalForResource`, for the upload).
     ///   A poll bound below that would be the client contradicting itself.
@@ -48,7 +53,7 @@ final class RunSubmission: ObservableObject {
     /// is set generously and treated as a backstop, not a deadline anyone
     /// should meet.
     init(api: APIClientProtocol = APIClient(), pollInterval: Duration = .seconds(1),
-         pollTimeout: Duration = .seconds(20 * 60)) {
+         pollTimeout: Duration = .seconds(60 * 60)) {
         self.api = api
         self.pollInterval = pollInterval
         self.pollTimeout = pollTimeout

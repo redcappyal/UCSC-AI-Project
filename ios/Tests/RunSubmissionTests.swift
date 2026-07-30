@@ -93,7 +93,7 @@ final class RunSubmissionTests: XCTestCase {
     /// That is not a hang the user can back out of: the sheet presenting this
     /// submission never resolves, so only killing the app recovers.
     ///
-    /// A short `pollTimeout` here rather than the 20-minute production default:
+    /// A short `pollTimeout` here rather than the 60-minute production default:
     /// the bound under test is that one exists and is honoured, not its value.
     /// `MockAPIClient` with a single `"running"` status answers that way
     /// forever — `trackStatus` clamps its cursor to the last element — so
@@ -121,8 +121,8 @@ final class RunSubmissionTests: XCTestCase {
         // timeout above rounds down to "0 min", so the minutes arithmetic that
         // a real user reads is not otherwise covered by anything.
         XCTAssertEqual(
-            APIError.trackingTimedOut(.seconds(20 * 60)).errorDescription,
-            "The server stopped reporting on this clip after 20 min. "
+            APIError.trackingTimedOut(.seconds(60 * 60)).errorDescription,
+            "The server stopped reporting on this clip after 60 min. "
                 + "It may still finish on its own — check Matches.")
     }
 
