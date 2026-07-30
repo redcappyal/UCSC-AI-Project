@@ -1089,8 +1089,12 @@ Do not reintroduce them to the UI without a deliberate DESIGN.md change.
   equally trustworthy and the card must not present them as if they were ·
   **ball tier, only when it ran** — two `.scol` tiles (Unforced errors / Floor
   bounces) · `.fbrow` feedback sentences ·
-  **"What this clip could measure"** — one `.fbrow` per tier, label left, `ON`/`OFF`
-  `.statechip` right, and the reason as dim `.s` text under the label when off ·
+  **"Not measured"** — rendered **only when a tier was gated off** (or the run is
+  legacy). One `.fbrow` per disabled tier, label left, `OFF` `.statechip` right,
+  and the `reason` as dim `.s` text under the label. When every tier ran the whole
+  section is omitted: the card exists so absence is rendered as its reason, and
+  four `ON` chips assert nothing a reader needs. The reason stays **visible body
+  text** — never behind the §8.23 disclosure ·
   a dim provenance `.metaline` ("run id"), marked `.devOnly` — a 13-digit epoch id
   names a job to whoever is sitting at the Mac and nothing at all to a player, so it
   leaves the native shell with the rest of the workshop chrome ·
@@ -1355,7 +1359,7 @@ Each phase: header shows step label + proxied primary; `#instr` gives the one-li
 | `p-player1-report` / `p-player2-report` | **Match review — Player 1 / Player 2 panes.** Per-player coaching report | Player N front-wall map (§8.10 court chart + `.targetMeta`; serves excluded) · Player N report panel (§8.17, opening with the §8.22 provenance line) · Player N movement panel (§8.17: distance / position split / speeds + court heatmap) · **P1 only:** the run's floor-bounce map (§8.10 `#floorMapSvg` + `.targetMeta`) — bounces are per-run, not per-player, so the panel renders once under the first report rather than twice | — (no primary) |
 | `p-label` | Human bounce labeling | overview · label timeline · transport+zoom · 2-col type grid (dot+label) · delete (destructive = plain secondary, disabled until selection) | — |
 | `p-matches` | Analysis section root — session library | view head (`n runs · live pipeline` meta only) · one `.clipcard` per analyzed run: head row opens that match's analysis page and `.selfSelector` identifies which player is the user (§8.20) · `.emptycard` when none | — (no chevron; section root) |
-| `p-match` | **Match analysis.** One analyzed match, read end to end | view head (clip duration only — the match date is the header label) · `#matchBody`: the §8.20 analysis stack (Rallies · Movement · ball tier when it ran · "What this clip could measure" · provenance line) · ghost "Open full review" · `.emptycard` when the run is gone | — (back chevron only, like the review panes; the native shell hides its tab bar and settings gear here, §3.2) |
+| `p-match` | **Match analysis.** One analyzed match, read end to end | view head (clip duration only — the match date is the header label) · `#matchBody`: the §8.20 analysis stack (Rallies · Movement · ball tier when it ran · "Not measured", only when a tier was gated off · provenance line) · ghost "Open full review" · `.emptycard` when the run is gone | — (back chevron only, like the review panes; the native shell hides its tab bar and settings gear here, §3.2) |
 | `p-coach` | Training section root (hub) | three feature cards (§8.13), including the live Your coach entry — no view head, it held only the title | — (no chevron; section root) |
 | `p-coach-advice` | Your coach — Ollama feedback and drills from the user's identified match history | provenance card (counts + source statement) · chronological observations · drill cards (§8.13a) | — (back chevron → Training hub) |
 | `p-progress` | Progress section root — personal cross-session trends | range `.seg` (no view head, it held only the title) · delta strip · trend cards · best-mark card (§8.20) · `.emptycard` under two identified runs | — (no chevron; section root) |

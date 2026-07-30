@@ -101,3 +101,24 @@ def test_the_stats_card_subtitle_fits_on_one_line():
     # at 375px, which loses information rather than saving space.
     assert "Your shots and patterns across identified matches" not in INDEX_HTML
     assert "<strong>Your stats</strong><span>Shots and patterns</span>" in INDEX_HTML
+
+
+def test_the_capability_card_is_titled_for_what_it_reports():
+    assert "What this clip could measure" not in INDEX_HTML
+    assert "Not measured" in INDEX_HTML
+
+
+def test_the_capability_card_lists_only_the_tiers_that_did_not_run():
+    assert "Object.keys(TIER_LABELS).filter(k => caps[k] && !caps[k].enabled)" in INDEX_HTML
+
+
+def test_the_capability_card_vanishes_when_everything_ran():
+    # Its whole purpose is explaining absence; with none there is nothing to say.
+    assert "const capRows = capabilityRows(rep);" in INDEX_HTML
+    assert "capRows ? `<div class=\"cardtitle\" style=\"font-size:15px\">Not measured</div>${capRows}` : ''" in INDEX_HTML
+
+
+def test_capability_reasons_stay_visible_body_text():
+    # They must never move behind the §8.23 disclosure.
+    assert 'escapeHtml(t.reason||\'\')' in INDEX_HTML
+    assert "whyDisclosure(t.reason" not in INDEX_HTML

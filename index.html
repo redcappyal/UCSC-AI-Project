@@ -8360,16 +8360,12 @@ function capabilityRows(rep){
     return `<div class="metaline">${escapeHtml(rep.legacy_reason||'')}</div>`;
   }
   const caps = rep.capabilities || {};
-  return Object.keys(TIER_LABELS).filter(k => caps[k]).map(k => {
+  return Object.keys(TIER_LABELS).filter(k => caps[k] && !caps[k].enabled).map(k => {
     const t = caps[k];
-    const chip = t.enabled
-      ? '<span class="statechip done">ON</span>'
-      : '<span class="statechip">OFF</span>';
-    const why = t.enabled ? '' :
-      `<span class="s" style="color:var(--dim)">${escapeHtml(t.reason||'')}</span>`;
+    const why = `<span class="s" style="color:var(--dim)">${escapeHtml(t.reason||'')}</span>`;
     return `<div class="fbrow">
       <div class="info"><span class="s" style="color:var(--text)">${TIER_LABELS[k]}</span>${why}</div>
-      ${chip}
+      <span class="statechip">OFF</span>
     </div>`;
   }).join('');
 }
@@ -8546,14 +8542,17 @@ function matchDetailBody(id){
       <div class="scol"><span class="sl">Floor bounces</span><span class="sv num">${m.bounces==null?'—':m.bounces}</span></div>
     </div>
     ${fb}`;
+  // The capability card exists so a tier that could not run is rendered as its
+  // reason (§8.20). With nothing gated off it has nothing to say, so both the
+  // heading and the rows go — a legacy run still returns its reason metaline.
+  const capRows = capabilityRows(rep);
   return `
     <div class="cardtitle" style="font-size:15px">Rallies</div>
     ${rallySection(rep)}
     <div class="cardtitle" style="font-size:15px">Movement</div>
     ${movementSection(rep)}
     ${ballBlock}
-    <div class="cardtitle" style="font-size:15px">What this clip could measure</div>
-    ${capabilityRows(rep)}
+    ${capRows ? `<div class="cardtitle" style="font-size:15px">Not measured</div>${capRows}` : ''}
     <div class="metaline devOnly">run ${escapeHtml(id)}</div>
     <button class="ghostbtn" type="button" id="matchReviewBtn">Open full review</button>`;
 }
