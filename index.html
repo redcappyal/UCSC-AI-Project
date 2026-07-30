@@ -1621,7 +1621,8 @@ const S = {
   trackStripGen:0,            // invalidates in-flight timeline thumbnail renders
   trackView:{startF:0, endF:0, cursor:0, key:'', ovDone:false, timer:null}, // fine-window state for the call page's coarse-fine timeline
   videoFps:null,              // probed by the server at upload; null until known
-  clip:{start:0, end:0, cursor:0, dragging:null, frameStride:1, inferenceWidth:960,
+  clip:{start:0, end:0, cursor:0, dragging:null, inferenceWidth:960,
+    frameStride:4,              // /api/track default; >1 = cheap coarse pass + stride-1 refine windows
     viewStart:0, viewEnd:1, viewSpan:0,   // detail window derived from cursor ± viewSpan/2
     dragX:0, dragT:0,
     overviewThumbs:false, overviewDragging:false,
