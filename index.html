@@ -1561,9 +1561,8 @@
        behind it to mean something. -->
   <section class="hidden" id="p-coach-advice">
     <div class="card" id="adviceProvenance">
-      <div class="cardtitle" id="adviceHeadline">Working on your coaching</div>
-      <p class="adviceMeta" id="adviceMeta"></p>
-      <p class="adviceMeta" id="adviceCaveat"></p>
+      <div class="cardtitle whyhead" id="adviceHeadline">Working on your coaching</div>
+      <div id="adviceWhy"></div>
     </div>
     <div id="adviceBody"></div>
   </section>
@@ -1658,7 +1657,7 @@ function whyDisclosure(text){
 /* Section heading + its optional disclosure. `label` is a trusted literal. */
 function sectionHead(label, why){
   const d = whyDisclosure(why);
-  return `<div class="cardtitle whyhead" style="font-size:14px">${label}${d.btn}</div>${d.note}`;
+  return `<div class="cardtitle whyhead" style="font-size:15px">${label}${d.btn}</div>${d.note}`;
 }
 document.addEventListener('click', (e) => {
   const btn = e.target.closest && e.target.closest('.whybtn');
@@ -5892,7 +5891,7 @@ function renderPlayerMovement(playerNumber){
     : '').join('')).join('') : '';
   $(`movementHeatmapP${playerNumber}`).innerHTML = cells + courtWireframeSvg('courtLine');
   $(`movementNoteP${playerNumber}`).textContent =
-    `Where ${playerDisplayName(playerNumber)} stood during rallies — stronger color means more time. Detector: ${(pv.backend || 'unknown')}.`;
+    `Where ${playerDisplayName(playerNumber)} stood during rallies — stronger color means more time.`;
 }
 
 function summaryFromPlayerAnalytics(player){
@@ -8151,16 +8150,16 @@ function renderCoachAdvice(){
   const player = advicePlayer();
 
   if(ADVICE.error){
+    // A failure is a result, not provenance, so it stays visible body copy —
+    // .whynote without .hidden is the plain dim rung for it (§8.23).
     $('adviceHeadline').textContent = 'Coaching unavailable';
-    $('adviceMeta').textContent = ADVICE.error;
-    $('adviceCaveat').textContent = '';
+    $('adviceWhy').innerHTML = `<div class="whynote">${escapeHtml(ADVICE.error)}</div>`;
     body.innerHTML = '';
     return;
   }
   if(!player){
     $('adviceHeadline').textContent = 'Working on your coaching';
-    $('adviceMeta').textContent = 'Reading your recent sessions…';
-    $('adviceCaveat').textContent = '';
+    $('adviceWhy').innerHTML = '';
     body.innerHTML = '';
     return;
   }
@@ -8168,9 +8167,8 @@ function renderCoachAdvice(){
   const sessions = Number(player.session_count) || 0;
   if(!sessions){
     $('adviceHeadline').textContent = 'Tell us which player is you';
-    $('adviceMeta').textContent =
-      'Open Analysis and choose Player A or Player B on a match.';
-    $('adviceCaveat').textContent = '';
+    $('adviceWhy').innerHTML =
+      '<div class="whynote">Open Analysis and choose Player A or Player B on a match.</div>';
     body.innerHTML = '';
     return;
   }
@@ -8186,22 +8184,28 @@ function renderCoachAdvice(){
       invalid_response: 'Ollama returned a report the app could not read.',
       truncated_response: 'Ollama ran out of output space while writing the report.',
     }[status] || 'Ollama could not generate this coaching report.';
-    $('adviceHeadline').textContent = 'Your coach is unavailable';
-    $('adviceMeta').textContent = statusText;
-    $('adviceCaveat').textContent =
+    // What went wrong is the result and stays on screen; what was measured
+    // anyway is provenance and rides behind the tap (§8.23).
+    const d = whyDisclosure(
       `${shots} shots were measured across ${sessions} identified ` +
-      `${sessions===1?'match':'matches'}; no rule-based advice was substituted.`;
+      `${sessions===1?'match':'matches'}; no rule-based advice was substituted.`);
+    $('adviceHeadline').innerHTML = 'Your coach is unavailable' + d.btn;
+    $('adviceWhy').innerHTML = `<div class="whynote">${escapeHtml(statusText)}</div>` + d.note;
     body.innerHTML = '';
     return;
   }
 
-  $('adviceHeadline').textContent = coach.headline;
-  $('adviceMeta').textContent =
-    `${shots} shots analyzed across ${sessions} identified ` +
-    `${sessions===1?'match':'matches'}.`;
-  $('adviceCaveat').textContent =
-    'Ollama reviewed those matches from oldest to newest. ' +
-    (ADVICE.data.me_pooling_note || '');
+  // One button per heading (§8.23): the counts, the reading order and the
+  // pooling caveat are three facts about the same report, so they concatenate
+  // into a single note rather than stacking three lines above the drills.
+  const why = [
+    `${shots} shots analyzed across ${sessions} identified ${sessions===1?'match':'matches'}.`,
+    'Ollama reviewed those matches from oldest to newest.',
+    ADVICE.data.me_pooling_note || '',
+  ].filter(Boolean).join(' ');
+  const d = whyDisclosure(why);
+  $('adviceHeadline').innerHTML = escapeHtml(coach.headline) + d.btn;
+  $('adviceWhy').innerHTML = d.note;
 
   body.innerHTML = '';
   const list = document.createElement('div');
@@ -8371,25 +8375,28 @@ function capabilityRows(rep){
 }
 function rallySection(rep){
   const tl = rep.rally_timeline;
-  if(!tl) return '<div class="metaline">Rally structure was not measured for this run.</div>';
+  // Absence reasons stay visible body text (§8.20); only provenance about a
+  // number that IS shown goes behind the §8.23 disclosure the caller renders.
+  if(!tl) return {why:'', html:'<div class="metaline">Rally structure was not measured for this run.</div>'};
   const rallies = tl.rallies || [];
   if(!rallies.length){
-    return `<div class="metaline">No rallies found${tl.audio_available ? '' : ' (clip has no audio track, so this used frame motion alone)'}.</div>`;
+    return {why:'', html:`<div class="metaline">No rallies found${tl.audio_available ? '' : ' (clip has no audio track, so this used frame motion alone)'}.</div>`};
   }
   const longest = longestRallyInfo(rep);
   const where = longest && longest.rally != null
     ? ` · Rally ${longest.rally}${longest.score ? ' · at ' + escapeHtml(longest.score) : ''}`
     : '';
-  return `<div class="scorecols" style="grid-template-columns:1fr">
+  const why = (tl.audio_available ? 'From impact sounds and frame motion' : 'From frame motion only — no audio track') +
+    (tl.agrees_with_hits === false ? ' · disagrees with the rallies counted from ball contacts' : '');
+  return {why, html: `<div class="scorecols" style="grid-template-columns:1fr">
       <div class="scol"><span class="sl">Longest rally${where}</span><span class="sv num">${longest ? longest.dur.toFixed(1) : '—'}<span class="ss">s</span></span></div>
-    </div>
-    <div class="metaline">${escapeHtml(tl.audio_available ? 'From impact sounds and frame motion' : 'From frame motion only — no audio track')}${tl.agrees_with_hits === false ? ' · disagrees with the hit-derived rallies' : ''}</div>`;
+    </div>`};
 }
 function movementSection(rep){
   const pv = rep.players_v2;
   if(!pv){
     const why = ((rep.capabilities||{}).player_movement||{}).reason;
-    return `<div class="metaline">${escapeHtml(why ? 'Movement not measured: ' + why : 'Movement was not measured for this run.')}</div>`;
+    return {why:'', html:`<div class="metaline">${escapeHtml(why ? 'Movement not measured: ' + why : 'Movement was not measured for this run.')}</div>`};
   }
   const row = (label, s) => `<div class="scorecols" style="grid-template-columns:1.2fr 1fr 1fr 1fr">
       <div class="scol"><span class="sl">${label} distance</span><span class="sv num">${Math.round(s.distance_ft||0)}<span class="ss">ft</span></span></div>
@@ -8398,8 +8405,11 @@ function movementSection(rep){
       <div class="scol"><span class="sl">Back</span><span class="sv num">${Math.round(100*(s.back_pct||0))}<span class="ss">%</span></span></div>
     </div>`;
   const cov = Math.round(100*((pv.player_a||{}).sample_coverage||0));
-  return row('P1', pv.player_a||{}) + row('P2', pv.player_b||{}) +
-    `<div class="metaline">Detector: ${escapeHtml(pv.backend||'unknown')} · ${cov}% of rally time observed</div>`;
+  // whyDisclosure escapes its own text, so the backend name goes in raw here.
+  return {
+    why: `Detector: ${pv.backend||'unknown'} · ${cov}% of rally time observed`,
+    html: row('P1', pv.player_a||{}) + row('P2', pv.player_b||{}),
+  };
 }
 
 function renderClipCards(){
@@ -8545,12 +8555,14 @@ function matchDetailBody(id){
   // The capability card exists so a tier that could not run is rendered as its
   // reason (§8.20). With nothing gated off it has nothing to say, so both the
   // heading and the rows go — a legacy run still returns its reason metaline.
+  const rally = rallySection(rep);
+  const movement = movementSection(rep);
   const capRows = capabilityRows(rep);
   return `
-    <div class="cardtitle" style="font-size:15px">Rallies</div>
-    ${rallySection(rep)}
-    <div class="cardtitle" style="font-size:15px">Movement</div>
-    ${movementSection(rep)}
+    ${sectionHead('Rallies', rally.why)}
+    ${rally.html}
+    ${sectionHead('Movement', movement.why)}
+    ${movement.html}
     ${ballBlock}
     ${capRows ? `<div class="cardtitle" style="font-size:15px">Not measured</div>${capRows}` : ''}
     <div class="metaline devOnly">run ${escapeHtml(id)}</div>

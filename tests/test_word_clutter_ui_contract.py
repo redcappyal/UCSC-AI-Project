@@ -122,3 +122,42 @@ def test_capability_reasons_stay_visible_body_text():
     # They must never move behind the §8.23 disclosure.
     assert 'escapeHtml(t.reason||\'\')' in INDEX_HTML
     assert "whyDisclosure(t.reason" not in INDEX_HTML
+
+
+def test_the_rally_and_movement_provenance_moved_behind_the_tap():
+    # NB: assert on the metaline WRAPPER, not on the sentence. The rally line is
+    # built as `<div class="metaline">${escapeHtml(tl.audio_available ? '...`,
+    # so asserting `'<div class="metaline">From impact' not in ...` would pass
+    # vacuously — that substring never existed.
+    assert 'metaline">${escapeHtml(tl.audio_available' not in INDEX_HTML
+    assert '<div class="metaline">Detector: ' not in INDEX_HTML
+    assert "sectionHead('Rallies', " in INDEX_HTML
+    assert "sectionHead('Movement', " in INDEX_HTML
+
+
+def test_the_rally_provenance_drops_the_pipeline_jargon():
+    assert "hit-derived rallies" not in INDEX_HTML
+    assert "disagrees with the rallies counted from ball contacts" in INDEX_HTML
+
+
+def test_the_heatmap_keeps_its_legend_and_hides_only_the_detector():
+    assert "stronger color means more time" in INDEX_HTML
+    assert "stronger color means more time. Detector:" not in INDEX_HTML
+
+
+def test_the_coaching_screen_collapses_its_three_caveats_into_one():
+    assert 'id="adviceMeta"' not in INDEX_HTML
+    assert 'id="adviceCaveat"' not in INDEX_HTML
+    assert 'id="adviceWhy"' in INDEX_HTML
+
+
+def test_the_coaching_disclosure_only_exists_in_the_loaded_state():
+    # renderAdvice also has error / loading / no-identified-player states,
+    # none of which have provenance to offer.
+    assert "$('adviceWhy').innerHTML = '';" in INDEX_HTML
+
+
+def test_the_low_sample_note_is_provenance_not_body_copy():
+    advice = (ROOT / "coaching_advice.py").read_text(encoding="utf-8")
+    assert "treat this as a pointer" not in advice
+    assert "low_sample_note" in advice

@@ -1079,14 +1079,18 @@ Do not reintroduce them to the UI without a deliberate DESIGN.md change.
   tier that always runs, ball detail last because it is the one most often gated off:
   **"Rallies"** — one full-width `.scol` tile: **Longest rally**, labeled with the
   rally number and the running score it happened at when the hit-derived rallies can
-  name it ("Longest rally · Rally 7 · at 4–3"), and a `.metaline` naming the signal it
-  came from ("From impact sounds and frame motion" / "From frame motion only — no
-  audio track"), plus a disagreement note when the timeline and the hit-derived
-  rallies differ ·
+  name it ("Longest rally · Rally 7 · at 4–3"). The signal it came from ("From impact
+  sounds and frame motion" / "From frame motion only — no audio track") and the
+  disagreement note when the timeline and the hit-derived rallies differ are
+  **provenance about a number that is shown**, so they ride in a §8.23 disclosure on
+  the *heading* — `sectionHead('Rallies', why)` — not in a `.metaline` under the tile.
+  The user-facing wording of that disagreement names ball contacts, not hits ·
   **"Movement"** — one four-tile `.scorecols` row per player (distance / On the T /
-  Front % / Back %) and a `.metaline` naming the detector backend and the fraction of
-  rally time actually observed, because a motion-blob fallback and real weights are not
-  equally trustworthy and the card must not present them as if they were ·
+  Front % / Back %), with the detector backend and the fraction of rally time actually
+  observed in the same §8.23 disclosure on the heading. A motion-blob fallback and
+  real weights are not equally trustworthy and the card must not present them as if
+  they were — but that is a caveat about numbers the card *does* show, so it sits one
+  tap away rather than spending a line under every row ·
   **ball tier, only when it ran** — two `.scol` tiles (Unforced errors / Floor
   bounces) · `.fbrow` feedback sentences ·
   **"Not measured"** — rendered **only when a tier was gated off** (or the run is
@@ -1325,6 +1329,9 @@ Copy for statuses is specific and actionable ("Tap the two ends of the out line"
 - No exclamation marks, no praise ("Great!"), no anthropomorphism. The app states facts.
   Single sanctioned exception: the "Coming soon!" hero text on roadmap placeholder pages
   (§8.14) — nowhere else.
+- **Provenance and confidence sit behind a disclosure, not in body copy** (§8.23).
+  State the fact; offer the caveat. The exception is *absence* — the reason a tier
+  could not run, or that no rallies were found, stays visible (§8.20).
 
 ---
 
@@ -1361,7 +1368,7 @@ Each phase: header shows step label + proxied primary; `#instr` gives the one-li
 | `p-matches` | Analysis section root — session library | view head (`n runs · live pipeline` meta only) · one `.clipcard` per analyzed run: head row opens that match's analysis page and `.selfSelector` identifies which player is the user (§8.20) · `.emptycard` when none | — (no chevron; section root) |
 | `p-match` | **Match analysis.** One analyzed match, read end to end | view head (clip duration only — the match date is the header label) · `#matchBody`: the §8.20 analysis stack (Rallies · Movement · ball tier when it ran · "Not measured", only when a tier was gated off · provenance line) · ghost "Open full review" · `.emptycard` when the run is gone | — (back chevron only, like the review panes; the native shell hides its tab bar and settings gear here, §3.2) |
 | `p-coach` | Training section root (hub) | three feature cards (§8.13), including the live Your coach entry — no view head, it held only the title | — (no chevron; section root) |
-| `p-coach-advice` | Your coach — Ollama feedback and drills from the user's identified match history | provenance card (counts + source statement) · chronological observations · drill cards (§8.13a) | — (back chevron → Training hub) |
+| `p-coach-advice` | Your coach — Ollama feedback and drills from the user's identified match history | headline card — the coach's own headline, with the shot/session counts, the reading order and the pooling caveat behind one §8.23 disclosure on it; a failure state keeps its reason as visible `.whynote` body copy · chronological observations · drill cards (§8.13a) | — (back chevron → Training hub) |
 | `p-progress` | Progress section root — personal cross-session trends | range `.seg` (no view head, it held only the title) · delta strip · trend cards · best-mark card (§8.20) · `.emptycard` under two identified runs | — (no chevron; section root) |
 | `p-live` | Placeholder: live match | placeholder hero · Planned card (§8.14) | — (back chevron only) |
 | `p-stats` | Personal training stats pooled across identified runs | view head (pooled-session meta only) · personal metric card · target summary · source statement | — (back chevron only) |

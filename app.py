@@ -1811,7 +1811,10 @@ def pooled_player_coaching(
 
     Pooling is by *player slot*, not by person: player_number comes from each
     run's own serve-alternation attribution, so Player 1 is whoever served
-    first in that clip. The caller must surface that; see `pooling_note`.
+    first in that clip. That caveat is spelled out in `pooling_note`. The field
+    the UI actually renders is `me_pooling_note`, which covers `me` — pooled
+    only across the runs where the user identified their own player, so the
+    slot ambiguity does not apply to it.
     """
     runs = recent_runs_with_analytics(limit)
     if identified_runs is None:

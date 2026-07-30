@@ -396,7 +396,7 @@ def _error_advice(unforced, unforced_pct, total_errors):
 
 
 def player_advice(player_analytics):
-    """-> {'items': [...], 'note': str|None} for one player's report."""
+    """-> {'items': [...], 'note': str|None, 'low_sample_note': str|None} for one player's report."""
     analytics = player_analytics or {}
     total = int(analytics.get("total_wall_hits") or 0)
 
@@ -409,6 +409,7 @@ def player_advice(player_analytics):
                 "few to draw a pattern from. Track a longer clip for coaching "
                 "advice."
             ),
+            "low_sample_note": None,
         }
 
     items = []
@@ -436,15 +437,16 @@ def player_advice(player_analytics):
     items.sort(key=lambda entry: -entry["priority"])
     items = items[:MAX_ADVICE_ITEMS]
 
+    # `note` is a result the page renders as body copy; `low_sample_note` is a
+    # hedge about a number that IS shown, so it rides behind the UI's
+    # provenance disclosure (DESIGN.md 8.23) instead.
     note = None
+    low_sample_note = None
     if not items:
         note = (
             "No clear weakness stood out in this clip — shot height, width and "
             "pace were all inside the expected range."
         )
     elif total < 20:
-        note = (
-            f"Based on {total} front-wall shots, so treat this as a pointer "
-            "rather than a verdict."
-        )
-    return {"items": items, "note": note}
+        low_sample_note = f"Based on {total} front-wall shots, so read it as a pointer."
+    return {"items": items, "note": note, "low_sample_note": low_sample_note}
