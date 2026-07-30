@@ -40,9 +40,10 @@ Ephemeral CUDA boxes for analysis + eval runs. Spec:
   sees one frame in four — treat stride-4 runs as a quick look, not an eval-grade one.
 - `--stride` and `--inference-width` override those defaults. `--inference-width` accepts
   only `0`, `640`, `960`, `1280` (`0` = native); anything else is rejected on the Mac,
-  before the clip is rsynced to a box that is already billing. Under the default `local`
-  (WASB) ball backend the width is inert either way — it bites only if `BALL_DETECTOR` is
-  set to `rfdetr`, which is why passing `0` explicitly is worth the keystrokes.
+  before the clip is rsynced to a box that is already billing. Under the default `rfdetr`
+  ball backend the width binds — rfdetr resizes to it itself — so it is a real knob on
+  every default run. It goes inert only under `BALL_DETECTOR=local`, where tiling owns
+  scale and `MAX_BALL_FRAME_WIDTH` (1080p) is the cap that matters instead.
 - Otherwise `lambda_run.sh` defaults to the full clip, with the calibration taken from
   your newest local run of the same video (`--calibration` to override; `--start` /
   `--end` to trim).

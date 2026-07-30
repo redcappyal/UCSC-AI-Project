@@ -833,7 +833,7 @@ def test_track_segments_rejects_unknown_backend():
 
 
 def test_load_ball_backend_local_never_touches_roboflow(monkeypatch):
-    monkeypatch.delenv("BALL_DETECTOR", raising=False)   # default is local
+    monkeypatch.setenv("BALL_DETECTOR", "local")   # an override now, not the default
     monkeypatch.delenv("ROBOFLOW_API_KEY", raising=False)
     stub = _StubBallRunner()
     monkeypatch.setattr(job_runner.ball_model, "load_detector", lambda: stub)
@@ -851,6 +851,24 @@ def test_load_ball_backend_rfdetr_branch(monkeypatch):
     monkeypatch.setenv("BALL_DETECTOR", "rfdetr")
     sentinel = object()
     monkeypatch.setattr(job_runner, "get_tracking_model", lambda: sentinel)
+    backend, model = job_runner.load_ball_backend()
+    assert backend == "rfdetr"
+    assert model is sentinel
+
+
+def test_load_ball_backend_defaults_to_rfdetr(monkeypatch):
+    """What an analysis job runs when nothing is configured. Distinct from the
+    branch test above: that one proves rfdetr *works* when asked for, this one
+    proves it is what you get when you ask for nothing -- and that the local
+    WASB loader is not reached, so a default flip cannot hide behind a stub."""
+    monkeypatch.delenv("BALL_DETECTOR", raising=False)
+    sentinel = object()
+    monkeypatch.setattr(job_runner, "get_tracking_model", lambda: sentinel)
+
+    def explode():
+        raise AssertionError("local WASB must not load on the default backend")
+
+    monkeypatch.setattr(job_runner.ball_model, "load_detector", explode)
     backend, model = job_runner.load_ball_backend()
     assert backend == "rfdetr"
     assert model is sentinel
@@ -885,7 +903,7 @@ def test_run_tracking_job_local_backend_end_to_end(tmp_path, monkeypatch):
     run_dir = _make_job(tmp_path, run_id, video_path)
     _qualify_for_ball_tier(run_id, run_dir)
 
-    monkeypatch.delenv("BALL_DETECTOR", raising=False)
+    monkeypatch.setenv("BALL_DETECTOR", "local")
     monkeypatch.delenv("ROBOFLOW_API_KEY", raising=False)
     monkeypatch.setenv("PERSON_DETECTOR", "none")
     stub = _StubBallRunner()

@@ -40,7 +40,7 @@ video ──► ball detection ──► bounce detection ──► classificati
 
 | Stage | Where | What it does |
 |---|---|---|
-| Ball detection | `ball_model.py`, `ball_detector.py`, `job_runner.py` | Per-frame ball positions. Default (`BALL_DETECTOR=local`) is the committed WASB temporal model: native-resolution 416px tiles, 3 consecutive frames per detection, strided coarse pass with true `t±1` neighbours, then a dense refine pass around hit candidates. `BALL_DETECTOR=rfdetr` keeps the hosted Roboflow RF-DETR (`inference_engine.py`) for A/B eval; that is the only path needing `ROBOFLOW_API_KEY`. Every run records which backend produced it (`ball_backend` in job.json and report-v1). **The WASB backend is wired but not yet measured; the line-call eval against `eval_set/BASELINE-2026-07-23.md` is the gate for any recall claim.** |
+| Ball detection | `inference_engine.py`, `ball_model.py`, `ball_detector.py`, `job_runner.py` | Per-frame ball positions. Default (`BALL_DETECTOR=rfdetr`) is the hosted Roboflow RF-DETR — the detector every measured number in this repo came from; it is the only path needing `ROBOFLOW_API_KEY`, and its confidence floor is `tracking_common.CONFIDENCE_THRESHOLD` (0.40). `BALL_DETECTOR=local` selects the committed WASB temporal model instead: native-resolution 416px tiles, 3 consecutive frames per detection, strided coarse pass with true `t±1` neighbours, then a dense refine pass around hit candidates, filtered by the manifest's own `conf_threshold`; the 1080p `MAX_BALL_FRAME_WIDTH` cap binds on that branch only, since it is the one stage whose cost is the source resolution. Every run records which backend produced it (`ball_backend` in job.json and report-v1). **WASB is wired but still unmeasured, which is why it is not the default; the line-call eval against `eval_set/BASELINE-2026-07-23.md` is the gate for any recall claim and for promoting it back.** |
 | Bounce detection | `detect_wall_hits.py`, `bounce_gb_model_detector.py` | Finds impact frames from trajectory kinks. `detect_wall_hits` locates candidates for the refine pass; `bounce_gb_model_detector` labels the events. One path, not a choice — the selectable engines were removed 2026-07-27. |
 | Audio rescue | `audio_events.py` | Impact sounds recover bounces the trajectory missed. |
 | Classification | `classify_events.py` | Labels each hit wall / side wall / floor / racket. |
@@ -76,11 +76,11 @@ Useful environment variables:
 |---|---|---|
 | `HOST` | `127.0.0.1` | Bind address. `0.0.0.0` exposes the server to the LAN for phone access. |
 | `PORT` | `5188` | Listen port. Avoid 5000 — macOS AirPlay Receiver holds it. |
-| `BALL_DETECTOR` | `local` | Ball detector for analysis jobs: `local` (committed WASB temporal model) or `rfdetr` (hosted Roboflow). No silent fallback. |
+| `BALL_DETECTOR` | `rfdetr` | Ball detector for analysis jobs: `rfdetr` (hosted Roboflow RF-DETR) or `local` (committed WASB temporal model). No silent fallback. |
 | `BALL_DEVICE` | `auto` | Device for the local ball detector: CUDA when available, else CPU. MPS is opt-in (`mps`), never auto. |
 | `BALL_MAX_BATCH_TILES` | `8` | Tiles per inference batch, capping the manifest's `max_batch_tiles` (32). A bigger batch buys nothing on any measured device — CUDA is flat from batch 1 to 64 (A10: 16.9→18.2 ms/tile) because the model saturates the card on one tile — and above 8 MPS falls off a ~40x cliff (M2 Air: 81.8 ms/tile at batch 8, 3082 at batch 10) and at 4K tile counts returns **wrong numbers**: the Metal command buffer OOMs, torch does not raise, and the heatmap comes back incomplete. Raise it only up to the manifest ceiling, and only with a measurement. |
 | `BALL_MODEL_DIR` | `models/crosscourt-wasb-416-v1` | Override the local ball model directory. |
-| `ROBOFLOW_API_KEY` | — | Required only when `BALL_DETECTOR=rfdetr`. |
+| `ROBOFLOW_API_KEY` | — | Required for `BALL_DETECTOR=rfdetr`, i.e. by default. |
 | `ROBOFLOW_MODEL_ID` | `ai-squash-line-tracker/4` | Which hosted detection model to load (rfdetr backend). |
 | `TRACKING_BACKEND` | `auto` | rfdetr backend only: `torch` (GPU/MPS) or `onnx` (CPU). |
 | `COACH_LLM_PROVIDER` | OpenAI when an API key is present; otherwise local templates | `ollama`, `openai`, or `local`. |

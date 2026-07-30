@@ -1,9 +1,9 @@
 """Offline ball tracking of a single clip -> timestamped pixel samples.
 
-Runs a ball detector -- by default the locally trained detector (ball_model +
-ball_detector; BALL_DETECTOR=local, alias "yolox") -- over one squash clip and
-produces `TrackSample`s. Set BALL_DETECTOR=rfdetr to use the hosted RF-DETR
-the Flask pipeline still runs on (via inference_engine) instead. A local
+Runs a ball detector -- by default the hosted RF-DETR the Flask pipeline runs
+on (BALL_DETECTOR=rfdetr, via inference_engine) -- over one squash clip and
+produces `TrackSample`s. Set BALL_DETECTOR=local (alias "yolox") to use the
+locally trained detector (ball_model + ball_detector) instead. A local
 manifest with frames_per_input > 1 (a temporal/WASB-style model) routes
 through centred 3-frame windows (_centered_windows) instead of one-frame-at-a-
 time detection -- see detections_to_track_samples. Heavy deps (cv2 video I/O,
@@ -15,7 +15,9 @@ module, or exercising its test injection seams, never touches them.
 This module was the single-camera half of the former `stereo_offline.py`. The
 two-clip fusion half was archived on 2026-07-27 (see archive/stereo/README.md);
 this half stayed, because it is the runner that exercises the local ball
-detector -- the thing the project is actually investing in.
+detector -- the thing the project is actually investing in. It still is; it
+just no longer reaches for it *by default*, which is a statement about which
+detector is trusted today, not about which one is being built.
 """
 
 import math
@@ -68,7 +70,13 @@ def _iter_frames(video_path):
         cap.release()
 
 
-BALL_DETECTOR_DEFAULT = "yolox"
+# The one place that decides which detector runs when nobody says otherwise.
+# "rfdetr" as of 2026-07-30: the committed WASB artifact is wired but still
+# unmeasured against eval_set/BASELINE-2026-07-23.md, so the hosted RF-DETR --
+# the detector every existing number in this repo came from -- stays the
+# default until that eval says otherwise. WASB is one env var away
+# (BALL_DETECTOR=local) and nothing about it was removed.
+BALL_DETECTOR_DEFAULT = "rfdetr"
 
 
 def _import_rfdetr():
@@ -103,7 +111,11 @@ def selected_detector():
 
     "local" is canonical; "yolox" is accepted as a compatible alias (it
     predates the local backend growing a temporal mode, and MODEL.md still
-    documents it) and normalises to "local"."""
+    documents it) and normalises to "local".
+
+    Unset resolves to BALL_DETECTOR_DEFAULT ("rfdetr"). This is the only read
+    of that constant, so the Flask app, this offline runner, and the eval
+    scripts cannot drift onto different defaults."""
     import os
     backend = os.environ.get("BALL_DETECTOR", BALL_DETECTOR_DEFAULT).strip().lower()
     if backend == "yolox":
@@ -118,10 +130,10 @@ def selected_detector():
 def _build_infer(model, confidence):
     """Build the per-frame detection callable.
 
-    Defaults to the locally trained detector (BALL_DETECTOR=local, alias
-    "yolox"); BALL_DETECTOR=rfdetr restores the hosted RF-DETR the Flask
-    pipeline still uses. Imported lazily so a clip with zero decoded frames
-    never loads a model at all.
+    Defaults to the hosted RF-DETR the Flask pipeline runs
+    (BALL_DETECTOR=rfdetr); BALL_DETECTOR=local (alias "yolox") selects the
+    locally trained detector. Imported lazily so a clip with zero decoded
+    frames never loads a model at all.
 
     Never falls back between detectors: a missing model raises, because a
     silent swap would make the local/rfdetr split invisible.

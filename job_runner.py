@@ -416,11 +416,12 @@ def decode_segments_to_queue(video_path, segments, frame_queue, stop_event,
 def load_ball_backend():
     """Resolve BALL_DETECTOR into (backend, model) for this job.
 
-    "local" (the default) loads the committed WASB artifact via
-    ball_model.load_detector(); "rfdetr" keeps the hosted tracking model --
-    the only branch that needs ROBOFLOW_API_KEY. Loud on every failure;
-    never falls back, because a silent swap would make the local/rfdetr
-    split invisible in every downstream number.
+    "rfdetr" (the default) keeps the hosted tracking model -- the only branch
+    that needs ROBOFLOW_API_KEY, and the detector every measured number in
+    this repo came from; "local" loads the committed WASB artifact via
+    ball_model.load_detector(). Loud on every failure; never falls back,
+    because a silent swap would make the local/rfdetr split invisible in
+    every downstream number.
     """
     backend = selected_detector()
     if backend == "rfdetr":
@@ -528,24 +529,27 @@ def track_segments(model, video_path, segments, inference_width, source_fps, res
     refine or audio-rescue (spec §4.2). Neighbour frames on the temporal
     path are invisible to observers.
 
-    backend "local" is what production runs: load_ball_backend() resolves
-    BALL_DETECTOR (which defaults to the committed WASB artifact) and every
-    job call site passes that result explicitly. It runs a ball_model runner
-    (`model` has .manifest) at NATIVE resolution — inference_width is
-    deliberately ignored, tiling owns scale (ios/MODEL.md §6) — and a temporal
-    manifest (frames_per_input == 3) consumes the 3-frame windows the temporal
-    producer emits. The selection floor becomes the manifest's own
-    conf_threshold: the motion-consistency selector is the low-confidence
-    rescue mechanism (the ByteTrack idea, absorbed), so the 0.40 rfdetr floor
-    would silently discard the recall the model was fine-tuned to recover.
+    backend "rfdetr" is what production runs (again, as of 2026-07-30):
+    load_ball_backend() resolves BALL_DETECTOR, which defaults to "rfdetr",
+    and every job call site passes that result explicitly. It is the per-frame
+    path against the hosted tracking model, and its floor is
+    tracking_common.CONFIDENCE_THRESHOLD — so that constant IS the pipeline's
+    live confidence floor again, not a legacy number, and changing it changes
+    what every analysis job detects.
 
-    backend "rfdetr" is the historical per-frame path against the hosted
-    tracking model, and its floor stays tracking_common.CONFIDENCE_THRESHOLD.
-    It is still this function's *kwarg* default — a leftover from before WASB
-    became the pipeline default — but no production caller relies on that, so
-    do not read it as "what a job runs", and do not read CONFIDENCE_THRESHOLD
-    as "the pipeline's confidence floor". A new caller that omits `backend=`
-    would silently get the legacy hosted path.
+    It is also this function's *kwarg* default, but that agreement is a fact
+    about today's BALL_DETECTOR default rather than a contract: a caller that
+    omits `backend=` gets rfdetr no matter what BALL_DETECTOR says, which is
+    why the job call sites still pass it explicitly.
+
+    backend "local" runs a ball_model runner (`model` has .manifest) at NATIVE
+    resolution — inference_width is deliberately ignored, tiling owns scale
+    (ios/MODEL.md §6) — and a temporal manifest (frames_per_input == 3)
+    consumes the 3-frame windows the temporal producer emits. The selection
+    floor becomes the manifest's own conf_threshold: the motion-consistency
+    selector is the low-confidence rescue mechanism (the ByteTrack idea,
+    absorbed), so the 0.40 rfdetr floor would silently discard the recall the
+    model was fine-tuned to recover.
     """
     temporal = False
     confidence_floor = CONFIDENCE_THRESHOLD
