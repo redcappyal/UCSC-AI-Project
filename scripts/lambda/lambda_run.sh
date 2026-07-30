@@ -35,11 +35,32 @@ if [ -n "$WIDTH" ]; then
     *) echo "Invalid --inference-width: $WIDTH (valid: 0, 640, 960, 1280)" >&2; exit 1 ;;
   esac
 fi
+# Same reason as the width check, and app.py:1361 is just as strict: a typo like
+# `--stride 40` or `--stride l` is rejected only AFTER the clip has been rsynced to
+# a box that is already billing. Non-numeric first (so `[ -lt ]` never sees a word).
+if [ -n "$STRIDE" ]; then
+  case "$STRIDE" in
+    ''|*[!0-9]*) echo "Invalid --stride: $STRIDE (whole number, 1-10)" >&2; exit 1 ;;
+  esac
+  if [ "$STRIDE" -lt 1 ] || [ "$STRIDE" -gt 10 ]; then
+    echo "Invalid --stride: $STRIDE (app.py accepts 1-10)" >&2; exit 1
+  fi
+fi
+# /api/track floats these, so digits with at most one dot. Rejects '', '1O', '1.2.3'.
+check_seconds() { # check_seconds FLAG VALUE
+  case "$2" in
+    ''|.|*[!0-9.]*|*.*.*)
+      echo "Invalid $1: $2 (seconds, e.g. 0 or 90.5)" >&2; exit 1 ;;
+  esac
+}
+check_seconds --start "$START_T"
+[ -z "$END_T" ] || check_seconds --end "$END_T"
+# Everything above is free; the moment below is the first that assumes a box.
 require_instance
 
-REMOTE_APP="http://127.0.0.1:5188"
+REMOTE_APP="http://127.0.0.1:$REMOTE_PORT"
 poll_and_sync() { # poll_and_sync RUN_ID
-  local run_id="$1" status="" response=""
+  local run_id="$1" status="" response="" run_error=""
   while true; do
     response="$(box_ssh "curl -s $REMOTE_APP/api/track/status/$run_id")"
     # A transient blip can hand back an empty/partial body, and json_field
@@ -47,10 +68,23 @@ poll_and_sync() { # poll_and_sync RUN_ID
     # absurd — treat an unreadable poll as "no news" and ask again.
     status="$(json_field "$response" status 2>/dev/null)" || status=""
     if [ -z "$status" ]; then
-      # Say so every tick. A stale --resume id, or a job the box lost to a Flask
-      # restart, parses fine but carries no status — silently identical to a blip.
-      # The loop still never gives up on its own, but the operator can see that it
-      # is stuck instead of watching a dead terminal while the box bills.
+      # A dead run id is NOT a blip, and the two are distinguishable: /api/track/
+      # status/<id> answers 404 with {"ok": false, "error": "Tracking job was not
+      # found."} and `curl -s` prints that body, so the answer is already in hand.
+      # Exit on a parseable error rather than printing "waiting for status" at a
+      # billing box forever. (Checked only when status is empty: a *running* job's
+      # payload never reaches here, and a failed one is handled by the case below.)
+      run_error=""
+      run_error="$(json_field "$response" error 2>/dev/null)" || run_error=""
+      if [ -n "$run_error" ]; then
+        echo ""
+        echo "Run $run_id: $run_error" >&2
+        echo "The box is still up and still billing — lambda_down.sh when you are done." >&2
+        exit 1
+      fi
+      # Otherwise say so every tick: an unparseable body is a genuine transient,
+      # and the loop never gives up on its own, but the operator can see that it is
+      # stuck instead of watching a dead terminal while the box bills.
       printf '\rwaiting for status (no parseable response yet)…   '
       sleep 5
       continue

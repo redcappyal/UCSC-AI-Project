@@ -2,13 +2,18 @@
 # Terminate the tracked instance (billing stops ONLY at termination), then
 # sweep the account for anything else still running.
 set -euo pipefail
-source "$(dirname "${BASH_SOURCE[0]}")/common.sh"
+# Resolved once, absolute, BEFORE the trap is armed: inside the trap
+# BASH_SOURCE[0] is whatever file the shell was last reading — common.sh, not this
+# script — and the sweep is the backstop that must not depend on that coincidence
+# (or on the cwd the operator happened to invoke from).
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/common.sh"
 
 # The sweep is the forgotten-box backstop, so it must survive every abort path
 # in this script — a failed terminate POST is exactly when the operator needs
 # to know what is still billing. || true: the sweep is best-effort (it calls
 # the API too), and must never mask this script's own exit status.
-trap 'echo "--- account sweep"; "$(dirname "${BASH_SOURCE[0]}")/lambda_status.sh" || true' EXIT
+trap 'echo "--- account sweep"; "$SCRIPT_DIR/lambda_status.sh" || true' EXIT
 
 if [ -f "$INSTANCE_FILE" ]; then
   require_instance

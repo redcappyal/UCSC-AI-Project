@@ -1,8 +1,11 @@
 #!/usr/bin/env bash
 # Launch one instance (A6000 -> A10 -> A100 under $2/hr), bootstrap, verify CUDA.
 set -euo pipefail
-source "$(dirname "${BASH_SOURCE[0]}")/common.sh"
-REF="${1:-main}"
+# Resolved once, absolute: BASH_SOURCE[0] changes meaning inside a sourced file,
+# and every later use of this path (the bootstrap scp) must be immune to cwd.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/common.sh"
+REF="${1:-main}"   # optional git ref to bootstrap on the box (default: main)
 
 # --- one box at a time
 if [ -f "$INSTANCE_FILE" ]; then
@@ -14,9 +17,18 @@ if [ -f "$INSTANCE_FILE" ]; then
     echo "Cannot verify existing instance $existing_id (API error above) — refusing to launch another box. Check scripts/lambda/lambda_status.sh; if the old box is confirmed gone, delete $INSTANCE_FILE and re-run." >&2
     exit 1
   }
-  status="$(json_field "$info" data.status)"
-  if [ -n "$status" ] && [ "$status" != "terminated" ]; then
-    echo "Instance $existing_id is already '$status' — use it, or lambda_down.sh first." >&2
+  status=""
+  status="$(json_field "$info" data.status 2>/dev/null)" || status=""
+  # Invariant shared with lambda_down.sh: ONLY an explicitly observed 'terminated'
+  # licenses deleting the tracking file. An empty status is not evidence the box is
+  # gone — it is a 2xx we could not read (shape change, `status: null`, partial
+  # `data`) — and letting it fall through would launch a second box while the
+  # tracked one is possibly still billing, leaving the OLD one untracked. The two
+  # scripts must agree here or the one-box guard has a hole at exactly the moment
+  # the API is behaving strangely.
+  if [ "$status" != "terminated" ]; then
+    echo "Instance $existing_id reports status '$status' (not 'terminated') — use it, or scripts/lambda/lambda_down.sh first." >&2
+    echo "If it is genuinely gone (scripts/lambda/lambda_status.sh shows nothing), delete $INSTANCE_FILE and re-run." >&2
     exit 1
   fi
   rm -f "$INSTANCE_FILE"
@@ -117,12 +129,17 @@ PY
 
 # --- wait for active + ip (15 min cap)
 ip=""
+status=""
 for _ in $(seq 1 90); do
   sleep 10
-  info="$(api GET "/instances/$instance_id")"
-  status="$(json_field "$info" data.status)"
-  ip="$(json_field "$info" data.ip)"
-  echo "  status=$status ip=${ip:-...}"
+  # Every parse in this loop is fail-open, and that is the point: the box is
+  # ALREADY billing from here on, so one transient 502/timeout must not abort the
+  # script — recovery would re-pay the provisioning minutes. An unreadable tick is
+  # just "no news"; re-poll. (Same `|| echo '{}'` guard lambda_down.sh uses.)
+  info="$(api GET "/instances/$instance_id" || echo '{}')"
+  status=""; status="$(json_field "$info" data.status 2>/dev/null)" || status=""
+  ip=""; ip="$(json_field "$info" data.ip 2>/dev/null)" || ip=""
+  echo "  status=${status:-?} ip=${ip:-...}"
   if [ "$status" = "active" ] && [ -n "$ip" ]; then
     break
   fi
@@ -132,7 +149,15 @@ if [ "$status" != "active" ] || [ -z "$ip" ]; then
   exit 1
 fi
 
-price_cents="$(json_field "$(api GET /instance-types)" "data.$itype.instance_type.price_cents_per_hour")"
+# Same fail-open guard, same reason: the box is up and billing, and the price is
+# only used for the cost lines. Losing it to a blip must not abort the session.
+price_cents=""
+price_cents="$(json_field "$(api GET /instance-types || echo '{}')" \
+  "data.$itype.instance_type.price_cents_per_hour" 2>/dev/null)" || price_cents=""
+if [ -z "$price_cents" ]; then
+  echo "warning: could not read the $itype price — session cost lines will read \$0.00." >&2
+  price_cents=0
+fi
 # Same env-fed, atomic write as the provisional one above; only ip/price_cents differ.
 # launched_at is the value read at launch, not now — provisioning took up to 15 min.
 CC_INSTANCE_FILE="$INSTANCE_FILE" CC_ID="$instance_id" CC_IP="$ip" CC_TYPE="$itype" \
@@ -154,7 +179,7 @@ for _ in $(seq 1 30); do
   if box_ssh true 2>/dev/null; then break; fi
   sleep 10
 done
-scp "${SSH_OPTS[@]}" "$(dirname "${BASH_SOURCE[0]}")/bootstrap_remote.sh" "$REMOTE_USER@$ip:/tmp/bootstrap_remote.sh"
+scp "${SSH_OPTS[@]}" "$SCRIPT_DIR/bootstrap_remote.sh" "$REMOTE_USER@$ip:/tmp/bootstrap_remote.sh"
 if ! box_ssh bash /tmp/bootstrap_remote.sh "$REF"; then
   echo "" >&2
   echo "Bootstrap FAILED. Instance left up for debugging (billing continues):" >&2
@@ -166,6 +191,22 @@ if ! box_ssh bash /tmp/bootstrap_remote.sh "$REF"; then
   exit 1
 fi
 
+echo ""
+# Nothing outside this terminal bounds a forgotten box: Lambda has no stopped
+# state, so the meter runs from the launch POST until termination, and both the
+# lambda_down sweep and lambda_status only help an operator who already
+# remembered. Naming the wall-clock deadline and the overnight number here, while
+# they are still watching, is the cheapest bound that exists today. (A local
+# watchdog is the next increment — see the spec's failure-mode table.)
+CC_PRICE_CENTS="$price_cents" CC_LAUNCHED_AT="$launched_at" python3 - <<'PY'
+import os, time
+price = int(os.environ["CC_PRICE_CENTS"] or 0) / 100
+started = int(os.environ["CC_LAUNCHED_AT"])
+clock = lambda offset: time.strftime("%H:%M", time.localtime(started + offset))
+print(f"Billing since {clock(0)} local at ${price:.2f}/hr — "
+      f"stop by {clock(3 * 3600)} or this session costs ${price * 3:.2f}.")
+print(f"Left running overnight (24 h) it costs ${price * 24:.2f}. SET A TIMER NOW.")
+PY
 echo ""
 echo "Ready. Next:"
 echo "  scripts/lambda/lambda_run.sh <clip.mp4>     # analyze a clip"

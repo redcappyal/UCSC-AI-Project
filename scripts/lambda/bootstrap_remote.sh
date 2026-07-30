@@ -4,6 +4,9 @@ set -euo pipefail
 REF="${1:-main}"
 
 cd "$HOME"
+# The clone URL is spelled out here, not sourced from common.sh: this script is
+# scp'd to the box and runs there, where common.sh does not exist. Anonymous clone
+# — the zero-secrets model needs this repo to stay public.
 if [ ! -d UCSC-AI-Project ]; then
   git clone --branch "$REF" https://github.com/redcappyal/UCSC-AI-Project
 fi

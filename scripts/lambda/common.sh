@@ -7,7 +7,9 @@ CONFIG_DIR="$HOME/.config/crosscourt"
 KEY_FILE="$CONFIG_DIR/lambda_api_key"
 INSTANCE_FILE="$CONFIG_DIR/lambda_instance.json"
 KNOWN_HOSTS="$CONFIG_DIR/lambda_known_hosts"
-REPO_URL="https://github.com/redcappyal/UCSC-AI-Project"
+# No REPO_URL here on purpose: the only clone happens in bootstrap_remote.sh, which
+# runs ON the box and cannot source this file. A variable nothing reads is a knob
+# that looks live and is not — the URL lives where it is used.
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 SSH_KEY="$HOME/.ssh/id_ed25519"
 SSH_KEY_NAME="crosscourt-mac"
