@@ -72,7 +72,7 @@ The venv is `.venv`; everything runs through it. System `python3` has no flask o
 
 `pytest.ini` deselects `requires_model` by default — one test that runs the committed
 TorchScript ball model through `torch` (see the `ball_track_offline.py` note below). A
-green run reads "722 passed, 1 skipped, 1 deselected" (measured 2026-07-30). Both are expected, not failures to
+green run reads "803 passed, 1 skipped, 1 deselected" (measured 2026-07-30). Both are expected, not failures to
 chase: the deselection is that model test, and the skip is `test_court_detect.py` needing
 the Bay Club footage, a real fixed-mount asset that lives outside the repo.
 

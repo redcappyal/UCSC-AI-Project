@@ -78,7 +78,10 @@ require_instance() {
 box_ssh() { ssh "${SSH_OPTS[@]}" "$REMOTE_USER@$INSTANCE_IP" "$@"; }
 
 box_rsync() { # box_rsync SRC... DST  (caller writes user@host: prefixes)
-  rsync -a --partial --info=progress2 -e "ssh ${SSH_OPTS[*]}" "$@"
+  # --progress, not --info=progress2: macOS ships openrsync (protocol 29, the
+  # rsync 2.6.9 era) and dies on the newer flag with a usage dump, which is
+  # what a real clip upload hit on 2026-07-30. --progress exists in both.
+  rsync -a --partial --progress -e "ssh ${SSH_OPTS[*]}" "$@"
 }
 
 ensure_tunnel() {
