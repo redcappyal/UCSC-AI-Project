@@ -45,7 +45,9 @@ echo "--- flask"
 pkill -f "python app.py" 2>/dev/null || true
 sleep 1
 nohup .venv/bin/python app.py > "$HOME/flask.log" 2>&1 &
-for _ in $(seq 1 20); do
+# 60 s, not 20: a cold first boot imports torch + cv2 + rfdetr before /api/health
+# answers, and a premature "Bootstrap FAILED" buys a paid debug session on a healthy box.
+for _ in $(seq 1 60); do
   if curl -sf http://127.0.0.1:5188/api/health > /dev/null; then
     echo "Flask up on 127.0.0.1:5188 (log: ~/flask.log)"
     exit 0

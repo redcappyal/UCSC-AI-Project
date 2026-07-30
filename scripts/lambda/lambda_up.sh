@@ -64,26 +64,55 @@ itype="${picked%% *}"
 region="${picked##* }"
 echo "Launching $itype in $region..."
 
+# Billing starts the moment this POST lands on the server, so its failure mode is
+# the expensive one. api() is fail-closed (curl --fail prints nothing on >=400), so
+# a bare assignment would abort here under errexit with no id, no tracking file and
+# no warning — and a POST can succeed server-side while its reply is lost (30 s
+# timeout on a hardware-provisioning endpoint, reset, edge 502). Capture the exit
+# code instead, same idiom as the pick step, and say plainly that a box may exist.
+launch_status=0
 launch_response="$(api POST /instance-operations/launch "{
   \"region_name\": \"$region\", \"instance_type_name\": \"$itype\",
   \"ssh_key_names\": [\"$SSH_KEY_NAME\"], \"quantity\": 1,
-  \"name\": \"crosscourt-analysis\"}")"
-instance_id="$(json_field "$launch_response" data.instance_ids.0)"
+  \"name\": \"crosscourt-analysis\"}")" || launch_status=$?
+if [ "$launch_status" -ne 0 ]; then
+  echo "Launch request failed in transit — a box MAY have started and be billing." >&2
+  echo "Run scripts/lambda/lambda_status.sh BEFORE retrying." >&2
+  exit 1
+fi
+# json_field raises IndexError (not empty) on a 2xx whose instance_ids is empty, so
+# guard this assignment too; the message below prints the whole response, which is
+# strictly more useful than the traceback it replaces.
+instance_id=""
+instance_id="$(json_field "$launch_response" data.instance_ids.0 2>/dev/null)" || instance_id=""
 if [ -z "$instance_id" ]; then
-  echo "Launch failed: $(json_field "$launch_response" error.message)" >&2
+  echo "Launch response carried no instance id: $launch_response" >&2
   exit 1
 fi
 echo "Instance $instance_id launching (billing has started — lambda_down.sh stops it)."
 
+# One clock read, shared by both writes below: launched_at means "when billing
+# started", and the final write happens up to 15 min later, after provisioning.
+launched_at="$(date +%s)"
+
 # Provisional record, written before any further api call: the file must exist from
 # the first billable moment so lambda_down.sh can always find the box even if this
 # script dies mid-poll. The full write below overwrites it with the real ip + price.
-python3 - <<PY
-import json, time
-json.dump({"id": "$instance_id", "ip": "", "type": "$itype",
-           "region": "$region", "price_cents": 0,
-           "launched_at": int(time.time())},
-          open("$INSTANCE_FILE", "w"))
+CC_INSTANCE_FILE="$INSTANCE_FILE" CC_ID="$instance_id" CC_IP="" CC_TYPE="$itype" \
+CC_REGION="$region" CC_PRICE_CENTS=0 CC_LAUNCHED_AT="$launched_at" \
+python3 - <<'PY'
+# Quoted heredoc + os.environ: shell values never become Python source, so a quote
+# or backslash in one cannot break the write — and breaking *this* write is what the
+# provisional record exists to prevent. tmp + os.replace so an interrupt mid-write
+# leaves the old file, never a zero-byte one that every reader then chokes on.
+import json, os
+path = os.environ["CC_INSTANCE_FILE"]
+with open(path + ".tmp", "w") as handle:
+    json.dump({"id": os.environ["CC_ID"], "ip": os.environ["CC_IP"],
+               "type": os.environ["CC_TYPE"], "region": os.environ["CC_REGION"],
+               "price_cents": int(os.environ["CC_PRICE_CENTS"] or 0),
+               "launched_at": int(os.environ["CC_LAUNCHED_AT"])}, handle)
+os.replace(path + ".tmp", path)
 PY
 
 # --- wait for active + ip (15 min cap)
@@ -104,12 +133,19 @@ if [ "$status" != "active" ] || [ -z "$ip" ]; then
 fi
 
 price_cents="$(json_field "$(api GET /instance-types)" "data.$itype.instance_type.price_cents_per_hour")"
-python3 - <<PY
-import json, time
-json.dump({"id": "$instance_id", "ip": "$ip", "type": "$itype",
-           "region": "$region", "price_cents": int("$price_cents" or 0),
-           "launched_at": int(time.time())},
-          open("$INSTANCE_FILE", "w"))
+# Same env-fed, atomic write as the provisional one above; only ip/price_cents differ.
+# launched_at is the value read at launch, not now — provisioning took up to 15 min.
+CC_INSTANCE_FILE="$INSTANCE_FILE" CC_ID="$instance_id" CC_IP="$ip" CC_TYPE="$itype" \
+CC_REGION="$region" CC_PRICE_CENTS="$price_cents" CC_LAUNCHED_AT="$launched_at" \
+python3 - <<'PY'
+import json, os
+path = os.environ["CC_INSTANCE_FILE"]
+with open(path + ".tmp", "w") as handle:
+    json.dump({"id": os.environ["CC_ID"], "ip": os.environ["CC_IP"],
+               "type": os.environ["CC_TYPE"], "region": os.environ["CC_REGION"],
+               "price_cents": int(os.environ["CC_PRICE_CENTS"] or 0),
+               "launched_at": int(os.environ["CC_LAUNCHED_AT"])}, handle)
+os.replace(path + ".tmp", path)
 PY
 
 # --- wait for ssh, then bootstrap
@@ -122,7 +158,10 @@ scp "${SSH_OPTS[@]}" "$(dirname "${BASH_SOURCE[0]}")/bootstrap_remote.sh" "$REMO
 if ! box_ssh bash /tmp/bootstrap_remote.sh "$REF"; then
   echo "" >&2
   echo "Bootstrap FAILED. Instance left up for debugging (billing continues):" >&2
-  echo "  ssh ${SSH_OPTS[*]} $REMOTE_USER@$ip" >&2
+  # printf %q, not ${SSH_OPTS[*]}: the -i/-o arguments are paths that may contain
+  # spaces, and this line exists to be copy-pasted into a shell.
+  ssh_cmd="$(printf 'ssh '; printf '%q ' "${SSH_OPTS[@]}"; printf '%q' "$REMOTE_USER@$ip")"
+  echo "  $ssh_cmd" >&2
   echo "  scripts/lambda/lambda_down.sh   # when done" >&2
   exit 1
 fi
