@@ -44,10 +44,22 @@ compute there.
   exist yet; `lambda_up.sh` generates it (no passphrase — it only grants access
   to Ian's own ephemeral instances) and registers the public key with Lambda as
   `crosscourt-mac` via `POST /ssh-keys` (skipped if already registered).
-- **The box carries zero secrets.** The repo is public (`git clone` needs no
-  auth); `BALL_DETECTOR` defaults to the committed local model (no
-  `ROBOFLOW_API_KEY`); the coach LLM call happens on the Mac when a report is
-  opened locally, so no `OPENAI_API_KEY` leaves the Mac.
+- **The box holds one secret: the Roboflow credentials, for the instance's
+  lifetime.** This section originally claimed "zero secrets on the box" on the
+  grounds that the ball backend defaults to the committed local model. That was
+  wrong (corrected 2026-07-30, first live session): `app.py` does
+  `os.environ.setdefault("BALL_DETECTOR", "rfdetr")`, so the *production*
+  backend is the hosted RF-DETR, and a box without credentials fails every job
+  at frame 0. `lambda_up.sh` therefore copies the Mac's whole `.env`
+  (`ROBOFLOW_API_KEY`, `ROBOFLOW_MODEL_ID`, `BALL_DETECTOR`) to the instance.
+  Handling: piped over ssh **stdin**, never as a command argument, since argv
+  is readable by any other process on the box via `ps`; written `chmod 600`;
+  destroyed with the instance at teardown, which is the only thing bounding its
+  exposure. `CROSSCOURT_ENV_FILE` overrides the source path.
+  Still true: the repo is public, so `git clone` needs no auth, and the coach
+  LLM call happens on the Mac when a report is opened, so no `OPENAI_API_KEY`
+  ever leaves the Mac. A WASB/eval session can still run secret-free with
+  `BALL_DETECTOR=local`.
 - **Network exposure:** Flask on the box binds `127.0.0.1:5188` (the app
   default; bootstrap must NOT set `HOST`). All HTTP reaches it through an SSH
   tunnel. The app has no auth; it must never listen publicly.

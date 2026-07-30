@@ -50,7 +50,16 @@ Ephemeral CUDA boxes for analysis + eval runs. Spec:
   `--end` to trim).
 - The box's Flask listens on 127.0.0.1 only. Never start it with `HOST=0.0.0.0` on a
   cloud box: the app has no auth.
-- The box holds zero secrets; the repo is public. OPENAI/ROBOFLOW keys stay on the Mac.
+- `lambda_up.sh` copies your whole `.env` to the box — the app's default ball
+  backend is the hosted RF-DETR, and without `ROBOFLOW_API_KEY` *and*
+  `ROBOFLOW_MODEL_ID` every job fails at frame 0 (the model-id one reports as
+  "Could not find requested Roboflow resource", which reads like a bad key).
+  It is sent over ssh stdin, never argv, and dies with the instance — so
+  tearing down is what ends its exposure. `CROSSCOURT_ENV_FILE=/path/to/.env`
+  overrides the source. For a secret-free WASB/eval session, set
+  `BALL_DETECTOR=local` instead.
+- `OPENAI_API_KEY` never leaves the Mac: coaching runs when you open a report
+  locally, not on the box. The repo is public, so the clone needs no auth.
 
 ## When a script dies, check the meter before you retry
 - **`lambda_up.sh` failed anywhere near the launch step?** Run
