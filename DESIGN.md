@@ -1187,7 +1187,8 @@ entirely rather than printing a zero. It takes `.warn` when any rally conflicts 
 Provenance and confidence about **a number that is shown** ride behind a tap, not
 in body copy. A `.whybtn` — 15 px circled-`i`, `--dim`, inside a 44 px target
 whose negative margins keep the heading row its original height — sits at the end
-of the heading the caveat belongs to. Tapping toggles a `.whynote` (12 / `--dim`)
+of the heading the caveat belongs to. Tapping toggles a `.whynote` (13 / `--dim` — the
+Sub-meta rung of the §6.1 ladder, same as `.metaline`)
 directly beneath. Built by `whyDisclosure(text)` / `sectionHead(label, why)`.
 
 - Collapsed by default. `aria-expanded` + `aria-controls`; glyph `aria-hidden`.
