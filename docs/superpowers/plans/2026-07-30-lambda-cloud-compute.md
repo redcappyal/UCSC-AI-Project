@@ -214,10 +214,8 @@ Stdlib only — runs under plain python3 on the Mac and on the box. Holds the
 logic worth unit-testing; the bash scripts stay plumbing.
 """
 import argparse
-import hashlib
 import json
 import sys
-from pathlib import Path
 
 
 def _entry_type(entry):
@@ -264,45 +262,6 @@ def availability_rows(payload, region_prefix="us-"):
     return sorted(rows, key=lambda row: (row[1], row[0]))
 
 
-def file_sha256(path, chunk_bytes=1024 * 1024):
-    hasher = hashlib.sha256()
-    with open(path, "rb") as handle:
-        while True:
-            chunk = handle.read(chunk_bytes)
-            if not chunk:
-                break
-            hasher.update(chunk)
-    return hasher.hexdigest()
-
-
-def find_default_calibration(clip_path, ui_runs_dir):
-    """Newest local run of the same video (by sha256) -> its calibration.json.
-
-    The by-hash upload store names videos `<sha256><ext>` and /api/track
-    records that path in job.json, so "same video" is an exact substring match
-    on the basename. Returns a Path or None.
-    """
-    digest = file_sha256(clip_path)
-    ui_runs = Path(ui_runs_dir)
-    if not ui_runs.is_dir():
-        return None
-    run_dirs = sorted(
-        (d for d in ui_runs.iterdir() if (d / "job.json").exists()),
-        key=lambda d: d.name, reverse=True,
-    )
-    for run_dir in run_dirs:
-        try:
-            job = json.loads((run_dir / "job.json").read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            continue
-        video_path = job.get("video_path", "")
-        if digest in Path(video_path).name:
-            calibration = run_dir / "calibration.json"
-            if calibration.exists():
-                return calibration
-    return None
-
-
 def _cmd_pick_type(args):
     payload = json.load(sys.stdin)
     picked = pick_instance_type(
@@ -324,19 +283,6 @@ def _cmd_pick_type(args):
     return 0
 
 
-def _cmd_find_calibration(args):
-    calibration = find_default_calibration(args.clip, args.ui_runs)
-    if calibration is None:
-        print(
-            f"No local run of this video found under {args.ui_runs}; "
-            f"pass --calibration explicitly.",
-            file=sys.stderr,
-        )
-        return 2
-    print(calibration)
-    return 0
-
-
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
@@ -346,11 +292,6 @@ def main(argv=None):
     pick.add_argument("--cap-cents", type=int, required=True)
     pick.add_argument("--region-prefix", default="us-")
     pick.set_defaults(func=_cmd_pick_type)
-
-    cal = sub.add_parser("find-calibration", help="default calibration for a clip")
-    cal.add_argument("clip")
-    cal.add_argument("--ui-runs", default="ui_runs")
-    cal.set_defaults(func=_cmd_find_calibration)
 
     args = parser.parse_args(argv)
     return args.func(args)
@@ -378,17 +319,19 @@ git commit -m "feat(cloud): instance-type selection helper for Lambda scripts"
 ### Task 2: `lambda_cloud.py` — default-calibration lookup
 
 **Files:**
-- Modify: `lambda_cloud.py` (already contains the implementation from Task 1 —
-  this task adds only tests; implementation and tests were co-designed, but a
-  reviewer gates them separately: selection logic vs filesystem lookup logic)
+- Modify: `lambda_cloud.py` (add the calibration lookup)
 - Test: `tests/test_lambda_cloud.py`
 
 **Interfaces:**
-- Consumes: `file_sha256`, `find_default_calibration` (Task 1 file).
-- Produces: verified behavior other tasks rely on: `find-calibration` CLI
-  prints the calibration path (exit 0) or exit 2 with a stderr hint.
+- Consumes: the `lambda_cloud.py` module + argparse scaffold from Task 1.
+- Produces (used by `lambda_run.sh` in Task 5):
+  - `file_sha256(path) -> str` (hex digest, streamed in 1 MB chunks).
+  - `find_default_calibration(clip_path, ui_runs_dir) -> Path | None`.
+  - CLI: `python3 lambda_cloud.py find-calibration <clip> --ui-runs <dir>`
+    prints the calibration path exit 0, or exit 2 with a stderr hint that
+    names `--calibration`.
 
-- [ ] **Step 1: Write the failing-or-passing tests (append to `tests/test_lambda_cloud.py`)**
+- [ ] **Step 1: Write the failing tests (append to `tests/test_lambda_cloud.py`)**
 
 ```python
 def _make_run(ui_runs, run_id, video_name, with_calibration=True):
@@ -445,22 +388,96 @@ def test_cli_find_calibration_exit_2_when_missing(tmp_path):
     assert "--calibration" in proc.stderr
 ```
 
-- [ ] **Step 2: Run the full helper test file**
+- [ ] **Step 2: Run to verify the new tests fail**
 
 Run: `.venv/bin/python -m pytest tests/test_lambda_cloud.py -q`
-Expected: `13 passed`. If any of the four new tests fail, fix
-`find_default_calibration` (not the tests) until green.
+Expected: 4 FAILED with `AttributeError: module 'lambda_cloud' has no
+attribute 'file_sha256'` (and `find_default_calibration`); the 9 Task 1
+tests still pass.
 
-- [ ] **Step 3: Run the whole suite**
+- [ ] **Step 3: Implement the lookup**
+
+In `lambda_cloud.py`: add `import hashlib` and
+`from pathlib import Path` to the imports, then add:
+
+```python
+def file_sha256(path, chunk_bytes=1024 * 1024):
+    hasher = hashlib.sha256()
+    with open(path, "rb") as handle:
+        while True:
+            chunk = handle.read(chunk_bytes)
+            if not chunk:
+                break
+            hasher.update(chunk)
+    return hasher.hexdigest()
+
+
+def find_default_calibration(clip_path, ui_runs_dir):
+    """Newest local run of the same video (by sha256) -> its calibration.json.
+
+    The by-hash upload store names videos `<sha256><ext>` and /api/track
+    records that path in job.json, so "same video" is an exact substring match
+    on the basename. Returns a Path or None.
+    """
+    digest = file_sha256(clip_path)
+    ui_runs = Path(ui_runs_dir)
+    if not ui_runs.is_dir():
+        return None
+    run_dirs = sorted(
+        (d for d in ui_runs.iterdir() if (d / "job.json").exists()),
+        key=lambda d: d.name, reverse=True,
+    )
+    for run_dir in run_dirs:
+        try:
+            job = json.loads((run_dir / "job.json").read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        video_path = job.get("video_path", "")
+        if digest in Path(video_path).name:
+            calibration = run_dir / "calibration.json"
+            if calibration.exists():
+                return calibration
+    return None
+
+
+def _cmd_find_calibration(args):
+    calibration = find_default_calibration(args.clip, args.ui_runs)
+    if calibration is None:
+        print(
+            f"No local run of this video found under {args.ui_runs}; "
+            f"pass --calibration explicitly.",
+            file=sys.stderr,
+        )
+        return 2
+    print(calibration)
+    return 0
+```
+
+and register the subcommand in `main()` after the `pick` block:
+
+```python
+    cal = sub.add_parser("find-calibration", help="default calibration for a clip")
+    cal.add_argument("clip")
+    cal.add_argument("--ui-runs", default="ui_runs")
+    cal.set_defaults(func=_cmd_find_calibration)
+```
+
+- [ ] **Step 4: Run to verify all pass**
+
+Run: `.venv/bin/python -m pytest tests/test_lambda_cloud.py -q`
+Expected: `13 passed`.
+
+- [ ] **Step 5: Run the whole suite**
 
 Run: `.venv/bin/python -m pytest tests/ -q`
-Expected: previous green count + 14 new, same 1 skipped / 1 deselected.
+Expected: previous green count + 13 total new tests vs pre-Task-1, same
+1 skipped / 1 deselected.
 
-- [ ] **Step 4: Commit**
+- [ ] **Step 6: Commit**
 
 ```bash
-git add tests/test_lambda_cloud.py
-git commit -m "test(cloud): cover default-calibration lookup"
+git add lambda_cloud.py tests/test_lambda_cloud.py
+git commit -m "feat(cloud): default-calibration lookup for lambda_run"
 ```
 
 ---
@@ -712,10 +729,9 @@ fi
 
 # --- ssh key: generate + register once
 mkdir -p "$CONFIG_DIR" && chmod 700 "$CONFIG_DIR"
-keys_response="$(api GET /ssh-keys)"
-registered="$(python3 -c "
-import json
-names = [k['name'] for k in json.loads('''$keys_response''').get('data', [])]
+registered="$(api GET /ssh-keys | python3 -c "
+import json, sys
+names = [k['name'] for k in json.load(sys.stdin).get('data', [])]
 print('yes' if '$SSH_KEY_NAME' in names else 'no')")"
 if [ "$registered" = "yes" ] && [ ! -f "$SSH_KEY" ]; then
   echo "'$SSH_KEY_NAME' is registered with Lambda but $SSH_KEY is missing locally." >&2
