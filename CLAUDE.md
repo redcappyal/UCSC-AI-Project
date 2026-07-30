@@ -67,7 +67,7 @@ The venv is `.venv`; everything runs through it. System `python3` has no flask o
 
 ```bash
 .venv/bin/python app.py                  # http://127.0.0.1:5188
-.venv/bin/python -m pytest tests/ -q     # 283 tests, ~9s
+.venv/bin/python -m pytest tests/ -q     # ~690 tests, ~70s
 ```
 
 `pytest.ini` deselects `requires_model` by default — one test that needs the exported

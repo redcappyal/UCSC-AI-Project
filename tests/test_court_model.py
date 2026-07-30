@@ -480,3 +480,78 @@ def test_court_model_public_is_json_safe():
     assert len(encoded["landmarks"]) == len(FLOOR_LANDMARKS)
     assert encoded["landmarks"][0]["id"] == "short_line_left"
     assert len(encoded["wireframe"]) == len(court_model.FLOOR_WIREFRAME)
+
+
+# --- mixed point/line homography fitting (spec 2026-07-29) -------------------
+
+
+def _mixed_fixture():
+    """A plausible floor-to-image homography plus helpers for building
+    correspondences from it."""
+    homography_true = np.array([[52.0, -6.0, 640.0],
+                                [4.0, 18.0, 250.0],
+                                [0.0005, 0.012, 1.0]])
+
+    def project(x, y):
+        return apply_homography(homography_true, (x, y))
+
+    def image_line(p, q):
+        u = np.array([*project(*p), 1.0])
+        v = np.array([*project(*q), 1.0])
+        return np.cross(u, v)
+
+    return homography_true, project, image_line
+
+
+def test_fit_homography_mixed_recovers_h_from_points_and_lines():
+    homography_true, project, image_line = _mixed_fixture()
+    points = [((0.0, 0.0), project(0.0, 0.0)),
+              ((21.0, 0.0), project(21.0, 0.0))]
+    lines = [((0.0, 1.0, 0.0), image_line((2.0, 0.0), (19.0, 0.0))),
+             ((0.0, 1.0, -17.918), image_line((2.0, 17.918), (19.0, 17.918))),
+             ((1.0, 0.0, -10.5), image_line((10.5, 18.0), (10.5, 30.0))),
+             ((1.0, 0.0, -5.33), image_line((5.33, 18.0), (5.33, 23.0)))]
+
+    fitted, rank_gap = court_model.fit_homography_mixed(points, lines)
+
+    assert rank_gap > 1e-2
+    for probe in ((0.0, 0.0), (21.0, 0.0), (0.0, 17.918), (21.0, 17.918),
+                  (10.5, 17.918), (5.25, 23.25), (16.0, 28.0)):
+        expected = project(*probe)
+        got = apply_homography(fitted, probe)
+        assert np.hypot(got[0] - expected[0], got[1] - expected[1]) < 1e-6
+
+
+def test_fit_homography_mixed_flags_the_concurrent_lines_degeneracy():
+    """Seam + short line + half-court line + the two seam corners do NOT pin
+    a homography: the short and half-court lines meet at the T, so a homology
+    centred there with the seam as axis satisfies every constraint. The rank
+    gap is how a caller must notice (measured failure mode: anchors slid
+    hundreds of px along their lines while every constraint held).
+    """
+    _, project, image_line = _mixed_fixture()
+    points = [((0.0, 0.0), project(0.0, 0.0)),
+              ((21.0, 0.0), project(21.0, 0.0))]
+    lines = [((0.0, 1.0, 0.0), image_line((2.0, 0.0), (19.0, 0.0))),
+             ((0.0, 1.0, -17.918), image_line((2.0, 17.918), (19.0, 17.918))),
+             ((1.0, 0.0, -10.5), image_line((10.5, 18.0), (10.5, 30.0)))]
+
+    _, rank_gap = court_model.fit_homography_mixed(points, lines)
+
+    assert rank_gap < 1e-6
+
+
+def test_fit_homography_mixed_agrees_with_the_point_only_fit():
+    homography_true, project, _ = _mixed_fixture()
+    court = [(0.0, 0.0), (21.0, 0.0), (2.0, 20.0), (19.0, 24.0), (10.5, 30.0)]
+    image = [project(*p) for p in court]
+
+    point_only, _ = fit_homography(court, image)
+    mixed, rank_gap = court_model.fit_homography_mixed(
+        list(zip(court, image)), [])
+
+    assert rank_gap > 1e-2
+    for probe in ((5.0, 5.0), (16.0, 28.0), (10.5, 17.918)):
+        a = apply_homography(point_only, probe)
+        b = apply_homography(mixed, probe)
+        assert np.hypot(a[0] - b[0], a[1] - b[1]) < 1e-6

@@ -36,6 +36,9 @@ venv/
 !eval_set/*.md
 # Design specs are durable project docs
 !docs/**/*.md
+# Real-footage regression fixtures for court detection (small, curated —
+# e.g. the Squash Zone outside-glass median frame)
+!tests/data/*.png
 # Architecture diagrams: the .puml source is the durable artifact (rendered
 # images are not committed — see docs/ARCHITECTURE.md for how to view them).
 !docs/**/*.puml

@@ -1003,13 +1003,12 @@ def test_detect_court_fails_when_a_front_wall_line_is_missing(key):
     judge_call.load_calibration_lines rejects such a calibration anyway, so it
     is unusable by construction and must fail into the manual wizard here.
 
-    Both cases report "the tin" missing, including the one where the SERVICE
-    line was erased: assign_lines takes the horizontals below the out line and
-    fills rest[0] -> service, rest[-1] -> tin, so a single survivor always
-    lands in the service slot and leaves tin empty. That mislabelling is the
-    known, user-accepted assign_lines defect, not something this test is
-    asserting is correct -- what it asserts is that either way the detection
-    FAILS cleanly into the manual wizard instead of presenting as success.
+    The warning is asserted structurally, not verbatim: which entity the
+    detector NAMES depends on how it establishes the front wall (the old
+    assigner always blamed "the tin", a documented mislabelling; the stack
+    search cannot attribute a missing member at all). What matters is that
+    either way the detection FAILS cleanly into the manual wizard with a
+    human-readable reason instead of presenting as success.
     """
     camera = court_camera(focal_px=700.0)
     image, truth = render_court(camera, noise_sigma=2.0)
@@ -1020,7 +1019,8 @@ def test_detect_court_fails_when_a_front_wall_line_is_missing(key):
     assert result["confidence"] == "low"
     assert result["lines"] == []
     assert result["planes"] == {}
-    assert result["warnings"][0] == "Could not find the tin."
+    assert result["warnings"][0].startswith("Could not find ")
+    assert "_" not in result["warnings"][0]
 
 
 def test_detect_court_leads_with_the_real_reason_not_the_camera_motion_note():
@@ -1051,12 +1051,9 @@ def test_detect_court_failure_copy_never_leaks_internal_identifiers():
 
     reason = court_detect.detect_court([blank])["warnings"][0]
 
-    assert reason == ("Could not find the out line, the service line, the tin, "
-                      "the front wall's floor line, the left wall's floor "
-                      "line, the right wall's floor line, and the short line.")
-    # No snake_case identifier survives into the copy. ("out" and "tin" are
-    # checked by the exact sentence above instead -- they are ordinary English
-    # words as well as keys, so a substring test on them proves nothing.)
+    assert reason.startswith("Could not find ")
+    assert reason.endswith(".")
+    # No snake_case identifier survives into the copy.
     assert "_" not in reason
     for identifier in court_detect._ENTITY_LABELS:
         if "_" in identifier:
@@ -1079,3 +1076,173 @@ def test_wall_corner_ids_do_not_redefine_court_datum_values():
     assert court_detect._WALL_CORNER_IDS == (
         "top_left", "top_right", "bottom_left", "bottom_right")
     assert not hasattr(court_detect, "_WALL_CORNER_COURT_FT")
+
+
+# --- outside-glass viewpoints (spec 2026-07-29) ------------------------------
+
+SQUASH_ZONE_MEDIAN_PNG = (Path(__file__).resolve().parent / "data"
+                          / "squash-zone-median-frame.png")
+
+
+def _outside_glass_camera():
+    """A tripod behind the back glass: the capture geometry ordinary users
+    bring (spec 2026-07-29 §1) — off-centre, standing height, the whole wall
+    AND the service boxes in frame. Unlike the fin-mount fixture, the boxes
+    being visible means the independent checks can actually verify."""
+    return court_camera(position=(9.0, 40.0, 5.5), look_at=(10.5, 0.0, 4.0),
+                        focal_px=1400.0)
+
+
+_CORNER_TRUTH_KEYS = ("wall_top_left", "wall_top_right",
+                      "wall_bottom_left", "wall_bottom_right")
+
+
+def _assert_corners_match_truth(result, truth, tolerance_px):
+    """Each detected corner sits on a DISTINCT true corner. Nearest-corner
+    matching keeps the assertion chirality-agnostic: "left"/"right" are
+    screen labels (see the crossed-pairing note in
+    test_detect_court_recovers_the_camera_that_drew_the_court)."""
+    corners = {corner["id"]: corner["tap_px"]
+               for corner in result["planes"]["wall"]["corners"]}
+    used = set()
+    for corner_id, (px, py) in corners.items():
+        distances = {key: math.hypot(px - truth[key][0], py - truth[key][1])
+                     for key in _CORNER_TRUTH_KEYS}
+        nearest = min(distances, key=distances.get)
+        assert distances[nearest] < tolerance_px, (corner_id, distances)
+        assert nearest not in used, (corner_id, nearest)
+        used.add(nearest)
+
+
+def _max_short_anchor_error(result, truth):
+    landmarks = {landmark["id"]: landmark["tap_px"]
+                 for landmark in result["planes"]["floor"]["landmarks"]}
+    errors = []
+    for name in ("short_line_left", "short_line_right"):
+        errors.append(min(
+            math.hypot(landmarks[name][0] - truth[key][0],
+                       landmarks[name][1] - truth[key][1])
+            for key in ("short_line_left", "short_line_right")))
+    return max(errors)
+
+
+def test_detect_court_from_outside_the_glass_is_high_confidence():
+    camera = _outside_glass_camera()
+    image, truth = render_court(camera, visible_depth_ft=31.5, noise_sigma=2.0)
+
+    result = court_detect.detect_court([image])
+
+    assert result["status"] == "ok"
+    assert result["confidence"] == "high"
+    assert result["checks_verified"] == 2
+    _assert_corners_match_truth(result, truth, 4.0)
+    assert _max_short_anchor_error(result, truth) < 8.0
+
+
+def test_detect_court_reconstructs_seams_hidden_by_fogged_glass():
+    """Ball-marked side glass hides both floor seams on real courts (the
+    Squash Zone footage). The mixed point/line floor fit needs no seam, so
+    the geometry must survive with both fogged out."""
+    camera = _outside_glass_camera()
+    image, truth = render_court(camera, visible_depth_ft=31.5, noise_sigma=2.0)
+    rng = np.random.default_rng(7)
+    height, width = image.shape[:2]
+    for x_ft in (0.0, court_model.COURT_WIDTH_FT):
+        for y_ft in np.linspace(0.2, 31.5, 160):
+            px, py = camera.project((x_ft, y_ft, 0.0))
+            x0, y0 = max(0, int(px) - 28), max(0, int(py) - 14)
+            x1, y1 = min(width, int(px) + 28), min(height, int(py) + 14)
+            if x1 > x0 and y1 > y0:
+                image[y0:y1, x0:x1] = rng.integers(
+                    140, 215, (y1 - y0, x1 - x0, 3), dtype=np.uint8)
+
+    result = court_detect.detect_court([image])
+
+    assert result["status"] == "ok"
+    _assert_corners_match_truth(result, truth, 5.0)
+    assert _max_short_anchor_error(result, truth) < 20.0
+
+
+def test_detect_court_fills_lines_occluded_mid_span():
+    """The occlusion contract (spec 2026-07-29 §4): a straight line whose
+    middle is blocked is extended, so the fits land on both true endpoints
+    and the spans still cover the wall rather than a fragment."""
+    camera = _outside_glass_camera()
+    image, truth = render_court(camera, visible_depth_ft=31.5, noise_sigma=2.0)
+    for key in ("out_line_lower_edge", "service_line_top_edge", "short_line"):
+        (x1, y1), (x2, y2) = truth[key]
+        mid_x, mid_y = int((x1 + x2) / 2), int((y1 + y2) / 2)
+        cv2.rectangle(image, (mid_x - 170, mid_y - 60),
+                      (mid_x + 170, mid_y + 60), (90, 90, 90), -1)
+
+    result = court_detect.detect_court([image])
+
+    assert result["status"] == "ok"
+    by_name = {line["name"]: line for line in result["lines"]}
+    for name in ("out_line_lower_edge", "service_line_top_edge",
+                 "tin_top_edge"):
+        fitted = by_name[name]
+        for point in truth[name]:
+            predicted = fitted["slope"] * point[0] + fitted["intercept"]
+            assert abs(predicted - point[1]) < 1.5, name
+        span = fitted["x_span_px"]
+        assert span[1] - span[0] > 700, name
+    _assert_corners_match_truth(result, truth, 4.0)
+    assert _max_short_anchor_error(result, truth) < 20.0
+
+
+def test_detect_court_ignores_a_frit_comb_and_a_logo():
+    """Periodic glass frit and a printed logo along the frame's bottom merge
+    into long horizontals; they must not be mistaken for the short line."""
+    camera = _outside_glass_camera()
+    image, truth = render_court(camera, visible_depth_ft=31.5, noise_sigma=2.0)
+    for x in range(0, image.shape[1], 14):
+        cv2.rectangle(image, (x, 990), (x + 4, 1080), (245, 245, 245), -1)
+    cv2.rectangle(image, (30, 1010), (240, 1070), (200, 80, 40), -1)
+
+    result = court_detect.detect_court([image])
+
+    assert result["status"] == "ok"
+    assert result["confidence"] == "high"
+    assert _max_short_anchor_error(result, truth) < 10.0
+
+
+@pytest.mark.skipif(not SQUASH_ZONE_MEDIAN_PNG.exists(),
+                    reason="Squash Zone median fixture not present")
+def test_assign_lines_handles_the_squash_zone_camera_angle():
+    """Real outside-glass tournament footage (median of frames 72-612 of the
+    2026-07-29 Squash Zone video): every entity named, at the positions
+    verified by overlay inspection when this capability landed."""
+    image = cv2.imread(str(SQUASH_ZONE_MEDIAN_PNG))
+    minimum = image.shape[1] * 0.10
+
+    assigned = court_detect.assign_lines(
+        court_detect.find_lines(court_detect.line_response(image), minimum),
+        court_detect.find_lines(court_detect.edge_response(image), minimum),
+        image.shape, image=image)
+
+    for name in ("out", "service", "tin", "front_seam",
+                 "left_seam", "right_seam", "short_line", "half_court"):
+        assert assigned[name] is not None, name
+    assert abs(assigned["service"].y_at(1000.0) - 458.0) < 6.0
+    assert abs(assigned["tin"].y_at(1000.0) - 630.0) < 8.0
+    assert abs(assigned["short_line"].y_at(1000.0) - 824.0) < 8.0
+
+
+@pytest.mark.skipif(not SQUASH_ZONE_MEDIAN_PNG.exists(),
+                    reason="Squash Zone median fixture not present")
+def test_detect_court_on_the_squash_zone_median_is_high_confidence():
+    image = cv2.imread(str(SQUASH_ZONE_MEDIAN_PNG))
+
+    result = court_detect.detect_court([image])
+
+    assert result["status"] == "ok"
+    assert result["confidence"] == "high"
+    assert result["checks_verified"] == 2
+    assert result["warnings"] == []
+    corners = {corner["id"]: corner["tap_px"]
+               for corner in result["planes"]["wall"]["corners"]}
+    assert abs(corners["top_left"][0] - 597.0) < 8.0
+    assert abs(corners["top_right"][0] - 1430.0) < 8.0
+    assert abs(corners["bottom_left"][1] - 683.0) < 8.0
+    assert abs(corners["bottom_right"][1] - 701.0) < 8.0

@@ -2,7 +2,16 @@
 
 **Date:** 2026-07-29
 **Branch:** `claude/auto-homography-frame-72-test-23ca74`
-**Status:** Approved direction; implemented in the same session.
+**Status:** IMPLEMENTED (same session). As-built deviations from §3, both
+deliberate: (1) deriving a MISSING stack member from the cross-ratio is not
+shipped — all four of out/service/tin/seam must be detected (a board that
+hides the seam junction entirely still refuses, honestly); (2) two additions
+the real footage forced: candidate stacks are retried best-first until the
+full pipeline succeeds (chance cross-ratio impostors outrank the true stack
+but have no paint or floor beneath them), and wall edge columns come from raw
+near-full-member reach refined inward by datum refits (glass panes REFLECT
+wall paint at its own image heights, so an outward-roaming refit follows the
+mirror image past the corner).
 **Extends:** `2026-07-27-auto-court-detection-design.md`. Everything in that spec still
 holds — output contract, datum rules (§5), "never key on hue", "never solve 3-D pose" —
 except its §7.4 assignment heuristics, which this spec replaces.
