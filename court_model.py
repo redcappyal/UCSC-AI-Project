@@ -278,6 +278,76 @@ def fit_homography(src_points, dst_points):
     return homography, residuals
 
 
+def fit_homography_mixed(point_corrs, line_corrs):
+    """Fit H from point AND infinite-line correspondences (normalized DLT).
+
+    point_corrs: [((sx, sy), (dx, dy)), ...] source -> destination points.
+    line_corrs:  [((A, B, C), (a, b, c)), ...] source line -> destination
+                 line, each as coefficients of A*x + B*y + C = 0.
+
+    A line correspondence constrains H through l_src ~ H^T @ l_dst, which is
+    linear in H and — unlike a pair of endpoints — carries no information
+    about where along the line its support was found. That makes it the right
+    representation for court lines whose visible extent is set by occlusion:
+    the constraint holds however much of the line was actually seen.
+
+    Returns (H, rank_gap) where rank_gap is the second-smallest singular
+    value of the (row-normalized) design matrix over its largest. The caller
+    decides how much rank deficiency to tolerate — unlike fit_homography this
+    does not raise, because hypothesis-search callers probe many correspondence
+    sets and near-degeneracy is an expected, non-exceptional outcome there.
+    """
+    src_pts = [p for p, _ in point_corrs]
+    dst_pts = [q for _, q in point_corrs]
+    src_norm_t = _normalization(_as_points(src_pts)) if src_pts else np.eye(3)
+    dst_norm_t = _normalization(_as_points(dst_pts)) if dst_pts else np.eye(3)
+    src_line_t = np.linalg.inv(src_norm_t).T
+    dst_line_t = np.linalg.inv(dst_norm_t).T
+
+    rows = []
+    for (sx, sy), (dx, dy) in point_corrs:
+        sxn, syn, swn = src_norm_t @ np.array([sx, sy, 1.0])
+        dxn, dyn, dwn = dst_norm_t @ np.array([dx, dy, 1.0])
+        rows.append([-sxn * dwn, -syn * dwn, -swn * dwn, 0, 0, 0,
+                     dxn * sxn, dxn * syn, dxn * swn])
+        rows.append([0, 0, 0, -sxn * dwn, -syn * dwn, -swn * dwn,
+                     dyn * sxn, dyn * syn, dyn * swn])
+    for src_line, dst_line in line_corrs:
+        L = src_line_t @ np.asarray(src_line, dtype=float)
+        l = dst_line_t @ np.asarray(dst_line, dtype=float)
+        # m = H^T @ l must be parallel to L: cross(m, L) = 0. Each component
+        # of the cross product is linear in H; the two rows tied to L's two
+        # largest components are kept so the constraint never degenerates.
+        def m_coeff(k, l=l):
+            coeff = np.zeros(9)
+            coeff[k], coeff[3 + k], coeff[6 + k] = l
+            return coeff
+        m1, m2, m3 = m_coeff(0), m_coeff(1), m_coeff(2)
+        cross_rows = (m2 * L[2] - m3 * L[1],
+                      m3 * L[0] - m1 * L[2],
+                      m1 * L[1] - m2 * L[0])
+        weights = (abs(L[1]) + abs(L[2]), abs(L[0]) + abs(L[2]),
+                   abs(L[0]) + abs(L[1]))
+        for index in sorted(range(3), key=lambda i: weights[i])[-2:]:
+            rows.append(cross_rows[index])
+
+    system = np.asarray(rows, dtype=float)
+    # Point rows and line cross-product rows have incomparable natural
+    # scales; whichever is larger silently dominates the least-squares
+    # solution (measured: anchors dragged ~500 px). Unit rows weight every
+    # constraint equally.
+    norms = np.linalg.norm(system, axis=1, keepdims=True)
+    system = system / np.maximum(norms, 1e-12)
+
+    _, singular, vt = np.linalg.svd(system)
+    h_norm = vt[-1].reshape(3, 3)
+    homography = np.linalg.inv(dst_norm_t) @ h_norm @ src_norm_t
+    if abs(homography[2, 2]) > 1e-12:
+        homography = homography / homography[2, 2]
+    rank_gap = float(singular[-2] / max(singular[0], 1e-12))
+    return homography, rank_gap
+
+
 def apply_homography(homography, point):
     vector = np.asarray(homography, dtype=float) @ np.array(
         [float(point[0]), float(point[1]), 1.0]
