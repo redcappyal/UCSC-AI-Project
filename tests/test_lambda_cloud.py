@@ -118,3 +118,27 @@ def test_cli_pick_type_no_capacity_exit_2():
     )
     assert proc.returncode == 2
     assert "gpu_1x_a6000" in proc.stderr  # availability table printed
+
+
+def test_pick_prefers_earlier_preference_over_cheaper_later_one():
+    # Preference order beats price: a6000 (first, 199) wins over sxm4 (later, 109).
+    payload = json.loads(json.dumps(FIXTURE))
+    payload["data"]["gpu_1x_a6000"]["instance_type"]["price_cents_per_hour"] = 199
+    payload["data"]["gpu_1x_a6000"]["regions_with_capacity_available"] = [
+        {"name": "us-west-1"},
+    ]
+    payload["data"]["gpu_1x_a100_sxm4"]["instance_type"]["price_cents_per_hour"] = 109
+    assert lambda_cloud.pick_instance_type(payload, PREFS, 200) == (
+        "gpu_1x_a6000", "us-west-1",
+    )
+
+
+def test_pick_returns_none_when_only_unlisted_types_have_capacity():
+    # h100 is the only single-GPU type left with capacity, and fits the 400 cap.
+    payload = json.loads(json.dumps(FIXTURE))
+    for name in PREFS:
+        payload["data"][name]["regions_with_capacity_available"] = []
+    assert payload["data"]["gpu_1x_h100_pcie"]["regions_with_capacity_available"] == [
+        {"name": "us-west-3"},
+    ]
+    assert lambda_cloud.pick_instance_type(payload, PREFS, 400) is None
