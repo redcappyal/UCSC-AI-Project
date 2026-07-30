@@ -242,6 +242,20 @@ of truth (click handler + disabled state) but is hidden with `.proxied` and mirr
 the header pill `#hdrAction`. Follow this pattern for every new phase: one primary action,
 proxied to the header. Secondary actions stay inline in the section.
 
+**The pill must not crowd the title out.** `#hdrAction` is sized by its own text and
+`#stepLabel` takes what is left, so a long pill label is paid for by the title's ellipsis —
+"Use calibration" beside "Confirm court" truncated it to "Confirm co…" at 390 px, and every
+calibration step clipped at 375. A `STEP_META` action may therefore carry a **`short`**: the
+pill wears `short`, and `label` becomes its `aria-label`. Nothing is lost — the proxied
+original is hidden, so the pill is the only thing a screen reader reads, and it still reads
+the full phrase.
+
+Every calibration step means the same thing (accept what is on screen and go on) and the
+title beside it already names the object, so all of them wear **`Use`**. A step whose verb
+is *not* accept-and-continue keeps its own word: `Record`, `Analyze`, `Judge`. When adding a
+phase, check the title still fits at **375 px** — that is the support floor, and the title is
+the thing that must survive.
+
 ### 3.5 Known platform gotchas (keep these workarounds)
 
 - `#vid` is kept renderable at 2 px / `opacity:0` — `display:none` breaks canvas capture

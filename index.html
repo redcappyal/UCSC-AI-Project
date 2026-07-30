@@ -1746,20 +1746,26 @@ const S = {
 const STEP_META = {
   load:   {label:'CrossCourt', instr:''},
   record: {label:'Record', instr:'', action:{btn:'recBtn', label:'Record'}},
+  // `short` is what the pill wears; `label` stays its accessible name (see
+  // syncHeaderAction). Every calibration step means the same thing — accept
+  // what is on screen and go on — and the title beside the pill already names
+  // the object, so repeating it there is what pushed the titles into an
+  // ellipsis. Steps whose verb is NOT "accept and continue" (Record, Analyze,
+  // Judge) keep their own word: they are decisions, not confirmations.
   frame:  {label:'Pick frame', instr:'Drag the film strip under the playhead to a frame where the out line, service line, and tin are fully visible and unblocked.',
-           action:{btn:'useFrame', label:'Use frame'}},
-  tap_out:{label:'Out line', instr:'', action:{btn:'confirmBtn', label:'Looks right'}},
-  tap_tin:{label:'Tin', instr:'', action:{btn:'confirmBtn', label:'Looks right'}},
-  tap_service:{label:'Service line', instr:'', action:{btn:'confirmBtn', label:'Looks right'}},
+           action:{btn:'useFrame', label:'Use frame', short:'Use'}},
+  tap_out:{label:'Out line', instr:'', action:{btn:'confirmBtn', label:'Looks right', short:'Use'}},
+  tap_tin:{label:'Tin', instr:'', action:{btn:'confirmBtn', label:'Looks right', short:'Use'}},
+  tap_service:{label:'Service line', instr:'', action:{btn:'confirmBtn', label:'Looks right', short:'Use'}},
   review: {label:'Review', instr:'Check that each fitted edge hugs the real paint edge across the whole line.',
-           action:{btn:'chooseClipBtn', label:'Use lines'}},
-  tap_wall:{label:'Wall corners', instr:'', action:{btn:'wallDoneBtn', label:'Use corners'}},
-  tap_floor:{label:'Floor map', instr:'', action:{btn:'floorDoneBtn', label:'Use floor map'}},
+           action:{btn:'chooseClipBtn', label:'Use lines', short:'Use'}},
+  tap_wall:{label:'Wall corners', instr:'', action:{btn:'wallDoneBtn', label:'Use corners', short:'Use'}},
+  tap_floor:{label:'Floor map', instr:'', action:{btn:'floorDoneBtn', label:'Use floor map', short:'Use'}},
   // One line, and the action rather than the purpose: #confirmSummary below the
   // frame already gives the verdict, and the two together used to say the same
   // thing twice across three lines of a screen that needed them for the frame.
   confirm:{label:'Confirm court', instr:'Drag any anchor that sits off the line.',
-           action:{btn:'confirmUseBtn', label:'Use calibration'}},
+           action:{btn:'confirmUseBtn', label:'Use calibration', short:'Use'}},
   clip:   {label:'Clip', instr:'Drag the top strip to slide the clip along the video, then drag the handles to trim it tight around the shot.',
            action:{btn:'runTrackBtn', label:'Analyze'}},
   analyze:{label:'Analyzing', instr:''},
@@ -1943,7 +1949,14 @@ function syncHeaderAction(action){
   hdrActionTarget = action ? $(action.btn) : null;
   hdrAction.classList.toggle('hidden', !hdrActionTarget);
   if(!hdrActionTarget) return;
-  hdrAction.textContent = action.label;
+  // The pill is sized by its own text and #stepLabel gets what's left, so a
+  // long pill label eats the title: "Use calibration" beside "Confirm court"
+  // truncated it to "Confirm co…" at 390px, and the whole wizard clipped at
+  // 375. Where a short form exists the pill wears it and `label` becomes the
+  // accessible name, so nothing is lost to a screen reader — which is the only
+  // reader of this button's full phrase, since the proxied original is hidden.
+  hdrAction.textContent = action.short || action.label;
+  hdrAction.setAttribute('aria-label', action.label);
   hdrAction.disabled = hdrActionTarget.disabled;
   hdrActionObs.observe(hdrActionTarget, {attributes:true, attributeFilter:['disabled']});
 }

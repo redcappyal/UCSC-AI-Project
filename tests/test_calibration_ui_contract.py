@@ -21,6 +21,20 @@ def test_confirm_screen_spends_its_height_on_the_frame():
     assert 'id="confirmCount"' not in INDEX_HTML
 
 
+def test_header_pill_wears_a_short_label_and_keeps_the_full_one_for_screen_readers():
+    """#hdrAction is sized by its own text and #stepLabel takes what is left, so
+    a long pill label is paid for by the title's ellipsis. Every calibration step
+    means accept-and-continue and the title already names the object."""
+    assert "hdrAction.textContent = action.short || action.label;" in INDEX_HTML
+    assert "hdrAction.setAttribute('aria-label', action.label);" in INDEX_HTML
+    for label in ("Use frame", "Looks right", "Use lines", "Use corners",
+                  "Use floor map", "Use calibration"):
+        assert f"label:'{label}', short:'Use'" in INDEX_HTML
+    # Steps whose verb is not accept-and-continue keep their own word.
+    for label in ("Record", "Analyze", "Judge"):
+        assert f"label:'{label}', short:" not in INDEX_HTML
+
+
 def test_confirm_drift_warning_cannot_reflow_the_frame():
     """#confirmDrift is the only confirm-screen copy a drag rewrites. In flow it
     re-centered the canvas under the finger, so it is pinned inside #stage where
