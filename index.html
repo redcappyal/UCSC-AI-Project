@@ -1791,6 +1791,12 @@ function syncHeaderAction(action){
 }
 
 function setPhase(p){
+  // Every route out of the analyzing screen abandons the run: the back
+  // chevron, the home button, any nav tab. Only one job holds the tracking
+  // semaphore, so a run left alive blocks the next track — cancel here, where
+  // all of them pass, instead of relying on each caller to remember. The
+  // analyze -> track hop is the success path and must not be cancelled.
+  if(S.phase === 'analyze' && p !== 'analyze' && p !== 'track') cancelPendingTrack();
   transportStop();
   S.phase = p;
   resetZoom();
@@ -2812,8 +2818,7 @@ $('hdrBack').onclick = () => {
   } else if(S.phase === 'clip'){
     setPhase(COURT ? 'tap_floor' : 'tap_wall');
   } else if(S.phase === 'analyze'){
-    cancelPendingTrack();   // stop the job, not just its screen
-    setPhase('clip');
+    setPhase('clip');   // setPhase cancels the run on the way out
   } else if(REVIEW_PHASES.includes(S.phase)){
     // Every review pane exits the same way: to Analysis. The panes are one
     // page, so Back is not a retreat through P2 -> P1 -> Call, and the run's
