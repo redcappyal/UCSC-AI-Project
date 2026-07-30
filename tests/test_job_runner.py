@@ -862,11 +862,16 @@ def test_load_ball_backend_unknown_value_raises(monkeypatch):
         job_runner.load_ball_backend()
 
 
-def test_ball_backend_summary_shapes():
+def test_ball_backend_summary_shapes(monkeypatch):
+    monkeypatch.delenv("MAX_BALL_FRAME_WIDTH", raising=False)
     local = job_runner.ball_backend_summary("local", _StubBallRunner())
+    # Exact equality on purpose: this block is what a stored run is
+    # attributed to, so a field appearing or vanishing is a change to the
+    # provenance of every run and should have to be written down here.
     assert local == {
         "backend": "local", "name": "stub-wasb", "version": 1,
         "artifact_sha256": "deadbeef", "device": "cpu",
+        "frame_width_cap": 1920,
     }
     hosted = job_runner.ball_backend_summary("rfdetr", object())
     assert hosted["backend"] == "rfdetr"
@@ -896,3 +901,104 @@ def test_run_tracking_job_local_backend_end_to_end(tmp_path, monkeypatch):
     assert job["ball_backend"]["backend"] == "local"
     assert job["ball_backend"]["name"] == "stub-wasb"
     assert stub.batches            # the stub actually ran
+
+
+# --- the 1080p processing cap -------------------------------------------
+#
+# The local WASB backend cuts its tiles at native resolution, so its cost is
+# the frame area and a 4K source pays ~4x a 1080p one for the same rally.
+# These pin the two halves that have to hold together: the model must see the
+# shrunk frame, and what it finds must come back out in SOURCE pixels --
+# calibration, judging and the floor map all live in source space, so a
+# detection left in shrunk coordinates would be silently mispositioned rather
+# than obviously broken.
+
+
+def _capped_shapes_and_results(tmp_path, monkeypatch, cap, detection=None,
+                               width=640, height=480):
+    """Run one local-backend segment, returning (shapes seen, results)."""
+    video = tmp_path / "clip.mp4"
+    _write_clip(video, frame_count=3, width=width, height=height)
+    seen = []
+
+    def spy_detect_frame_stack(model, frames, manifest):
+        seen.append([frame.shape[:2] for frame in frames])
+        return [dict(detection)] if detection else []
+
+    monkeypatch.setattr(job_runner, "detect_frame_stack", spy_detect_frame_stack)
+    monkeypatch.setattr(
+        job_runner, "select_motion_consistent_ball_predictions",
+        lambda by_frame, confidence_threshold, **kwargs: {
+            frame: (preds[0] if preds else None)
+            for frame, preds in by_frame.items()
+        })
+    if cap is None:
+        monkeypatch.delenv("MAX_BALL_FRAME_WIDTH", raising=False)
+    else:
+        monkeypatch.setenv("MAX_BALL_FRAME_WIDTH", str(cap))
+
+    results = {}
+    job_runner.track_segments(
+        _StubBallRunner(), video, [(0, 2, 1)], 640, 30.0, results,
+        on_frame=lambda idx: None, backend="local")
+    return seen, results
+
+
+def test_a_source_wider_than_the_cap_reaches_the_ball_model_shrunk(
+        tmp_path, monkeypatch):
+    seen, _ = _capped_shapes_and_results(tmp_path, monkeypatch, cap=320)
+    assert seen, "the stubbed detector never ran"
+    for stack in seen:
+        # 640x480 halved, and every frame of a temporal stack resized by the
+        # SAME factor -- detect_frame_stack rejects a stack whose frames
+        # disagree on shape, so a per-frame resize would not merely be wrong,
+        # it would raise.
+        assert stack == [(240, 320), (240, 320), (240, 320)]
+
+
+def test_detections_from_a_shrunk_frame_come_back_in_source_pixels(
+        tmp_path, monkeypatch):
+    _, results = _capped_shapes_and_results(
+        tmp_path, monkeypatch, cap=320,
+        detection={"x": 100.0, "y": 60.0, "width": 5.0, "height": 5.0,
+                   "confidence": 0.9, "class_name": "ball", "class": "ball"})
+    row = results[1]
+    assert row["detected"] is True
+    # Found at (100, 60) in the 320x240 frame the model saw; the source clip
+    # is 640x480, so the run must record (200, 120). Leaving this at 100
+    # would put the ball on the wrong side of a calibration line without
+    # anything downstream noticing.
+    assert float(row["x_center"]) == pytest.approx(200.0)
+    assert float(row["y_center"]) == pytest.approx(120.0)
+    assert float(row["width"]) == pytest.approx(10.0)
+
+
+def test_a_source_inside_the_cap_is_passed_through_untouched(
+        tmp_path, monkeypatch):
+    seen, results = _capped_shapes_and_results(
+        tmp_path, monkeypatch, cap=1920,
+        detection={"x": 100.0, "y": 60.0, "width": 5.0, "height": 5.0,
+                   "confidence": 0.9, "class_name": "ball", "class": "ball"})
+    for stack in seen:
+        assert stack == [(480, 640), (480, 640), (480, 640)]
+    # No resize means no rescale: a 1080p-or-smaller clip must be bit-for-bit
+    # the run it was before the cap existed.
+    assert float(results[1]["x_center"]) == pytest.approx(100.0)
+
+
+def test_the_ball_frame_cap_is_1080p(monkeypatch):
+    # Two facts, two assertions, for the reason spelled out on the confidence
+    # floor above: the wiring test passes at any cap value, so on its own it
+    # cannot see someone changing what "downscale before processing" means.
+    monkeypatch.delenv("MAX_BALL_FRAME_WIDTH", raising=False)
+    assert job_runner.MAX_BALL_FRAME_WIDTH == 1920
+    assert job_runner.ball_frame_width_cap() == 1920
+
+    monkeypatch.setenv("MAX_BALL_FRAME_WIDTH", "3840")
+    assert job_runner.ball_frame_width_cap() == 3840
+    # 0 is the documented escape hatch: process at native resolution.
+    monkeypatch.setenv("MAX_BALL_FRAME_WIDTH", "0")
+    assert job_runner.ball_frame_width_cap() == 0
+    monkeypatch.setenv("MAX_BALL_FRAME_WIDTH", "not-a-number")
+    with pytest.raises(ValueError):
+        job_runner.ball_frame_width_cap()

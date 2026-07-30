@@ -31,7 +31,13 @@ from bounce_gb_model_detector import DEFAULT_MODEL_PATH as BOUNCE_GB_MODEL_PATH
 from bounce_gb_model_detector import detect_hits_with_gb_model
 from classify_events import classify_events
 from detect_wall_hits import detect_hits_from_rows, scale_frames_for_fps, scaled_hit_kwargs
-from inference_engine import DEFAULT_MODEL_ID, get_tracking_model, infer_frame_predictions
+from inference_engine import (
+    DEFAULT_MODEL_ID,
+    get_tracking_model,
+    infer_frame_predictions,
+    resize_frame_for_inference,
+    scale_predictions,
+)
 from judge_call import (
     Point,
     clamp_wall_x_for_vertical_in,
@@ -434,11 +440,81 @@ def ball_backend_summary(backend, model):
             "version": manifest.version,
             "artifact_sha256": manifest.artifact_sha256,
             "device": getattr(model, "device", "cpu"),
+            # Part of the attribution, not a setting: two runs of the same
+            # artifact over the same clip are not comparable if one saw 4K
+            # and the other saw 1080p, and nothing else in the run records
+            # which one happened.
+            "frame_width_cap": ball_frame_width_cap(),
         }
     return {
         "backend": "rfdetr",
         "model_id": os.getenv("ROBOFLOW_MODEL_ID", DEFAULT_MODEL_ID),
     }
+
+
+MAX_BALL_FRAME_WIDTH = 1920
+_BALL_FRAME_WIDTH_ENV_VAR = "MAX_BALL_FRAME_WIDTH"
+
+
+def ball_frame_width_cap():
+    """Widest frame the ball model is allowed to see, in source pixels.
+
+    1920 by default: analysis runs at 1080p and below even when the capture
+    is 4K. The local WASB backend cuts its 416 px tiles at NATIVE resolution
+    (ios/MODEL.md 6), so its cost is the tile count and the tile count is the
+    frame area -- a 4K frame is ~66 tiles against ~16 at 1080p for the same
+    rally. It is the only stage that scales that way: rfdetr resizes to
+    `inference_width` itself, rfdetr person detection resizes inside
+    `predict`, and motion energy is a frame subtraction. So capping here is
+    what "the pipeline does not process 4K" amounts to.
+
+    `MAX_BALL_FRAME_WIDTH=0` lifts the cap and processes at native
+    resolution. That is the setting to reach for before concluding the cap
+    is free: the committed model was fine-tuned on native-resolution crops
+    with `nominal_ball_px` 10.5, and downscaling 4K halves the ball to ~5 px,
+    which is a smaller ball than the artifact ever saw in training.
+
+    Raises on a malformed value rather than ignoring it, for the same reason
+    BALL_MAX_BATCH_TILES does: a silently-dropped typo leaves the cap exactly
+    where it was while looking like it moved.
+    """
+    raw = os.environ.get(_BALL_FRAME_WIDTH_ENV_VAR, "").strip()
+    if not raw:
+        return MAX_BALL_FRAME_WIDTH
+    try:
+        cap = int(raw)
+    except ValueError as exc:
+        raise ValueError(
+            f"{_BALL_FRAME_WIDTH_ENV_VAR} must be a non-negative integer, "
+            f"got {raw!r}") from exc
+    if cap < 0:
+        raise ValueError(
+            f"{_BALL_FRAME_WIDTH_ENV_VAR} must be a non-negative integer, "
+            f"got {cap}")
+    return cap
+
+
+def cap_frames_for_ball_model(payload, max_width, temporal):
+    """Shrink a decode payload to `max_width`, and report the way back.
+
+    Returns `(payload, x_scale, y_scale)`, where the scales carry a detection
+    made in the shrunk frame back into source pixels. That return is not
+    optional bookkeeping: calibration, `judge_call` and the floor map all live
+    in source coordinates, so a detection left in shrunk space would be
+    mispositioned quietly rather than visibly.
+
+    Reuses `resize_frame_for_inference`, which the rfdetr path has always used
+    for the same job, so there is one resize-and-scale-back mechanism rather
+    than a second one that can drift from it. A temporal payload is three
+    frames of a single moment and is resized by one shared factor --
+    `detect_frame_stack` rejects a stack whose frames disagree on shape, so
+    resizing them independently would raise rather than mislead.
+    """
+    if not temporal:
+        return resize_frame_for_inference(payload, max_width)
+
+    resized = [resize_frame_for_inference(frame, max_width) for frame in payload]
+    return [frame for frame, _, _ in resized], resized[1][1], resized[1][2]
 
 
 def track_segments(model, video_path, segments, inference_width, source_fps, results, on_frame,
@@ -485,6 +561,11 @@ def track_segments(model, video_path, segments, inference_width, source_fps, res
     elif backend != "rfdetr":
         raise ValueError(f"Unknown ball backend {backend!r}")
 
+    # Read once per call, not per frame: an operator changing the env var
+    # mid-run must not produce a run whose first half is a different pixel
+    # space from its second.
+    width_cap = ball_frame_width_cap()
+
     # A temporal item holds 3 frames; shrink the queue so worst-case
     # buffered frame count stays in the same ballpark.
     queue_size = max(2, DECODE_QUEUE_SIZE // 3) if temporal else DECODE_QUEUE_SIZE
@@ -511,10 +592,18 @@ def track_segments(model, video_path, segments, inference_width, source_fps, res
             if frame_observer is not None:
                 frame_observer(frame_idx, center)
             if backend == "local":
+                # The one stage whose cost is the source resolution, so the
+                # one stage the 1080p cap has to bind. Detections come back
+                # in shrunk space and are put back into source pixels here,
+                # before anything downstream can mistake them for source
+                # coordinates.
+                stack, x_scale, y_scale = cap_frames_for_ball_model(
+                    payload, width_cap, temporal)
                 if temporal:
-                    predictions = detect_frame_stack(model, payload, model.manifest)
+                    predictions = detect_frame_stack(model, stack, model.manifest)
                 else:
-                    predictions = detect_frame(model, payload, model.manifest)
+                    predictions = detect_frame(model, stack, model.manifest)
+                predictions = scale_predictions(predictions, x_scale, y_scale)
             else:
                 predictions = infer_frame_predictions(
                     model,
