@@ -139,6 +139,13 @@ iOS app in Safari (add-to-home-screen capable).
   `body.phase-page` (`flex:1 1 auto; min-height:0; overflow-y:auto`); reports use
   `body.phase-target` and the Call page `body.phase-track`. Any new stage-less
   phase needs one of these, or its lower content silently becomes unreachable.
+- **Every internal scroller pins `overflow-x`.** CSS promotes the other axis from
+  `visible` to `auto` whenever one axis is `auto`, so `overflow-y:auto` alone hands
+  the page a horizontal scrollbar the moment any child pokes past the 14 px gutter
+  (§7). That is how the Dashboard picked up a 14 px side-scroll that dragged the
+  whole page — the Coach Notes rail's negative side margin, ported from the lab,
+  where no intermediate scroller clips it. The rail's own `overflow-x:auto` is
+  untouched: a rail may scroll sideways, a page may not.
 - **A page that fixes `main`'s height must also floor the stage.**
   `body.phase-track` sizes `main` from `--track-main-height`, measured from the
   call controls; `preserveTrackStageHeight()` clamps that measurement to
