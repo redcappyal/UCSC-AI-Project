@@ -139,6 +139,17 @@ def test_selected_detector_yolox_still_accepted(monkeypatch):
     assert ball_track_offline.selected_detector() == "local"   # normalised
 
 
+def test_selected_detector_defaults_to_rfdetr(monkeypatch):
+    """With nothing set, every entry point -- the Flask app, this offline
+    runner, eval scripts -- must resolve to the hosted RF-DETR. Pins the
+    value, not just the wiring: a test that compared selected_detector() to
+    BALL_DETECTOR_DEFAULT would pass at either value and could not see the
+    default flip back to the unmeasured WASB artifact."""
+    monkeypatch.delenv("BALL_DETECTOR", raising=False)
+    assert ball_track_offline.BALL_DETECTOR_DEFAULT == "rfdetr"
+    assert ball_track_offline.selected_detector() == "rfdetr"
+
+
 # --- _centered_windows -------------------------------------------------
 
 
@@ -168,9 +179,10 @@ def test_centered_windows_empty_clip():
 
 
 def test_temporal_manifest_routes_through_centered_windows(monkeypatch):
-    # Ambient BALL_DETECTOR must not change this test's outcome -- see
-    # test_build_infer_defaults_to_yolox's comment on the same gotcha.
-    monkeypatch.delenv("BALL_DETECTOR", raising=False)
+    # Temporal windows are a local-backend behaviour, so select it explicitly:
+    # the default is rfdetr, and ambient BALL_DETECTOR must not change this
+    # test's outcome either way.
+    monkeypatch.setenv("BALL_DETECTOR", "local")
     calls = []
 
     def fake_detect_stack(runner, frames, manifest):
@@ -195,7 +207,7 @@ def test_temporal_manifest_routes_through_centered_windows(monkeypatch):
 
 
 def test_temporal_manifest_rejects_stride(monkeypatch):
-    monkeypatch.delenv("BALL_DETECTOR", raising=False)
+    monkeypatch.setenv("BALL_DETECTOR", "local")
     runner = SimpleNamespace(manifest=SimpleNamespace(
         conf_threshold=0.1, frames_per_input=3))
     monkeypatch.setattr(ball_track_offline, "_video_fps", lambda path: 60.0)
@@ -210,7 +222,7 @@ def test_temporal_routing_rejects_model_without_manifest(monkeypatch):
     """A `model` with no `.manifest` (e.g. an RF-DETR object) under the local
     backend must raise the same friendly TypeError _build_infer raises, not
     an opaque AttributeError from reaching into `runner.manifest` directly."""
-    monkeypatch.delenv("BALL_DETECTOR", raising=False)
+    monkeypatch.setenv("BALL_DETECTOR", "local")
     monkeypatch.setattr(ball_track_offline, "_video_fps", lambda path: 60.0)
     monkeypatch.setattr(ball_track_offline, "_iter_frames", lambda path: iter(
         [(0, np.zeros((2, 2, 3), dtype=np.uint8))]))
@@ -222,7 +234,7 @@ def test_temporal_routing_rejects_model_without_manifest(monkeypatch):
 
 def test_single_frame_manifest_keeps_v1_path(monkeypatch):
     # frames_per_input == 1 must keep going through _detect_frame per frame
-    monkeypatch.delenv("BALL_DETECTOR", raising=False)
+    monkeypatch.setenv("BALL_DETECTOR", "local")
     seen = []
     monkeypatch.setattr(ball_track_offline, "_detect_frame",
                         lambda runner, frame, manifest: seen.append(1) or [])
@@ -236,12 +248,11 @@ def test_single_frame_manifest_keeps_v1_path(monkeypatch):
     assert seen == [1]
 
 
-def test_build_infer_defaults_to_yolox(monkeypatch):
-    # Ambient BALL_DETECTOR must not change this test's outcome -- the
-    # module docstring advertises BALL_DETECTOR=rfdetr as a valid override,
-    # and a developer with it exported would otherwise see this test wander
-    # into the real inference_engine import.
-    monkeypatch.delenv("BALL_DETECTOR", raising=False)
+def test_build_infer_local_loads_ball_detector(monkeypatch):
+    # BALL_DETECTOR=local is now an override, not the default, so select it
+    # explicitly -- otherwise this test wanders into the real
+    # inference_engine import looking for a Roboflow key.
+    monkeypatch.setenv("BALL_DETECTOR", "local")
     calls = {}
 
     class _Manifest:
@@ -293,14 +304,14 @@ def test_build_infer_honours_rfdetr_override(monkeypatch):
 
 
 def test_build_infer_rejects_model_without_manifest(monkeypatch):
-    """The RF-DETR-object-under-yolox-default case: passing a `model` with no
-    `.manifest` attribute while BALL_DETECTOR selects yolox (the default)
-    must raise TypeError up front, not wander into an opaque AttributeError
-    mid-frame. A defensive monkeypatch on _load_ball_detector proves the
-    guard fires before ever reaching that seam -- if the guard regressed,
-    this would blow up on the loader instead of failing the assertion below,
-    which would still fail the test either way, but this pins down why."""
-    monkeypatch.delenv("BALL_DETECTOR", raising=False)
+    """The RF-DETR-object-under-local-backend case: passing a `model` with no
+    `.manifest` attribute while BALL_DETECTOR selects local must raise
+    TypeError up front, not wander into an opaque AttributeError mid-frame.
+    A defensive monkeypatch on _load_ball_detector proves the guard fires
+    before ever reaching that seam -- if the guard regressed, this would blow
+    up on the loader instead of failing the assertion below, which would still
+    fail the test either way, but this pins down why."""
+    monkeypatch.setenv("BALL_DETECTOR", "local")
 
     def _unexpected_load():
         raise AssertionError(
@@ -318,7 +329,7 @@ def test_build_infer_rejects_unreachable_confidence(monkeypatch):
     code -- the detector already drops everything below its own
     conf_threshold before selection ever sees it. A defensive monkeypatch on
     _detect_frame proves the guard fires before any inference runs."""
-    monkeypatch.delenv("BALL_DETECTOR", raising=False)
+    monkeypatch.setenv("BALL_DETECTOR", "local")
 
     class _Manifest:
         conf_threshold = 0.9  # above the 0.4 confidence used below

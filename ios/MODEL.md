@@ -195,10 +195,12 @@ run the traced artifact, never `yolox`. Two environment variables control it:
 
 - `BALL_MODEL_DIR` — points at the model directory (defaults to
   `models/crosscourt-ball-416-v1` beside the repo root).
-- `BALL_DETECTOR` — selects the backend for `ball_track_offline.py`: `yolox` (default)
-  loads this local detector; `rfdetr` restores the hosted RF-DETR model the Flask
-  pipeline still uses. (Was `STEREO_DETECTOR`, renamed 2026-07-27 when the stereo half
-  of `stereo_offline.py` was archived — see `archive/stereo/README.md`.)
+- `BALL_DETECTOR` — selects the backend everywhere, `ball_track_offline.py` included:
+  `rfdetr` (default) is the hosted RF-DETR the Flask pipeline runs; `local` (alias
+  `yolox`) loads this local detector. The default flipped to `rfdetr` on 2026-07-30 —
+  the local artifact is unmeasured, so it is opt-in until the line-call eval scores it.
+  (Was `STEREO_DETECTOR`, renamed 2026-07-27 when the stereo half of
+  `stereo_offline.py` was archived — see `archive/stereo/README.md`.)
 
 ## 3. Score before shipping (acceptance gate)
 

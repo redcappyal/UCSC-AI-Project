@@ -44,10 +44,11 @@ APP_VERSION = "fps-wall-homography-2026-07-29-1"
 if load_dotenv is not None:
     load_dotenv(ROOT / ".env")
 
-# Keep the Flask analysis pipeline on the established Roboflow RF-DETR ball
-# detector. The newer committed WASB detector remains available for explicit
-# A/B runs with BALL_DETECTOR=local, but it is no longer the app default.
-os.environ.setdefault("BALL_DETECTOR", "rfdetr")
+# Ball detector: the default is ball_track_offline.BALL_DETECTOR_DEFAULT
+# ("rfdetr", the hosted Roboflow RF-DETR), read through selected_detector() by
+# every entry point. Do not re-pin it here with a setdefault -- that is what
+# this line used to be, and it left two places owning one default. .env still
+# overrides it; BALL_DETECTOR=local runs the committed WASB model instead.
 
 # inference_engine sets the model-cache/metrics env defaults on import;
 # import it (via job_runner) before anything touches the inference package.
