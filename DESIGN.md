@@ -524,7 +524,10 @@ until it was archived 2026-07-29 (`archive/challenge-ui/`).
 - Text: `color-mix(in srgb, var(--surface) 86%, var(--bg))` fill, radius 12 (§4.4), 17 px,
   `min-height:48px`, `1px --line` border — the border is what distinguishes it from the
   Number variant, needed because a text field sits inside a `--surface` card (post-hoc
-  player naming, §4.6) rather than always on `--bg` the way Number fields do.
+  player naming, §4.6) rather than always on `--bg` the way Number fields do. The floor
+  step's profile-name row reuses this recipe on `--bg` (one text-field look everywhere);
+  native dialogs (`window.prompt`/`confirm`/`alert`) are never an alternative — the iOS
+  shell's WKWebView has no UI delegate, so they silently no-op there.
 
 ### 8.5 Progress (`.progressbox`)
 
@@ -1201,7 +1204,7 @@ Each phase: header shows step label + proxied primary; `#instr` gives the one-li
 | `p-frame` | Pick a clean calibration frame | overview rail · editor strip w/ playhead · readout · transport+steppers | "Use this frame" |
 | `p-tap` | Tap out line, tin, then service line on frame | stage-driven; clear-selection small button | "Looks right" (disabled until the current line has a fit) |
 | `p-review` | Approve fitted lines (cyan/amber/lime on stage) | minimal; evidence is the stage | "Use these lines" |
-| `p-tap-floor` | Floor calibration wizard | `.floorRow`: diagram (progress marks) + prompt/side actions · skip-all / save-profile | "Use floor map" |
+| `p-tap-floor` | Floor calibration wizard | `.floorRow`: diagram (progress marks) + prompt/side actions · skip-all / save-profile (tapping "Save as profile" swaps that row **in place** for a §8.4 text input + Save of the same 48 px height — never `window.prompt`, which the iOS shell's WKWebView leaves unimplemented; Esc or an empty-field blur restores the buttons) | "Use floor map" |
 | `p-clip` | Trim rally clip | overview · trim editor (accent handles) · transport+readout row · start/end nudge steppers · full-width "Select entire clip" secondary · frame summary | "Analyze" |
 | `p-analyze` | Honest processing | `.progressbox` stats + bar (+ stage ANALYZING pulse) | — (auto-advances) |
 | `p-track` | **Match review — Call pane.** Review track, judge calls, name the players | control area keeps its pre-rally-visualization height so the video stage does not shrink, floored against the stage per §3.1; the added content scrolls inside that footprint · scrub hint lives in the header `#instr` line (detection failures replace it, `.warn`) · per-rally front-wall impact mini-map · rally segmentation card (proportional neutral ribbon, active segment in accent, `attr-*` provenance states + legend §8.22; per-rally winners/scores stay backend-only per the 2026-07-29 review) · overview w/ marker minis · hit timeline (neon bars, center playhead) · readout · transport · frame input + Judge row · verdict box · Players card (two equal-width detected-player cards, each with a 4:5 crop directly above its own name field; a quiet "No photo available" placeholder preserves the pair when an old run has only one crop) · ghost "Watch source video". One pane, no switcher — the Challenge pane and its dock were archived 2026-07-29 (`archive/challenge-ui/`) | "Judge frame" |

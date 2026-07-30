@@ -635,6 +635,11 @@
   .floorSide{flex:1; min-width:0; display:flex; flex-direction:column; gap:10px}
   #floorPrompt{font-size:15px; line-height:1.4; margin:0}
   #floorPrompt b{color:var(--text)}
+  /* Save-as-profile swaps its buttons row for a name row in place; equal
+     min-heights keep the swap shift-free (§18: no layout shift). The input's
+     48px recipe height is the taller of the two, so both rows reserve it. */
+  .floorProfileRow{min-height:48px}
+  .floorProfileRow input{flex:1.5}
 
   /* floor bounce map on the targets page */
   .floorMap{border:1px solid var(--line); border-radius:8px; overflow:hidden; background:var(--surface)}
@@ -1035,9 +1040,14 @@
       </div>
     </div>
     <button class="primary proxied" id="floorDoneBtn" disabled>Use floor map</button>
-    <div class="row">
+    <div class="row floorProfileRow" id="floorProfileActions">
       <button class="small" id="floorSkipAllBtn" type="button">Skip floor calibration</button>
       <button class="small" id="floorSaveProfileBtn" type="button" disabled>Save as profile</button>
+    </div>
+    <div class="row floorProfileRow hidden" id="floorProfileNameRow">
+      <input type="text" id="floorProfileNameInput" maxlength="40" autocomplete="off"
+             enterkeyhint="done" aria-label="Profile name" placeholder="e.g. Court 3 rear mount">
+      <button class="small" id="floorProfileNameSaveBtn" type="button" disabled>Save</button>
     </div>
     <p class="status" id="floorStatus"></p>
     <p class="status" id="camHealthFloor"></p>
@@ -4040,6 +4050,7 @@ function updateFloorUI(){
     $('floorSkipLandmarkBtn').disabled = true;
     $('floorClearBtn').disabled = true;
     $('floorSaveProfileBtn').disabled = true;
+    setFloorProfileEntry(false);
     buildFloorDiagram();
     return;
   }
@@ -4060,6 +4071,7 @@ function updateFloorUI(){
   $('floorClearBtn').disabled = !F.landmarks.some(l => l.refined_px || l.skipped);
   $('floorDoneBtn').disabled = !F.H;
   $('floorSaveProfileBtn').disabled = !F.H;
+  if(!F.H) setFloorProfileEntry(false);   // a lost fit invalidates a half-typed save
   if(F.H){
     const quality = F.rms <= FLOOR_RMS_WARN ? 'ok' : 'warn';
     status.textContent = `Floor fit: ${placed} landmarks · RMS ${F.rms.toFixed(1)} px · worst ${F.maxResidual.toFixed(1)} px` +
@@ -4102,6 +4114,7 @@ function buildFloorView(){
   if(COURT && !S.floor) S.floor = newFloorState();
   if(S.floor) seedFrontSeamFromWall(S.floor);
   if(S.floor && S.floor.activeIdx !== -1) S.floor.activeIdx = nextIncompleteIdx();
+  setFloorProfileEntry(false);   // entering the step always shows the buttons row
   updateFloorUI();
   scheduleCameraCheck();
 }
@@ -4316,10 +4329,38 @@ function applyProfile(saved){
   w.textContent = note + (w.textContent ? ' ' + w.textContent : '');
   w.className = 'status warn';
 }
+/* The profile name is collected inline: "Save as profile" swaps its row for a
+   same-height input + Save. Never window.prompt() here — the iOS shell's
+   WKWebView has no WKUIDelegate, so prompt/confirm/alert silently return
+   null there and the tap reads as a dead button. */
+function setFloorProfileEntry(open){
+  $('floorProfileActions').classList.toggle('hidden', open);
+  $('floorProfileNameRow').classList.toggle('hidden', !open);
+}
+function syncFloorProfileSaveBtn(){
+  $('floorProfileNameSaveBtn').disabled = !$('floorProfileNameInput').value.trim();
+}
 $('floorSaveProfileBtn').onclick = () => {
   if(!S.floor || !S.floor.H || !S.lines.out || !S.lines.tin || !S.lines.service) return;
-  const name = (window.prompt('Profile name (e.g. “Court 3 rear mount”)',
-    S.profile ? S.profile.name : '') || '').trim();
+  const input = $('floorProfileNameInput');
+  input.value = S.profile ? S.profile.name : '';
+  setFloorProfileEntry(true);
+  syncFloorProfileSaveBtn();
+  input.focus();
+};
+$('floorProfileNameInput').oninput = syncFloorProfileSaveBtn;
+$('floorProfileNameInput').onkeydown = e => {
+  if(e.key === 'Enter'){ e.preventDefault(); $('floorProfileNameSaveBtn').click(); }
+  else if(e.key === 'Escape') setFloorProfileEntry(false);
+};
+$('floorProfileNameInput').onblur = () => {
+  // A tap elsewhere with nothing typed reads as "never mind" — restore the
+  // buttons. Typed text survives the blur so a stray tap can't destroy it.
+  if(!$('floorProfileNameInput').value.trim()) setFloorProfileEntry(false);
+};
+$('floorProfileNameSaveBtn').onclick = () => {
+  if(!S.floor || !S.floor.H || !S.lines.out || !S.lines.tin || !S.lines.service) return;
+  const name = $('floorProfileNameInput').value.trim();
   if(!name) return;
   S.profile = {
     id: (crypto.randomUUID ? crypto.randomUUID() : String(Date.now())),
@@ -4336,6 +4377,7 @@ $('floorSaveProfileBtn').onclick = () => {
   while(profiles.length > 10) profiles.shift();
   try{ localStorage.setItem(PROFILE_KEY, JSON.stringify(profiles)); }
   catch(_){ showError('Could not save the profile (storage full or blocked).'); return; }
+  setFloorProfileEntry(false);
   $('floorStatus').textContent = `Saved profile “${name}” — apply it from the frame step on the next clip.`;
   $('floorStatus').className = 'status ok';
 };
