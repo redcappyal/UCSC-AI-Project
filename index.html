@@ -7540,7 +7540,13 @@ function restoreLinesFromCalibration(cal){
 async function tryRestoreSession(){
   let stash = null;
   try{ stash = JSON.parse(localStorage.getItem(RESTORE_KEY) || 'null'); }catch(_){ }
-  if(!stash || !stash.run_id || S.phase !== 'load') return;
+  /* "Still at rest" means this webview's boot root: 'load' on the web, but a
+     pinned shell tab rests at its own section root (§3.2). Comparing against
+     the literal 'load' would veto every restore on a non-Dashboard tab —
+     including the openRunReview reload that is the Analysis tab's only route
+     into the full review. */
+  const restRoot = SHELL_TAB || 'load';
+  if(!stash || !stash.run_id || S.phase !== restRoot) return;
   $('loadStatus').textContent = 'Restoring last session…';
   $('loadStatus').className = 'status';
 
@@ -7554,13 +7560,13 @@ async function tryRestoreSession(){
   }catch(_){ /* backend unreachable — treat like a missing run */ }
   if(!data){
     clearRestoreStash();
-    if(S.phase === 'load'){
+    if(S.phase === restRoot){
       $('loadStatus').textContent = 'Previous session could not be restored (run is gone). Load a clip to begin.';
       $('loadStatus').className = 'status';
     }
     return;
   }
-  if(S.phase !== 'load') return;   // user moved on while we fetched
+  if(S.phase !== restRoot) return;   // user moved on while we fetched
 
   S.run = data;
   S.restoredSession = true;
@@ -7576,7 +7582,7 @@ async function tryRestoreSession(){
   const videoUrl = `/api/runs/${encodeURIComponent(stash.run_id)}/source_video`;
   let available = false;
   try{ available = (await fetch(videoUrl, {method:'HEAD', cache:'no-store'})).ok; }catch(_){ }
-  if(S.phase !== 'load') return;
+  if(S.phase !== restRoot) return;
   if(available){
     clearThumbCache();
     vid.src = videoUrl;
