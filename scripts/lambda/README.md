@@ -32,12 +32,13 @@ Ephemeral CUDA boxes for analysis + eval runs. Spec:
 - `lambda_up.sh [git-ref]` takes an optional git ref (default `main`) — the branch or
   tag `bootstrap_remote.sh` clones and checks out on the box. Use it to run a branch
   that is not merged yet; the ref must exist on the **public remote**, not just locally.
-- **Run at native fidelity: `--stride 1 --inference-width 0`.** Every frame at full
-  resolution is the fidelity the GPU is rented for and what the WASB ball detector was
-  trained for — it tiles at native resolution and ignores `inference_width` outright
-  (`job_runner.py`, `track_segments`). `/api/track`'s own defaults are laptop-shaped,
-  `frame_stride=4` and `inference_width=960` (`app.py`), so left alone the coarse pass
-  sees one frame in four — treat stride-4 runs as a quick look, not an eval-grade one.
+- **Run at native fidelity: `--stride 1 --inference-width 0`.** Full resolution on every
+  frame is the fidelity the GPU is rented for. Only one of those two flags still changes
+  anything: `/api/track` defaults to `frame_stride=1` and `inference_width=960`
+  (`app.py`), so the stride is already every frame and it is the **width** that quietly
+  downgrades a run left alone. Pass `--stride 1` anyway — it costs nothing and keeps the
+  invocation self-describing — but when a run comes back lower-fidelity than you meant,
+  the width is the one to check.
 - `--stride` and `--inference-width` override those defaults. `--inference-width` accepts
   only `0`, `640`, `960`, `1280` (`0` = native); anything else is rejected on the Mac,
   before the clip is rsynced to a box that is already billing. Under the default `rfdetr`
