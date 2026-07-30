@@ -52,7 +52,10 @@ struct APIClient: APIClientProtocol {
             ("calibration_json", calibrationJSON),
             ("start_time", "0"),
             ("end_time", String(duration)),
-            ("frame_stride", "4"),
+            // Every frame: the bounce GB model reads the frames on either side
+            // of a candidate, and a strided coarse pass only earns those back
+            // inside refine windows -- around candidates it already proposed.
+            ("frame_stride", "1"),
             ("inference_width", "960"),
         ]
         request.httpBody = Data(Multipart.formURLEncoded(fields).utf8)
