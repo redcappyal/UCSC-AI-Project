@@ -142,3 +142,57 @@ def test_pick_returns_none_when_only_unlisted_types_have_capacity():
         {"name": "us-west-3"},
     ]
     assert lambda_cloud.pick_instance_type(payload, PREFS, 400) is None
+
+
+def _make_run(ui_runs, run_id, video_name, with_calibration=True):
+    run_dir = ui_runs / run_id
+    run_dir.mkdir(parents=True)
+    (run_dir / "job.json").write_text(
+        json.dumps({"video_path": f"/anywhere/by-hash/{video_name}"}),
+        encoding="utf-8",
+    )
+    if with_calibration:
+        (run_dir / "calibration.json").write_text("{}", encoding="utf-8")
+    return run_dir
+
+
+def test_find_calibration_newest_matching_run_wins(tmp_path):
+    clip = tmp_path / "clip.mp4"
+    clip.write_bytes(b"fake video bytes")
+    digest = lambda_cloud.file_sha256(clip)
+    ui_runs = tmp_path / "ui_runs"
+    _make_run(ui_runs, "1753900000000", f"{digest}.mp4")
+    newest = _make_run(ui_runs, "1753990000000", f"{digest}.mp4")
+    _make_run(ui_runs, "1753995000000", "0123deadbeef.mp4")  # other video, newer
+    found = lambda_cloud.find_default_calibration(clip, ui_runs)
+    assert found == newest / "calibration.json"
+
+
+def test_find_calibration_skips_runs_without_calibration(tmp_path):
+    clip = tmp_path / "clip.mp4"
+    clip.write_bytes(b"fake video bytes")
+    digest = lambda_cloud.file_sha256(clip)
+    ui_runs = tmp_path / "ui_runs"
+    older = _make_run(ui_runs, "1753900000000", f"{digest}.mp4")
+    _make_run(ui_runs, "1753990000000", f"{digest}.mp4", with_calibration=False)
+    assert lambda_cloud.find_default_calibration(clip, ui_runs) == older / "calibration.json"
+
+
+def test_find_calibration_none_when_no_match(tmp_path):
+    clip = tmp_path / "clip.mp4"
+    clip.write_bytes(b"fake video bytes")
+    ui_runs = tmp_path / "ui_runs"
+    _make_run(ui_runs, "1753900000000", "0123deadbeef.mp4")
+    assert lambda_cloud.find_default_calibration(clip, ui_runs) is None
+
+
+def test_cli_find_calibration_exit_2_when_missing(tmp_path):
+    clip = tmp_path / "clip.mp4"
+    clip.write_bytes(b"fake video bytes")
+    proc = subprocess.run(
+        [sys.executable, str(Path(lambda_cloud.__file__)), "find-calibration",
+         str(clip), "--ui-runs", str(tmp_path / "ui_runs")],
+        capture_output=True, text=True,
+    )
+    assert proc.returncode == 2
+    assert "--calibration" in proc.stderr
