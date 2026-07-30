@@ -1103,6 +1103,7 @@
         <button type="button" id="nEndP1f" aria-label="End later one frame">+</button>
       </div>
     </div>
+    <button type="button" id="clipSelectAllBtn">Select entire clip</button>
     <div class="clipFrameSummary">
       <span>Selected frames</span>
       <output id="clipFrameRangeOut">0-0 (1 frame)</output>
@@ -4915,7 +4916,19 @@ function nudgeClipEdge(which, delta){
   requestPreviewFrame(t);
 }
 
+// Unlike nudging, the playhead stays put — only the selection grows.
+function selectEntireClip(){
+  stopClipPlayback();
+  S.clip.start = 0;
+  S.clip.end = clipDuration();
+  recenterView();
+  updateClipTimeline();
+  drawDetailPlaceholderNow();
+  scheduleDetailRender();
+}
+
 const frameStep = () => 1 / videoFps();
+$('clipSelectAllBtn').onclick = selectEntireClip;
 $('nStartM1s').onclick = () => nudgeClipEdge('start', -1);
 $('nStartM1f').onclick = () => nudgeClipEdge('start', -frameStep());
 $('nStartP1f').onclick = () => nudgeClipEdge('start', frameStep());
