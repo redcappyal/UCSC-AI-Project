@@ -34,7 +34,7 @@ from tracking_common import (  # noqa: E402
 )
 
 
-VIDEO_INPUT_PATH = Path(__file__).with_name("MatchplayEp2Clip.mp4")
+VIDEO_INPUT_PATH = Path(__file__).with_name("ClippedIanGold.mp4")
 VIDEO_OUTPUT_PATH = Path(__file__).with_name("annotated_output_local.mp4")
 CSV_OUTPUT_PATH = Path(__file__).with_name("ball_coordinates_local.csv")
 
@@ -122,6 +122,15 @@ def parse_args():
         type=float,
         default=ANNOTATION_PROGRESS_INTERVAL_SECONDS,
         help="Seconds between annotation progress/ETA updates.",
+    )
+    parser.add_argument(
+        "--raw-predictions",
+        action="store_true",
+        help=(
+            "Draw and save every prediction returned by inference. Disables "
+            "stationary/dust filtering, motion linking, track support, "
+            "post-inference confidence filtering, and trajectory filling."
+        ),
     )
     parser.add_argument("--no-video", action="store_true")
     parser.add_argument("--smoke-test", action="store_true")
@@ -378,7 +387,10 @@ def main():
         raise RuntimeError("--inference-confidence must be between 0 and 1.")
     if not 0 <= args.confidence <= 1:
         raise RuntimeError("--confidence must be between 0 and 1.")
-    if args.inference_confidence > args.confidence:
+    if (
+        not args.raw_predictions
+        and args.inference_confidence > args.confidence
+    ):
         raise RuntimeError("--inference-confidence cannot exceed --confidence.")
     if args.inference_width < 0:
         raise RuntimeError("--inference-width must be 0 or greater.")
@@ -427,6 +439,7 @@ def main():
     raw_prediction_count = 0
     trajectory_estimated_count = 0
     trajectory_tracked_detection_count = 0
+    raw_annotated_prediction_count = 0
     previous_anchor = None
     missing_video_frames = []
     predictions_by_source_frame = {}
@@ -560,6 +573,60 @@ def main():
         finally:
             annotation_cap.release()
 
+    def annotate_raw_prediction_video():
+        nonlocal raw_annotated_prediction_count
+        if args.no_video or not processed_source_frames:
+            return
+
+        total_frames = len(processed_source_frames)
+        annotation_cap = cv2.VideoCapture(str(args.video))
+        if not annotation_cap.isOpened():
+            raise RuntimeError(f"Could not reopen video for annotation: {args.video}")
+
+        annotation_started = time.monotonic()
+        last_progress_update = annotation_started
+        annotated_count = 0
+        print(
+            "Raw annotation pass: drawing every returned prediction across "
+            f"{total_frames:,} sequentially decoded frame(s).",
+            flush=True,
+        )
+        try:
+            sequential_frames = iter_video_frames_sequentially(
+                annotation_cap,
+                processed_source_frames,
+            )
+            for output_index, (source_frame, frame) in enumerate(
+                sequential_frames,
+                start=1,
+            ):
+                predictions = predictions_by_source_frame.get(source_frame, [])
+                write_output_frame(draw_raw_predictions(frame, predictions))
+                raw_annotated_prediction_count += len(predictions)
+                annotated_count = output_index
+
+                now = time.monotonic()
+                if (
+                    annotated_count == total_frames
+                    or now - last_progress_update >= args.annotation_progress_interval
+                ):
+                    elapsed = max(now - annotation_started, 1e-9)
+                    frames_per_second = annotated_count / elapsed
+                    remaining_seconds = (
+                        total_frames - annotated_count
+                    ) / frames_per_second
+                    percent = annotated_count / total_frames * 100
+                    print(
+                        "Raw annotation progress: "
+                        f"{annotated_count:,}/{total_frames:,} ({percent:.1f}%) | "
+                        f"{frames_per_second:.1f} frames/s | "
+                        f"ETA {format_duration(remaining_seconds)}",
+                        flush=True,
+                    )
+                    last_progress_update = now
+        finally:
+            annotation_cap.release()
+
     print(f"Source video: {source_frame_count} frames at {source_fps:.2f} FPS")
     print(f"Processing source frames {start_frame} through {end_frame}")
     print(f"Processing every {args.frame_stride} frame(s)")
@@ -567,11 +634,18 @@ def main():
         "Inference width: "
         + ("original" if args.inference_width == 0 else f"{args.inference_width}px")
     )
-    print(
-        "Detection thresholds: "
-        f"raw evidence >= {args.inference_confidence:.2f}, "
-        f"confirmed raw confidence >= {args.confidence:.2f}"
-    )
+    if args.raw_predictions:
+        print(
+            "Detection threshold: "
+            f"model return floor >= {args.inference_confidence:.2f}; "
+            "no post-inference threshold"
+        )
+    else:
+        print(
+            "Detection thresholds: "
+            f"raw evidence >= {args.inference_confidence:.2f}, "
+            f"confirmed raw confidence >= {args.confidence:.2f}"
+        )
     if not args.no_video:
         print(f"Output video: {args.output_video}")
     print(f"Output CSV: {args.csv}")
@@ -601,19 +675,30 @@ def main():
                     args.inference_confidence,
                     args.inference_width,
                 )
-                predictions = [
-                    prediction
-                    for prediction in predictions
-                    if float(prediction.get("confidence", 1.0))
-                    >= args.inference_confidence
-                ]
+                if not args.raw_predictions:
+                    predictions = [
+                        prediction
+                        for prediction in predictions
+                        if float(prediction.get("confidence", 1.0))
+                        >= args.inference_confidence
+                    ]
                 predictions_by_source_frame[read_count] = predictions
                 processed_source_frames.append(read_count)
                 raw_prediction_count += len(predictions)
                 selected_prediction = select_raw_highest_confidence_prediction(predictions)
                 if selected_prediction is not None:
                     detected_count += 1
-                csv_writer.writerow(ball_csv_row(read_count, source_fps, selected_prediction))
+                if args.raw_predictions:
+                    # Preserve all returned boxes. An empty row still records
+                    # that inference ran for a frame and returned nothing.
+                    for prediction in predictions or [None]:
+                        csv_writer.writerow(
+                            ball_csv_row(read_count, source_fps, prediction)
+                        )
+                else:
+                    csv_writer.writerow(
+                        ball_csv_row(read_count, source_fps, selected_prediction)
+                    )
 
                 processed_count += 1
                 print(
@@ -631,12 +716,19 @@ def main():
         cap.release()
 
     if not args.no_video:
-        annotate_processed_video()
-        print(
-            "Annotated video boxes: "
-            f"{trajectory_tracked_detection_count} tracked detection(s), "
-            f"{trajectory_estimated_count} trajectory estimate(s)"
-        )
+        if args.raw_predictions:
+            annotate_raw_prediction_video()
+            print(
+                "Annotated video boxes: "
+                f"{raw_annotated_prediction_count} raw prediction(s)"
+            )
+        else:
+            annotate_processed_video()
+            print(
+                "Annotated video boxes: "
+                f"{trajectory_tracked_detection_count} tracked detection(s), "
+                f"{trajectory_estimated_count} trajectory estimate(s)"
+            )
 
     if writer is not None:
         writer.release()
@@ -660,6 +752,12 @@ def main():
         "processed_frames": processed_count,
         "frames_with_raw_prediction": detected_count,
         "raw_prediction_count": raw_prediction_count,
+        "annotation_mode": (
+            "raw_model_predictions"
+            if args.raw_predictions
+            else "filtered_motion_tracking"
+        ),
+        "raw_annotated_prediction_count": raw_annotated_prediction_count,
         "trajectory_tracked_video_frames": trajectory_tracked_detection_count,
         "trajectory_estimated_video_frames": trajectory_estimated_count,
         "trajectory_fill_max_gap": args.trajectory_fill_max_gap,

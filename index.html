@@ -250,9 +250,19 @@
     background:#f5f5f5; box-shadow:0 0 0 1px rgba(0,0,0,.45); pointer-events:none}
   .clipHandle.offview{opacity:.35}
   .nudgeRow{display:flex; gap:8px; align-items:stretch}
-  .nudgeLabel{flex:0 0 78px; font-size:13px; color:var(--dim);
+  .nudgeLabel{flex:0 0 112px; font-size:13px; color:var(--dim);
     display:flex; flex-direction:column; justify-content:center}
   .nudgeLabel output{color:var(--text); font-size:15px; font-weight:600; font-variant-numeric:tabular-nums}
+  .clipTimeBox{display:flex; align-items:center; width:100%; margin:3px 0;
+    background:color-mix(in srgb, var(--surface) 86%, var(--bg));
+    border:1px solid var(--line); border-radius:9px}
+  .clipTimeBox:focus-within{border-color:var(--accent-bg);
+    box-shadow:0 0 0 2px color-mix(in srgb, var(--accent-bg) 22%, transparent)}
+  .nudgeLabel input.clipTimeInput{width:100%; min-width:0; min-height:32px; padding:5px 2px 5px 7px;
+    background:transparent; color:var(--text); border:0; border-radius:0; box-shadow:none;
+    font:inherit; font-size:15px; font-weight:600; font-variant-numeric:tabular-nums}
+  .nudgeLabel input.clipTimeInput:focus{outline:none}
+  .clipTimeUnit{padding-right:7px; color:var(--dim); font-size:13px; user-select:none}
   .frameOut{font-size:13px!important; color:var(--dim)!important}
   .clipFrameSummary{display:flex; justify-content:space-between; gap:10px; padding:2px 0 4px;
     color:var(--dim); font-size:14px; font-variant-numeric:tabular-nums}
@@ -304,13 +314,13 @@
   .rallySegment{position:absolute; top:0; bottom:0; min-width:2px; overflow:hidden;
     display:flex; align-items:center; justify-content:center; flex-direction:column;
     border-right:2px solid var(--bg); background:var(--line); color:var(--text);
-    font-variant-numeric:tabular-nums}
+    font-variant-numeric:tabular-nums; transition:opacity .14s ease, background .14s ease,
+    color .14s ease, box-shadow .14s ease}
   .rallySegment:last-child{border-right:0}
   .rallySegment strong{font-size:13px; line-height:1.1; white-space:nowrap}
   .rallySegment .rallyWinner{max-width:calc(100% - 6px); overflow:hidden;
     text-overflow:ellipsis; white-space:nowrap; font-size:9px; line-height:1.2;
     opacity:.8}
-  .rallySegment.active{background:var(--accent-bg); color:var(--accent-text)}
   /* Attribution provenance per rally (job_runner attribution_state). A rally
      whose shot labels were guessed must not read the same as one the person
      detector actually observed. This is a DATA-QUALITY split, not a verdict
@@ -327,6 +337,14 @@
     font-size:10px; font-weight:700; line-height:1}
   .rallySegment.attr-repaired::after{content:'\21BB'; color:var(--dim)}
   .rallySegment.attr-conflict::after{content:'!'; color:var(--tint-poor-fg)}
+  /* Keep playback state visually stronger than every attribution state. This
+     selector intentionally follows the provenance rules and carries an ID so
+     assumed/conflict fills cannot override the currently playing rally. */
+  #rallyRibbon.hasActive .rallySegment:not(.active){opacity:.52}
+  #rallyRibbon .rallySegment.active{z-index:2; background:var(--accent-bg);
+    color:var(--accent-text); box-shadow:inset 0 0 0 3px var(--text),
+    0 0 10px color-mix(in srgb, var(--accent-bg) 70%, transparent)}
+  #rallyRibbon .rallySegment.active .rallyWinner{opacity:1; font-weight:700}
   /* Each swatch is a miniature of the ribbon segment it decodes (§8.11: the
      legend and the thing decoded share tokens). Observed and repaired share
      the neutral segment fill — accent belongs to .active, which is the
@@ -778,6 +796,15 @@
   .deleteRunBtn:disabled{opacity:.45; cursor:wait}
   .deleteRunBtn.arm{width:auto; border-radius:999px; padding:0 12px;
     background:var(--accent-bg); color:var(--accent-text); font-size:12px; font-weight:700}
+  /* Analysis session list gets roomier type than the dense metric screens.
+     Scope every override to this section so judging/coaching layouts retain
+     their information density. */
+  #p-matches .viewhead h2{font-size:26px}
+  #p-matches .viewhead .dim{font-size:15px}
+  #p-matches .cliptop .name{font-size:18px}
+  #p-matches .cliptop .metaline{font-size:15px}
+  #p-matches .statechip{font-size:12px; padding:7px 13px}
+  #p-matches .emptycard{font-size:16px}
   /* The match analysis, on its own page: the same stack the card used to hold
      inline, now unclamped — <main> supplies the page padding. */
   #matchBody{display:flex; flex-direction:column; gap:14px}
@@ -1113,7 +1140,14 @@
       <div class="tlReadout"><output id="clipReadout">–</output></div>
     </div>
     <div class="nudgeRow">
-      <span class="nudgeLabel">Start<output id="clipStartOut">0.00s</output><output class="frameOut" id="clipStartFrameOut">Frame 0</output></span>
+      <span class="nudgeLabel">Start
+        <span class="clipTimeBox">
+          <input class="clipTimeInput" id="clipStartOut" type="text" inputmode="decimal"
+            value="0.00" aria-label="Clip start time in seconds">
+          <span class="clipTimeUnit" aria-hidden="true">s</span>
+        </span>
+        <output class="frameOut" id="clipStartFrameOut">Frame 0</output>
+      </span>
       <div class="stepper">
         <button type="button" id="nStartM1s" aria-label="Start earlier one second">&minus;</button>
         <span class="stepUnit">second</span>
@@ -1126,7 +1160,14 @@
       </div>
     </div>
     <div class="nudgeRow">
-      <span class="nudgeLabel">End<output id="clipEndOut">0.00s</output><output class="frameOut" id="clipEndFrameOut">Frame 0</output></span>
+      <span class="nudgeLabel">End
+        <span class="clipTimeBox">
+          <input class="clipTimeInput" id="clipEndOut" type="text" inputmode="decimal"
+            value="0.00" aria-label="Clip end time in seconds">
+          <span class="clipTimeUnit" aria-hidden="true">s</span>
+        </span>
+        <output class="frameOut" id="clipEndFrameOut">Frame 0</output>
+      </span>
       <div class="stepper">
         <button type="button" id="nEndM1s" aria-label="End earlier one second">&minus;</button>
         <span class="stepUnit">second</span>
@@ -5019,21 +5060,43 @@ function updateClipLabels(){
   const startFrame = timeToFrame(start);
   const endFrame = timeToFrame(end);
   const selectedFrames = Math.max(1, endFrame - startFrame + 1);
-  $('clipStartOut').textContent = fmtTime(start);
-  $('clipEndOut').textContent = fmtTime(end);
+  if(document.activeElement !== $('clipStartOut')){
+    $('clipStartOut').value = start.toFixed(2);
+  }
+  if(document.activeElement !== $('clipEndOut')){
+    $('clipEndOut').value = end.toFixed(2);
+  }
   $('clipStartFrameOut').textContent = `Frame ${startFrame}`;
   $('clipEndFrameOut').textContent = `Frame ${endFrame}`;
   $('clipFrameRangeOut').textContent = `${startFrame}-${endFrame} (${selectedFrames} frame${selectedFrames === 1 ? '' : 's'})`;
 }
 
-function nudgeClipEdge(which, delta){
+function parseClipTime(value){
+  const text = String(value).trim().toLowerCase().replace(/s$/, '').trim();
+  if(!text) return null;
+  const pieces = text.split(':');
+  if(pieces.length > 2) return null;
+  let seconds;
+  if(pieces.length === 2){
+    const minutes = Number(pieces[0]);
+    const remainder = Number(pieces[1]);
+    if(!Number.isFinite(minutes) || !Number.isFinite(remainder) ||
+       minutes < 0 || remainder < 0 || remainder >= 60) return null;
+    seconds = minutes * 60 + remainder;
+  } else {
+    seconds = Number(text);
+  }
+  return Number.isFinite(seconds) && seconds >= 0 ? seconds : null;
+}
+
+function setClipEdge(which, requestedTime){
   stopClipPlayback();
   let t;
   if(which === 'start'){
-    t = Math.max(0, Math.min(S.clip.start + delta, S.clip.end - minClip()));
+    t = Math.max(0, Math.min(requestedTime, S.clip.end - minClip()));
     S.clip.start = t;
   } else {
-    t = Math.min(clipDuration(), Math.max(S.clip.end + delta, S.clip.start + minClip()));
+    t = Math.min(clipDuration(), Math.max(requestedTime, S.clip.start + minClip()));
     S.clip.end = t;
   }
   S.clip.cursor = t;             // the playhead centers on the edge being nudged
@@ -5053,6 +5116,36 @@ function selectEntireClip(){
   updateClipTimeline();
   drawDetailPlaceholderNow();
   scheduleDetailRender();
+}
+
+function nudgeClipEdge(which, delta){
+  const current = which === 'start' ? S.clip.start : S.clip.end;
+  setClipEdge(which, current + delta);
+}
+
+function commitClipTime(which){
+  const input = $(which === 'start' ? 'clipStartOut' : 'clipEndOut');
+  const parsed = parseClipTime(input.value);
+  if(parsed === null){
+    input.value = (which === 'start' ? S.clip.start : S.clip.end).toFixed(2);
+    return;
+  }
+  setClipEdge(which, parsed);
+  input.value = (which === 'start' ? S.clip.start : S.clip.end).toFixed(2);
+}
+
+for(const which of ['start', 'end']){
+  const input = $(which === 'start' ? 'clipStartOut' : 'clipEndOut');
+  input.addEventListener('blur', () => commitClipTime(which));
+  input.addEventListener('keydown', event => {
+    if(event.key === 'Enter'){
+      event.preventDefault();
+      input.blur();
+    } else if(event.key === 'Escape'){
+      input.value = (which === 'start' ? S.clip.start : S.clip.end).toFixed(2);
+      input.blur();
+    }
+  });
 }
 
 const frameStep = () => 1 / videoFps();
@@ -6453,11 +6546,20 @@ function rallyDisplayBounds(rallies){
 }
 
 function syncActiveRally(frame){
+  let hasActive = false;
   for(const el of document.querySelectorAll('#rallyRibbon .rallySegment')){
     const start = Number(el.dataset.start);
     const end = Number(el.dataset.end);
-    el.classList.toggle('active', frame >= start && frame < end);
+    const active = frame >= start && frame <= end;
+    el.classList.toggle('active', active);
+    if(active){
+      el.setAttribute('aria-current', 'true');
+      hasActive = true;
+    } else {
+      el.removeAttribute('aria-current');
+    }
   }
+  $('rallyRibbon').classList.toggle('hasActive', hasActive);
 }
 
 function buildRallyVisualization(initialFrame){
@@ -6496,8 +6598,11 @@ function buildRallyVisualization(initialFrame){
     ].filter(Boolean).join(' · ');
     const segment = document.createElement('div');
     segment.className = `rallySegment attr-${state}`;
-    segment.dataset.start = start;
-    segment.dataset.end = end;
+    // The ribbon tiles use midpoint display bounds to fill the available
+    // width, but playback highlighting follows the model's true rally bounds.
+    // This leaves the ribbon unhighlighted during an inferred between-rally gap.
+    segment.dataset.start = Number(rally.start_frame);
+    segment.dataset.end = Number(rally.end_frame);
     segment.style.left = `${(start - runStart) / runSpan * 100}%`;
     segment.style.width = `${Math.max(0, end - start) / runSpan * 100}%`;
     segment.setAttribute('aria-label',
