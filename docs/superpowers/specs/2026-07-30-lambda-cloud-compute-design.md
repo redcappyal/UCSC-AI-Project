@@ -23,7 +23,9 @@ compute there.
    server. (Training later would only change the GPU choice; nothing here
    precludes it.)
 2. **GPU policy:** prefer `A6000` (48 GB, $1.09/hr as of 2026-07-30), fall back
-   A10 ($1.29) then A100 ($1.99). Hard cap **$2.00/hr** enforced in-script;
+   A10 ($1.29) then A100 ($1.99; both `gpu_1x_a100` and `gpu_1x_a100_sxm4`
+   variants qualify — live API check 2026-07-30 showed only the SXM variant
+   with US capacity). Hard cap **$2.00/hr** enforced in-script;
    anything above requires asking Ian. US regions. Lambda bills by the minute.
 3. **Fully ephemeral:** no persistent Lambda filesystem. Fresh instance per
    session, bootstrap from the public repo, rsync clips up and results back,
