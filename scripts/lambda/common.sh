@@ -35,7 +35,13 @@ api_key() {
 
 api() { # api METHOD PATH [JSON_BODY]
   local method="$1" path="$2" body="${3:-}"
-  local args=(-sS --fail-with-body -m 30 -X "$method" -H "Authorization: Bearer $(api_key)")
+  # Assign on its own line: inside `local ...=$(api_key)` the declaration's own
+  # exit status masks api_key's return 1, losing the missing-key diagnostic.
+  local key
+  key="$(api_key)" || return 1
+  # --fail (not --fail-with-body): an HTTP error body on stdout would parse as an
+  # empty account and print a false all-clear downstream.
+  local args=(-sS --fail -m 30 -X "$method" -H "Authorization: Bearer $key")
   if [ -n "$body" ]; then
     args+=(-H "Content-Type: application/json" -d "$body")
   fi
