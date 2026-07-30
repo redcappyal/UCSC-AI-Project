@@ -9,6 +9,92 @@ native scale instead.
 The window strategy is deliberately a seam: §6's velocity-extrapolated single
 crop can replace tile_windows later without touching the model adapter.
 """
+import os
+
+# Tiles per inference batch, measured rather than assumed. bench_wasb_device.py
+# over 416px 9-channel stacks, median ms per tile:
+#
+#   Lambda A10 (CUDA 12.8, torch 2.7.0)
+#     batch 1: 16.9   batch 8: 17.3   batch 16: 16.8   batch 32: 18.1   batch 64: 18.2
+#   8 GB M2 Air (MPS)
+#     batch 1: 81.4   batch 4: 76.8   batch 8: 81.8
+#     batch 10: 3082  batch 12: 5903  batch 16: 4749
+#
+# Two facts, one conclusion. CUDA is FLAT: the model saturates an A10 on a
+# single tile, so it is compute-bound and a bigger batch buys nothing anywhere.
+# MPS falls off a ~40x cliff between 8 and 10 -- not the machine running out of
+# memory (system RAM was 68% free), but MPS allocator pressure from the
+# activations.
+#
+# Past the cliff MPS does something worse than crawl. At batch 32 over 32 real
+# tiles the Metal command buffer failed with
+# kIOGPUCommandBufferCallbackErrorOutOfMemory, torch did NOT raise, and the
+# heatmap came back differing from the batch-8 result by 3.5e-2 -- the full
+# magnitude of the signal in that frame (max probability 0.035).
+#
+# That is not arithmetic. Batches 1, 4 and 16 are bitwise identical to 8 on
+# MPS, and on CPU batch 32 differs from batch 8 by only 1.5e-7 (ordinary
+# float32 reassociation, five orders of magnitude smaller). 3.5e-2 is work that
+# silently did not finish. A detector that quietly returns wrong numbers is the
+# failure this module is built to refuse, so the cap is a correctness fix on
+# MPS, not only a speed one.
+#
+# A batch above 8 therefore helps no device that has been measured and corrupts
+# one. This is a single default rather than an MPS special case for that reason.
+DEFAULT_MAX_BATCH_TILES = 8
+
+_BATCH_ENV_VAR = "BALL_MAX_BATCH_TILES"
+
+
+def _env_batch_cap():
+    """BALL_MAX_BATCH_TILES as a positive int, or None when unset.
+
+    Raises on a malformed value rather than ignoring it: the operator who
+    sets this is trying to rescue a machine that is already too slow, and a
+    silently-dropped typo would leave the batch exactly where it was while
+    looking like the cap did nothing.
+    """
+    raw = os.environ.get(_BATCH_ENV_VAR, "").strip()
+    if not raw:
+        return None
+    try:
+        cap = int(raw)
+    except ValueError as exc:
+        raise ValueError(
+            f"{_BATCH_ENV_VAR} must be a positive integer, got {raw!r}") from exc
+    if cap < 1:
+        raise ValueError(
+            f"{_BATCH_ENV_VAR} must be a positive integer, got {cap}")
+    return cap
+
+
+def effective_batch_tiles(manifest):
+    """How many tiles to hand the runner at once.
+
+    `manifest.max_batch_tiles` is the model's CEILING, not a mandate. It is a
+    property of the exported artifact, which is why it stays 32 and is not
+    edited here -- but nothing measured benefits from a batch that big (see
+    DEFAULT_MAX_BATCH_TILES), so DEFAULT_MAX_BATCH_TILES caps it and
+    BALL_MAX_BATCH_TILES overrides that default for an operator who has
+    measured their own machine.
+
+    The ceiling itself is never raised -- a batch the exported model never
+    declared would make the number unattributable to the artifact, and the
+    supported way to declare a bigger one is the manifest (or BALL_MODEL_DIR).
+
+    Batching is meant to be a throughput knob -- the tile set, the per-tile
+    crop and the merge are identical at every batch size -- and measured, that
+    holds exactly at the sizes this cap allows: batches 1, 4, 8 and 16 return
+    bitwise-identical heatmaps. Only batch 32 diverges (1.5e-7 on CPU from
+    float reassociation; catastrophically on MPS, above), which is another
+    reason not to go there. Being output-neutral is also what makes the env
+    var safe to read per call rather than once at load, unlike BALL_DEVICE --
+    which load_detector freezes when it caches the runner, because that one
+    *would* change results.
+    """
+    ceiling = max(1, int(manifest.max_batch_tiles))
+    cap = _env_batch_cap()
+    return min(ceiling, cap if cap is not None else DEFAULT_MAX_BATCH_TILES)
 
 
 def tile_windows(frame_w, frame_h, tile, overlap):
@@ -130,7 +216,7 @@ def detect_frame(runner, frame, manifest):
     windows = tile_windows(frame_w, frame_h, tile, manifest.tile_overlap_px)
 
     detections = []
-    batch = max(1, manifest.max_batch_tiles)
+    batch = effective_batch_tiles(manifest)
     for start in range(0, len(windows), batch):
         chunk = windows[start:start + batch]
         crops = [_crop(frame, x0, y0, tile) for x0, y0 in chunk]
@@ -183,7 +269,7 @@ def detect_frame_stack(runner, frames, manifest):
     windows = tile_windows(frame_w, frame_h, tile, manifest.tile_overlap_px)
 
     detections = []
-    batch = max(1, manifest.max_batch_tiles)
+    batch = effective_batch_tiles(manifest)
     for start in range(0, len(windows), batch):
         chunk = windows[start:start + batch]
         stacks = [

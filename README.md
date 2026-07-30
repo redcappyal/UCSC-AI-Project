@@ -78,6 +78,7 @@ Useful environment variables:
 | `PORT` | `5188` | Listen port. Avoid 5000 — macOS AirPlay Receiver holds it. |
 | `BALL_DETECTOR` | `local` | Ball detector for analysis jobs: `local` (committed WASB temporal model) or `rfdetr` (hosted Roboflow). No silent fallback. |
 | `BALL_DEVICE` | `auto` | Device for the local ball detector: CUDA when available, else CPU. MPS is opt-in (`mps`), never auto. |
+| `BALL_MAX_BATCH_TILES` | `8` | Tiles per inference batch, capping the manifest's `max_batch_tiles` (32). A bigger batch buys nothing on any measured device — CUDA is flat from batch 1 to 64 (A10: 16.9→18.2 ms/tile) because the model saturates the card on one tile — and above 8 MPS falls off a ~40x cliff (M2 Air: 81.8 ms/tile at batch 8, 3082 at batch 10) and at 4K tile counts returns **wrong numbers**: the Metal command buffer OOMs, torch does not raise, and the heatmap comes back incomplete. Raise it only up to the manifest ceiling, and only with a measurement. |
 | `BALL_MODEL_DIR` | `models/crosscourt-wasb-416-v1` | Override the local ball model directory. |
 | `ROBOFLOW_API_KEY` | — | Required only when `BALL_DETECTOR=rfdetr`. |
 | `ROBOFLOW_MODEL_ID` | `ai-squash-line-tracker/4` | Which hosted detection model to load (rfdetr backend). |
