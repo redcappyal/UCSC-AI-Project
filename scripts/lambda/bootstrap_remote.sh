@@ -8,7 +8,7 @@ if [ ! -d UCSC-AI-Project ]; then
   git clone --branch "$REF" https://github.com/redcappyal/UCSC-AI-Project
 fi
 cd UCSC-AI-Project
-git fetch origin "$REF" && git checkout "$REF" && git pull --ff-only origin "$REF" || true
+git fetch origin "$REF" && git checkout "$REF" && git pull --ff-only origin "$REF"
 
 # Reuse Lambda Stack's CUDA torch; requirements.txt leaves torch unpinned so
 # pip sees it satisfied. rfdetr==1.8.3 could still resolve its own torch —

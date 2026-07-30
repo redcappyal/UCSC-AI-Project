@@ -7,7 +7,14 @@ REF="${1:-main}"
 # --- one box at a time
 if [ -f "$INSTANCE_FILE" ]; then
   existing_id="$(python3 -c "import json;print(json.load(open('$INSTANCE_FILE'))['id'])")"
-  status="$(json_field "$(api GET "/instances/$existing_id" || echo '{}')" data.status)"
+  # An unreachable API is not evidence the box is gone. A 404 on a GC'd id lands
+  # in this refusal path by design — deleting tracking requires a human (or
+  # lambda_down.sh), never a guess, because guessing wrong bills a second box.
+  info="$(api GET "/instances/$existing_id")" || {
+    echo "Cannot verify existing instance $existing_id (API error above) — refusing to launch another box. Check scripts/lambda/lambda_status.sh; if the old box is confirmed gone, delete $INSTANCE_FILE and re-run." >&2
+    exit 1
+  }
+  status="$(json_field "$info" data.status)"
   if [ -n "$status" ] && [ "$status" != "terminated" ]; then
     echo "Instance $existing_id is already '$status' — use it, or lambda_down.sh first." >&2
     exit 1
@@ -67,6 +74,17 @@ if [ -z "$instance_id" ]; then
   exit 1
 fi
 echo "Instance $instance_id launching (billing has started — lambda_down.sh stops it)."
+
+# Provisional record, written before any further api call: the file must exist from
+# the first billable moment so lambda_down.sh can always find the box even if this
+# script dies mid-poll. The full write below overwrites it with the real ip + price.
+python3 - <<PY
+import json, time
+json.dump({"id": "$instance_id", "ip": "", "type": "$itype",
+           "region": "$region", "price_cents": 0,
+           "launched_at": int(time.time())},
+          open("$INSTANCE_FILE", "w"))
+PY
 
 # --- wait for active + ip (15 min cap)
 ip=""
