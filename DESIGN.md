@@ -181,7 +181,11 @@ iOS app in Safari (add-to-home-screen capable).
   or Training — lands back on the tab it started from instead of stranding the
   native tab on another section (the pill that would recover it is hidden
   here). Phases below root are never rewritten, and the `#run=` review sheet
-  has no `#tab=` so it is never pinned. It also hides `.devOnly` (the Dashboard
+  has no `#tab=` so it is never pinned. Session restore participates:
+  `tryRestoreSession`'s "still at rest" guards compare against the pinned root
+  (`SHELL_TAB || 'load'`), so the `openRunReview` reload still rehydrates the
+  full review on a pinned tab instead of being vetoed by a rest phase that is
+  no longer `load`. It also hides `.devOnly` (the Dashboard
   Dev row, §8.15): inside the app the page is the product, and the only reader of
   that row is someone sitting at the Mac. Everything else renders unchanged;
   Since the Challenge dock was archived there is no second dock left to reconcile.
