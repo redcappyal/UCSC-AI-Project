@@ -85,7 +85,9 @@ def test_user_player_selection_validates_the_run_and_player(runs_dir):
     ).status_code == 404
 
 
-def test_pooled_me_metrics_follow_each_runs_selected_player(runs_dir):
+def test_pooled_me_metrics_follow_each_runs_selected_player(
+    runs_dir, monkeypatch
+):
     _write_selected_run(
         runs_dir,
         "1785000000001",
@@ -99,6 +101,12 @@ def test_pooled_me_metrics_follow_each_runs_selected_player(runs_dir):
         selected_player=2,
         player_one_zones=[1, 1, 1],
         player_two_zones=[7, 8],
+    )
+    monkeypatch.setenv("COACH_LLM_PROVIDER", "ollama")
+    monkeypatch.setattr(
+        app_module,
+        "ollama_multi_match_coaching_feedback",
+        lambda history, pooled: (None, "ollama_unavailable"),
     )
     client = app_module.app.test_client()
 

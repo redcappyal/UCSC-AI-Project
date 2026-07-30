@@ -8,6 +8,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app import (
     build_coaching_analytics,
+    compact_coaching_analytics,
     local_coaching_feedback,
     local_player_coaching_feedback,
     parse_llm_coaching_report,
@@ -48,6 +49,43 @@ def test_parse_llm_coaching_report_validates_required_player_sections():
     assert parse_llm_coaching_report("not json") is None
     del report["players"]["2"]["drill_goal"]
     assert parse_llm_coaching_report(json.dumps(report)) is None
+
+
+def test_compact_coaching_analytics_removes_repeated_zone_tables():
+    analytics = {
+        "players": [{
+            "player_number": 1,
+            "total_wall_hits": 4,
+            "average_wall_height_ft": 7.2,
+            "target_zone_percentages": [
+                {"zone": 1, "count": 3, "percentage": 75.0},
+                {"zone": 2, "count": 0, "percentage": 0.0},
+                {"zone": 3, "count": 1, "percentage": 25.0},
+            ],
+            "missing_target_zones": [{"zone": 2, "count": 0}],
+            "rally_outcome_analytics": {
+                "winning": {
+                    "rally_count": 2,
+                    "total_wall_hits": 4,
+                    "target_zone_percentages": [{"zone": 1, "count": 4}],
+                },
+                "losing": {"rally_count": 0, "total_wall_hits": 0},
+            },
+        }],
+        "target_zone_percentages": [{"zone": 1, "count": 999}],
+    }
+
+    compact = compact_coaching_analytics(analytics)
+
+    assert compact["players"][0]["target_zones_used"] == {
+        "1": 75.0,
+        "3": 25.0,
+    }
+    assert compact["players"][0]["unused_target_zones"] == [2]
+    assert compact["players"][0]["rally_outcomes"] == {
+        "winning": {"rally_count": 2, "total_wall_hits": 4}
+    }
+    assert "target_zone_percentages" not in compact["players"][0]
 
 
 def test_llm_coaching_feedback_requests_structured_player_report(monkeypatch):
@@ -93,7 +131,14 @@ def test_llm_coaching_feedback_requests_structured_player_report(monkeypatch):
     assert request_body["model"] == "test-model"
     assert request_body["text"]["format"]["type"] == "json_schema"
     assert request_body["text"]["format"]["strict"] is True
-    assert request_body["text"]["format"]["schema"]["required"] == ["summary", "players"]
+    assert request_body["text"]["format"]["schema"]["required"] == ["players", "summary"]
+    player_schema = request_body["text"]["format"]["schema"]["properties"]["players"][
+        "properties"
+    ]["1"]
+    assert player_schema["properties"]["observations"]["maxItems"] == 2
+    assert request_body["text"]["format"]["schema"]["properties"]["summary"][
+        "maxLength"
+    ] == 360
     assert "test-key" not in captured["request"].data.decode("utf-8")
 
 
@@ -137,8 +182,37 @@ def test_ollama_coaching_feedback_uses_local_structured_output(monkeypatch):
     assert request_body["model"] == "test-local-model"
     assert request_body["stream"] is False
     assert request_body["think"] is False
-    assert request_body["format"]["required"] == ["summary", "players"]
+    assert request_body["format"]["required"] == ["players", "summary"]
     assert request_body["options"]["num_ctx"] == 8192
+    assert request_body["options"]["num_predict"] == 1200
+
+
+def test_ollama_reports_output_limit_as_truncation(monkeypatch):
+    import app
+
+    class FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def read(self):
+            return json.dumps({
+                "done_reason": "length",
+                "message": {"role": "assistant", "content": '{"players":'},
+            }).encode("utf-8")
+
+    monkeypatch.setattr(
+        app.urllib.request,
+        "urlopen",
+        lambda request_obj, timeout: FakeResponse(),
+    )
+
+    report, status = app.ollama_coaching_feedback({"players": []})
+
+    assert report is None
+    assert status == "truncated_response"
 
 
 def test_player_error_metrics_classifies_lost_rallies_and_calculates_percentage():

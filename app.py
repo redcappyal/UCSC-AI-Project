@@ -728,16 +728,20 @@ def openai_coach_response_format():
         "properties": {
             "observations": {
                 "type": "array",
-                "items": {"type": "string"},
+                "items": {"type": "string", "maxLength": 220},
+                "minItems": 2,
+                "maxItems": 2,
                 "description": "Two concise, evidence-based observations for this player.",
             },
-            "drill_name": {"type": "string"},
+            "drill_name": {"type": "string", "maxLength": 80},
             "drill_instructions": {
                 "type": "string",
+                "maxLength": 300,
                 "description": "A specific drill setup with repetitions or duration.",
             },
             "drill_goal": {
                 "type": "string",
+                "maxLength": 180,
                 "description": "A measurable target for completing the drill successfully.",
             },
         },
@@ -756,10 +760,6 @@ def openai_coach_response_format():
         "schema": {
             "type": "object",
             "properties": {
-                "summary": {
-                    "type": "string",
-                    "description": "A short overall summary comparing the two players.",
-                },
                 "players": {
                     "type": "object",
                     "properties": {
@@ -769,8 +769,18 @@ def openai_coach_response_format():
                     "required": ["1", "2"],
                     "additionalProperties": False,
                 },
+                "summary": {
+                    "type": "string",
+                    "maxLength": 360,
+                    "description": (
+                        "One concise sentence comparing the players; no repeated metrics."
+                    ),
+                },
             },
-            "required": ["summary", "players"],
+            # Put the bounded player sections first. Local models tend to
+            # follow schema property order; this prevents an overlong summary
+            # from consuming the entire generation before the useful report.
+            "required": ["players", "summary"],
             "additionalProperties": False,
         },
     }
@@ -820,7 +830,97 @@ def format_llm_player_feedback(player_report):
     )
 
 
+COACHING_LLM_PLAYER_METRICS = (
+    "player_number",
+    "total_wall_hits",
+    "unforced_errors",
+    "forced_errors",
+    "total_errors",
+    "unforced_error_percentage",
+    "average_rally_duration_seconds",
+    "average_wall_height_ft",
+    "average_incoming_speed_mph",
+    "average_exit_speed_mph",
+    "average_velocity_change_mph",
+    "max_incoming_speed_mph",
+    "center_target_rate",
+    "side_target_rate",
+    "low_target_rate",
+    "mid_target_rate",
+    "high_target_rate",
+    "in_count",
+    "out_count",
+)
+
+COACHING_LLM_OUTCOME_METRICS = (
+    "rally_count",
+    "total_wall_hits",
+    "average_rally_duration_seconds",
+    "average_wall_height_ft",
+    "average_incoming_speed_mph",
+    "center_target_rate",
+    "side_target_rate",
+    "low_target_rate",
+    "mid_target_rate",
+    "high_target_rate",
+)
+
+
+def compact_coaching_analytics(analytics):
+    """Keep only measurements that can support the requested coaching.
+
+    The UI analytics object contains repeated nine-zone tables at the match,
+    player, and won/lost-rally levels. Sending all of them encouraged qwen3 to
+    restate the same percentages until it hit Ollama's output limit. This
+    compact form retains the evidence while removing those repetitions.
+    """
+
+    compact_players = []
+    for player in analytics.get("players", []) or []:
+        if not isinstance(player, dict):
+            continue
+        compact = {
+            key: player.get(key)
+            for key in COACHING_LLM_PLAYER_METRICS
+            if key in player
+        }
+        compact["target_zones_used"] = {
+            str(zone.get("zone")): zone.get("percentage")
+            for zone in player.get("target_zone_percentages", []) or []
+            if isinstance(zone, dict) and (zone.get("count") or 0) > 0
+        }
+        compact["unused_target_zones"] = [
+            zone.get("zone")
+            for zone in player.get("missing_target_zones", []) or []
+            if isinstance(zone, dict) and zone.get("zone") is not None
+        ]
+        outcomes = {}
+        for outcome_name, outcome in (
+            player.get("rally_outcome_analytics", {}) or {}
+        ).items():
+            if not isinstance(outcome, dict):
+                continue
+            if not (outcome.get("rally_count") or outcome.get("total_wall_hits")):
+                continue
+            outcomes[outcome_name] = {
+                key: outcome.get(key)
+                for key in COACHING_LLM_OUTCOME_METRICS
+                if key in outcome
+            }
+        compact["rally_outcomes"] = outcomes
+        compact_players.append(compact)
+    return {
+        "players": compact_players,
+        "notes": {
+            "total_wall_hits_means": "shots analyzed",
+            "wall_height_means": "front-wall impact height",
+            "speed_is_estimated": True,
+        },
+    }
+
+
 def coaching_messages(analytics):
+    coaching_analytics = compact_coaching_analytics(analytics)
     return [
         {
             "role": "system",
@@ -833,6 +933,9 @@ def coaching_messages(analytics):
                 "metrics when available. If a player's sample is small, say so plainly. "
                 "Compare winning-rally and losing-rally analytics when both samples exist, "
                 "and highlight useful differences without claiming they caused the result. "
+                "Keep each player's observations about that player's own measurements; "
+                "reserve cross-player comparisons for the one-sentence summary, and check "
+                "the numeric direction of every comparison. "
                 "Use 'shots analyzed' instead of 'front-wall hits'. Wall height means "
                 "where the ball struck the front wall; pace is estimated ball speed "
                 "around front-wall contact."
@@ -842,8 +945,10 @@ def coaching_messages(analytics):
             "role": "user",
             "content": (
                 "Create the overall summary and separate Player 1 and Player 2 coaching "
-                "reports from these analytics:\n"
-                + json.dumps(analytics, indent=2)
+                "reports from these analytics. The summary must be one sentence under "
+                "45 words. Return exactly two observations per player and do not repeat "
+                "the same metric:\n"
+                + json.dumps(coaching_analytics, separators=(",", ":"))
             ),
         },
     ]
@@ -909,6 +1014,12 @@ def ollama_coaching_feedback(analytics):
         timeout = max(1.0, float(os.getenv("OLLAMA_COACH_TIMEOUT_SECONDS", "120")))
     except ValueError:
         timeout = 120.0
+    try:
+        max_tokens = max(
+            400, int(os.getenv("OLLAMA_COACH_MAX_TOKENS", "1200"))
+        )
+    except ValueError:
+        max_tokens = 1200
 
     body = json.dumps(
         {
@@ -918,8 +1029,8 @@ def ollama_coaching_feedback(analytics):
             "think": False,
             "format": openai_coach_response_format()["schema"],
             "options": {
-                "temperature": 0.2,
-                "num_predict": 850,
+                "temperature": 0.1,
+                "num_predict": max_tokens,
                 "num_ctx": 8192,
             },
         }
@@ -935,9 +1046,15 @@ def ollama_coaching_feedback(analytics):
             data = json.loads(response.read().decode("utf-8"))
     except urllib.error.HTTPError as error:
         return None, "ollama_model_missing" if error.code == 404 else "ollama_request_failed"
-    except (urllib.error.URLError, TimeoutError, OSError, json.JSONDecodeError):
+    except json.JSONDecodeError:
+        return None, "invalid_response"
+    except (urllib.error.URLError, TimeoutError, OSError):
         return None, "ollama_unavailable"
 
+    if not isinstance(data, dict):
+        return None, "invalid_response"
+    if data.get("done_reason") == "length":
+        return None, "truncated_response"
     text = ((data.get("message") or {}).get("content") or "").strip()
     if not text:
         return None, "empty_response"
@@ -1630,9 +1747,11 @@ def coaching_response_payload(analytics, llm_provider, llm_report=None, llm_stat
 
 
 POOLED_ADVICE_SESSION_LIMIT = 8
+POOLED_COACH_CACHE = {}
+POOLED_COACH_CACHE_LOCK = threading.Lock()
 
 
-def recent_runs_with_analytics(limit):
+def recent_runs_with_analytics(limit, identified_only=False):
     """Newest-first (run_id, payload) pairs for runs that have detected hits."""
     if not RUNS_DIR.is_dir():
         return []
@@ -1671,6 +1790,8 @@ def recent_runs_with_analytics(limit):
         selected_player = job.get("user_player_number")
         if selected_player not in (1, 2):
             selected_player = None
+        if identified_only and selected_player is None:
+            continue
         player_names = ((job.get("players_v1") or {}).get("player_names") or {})
         loaded.append({
             "run_id": run_id,
@@ -1682,19 +1803,20 @@ def recent_runs_with_analytics(limit):
     return loaded
 
 
-def pooled_player_coaching(limit=POOLED_ADVICE_SESSION_LIMIT):
-    """Advice built from several sessions at once.
-
-    A single clip rarely clears coaching_advice.MIN_HITS_FOR_ADVICE — a minute
-    of play yields a handful of front-wall contacts — so per-run advice is
-    almost always "too few shots". Pooling the recent sessions is what makes
-    the Training hub able to say anything at all.
+def pooled_player_coaching(
+    limit=POOLED_ADVICE_SESSION_LIMIT, identified_runs=None
+):
+    """Analytics built from several sessions at once.
 
     Pooling is by *player slot*, not by person: player_number comes from each
     run's own serve-alternation attribution, so Player 1 is whoever served
     first in that clip. The caller must surface that; see `pooling_note`.
     """
     runs = recent_runs_with_analytics(limit)
+    if identified_runs is None:
+        identified_runs = recent_runs_with_analytics(
+            limit, identified_only=True
+        )
 
     sessions = []
     hits_by_player = {1: [], 2: []}
@@ -1722,6 +1844,14 @@ def pooled_player_coaching(limit=POOLED_ADVICE_SESSION_LIMIT):
             "created": run["created"],
             "wall_hits": len(run_hits),
         })
+    for run in identified_runs:
+        payload = run["payload"]
+        run_hits = front_wall_hits_from_payload(payload)
+        run_rallies = (
+            payload.get("rallies")
+            or (payload.get("player_assignment") or {}).get("rallies")
+            or []
+        )
         selected_player = run.get("user_player_number")
         if selected_player in (1, 2):
             personal_hits = [
@@ -1756,7 +1886,6 @@ def pooled_player_coaching(limit=POOLED_ADVICE_SESSION_LIMIT):
             "player_number": player_number,
             "label": analytics["label"],
             "analytics": analytics,
-            "advice": player_advice(analytics),
         })
 
     personal_summary = build_target_zone_summary(selected_hits)
@@ -1797,7 +1926,6 @@ def pooled_player_coaching(limit=POOLED_ADVICE_SESSION_LIMIT):
         "session_count": len(selected_sessions),
         "sessions": selected_sessions,
         "analytics": personal_analytics,
-        "advice": player_advice(personal_analytics),
     }
 
     return {
@@ -1819,9 +1947,254 @@ def pooled_player_coaching(limit=POOLED_ADVICE_SESSION_LIMIT):
     }
 
 
+def multi_match_coach_schema():
+    drill_schema = {
+        "type": "object",
+        "properties": {
+            "name": {"type": "string", "maxLength": 80},
+            "evidence": {"type": "string", "maxLength": 220},
+            "setup": {"type": "string", "maxLength": 220},
+            "work": {"type": "string", "maxLength": 320},
+            "dose": {"type": "string", "maxLength": 120},
+            "success_measure": {"type": "string", "maxLength": 180},
+            "match_application": {"type": "string", "maxLength": 180},
+        },
+        "required": [
+            "name",
+            "evidence",
+            "setup",
+            "work",
+            "dose",
+            "success_measure",
+            "match_application",
+        ],
+        "additionalProperties": False,
+    }
+    return {
+        "type": "object",
+        "properties": {
+            "headline": {"type": "string", "maxLength": 90},
+            "summary": {"type": "string", "maxLength": 500},
+            "trend_observations": {
+                "type": "array",
+                "items": {"type": "string", "maxLength": 240},
+                "minItems": 1,
+                "maxItems": 3,
+            },
+            "drills": {
+                "type": "array",
+                "items": drill_schema,
+                "minItems": 2,
+                "maxItems": 2,
+            },
+            "next_match_focus": {"type": "string", "maxLength": 220},
+        },
+        "required": [
+            "headline",
+            "summary",
+            "trend_observations",
+            "drills",
+            "next_match_focus",
+        ],
+        "additionalProperties": False,
+    }
+
+
+def parse_multi_match_coach_report(text):
+    try:
+        report = json.loads(text)
+    except (TypeError, json.JSONDecodeError):
+        return None
+    if not isinstance(report, dict):
+        return None
+    for key in ("headline", "summary", "next_match_focus"):
+        if not isinstance(report.get(key), str) or not report[key].strip():
+            return None
+    trends = report.get("trend_observations")
+    if (
+        not isinstance(trends, list)
+        or not trends
+        or any(not isinstance(item, str) or not item.strip() for item in trends)
+    ):
+        return None
+    drills = report.get("drills")
+    if not isinstance(drills, list) or len(drills) != 2:
+        return None
+    drill_fields = (
+        "name",
+        "evidence",
+        "setup",
+        "work",
+        "dose",
+        "success_measure",
+        "match_application",
+    )
+    for drill in drills:
+        if not isinstance(drill, dict):
+            return None
+        if any(
+            not isinstance(drill.get(key), str) or not drill[key].strip()
+            for key in drill_fields
+        ):
+            return None
+    return report
+
+
+def identified_player_match_history(runs):
+    """Compact identified-player analytics, ordered oldest to newest."""
+    history = []
+    for run in reversed(runs):
+        player_number = run.get("user_player_number")
+        analytics = build_coaching_analytics(run["payload"])
+        player = next(
+            (
+                candidate
+                for candidate in analytics.get("players", [])
+                if candidate.get("player_number") == player_number
+            ),
+            None,
+        )
+        if not player:
+            continue
+        compact = compact_coaching_analytics({"players": [player]})["players"]
+        if not compact:
+            continue
+        track = "A" if player_number == 1 else "B"
+        history.append({
+            "match_order": len(history) + 1,
+            "run_id": run["run_id"],
+            "created_unix_seconds": rounded(run["created"], 3),
+            "player_name": run.get("player_names", {}).get(track),
+            "metrics": compact[0],
+        })
+    return history
+
+
+def multi_match_coaching_messages(history, pooled_analytics):
+    pooled = compact_coaching_analytics(
+        {"players": [pooled_analytics]}
+    )["players"]
+    evidence = {
+        "ordering": "oldest_to_newest",
+        "matches": history,
+        "pooled_metrics": pooled[0] if pooled else {},
+        "measurement_notes": {
+            "total_wall_hits_means": "shots analyzed",
+            "wall_height_means": "front-wall impact height",
+            "speed_is_estimated": True,
+        },
+    }
+    return [
+        {
+            "role": "system",
+            "content": (
+                "You are a practical squash coach reviewing one player's match "
+                "history. The matches are supplied oldest to newest. Compare them "
+                "in that order, prioritizing repeated weaknesses and the most "
+                "recent evidence. Use only measured data; never invent technique, "
+                "shot type, handedness, player movement, or causation. Cite concrete "
+                "numbers and match order when useful. Give exactly two drills that "
+                "a player can execute, each with setup, work, dosage, a measurable "
+                "success test, and how to apply it in the next match. If samples are "
+                "small or a metric is missing, state that limitation instead of "
+                "guessing. Call front-wall contacts 'shots analyzed'."
+            ),
+        },
+        {
+            "role": "user",
+            "content": (
+                "Review this chronological match history. Explain what is improving, "
+                "what keeps recurring, and the highest-value next action. Return the "
+                "structured coaching report only:\n"
+                + json.dumps(evidence, separators=(",", ":"))
+            ),
+        },
+    ]
+
+
+def ollama_multi_match_coaching_feedback(history, pooled_analytics):
+    model = os.getenv("OLLAMA_COACH_MODEL", DEFAULT_OLLAMA_COACH_MODEL).strip()
+    base_url = os.getenv("OLLAMA_BASE_URL", DEFAULT_OLLAMA_URL).strip().rstrip("/")
+    try:
+        timeout = max(
+            1.0, float(os.getenv("OLLAMA_COACH_TIMEOUT_SECONDS", "120"))
+        )
+    except ValueError:
+        timeout = 120.0
+    try:
+        max_tokens = max(
+            700, int(os.getenv("OLLAMA_COACH_MAX_TOKENS", "1200"))
+        )
+    except ValueError:
+        max_tokens = 1200
+
+    messages = multi_match_coaching_messages(history, pooled_analytics)
+    schema = multi_match_coach_schema()
+    cache_payload = {
+        "model": model,
+        "base_url": base_url,
+        "messages": messages,
+        "schema": schema,
+    }
+    cache_key = hashlib.sha256(
+        json.dumps(cache_payload, sort_keys=True).encode("utf-8")
+    ).hexdigest()
+    with POOLED_COACH_CACHE_LOCK:
+        cached = POOLED_COACH_CACHE.get(cache_key)
+    if cached is not None:
+        return cached, "ok"
+
+    body = json.dumps({
+        "model": model,
+        "messages": messages,
+        "stream": False,
+        "think": False,
+        "format": schema,
+        "options": {
+            "temperature": 0.1,
+            "num_predict": max_tokens,
+            "num_ctx": 16384,
+        },
+    }).encode("utf-8")
+    request_obj = urllib.request.Request(
+        f"{base_url}/api/chat",
+        data=body,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request_obj, timeout=timeout) as response:
+            data = json.loads(response.read().decode("utf-8"))
+    except urllib.error.HTTPError as error:
+        status = (
+            "ollama_model_missing"
+            if error.code == 404
+            else "ollama_request_failed"
+        )
+        return None, status
+    except json.JSONDecodeError:
+        return None, "invalid_response"
+    except (urllib.error.URLError, TimeoutError, OSError):
+        return None, "ollama_unavailable"
+
+    if not isinstance(data, dict):
+        return None, "invalid_response"
+    if data.get("done_reason") == "length":
+        return None, "truncated_response"
+    text = ((data.get("message") or {}).get("content") or "").strip()
+    report = parse_multi_match_coach_report(text)
+    if not report:
+        return None, "invalid_response"
+    with POOLED_COACH_CACHE_LOCK:
+        if len(POOLED_COACH_CACHE) >= 16:
+            POOLED_COACH_CACHE.pop(next(iter(POOLED_COACH_CACHE)))
+        POOLED_COACH_CACHE[cache_key] = report
+    return report, "ok"
+
+
 @app.get("/api/coach/advice")
 def coach_advice():
-    """Coaching advice over the recent sessions together, not one run alone."""
+    """Ollama coaching over the user's identified matches in time order."""
     try:
         limit = int(request.args.get("sessions", POOLED_ADVICE_SESSION_LIMIT))
     except (TypeError, ValueError):
@@ -1829,7 +2202,29 @@ def coach_advice():
     if limit < 1 or limit > 50:
         return error_response("sessions must be between 1 and 50.", status=400)
 
-    return jsonify({"ok": True, **pooled_player_coaching(limit)})
+    identified_runs = recent_runs_with_analytics(
+        limit, identified_only=True
+    )
+    pooled = pooled_player_coaching(limit, identified_runs=identified_runs)
+    history = identified_player_match_history(identified_runs)
+    provider = configured_coach_provider()
+    if not history:
+        report, llm_status = None, "no_identified_sessions"
+    elif provider != "ollama":
+        report, llm_status = None, "ollama_not_configured"
+    else:
+        report, llm_status = ollama_multi_match_coaching_feedback(
+            history, pooled["me"]["analytics"]
+        )
+    return jsonify({
+        "ok": True,
+        **pooled,
+        "coach": report,
+        "coach_match_order": [match["run_id"] for match in history],
+        "coach_match_ordering": "oldest_to_newest",
+        "llm_provider": provider,
+        "llm_status": llm_status,
+    })
 
 
 @app.get("/api/runs/<run_id>/coach")

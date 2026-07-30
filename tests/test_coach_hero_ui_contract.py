@@ -1,9 +1,4 @@
-"""The Training hub's Coaching hero is the entry to the coaching advice.
-
-Everything else on that hub is a roadmap placeholder, so if this hero stops
-being a button the page has no working destination at all — which is the state
-it shipped in before 2026-07-30.
-"""
+"""The Training hub exposes one coaching destination: Your coach."""
 
 from pathlib import Path
 
@@ -12,43 +7,40 @@ ROOT = Path(__file__).resolve().parents[1]
 INDEX_HTML = (ROOT / "index.html").read_text(encoding="utf-8")
 
 
-def test_the_hero_is_a_button_and_not_a_div():
-    assert '<button class="hero" type="button" id="coachHeroBtn" disabled>' in INDEX_HTML
+def test_training_hub_has_no_duplicate_coaching_hero():
+    assert 'id="coachHeroBtn"' not in INDEX_HTML
+    assert 'id="coachRing"' not in INDEX_HTML
 
 
-def test_the_hero_opens_the_advice_page_not_the_per_run_review():
-    # openRunReview lands on the frame-by-frame call page, which is the wrong
-    # first thing for a reader who tapped "Coaching".
-    assert "$('coachHeroBtn').onclick = () => { if(selectedRuns().length) setPhase('coach_advice'); };" in INDEX_HTML
+def test_your_coach_card_opens_the_live_coaching_page():
+    assert (
+        '<button class="featureCard" type="button" '
+        'data-phase="coach_advice">' in INDEX_HTML
+    )
+    assert "<strong>Your coach</strong>" in INDEX_HTML
+    assert "<span class=\"fcTag\">Live</span>" in INDEX_HTML
 
 
-def test_the_hero_is_disabled_until_the_user_identifies_themselves():
-    assert "const count = selectedRuns().length" in INDEX_HTML
-    assert "$('coachHeroBtn').disabled = !count" in INDEX_HTML
-    assert "'Choose yourself in Analysis to unlock your drills'" in INDEX_HTML
+def test_obsolete_sharing_placeholder_is_removed():
+    assert 'id="p-sharing"' not in INDEX_HTML
+    assert "sharing: {label:'Your coach'" not in INDEX_HTML
 
 
 def test_the_advice_page_is_a_scrollable_leaf_off_the_training_hub():
-    assert "coach_advice:{label:'Coaching', instr:''}," in INDEX_HTML
-    # PAGE_PHASES drives both the page background and main's own scroller.
+    assert "coach_advice:{label:'Your coach', instr:''}," in INDEX_HTML
     assert "const PAGE_PHASES = [...ROADMAP_PHASES, 'match', 'coach_advice'];" in INDEX_HTML
     assert "} else if(S.phase === 'coach_advice'){" in INDEX_HTML
     assert "setPhase('coach');" in INDEX_HTML
 
 
-def test_the_advice_page_pools_only_identified_sessions():
+def test_the_advice_page_uses_ollama_history_output():
     assert "/api/coach/advice?sessions=${POOLED_SESSIONS}" in INDEX_HTML
-    assert "return (ADVICE.data || {}).me || null" in INDEX_HTML
-    assert "$('adviceCaveat').textContent = ADVICE.data.me_pooling_note || ''" in INDEX_HTML
+    assert "const coach = ADVICE.data.coach;" in INDEX_HTML
+    assert "'Ollama reviewed those matches from oldest to newest. '" in INDEX_HTML
+    assert "no rule-based advice was substituted" in INDEX_HTML
 
 
-def test_the_button_hero_overrides_the_ua_flex_centering():
-    # A bare <button class="hero"> shrink-wraps its .herotop row to the center;
-    # the row has to span the card like it does in the <div> hero.
-    assert "align-items:stretch" in INDEX_HTML
-
-
-def test_design_md_documents_the_tappable_hero_and_the_advice_page():
+def test_design_md_documents_the_single_your_coach_destination():
     design = (ROOT / "DESIGN.md").read_text(encoding="utf-8")
-    assert "**Tappable ink hero.**" in design
-    assert "p-coach-advice" in design
+    assert "including the live Your coach entry" in design
+    assert "No deterministic coaching copy is substituted" in design

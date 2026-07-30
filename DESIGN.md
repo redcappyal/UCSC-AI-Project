@@ -223,7 +223,7 @@ phases: `p-load`, `p-record`, `p-frame`, `p-tap`, `p-review`, `p-tap-floor`, `p-
 `p-analyze`, `p-track`, `p-player1-report`, `p-player2-report`, `p-label`,
 the section roots `p-matches` (Analysis), `p-coach` (Training), `p-progress`, the
 match analysis page `p-match`, and the
-roadmap placeholders `p-live`, `p-stats`, `p-shot-bot`, `p-sharing` (blueprints in §16).
+roadmap placeholders `p-live`, `p-stats`, `p-shot-bot` (blueprints in §16).
 To add a screen, add a section and follow §17 — never add a second header, tab bar, or
 routing chrome beyond the §8.3 nav dock.
 
@@ -697,16 +697,6 @@ guidance copy — the cards are the page. They navigate to sub-pages via `setPha
 sanctioned drill-down navigation, **not** nav chrome: the nav pill stays a section tab
 bar (§8.3) and §3.3/§18 still hold.
 
-**Tappable ink hero.** On the Training hub the ink hero (§8.15) is itself a `<button>`,
-because it is the page's only live destination — every feature card under it is a
-roadmap placeholder. It keeps the §8.15 hero recipe and adds: a 18 px `rgba(255,255,255,.55)`
-chevron after the ring badge (the affordance the hero would otherwise lack), explicit
-`align-items:stretch` (the UA button style centers flex children), `:active` =
-`brightness(1.3)` — brighter, not dimmer, because the fill is ink — and a `:disabled`
-state (chevron at 25% opacity) while no analyzed run exists. The subtitle names what
-the hero delivers (drills, and over how many sessions), not the corpus behind it. This
-is the **only** hero that is a button; a hero elsewhere stays a `<div>`.
-
 ### 8.13a Coaching advice (`p-coach-advice`)
 
 The leaf under the Training hub, and the one page in the app whose content is advice
@@ -719,14 +709,11 @@ rather than measurement. Top → bottom:
   person without mixing the opponent's shots into Training.
 - **Drill cards** (`.adviceDrills > .drillCard`) — the §8.9 card recipe (surface fill,
   `--shadow-card`, radius 18, padding 14) rather than the hairline-bordered variant used
-  inside the per-run report, because here the cards *are* the page. Each holds a 15/700
-  `.drillIssue` naming the weakness in the player's own numbers, then an ordered
-  `.drillSteps` list of four stages — Solo → Drills → Conditioned games → Matchplay —
-  each a 11/700 uppercase `.drillStage` label over 13 px `--dim` text.
-
-When the pooled shots still fall under the advice threshold the page shows that sentence
-alone (`.adviceEmpty`, 14 px `--dim`) — §13's rule: a result that could not be computed
-states its reason and is never drawn as an empty list.
+  inside the per-run report, because here the cards *are* the page. Ollama reviews the
+  user's identified matches oldest to newest and returns a summary, trend observations,
+  two concrete drills with dosage and success measures, and one next-match focus.
+  No deterministic coaching copy is substituted when Ollama is unavailable; the
+  provenance card states the failure and confirms that measured statistics still exist.
 
 ### 8.14 Placeholder pages
 
@@ -843,8 +830,12 @@ track has no observed coverage — absence over zeros, per Principle 3.
 
 The local template renders immediately; the LLM narration is fetched afterwards and
 **replaces the text in place** — the panel never shows a spinner and never changes
-height on arrival (§18). If the LLM is unreachable the local text simply stays and the
-source tag reports it.
+height on arrival (§18). If Ollama is unreachable, truncated, or returns invalid
+structured output, the local text stays, the source tag reports the exact state, and a
+compact `Retry Ollama` button appears beside it. The Ollama prompt receives only the
+coaching-relevant metrics (not the repeated full nine-zone tables), and its schema
+bounds every narrative field so a local model cannot spend the output budget on a
+runaway summary before producing the player sections.
 
 ### 8.18 Two-way segment (`.corrSeg`)
 
@@ -1278,13 +1269,12 @@ Each phase: header shows step label + proxied primary; `#instr` gives the one-li
 | `p-label` | Human bounce labeling | overview · label timeline · transport+zoom · 2-col type grid (dot+label) · delete (destructive = plain secondary, disabled until selection) | — |
 | `p-matches` | Analysis section root — session library | view head ("Analysis" + `n runs · live pipeline`) · one `.clipcard` per analyzed run: head row opens that match's analysis page and `.selfSelector` identifies which player is the user (§8.20) · `.emptycard` when none | — (no chevron; section root) |
 | `p-match` | **Match analysis.** One analyzed match, read end to end | view head (match date + duration) · `#matchBody`: the §8.20 analysis stack (Rallies · Movement · ball tier when it ran · "What this clip could measure" · provenance line) · ghost "Open full review" · `.emptycard` when the run is gone | — (back chevron only, like the review panes; the native shell hides its tab bar and settings gear here, §3.2) |
-| `p-coach` | Training section root (hub) | view head · tappable ink hero (Coaching + sessions ring + chevron → `p-coach-advice`, §8.13) · three feature cards (§8.13) | — (no chevron; section root) |
-| `p-coach-advice` | Coaching advice — drills pooled over the user's identified player in recent sessions | provenance card (counts + source statement) · drill cards (§8.13a) | — (back chevron → Training hub) |
+| `p-coach` | Training section root (hub) | view head · three feature cards (§8.13), including the live Your coach entry | — (no chevron; section root) |
+| `p-coach-advice` | Your coach — Ollama feedback and drills from the user's identified match history | provenance card (counts + source statement) · chronological observations · drill cards (§8.13a) | — (back chevron → Training hub) |
 | `p-progress` | Progress section root — personal cross-session trends | view head · range `.seg` · delta strip · trend cards · best-mark card (§8.20) · `.emptycard` under two identified runs | — (no chevron; section root) |
 | `p-live` | Placeholder: live match | placeholder hero · Planned card (§8.14) | — (back chevron only) |
 | `p-stats` | Personal training stats pooled across identified runs | view head · personal metric card · target summary · source statement | — (back chevron only) |
 | `p-shot-bot` | Placeholder: shot selection | placeholder hero · Planned card (§8.14) | — (back chevron only) |
-| `p-sharing` | Placeholder: your coach (coaching platform) | placeholder hero · Planned card (§8.14) | — (back chevron only) |
 
 **The match review page.** `p-track` + `p-player1-report` + `p-player2-report` are one
 page in three panes (§3.3), reached only by finishing an analysis or by opening a match
@@ -1297,7 +1287,7 @@ the only movement between panes; Back exits to Analysis from **any** pane, never
 retreating P2 → P1 → Call.
 
 `p-load` is the **Dashboard section root** (§8.15). Sub-page back routes: `p-record` →
-Dashboard; `p-live` → Dashboard; `p-stats` / `p-shot-bot` / `p-sharing` → Training; every
+Dashboard; `p-live` → Dashboard; `p-stats` / `p-shot-bot` → Training; every
 review pane → Analysis. The calibration wizard (`p-tap` → … → `p-tap-floor`) serves two
 flows: entered from `p-frame` it exits to `p-clip`; entered from `p-record` ("Calibrate
 court", on a frame frozen from the live camera) it exits back to `p-record` and the

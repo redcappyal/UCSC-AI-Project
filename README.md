@@ -86,6 +86,7 @@ Useful environment variables:
 | `COACH_LLM_PROVIDER` | OpenAI when an API key is present; otherwise local templates | `ollama`, `openai`, or `local`. |
 | `OLLAMA_COACH_MODEL` | `qwen3:8b` | Local model used for structured coaching reports. |
 | `OLLAMA_BASE_URL` | `http://127.0.0.1:11434` | Ollama server used by the Flask app. |
+| `OLLAMA_COACH_MAX_TOKENS` | `1200` | Output ceiling for the compact structured coaching report. |
 | `OPENAI_API_KEY` | — | Optional. Enables player-specific LLM feedback and drills; falls back to local coaching without it. |
 | `OPENAI_COACH_MODEL` | `gpt-5-mini` | Model used for structured coaching reports. |
 
