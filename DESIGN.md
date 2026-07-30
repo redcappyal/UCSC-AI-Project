@@ -418,28 +418,38 @@ something about the ball.
 sans-serif` with `-webkit-font-smoothing:antialiased`. No webfonts — never fetch fonts
 remotely.
 
-**Base:** 16 px / 1.4 line-height on `body`.
+**Base:** 17 px / 1.4 line-height on `body`.
 
 ### 6.1 Type scale (roles, not free sizes)
 
+Raised one notch on 2026-07-30 — the previous ladder bottomed out at 11–12 px, which
+is where most of the app's copy actually lived, and it read cramped on a phone held at
+arm's length on court. Sizes below are the *whole* ladder; move it as a ladder, never a
+rule at a time.
+
 | Role | Spec | Used by |
 |---|---|---|
-| Verdict word | 28 / 700, uppercase, tracking `.04em` | `.verdict strong` |
-| Stat numeral | 26 / 700, tabular | `.targetPct`, `.trend .val` |
-| Tile numeral | 20–22 / 700, tabular | `.stattile .sv`, `.scol .sv`, `.coachMetric span` |
-| Overlay status | 22 / 700, uppercase, tracking `.14em` | `.analyzePulse` |
-| View title | 20 / 700, tracking `-.02em` | `h2`, `.viewhead h2` |
-| Step label | 17 / 700, tracking `-.02em` | `#stepLabel` |
-| Input value | 17 / 400, tabular | `input[type=number]` |
-| Body | 16 / 400 | default |
-| Card title | 15 / 600, tracking `-.01em` | `.cardtitle`, `.targetHead strong`, `.hubHead` |
-| Instruction / guidance | 15 / 400 dim | `.instruction`, `#floorPrompt` |
-| Control | 14 / 600, tracking `-.01em` | buttons, `.pill`, row names |
-| Meta / status / readout | 14 / 400 dim; values 600 `--text`, tabular | `.status`, `.stat`, `.tlReadout`, `.sliderlabel` |
-| Caption / small control | 13 / 600 | `button.small`, `.nudgeLabel`, `.fbrow .t` |
-| Sub-meta | 12 / 400–600 dim | `.metaline`, descriptions, `.targetHead span` |
-| Chip / tag | 10–12 / 600–700, uppercase, tracking `.04em` | `.chip`, `.statechip`, `.fcTag`, `.courtText` |
-| Micro / debug | 11 / 600, uppercase, tracking `.06em` | `.devHead`, tile labels (500, no caps) |
+| Verdict word | 32 / 700, uppercase, tracking `.04em` | `.verdict strong` |
+| Stat numeral | 28 / 700, tabular | `.trend .val` |
+| Tile numeral | 22–24 / 700, tabular | `.stattile .sv`, `.scol .sv`, `.coachMetric span` |
+| Overlay status | 24 / 700, uppercase, tracking `.14em` | `.analyzePulse` |
+| View title | 22 / 700, tracking `-.02em` | `h2`, `.viewhead h2` |
+| Step label | 18 / 700, tracking `-.02em` | `#stepLabel` |
+| Input value | 18 / 400, tabular | `input[type=number]` |
+| Body | 17 / 400 | default |
+| Card title | 16 / 600, tracking `-.01em` | `.cardtitle`, `.targetHead strong`, `.hubHead` |
+| Instruction / guidance | 16 / 400 dim | `.instruction`, `#floorPrompt` |
+| Control | 15 / 600, tracking `-.01em` | buttons, `.pill`, row names |
+| Meta / status / readout | 15 / 400 dim; values 600 `--text`, tabular | `.status`, `.stat`, `.tlReadout`, `.sliderlabel` |
+| Caption / small control | 14 / 600 | `button.small`, `.nudgeLabel`, `.fbrow .t` |
+| Sub-meta | 13 / 400–600 dim | `.metaline`, descriptions, `.targetHead span` |
+| Chip / tag | 11–13 / 600–700, uppercase, tracking `.04em` | `.chip`, `.statechip`, `.fcTag` |
+| Micro / debug | 12 / 600, uppercase, tracking `.06em` | `.devHead`, tile labels (500, no caps) |
+
+**Exempt: lettering inside the court diagram** (`.targetPct` 26, `.targetZoneNum` 13,
+`.courtText` 12 — §8.10). Those sit in a locked-aspect box and are sized to the
+diagram, not to this ladder; scaling them with it clips the percentages and slides the
+line chips over the zone numbers. When the ladder moves, they stay.
 
 ### 6.2 Rules
 
@@ -464,7 +474,7 @@ remotely.
 - **Full-bleed stage, gutter content:** the stage/canvas runs edge-to-edge; everything in
   `<main>` respects the 14 px gutter.
 - **Reserved heights:** any element whose content appears/disappears reserves its space
-  (`.verdict{min-height:78px}`, `.status{min-height:1.2em}`). New dynamic elements must do
+  (`.verdict{min-height:86px}`, `.status{min-height:1.2em}`). New dynamic elements must do
   the same — zero cumulative layout shift is the bar.
 - **One primary action per phase**, proxied to the header pill (§3.4). If a phase seems to
   need two primaries, split the phase.
@@ -561,7 +571,7 @@ calm surface + bold text.
 
 ### 8.7 Verdict box (`.verdict`) — reserved-height pattern
 
-Radius 18, centered, `min-height:78px`, 13 px caption + 28 px `strong` word. Four states:
+Radius 18, centered, `min-height:86px`, 14 px caption + 32 px `strong` word. Four states:
 `.in` (green fill, `#03230c` ink) · `.out` (red fill, white ink) · `.neutral` (surface +
 `--shadow-card`, for event classifications) · `.blank` (transparent + dashed dim border —
 placeholder so the box always occupies identical space). Never show/hide the box itself.
