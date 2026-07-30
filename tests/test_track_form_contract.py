@@ -90,6 +90,20 @@ def test_single_camera_track_carries_no_session_state(monkeypatch, tmp_path):
         _cleanup(run_id)
 
 
+def test_track_defaults_to_analyzing_every_selected_frame(monkeypatch, tmp_path):
+    """Sparse coarse sampling missed real impacts in ordinary match footage."""
+    app_module, runs = _track_env(monkeypatch, tmp_path)
+    response = _post_track(app_module.app.test_client())
+    assert response.status_code == 200
+    run_id = response.get_json()["run_id"]
+    try:
+        job = _job_on_disk(runs, run_id)
+        assert job["frame_stride"] == 1
+        assert job["total_frames"] == 301
+    finally:
+        _cleanup(run_id)
+
+
 def test_retired_session_fields_are_ignored_not_rejected(monkeypatch, tmp_path):
     """A client still sending the archived fields gets a normal run, not a 400.
 

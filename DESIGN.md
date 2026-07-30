@@ -702,14 +702,11 @@ is the **only** hero that is a button; a hero elsewhere stays a `<div>`.
 The leaf under the Training hub, and the one page in the app whose content is advice
 rather than measurement. Top → bottom:
 
-- **Player switcher** — a §8.1 `.seg` with two segments (no Call segment: this page is
-  not a review pane, and the frame-by-frame calls are not what a coaching reader came
-  for). Segments carry saved player names when a run has them.
 - **Provenance card** (§8.9 card): `.cardtitle` headline counting what there is to work
   on, then two 13 px `--dim` `.adviceMeta` lines — the shot and session totals, then the
-  pooling caveat. The caveat is **required copy, not a footnote**: attribution is
-  per-clip, so "Player 1" names a slot (whoever served first) and not a person, and the
-  page would be quietly claiming otherwise without it.
+  pooling statement. Advice pools only the player the user identified on each Analysis
+  card; Player A in one match and Player B in another can therefore describe the same
+  person without mixing the opponent's shots into Training.
 - **Drill cards** (`.adviceDrills > .drillCard`) — the §8.9 card recipe (surface fill,
   `--shadow-card`, radius 18, padding 14) rather than the hairline-bordered variant used
   inside the per-run report, because here the cards *are* the page. Each holds a 15/700
@@ -1034,7 +1031,17 @@ Do not reintroduce them to the UI without a deliberate DESIGN.md change.
   one `.ghostbtn` **"Open full review"**, the only entrance to the frame-by-frame
   call page (§16, `p-track`), which owns "Watch source video". One level per screen:
   the list names the matches, this page reads the analysis, the review page judges
-  frames.
+  frames. The primary identity choice lives in the full review's Players card: each
+  crop/name card ends with a full-width **"This is me"** button, and the selected card
+  receives the accent treatment plus a checkmark. The Analysis row repeats the choice
+  as `.selfSelector` so an older completed match can still be identified without
+  reopening review. Both surfaces persist `user_player_number` for that run through
+  `POST /api/runs/<id>/me` and remain synchronized. This is a per-run choice because
+  Player A/B are match-local tracks, not permanent identities.
+- **Training stats** (`p-stats`): a live personal summary pooled only across the runs
+  with a `.selfSelector` choice — front-wall shot count, unforced-error share, wide
+  usage, low attacking rate, average wall height, and most-used target zones. With no
+  identified run it directs the user back to Analysis; it is not a roadmap placeholder.
 - **Progress** (`p-progress`): `.seg` range picker (1W/1M/3M/6M) · `#deltastrip` —
   three `.delta` cards (radius 18) with 11 dim label, 20/700 value, and a `.chip`
   delta vs the previous run (`good`/`poor` tint, `flat` when unchanged; direction-aware
@@ -1043,12 +1050,11 @@ Do not reintroduce them to the UI without a deliberate DESIGN.md change.
   usage, Low attacking) — 15/600 label, 26/700 value + unit + `vs typical`
   (tint-colored, direction-aware), and an inline-SVG spline chart: quartile "typical
   band" (`--seg-bg`), dashed midline, accent line + soft area fill, accent end-dot with
-  the value labeled. A range window holding fewer than two sessions says so in the card
-  — it never silently substitutes the all-time series. · a `.bestrow` card (Longest
-  rally to date, with the rally number and score when known). Baselines are the runs'
-  own quartiles — never invented targets. Movement trends (T-time, distance) average
-  the tracked players with observed coverage, since track→player identity is not
-  stable across runs.
+  the value labeled. A range window holding fewer than two identified sessions says so in the card
+  — it never silently substitutes the all-time series. · a `.bestrow` card (best
+  personal T-position mark). Baselines are the selected player's own per-run quartiles
+  — never invented targets. Every point first resolves that run's `user_player_number`,
+  so a Player A selection in one run and Player B in another remain one personal series.
 
 ### 8.21 Review pane switcher (`#reviewSeg`)
 
@@ -1257,16 +1263,16 @@ Each phase: header shows step label + proxied primary; `#instr` gives the one-li
 | `p-tap-floor` | Floor calibration wizard | `.floorRow`: diagram (progress marks) + prompt/side actions · skip-all / save-profile (tapping "Save as profile" swaps that row **in place** for a §8.4 text input + Save of the same 48 px height — never `window.prompt`, which the iOS shell's WKWebView leaves unimplemented; Esc or an empty-field blur restores the buttons) | "Use floor map" |
 | `p-clip` | Trim rally clip | overview · trim editor (accent handles) · transport+readout row · start/end nudge steppers · full-width "Select entire clip" secondary · frame summary | "Analyze" |
 | `p-analyze` | Honest processing | `.progressbox` stats + bar (+ stage ANALYZING pulse) | — (auto-advances) |
-| `p-track` | **Match review — Call pane.** Review track, judge calls, name the players | control area keeps its pre-rally-visualization height so the video stage does not shrink, floored against the stage per §3.1; the added content scrolls inside that footprint · scrub hint lives in the header `#instr` line (detection failures replace it, `.warn`) · per-rally front-wall impact mini-map · rally segmentation card (proportional neutral ribbon, active segment in accent, `attr-*` provenance states + legend §8.22; per-rally winners/scores stay backend-only per the 2026-07-29 review) · overview w/ marker minis · hit timeline (neon bars, center playhead) · readout · transport · frame input + Judge row · verdict box · Players card (two equal-width detected-player cards, each with a 4:5 crop directly above its own name field; a quiet "No photo available" placeholder preserves the pair when an old run has only one crop) · ghost "Watch source video". One pane, no switcher — the Challenge pane and its dock were archived 2026-07-29 (`archive/challenge-ui/`) | "Judge frame" |
+| `p-track` | **Match review — Call pane.** Review track, judge calls, name the players, identify yourself | control area keeps its pre-rally-visualization height so the video stage does not shrink, floored against the stage per §3.1; the added content scrolls inside that footprint · scrub hint lives in the header `#instr` line (detection failures replace it, `.warn`) · per-rally front-wall impact mini-map · rally segmentation card (proportional neutral ribbon, active segment in accent, `attr-*` provenance states + legend §8.22; per-rally winners/scores stay backend-only per the 2026-07-29 review) · overview w/ marker minis · hit timeline (neon bars, center playhead) · readout · transport · frame input + Judge row · verdict box · Players card (two equal-width detected-player cards, each with a 4:5 crop, its own name field, and a full-width "This is me" identity button; a quiet "No photo available" placeholder preserves the pair when an old run has only one crop) · ghost "Watch source video". One pane, no switcher — the Challenge pane and its dock were archived 2026-07-29 (`archive/challenge-ui/`) | "Judge frame" |
 | `p-player1-report` / `p-player2-report` | **Match review — Player 1 / Player 2 panes.** Per-player coaching report | Player N front-wall map (§8.10 court chart + `.targetMeta`; serves excluded) · Player N report panel (§8.17, opening with the §8.22 provenance line) · Player N movement panel (§8.17: distance / position split / speeds + court heatmap) · **P1 only:** the run's floor-bounce map (§8.10 `#floorMapSvg` + `.targetMeta`) — bounces are per-run, not per-player, so the panel renders once under the first report rather than twice | — (no primary) |
 | `p-label` | Human bounce labeling | overview · label timeline · transport+zoom · 2-col type grid (dot+label) · delete (destructive = plain secondary, disabled until selection) | — |
-| `p-matches` | Analysis section root — session library | view head ("Analysis" + `n runs · live pipeline`) · one head-row `.clipcard` per analyzed run, opening that match's analysis page (§8.20) · `.emptycard` when none | — (no chevron; section root) |
+| `p-matches` | Analysis section root — session library | view head ("Analysis" + `n runs · live pipeline`) · one `.clipcard` per analyzed run: head row opens that match's analysis page and `.selfSelector` identifies which player is the user (§8.20) · `.emptycard` when none | — (no chevron; section root) |
 | `p-match` | **Match analysis.** One analyzed match, read end to end | view head (match date + duration) · `#matchBody`: the §8.20 analysis stack (Rallies · Movement · ball tier when it ran · "What this clip could measure" · provenance line) · ghost "Open full review" · `.emptycard` when the run is gone | — (back chevron only, like the review panes; the native shell hides its tab bar and settings gear here, §3.2) |
 | `p-coach` | Training section root (hub) | view head · tappable ink hero (Coaching + sessions ring + chevron → `p-coach-advice`, §8.13) · three feature cards (§8.13) | — (no chevron; section root) |
-| `p-coach-advice` | Coaching advice — drills pooled over the recent sessions | player `.seg` · provenance card (counts + pooling caveat) · drill cards (§8.13a) | — (back chevron → Training hub) |
-| `p-progress` | Progress section root — cross-session trends | view head · range `.seg` · delta strip · trend cards · best-mark card (§8.20) · `.emptycard` under two runs | — (no chevron; section root) |
+| `p-coach-advice` | Coaching advice — drills pooled over the user's identified player in recent sessions | provenance card (counts + source statement) · drill cards (§8.13a) | — (back chevron → Training hub) |
+| `p-progress` | Progress section root — personal cross-session trends | view head · range `.seg` · delta strip · trend cards · best-mark card (§8.20) · `.emptycard` under two identified runs | — (no chevron; section root) |
 | `p-live` | Placeholder: live match | placeholder hero · Planned card (§8.14) | — (back chevron only) |
-| `p-stats` | Placeholder: stats + trends | placeholder hero · Planned card (§8.14) | — (back chevron only) |
+| `p-stats` | Personal training stats pooled across identified runs | view head · personal metric card · target summary · source statement | — (back chevron only) |
 | `p-shot-bot` | Placeholder: shot selection | placeholder hero · Planned card (§8.14) | — (back chevron only) |
 | `p-sharing` | Placeholder: your coach (coaching platform) | placeholder hero · Planned card (§8.14) | — (back chevron only) |
 

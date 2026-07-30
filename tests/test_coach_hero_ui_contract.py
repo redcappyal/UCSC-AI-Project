@@ -19,12 +19,13 @@ def test_the_hero_is_a_button_and_not_a_div():
 def test_the_hero_opens_the_advice_page_not_the_per_run_review():
     # openRunReview lands on the frame-by-frame call page, which is the wrong
     # first thing for a reader who tapped "Coaching".
-    assert "$('coachHeroBtn').onclick = () => { if(LIVE.runs.length) setPhase('coach_advice'); };" in INDEX_HTML
+    assert "$('coachHeroBtn').onclick = () => { if(selectedRuns().length) setPhase('coach_advice'); };" in INDEX_HTML
 
 
-def test_the_hero_is_disabled_until_a_run_exists():
+def test_the_hero_is_disabled_until_the_user_identifies_themselves():
+    assert "const count = selectedRuns().length" in INDEX_HTML
     assert "$('coachHeroBtn').disabled = !count" in INDEX_HTML
-    assert "'Analyze a clip to get your first drills'" in INDEX_HTML
+    assert "'Choose yourself in Analysis to unlock your drills'" in INDEX_HTML
 
 
 def test_the_advice_page_is_a_scrollable_leaf_off_the_training_hub():
@@ -35,9 +36,10 @@ def test_the_advice_page_is_a_scrollable_leaf_off_the_training_hub():
     assert "setPhase('coach');" in INDEX_HTML
 
 
-def test_the_advice_page_pools_sessions_and_shows_the_pooling_caveat():
+def test_the_advice_page_pools_only_identified_sessions():
     assert "/api/coach/advice?sessions=${POOLED_SESSIONS}" in INDEX_HTML
-    assert "$('adviceCaveat').textContent = data.pooling_note" in INDEX_HTML
+    assert "return (ADVICE.data || {}).me || null" in INDEX_HTML
+    assert "$('adviceCaveat').textContent = ADVICE.data.me_pooling_note || ''" in INDEX_HTML
 
 
 def test_the_button_hero_overrides_the_ua_flex_centering():

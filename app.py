@@ -151,6 +151,7 @@ def public_job(job):
         "target_zones_by_player",
         "player_assignment",
         "players_v1",
+        "user_player_number",
         "rallies",
         "floor_zones",
         "calibration_warning",
@@ -1348,7 +1349,7 @@ def track_clip():
     try:
         start_time = float(request.form.get("start_time", "0"))
         end_time = float(request.form.get("end_time", "0"))
-        frame_stride = int(request.form.get("frame_stride", "4"))
+        frame_stride = int(request.form.get("frame_stride", "1"))
         inference_width = int(request.form.get("inference_width", "960"))
     except ValueError:
         return error_response(
@@ -1648,22 +1649,36 @@ def recent_runs_with_analytics(limit):
             if run_dir.name.isdigit()
             else hits_path.stat().st_mtime
         )
-        candidates.append((created, run_dir.name, hits_path))
+        candidates.append((created, run_dir.name, hits_path, run_dir / "job.json"))
     candidates.sort(reverse=True)
 
     loaded = []
-    for created, run_id, hits_path in candidates:
+    for created, run_id, hits_path, job_path in candidates:
         if len(loaded) >= limit:
             break
         try:
             payload = json.loads(hits_path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
             continue
+        try:
+            job = json.loads(job_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            job = {}
         # A run with no front-wall contact contributes nothing but would still
         # burn one of the session slots.
         if not front_wall_hits_from_payload(payload):
             continue
-        loaded.append({"run_id": run_id, "created": created, "payload": payload})
+        selected_player = job.get("user_player_number")
+        if selected_player not in (1, 2):
+            selected_player = None
+        player_names = ((job.get("players_v1") or {}).get("player_names") or {})
+        loaded.append({
+            "run_id": run_id,
+            "created": created,
+            "payload": payload,
+            "user_player_number": selected_player,
+            "player_names": player_names,
+        })
     return loaded
 
 
@@ -1684,6 +1699,10 @@ def pooled_player_coaching(limit=POOLED_ADVICE_SESSION_LIMIT):
     sessions = []
     hits_by_player = {1: [], 2: []}
     rallies = []
+    selected_hits = []
+    selected_sessions = []
+    selected_error_metrics = []
+    selected_name = None
     for run in runs:
         payload = run["payload"]
         run_hits = front_wall_hits_from_payload(payload)
@@ -1703,6 +1722,27 @@ def pooled_player_coaching(limit=POOLED_ADVICE_SESSION_LIMIT):
             "created": run["created"],
             "wall_hits": len(run_hits),
         })
+        selected_player = run.get("user_player_number")
+        if selected_player in (1, 2):
+            personal_hits = [
+                hit for hit in run_hits
+                if int(hit.get("player_number") or 0) == selected_player
+            ]
+            selected_hits.extend(personal_hits)
+            selected_error_metrics.append(
+                player_error_metrics(run_rallies, selected_player, run_hits)
+            )
+            track = "A" if selected_player == 1 else "B"
+            name = run.get("player_names", {}).get(track)
+            if name and selected_name is None:
+                selected_name = name
+            selected_sessions.append({
+                "run_id": run["run_id"],
+                "created": run["created"],
+                "player_number": selected_player,
+                "player_name": name,
+                "wall_hits": len(personal_hits),
+            })
 
     players = []
     for player_number in (1, 2):
@@ -1719,10 +1759,57 @@ def pooled_player_coaching(limit=POOLED_ADVICE_SESSION_LIMIT):
             "advice": player_advice(analytics),
         })
 
+    personal_summary = build_target_zone_summary(selected_hits)
+    personal_analytics = coaching_analytics_for_hits(
+        selected_hits, personal_summary
+    )
+    personal_analytics["label"] = selected_name or "You"
+    personal_analytics["player_number"] = None
+    for key in (
+        "unforced_errors",
+        "unforced_errors_out",
+        "unforced_errors_tin",
+        "forced_errors",
+        "total_errors",
+    ):
+        personal_analytics[key] = sum(
+            int(metrics.get(key) or 0) for metrics in selected_error_metrics
+        )
+    personal_analytics["unforced_error_percentage"] = (
+        rounded(
+            personal_analytics["unforced_errors"]
+            / personal_analytics["total_errors"] * 100,
+            1,
+        )
+        if personal_analytics["total_errors"]
+        else None
+    )
+    won_durations = [
+        metrics.get("average_rally_duration_seconds")
+        for metrics in selected_error_metrics
+        if metrics.get("average_rally_duration_seconds") is not None
+    ]
+    personal_analytics["average_rally_duration_seconds"] = rounded(
+        average(won_durations), 1
+    )
+    me = {
+        "label": personal_analytics["label"],
+        "session_count": len(selected_sessions),
+        "sessions": selected_sessions,
+        "analytics": personal_analytics,
+        "advice": player_advice(personal_analytics),
+    }
+
     return {
         "sessions": sessions,
         "session_count": len(sessions),
         "players": players,
+        "me": me,
+        "me_pooling_note": (
+            f"Built from {len(selected_sessions)} identified "
+            f"{'session' if len(selected_sessions) == 1 else 'sessions'}. "
+            "Only matches where you selected your player are included."
+        ),
         "pooling_note": (
             "Pooled across your last "
             f"{len(sessions)} {'session' if len(sessions) == 1 else 'sessions'} "
@@ -1810,6 +1897,15 @@ def list_runs():
                 "duration_seconds": duration,
                 "status": job.get("status"),
                 "has_analytics": (run_dir / "detected_hits.json").exists(),
+                "user_player_number": (
+                    job.get("user_player_number")
+                    if job.get("user_player_number") in (1, 2)
+                    else None
+                ),
+                "player_names": (
+                    (job.get("players_v1") or {}).get("player_names")
+                    or {"A": None, "B": None}
+                ),
                 # Which analysis tiers this run actually ran. Empty for runs
                 # made before capability gating -- a list where every row looks
                 # identical is not a list worth reading, and "we don't know"
@@ -1950,6 +2046,51 @@ def save_ground_truth(run_id):
 
 
 PLAYER_NAME_MAX_CHARS = 40
+PLAYER_PROFILE_SCHEMA = "player-profile-v1"
+
+
+@app.post("/api/runs/<run_id>/me")
+def save_user_player(run_id):
+    """Identify which attributed player represents the app's user.
+
+    The choice is stored per run because Player 1 means "served first in this
+    clip", not one stable person across every match.
+    """
+    safe_run_id = secure_filename(run_id)
+    if not safe_run_id or safe_run_id != run_id:
+        return error_response("Run ID is invalid.", status=400)
+    run_dir = RUNS_DIR / safe_run_id
+    if not run_dir.is_dir():
+        return error_response("Run was not found.", status=404)
+
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return error_response("Body must be a JSON object.")
+    try:
+        player_number = int(data.get("player_number"))
+    except (TypeError, ValueError):
+        return error_response("player_number must be 1 or 2.")
+    if player_number not in (1, 2):
+        return error_response("player_number must be 1 or 2.")
+
+    payload = {
+        "schema": PLAYER_PROFILE_SCHEMA,
+        "player_number": player_number,
+        "track": "A" if player_number == 1 else "B",
+        "selected_at": time.strftime(
+            "%Y-%m-%dT%H:%M:%SZ", time.gmtime()
+        ),
+    }
+    try:
+        (run_dir / "player_profile.json").write_text(
+            json.dumps(payload, indent=2), encoding="utf-8"
+        )
+    except OSError as error:
+        return error_response(
+            f"Player selection could not be saved: {error}", status=500
+        )
+    update_job(safe_run_id, user_player_number=player_number)
+    return jsonify({"ok": True, **payload})
 
 
 @app.post("/api/runs/<run_id>/players")

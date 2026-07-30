@@ -139,5 +139,10 @@ def build_report(run_dir, coach_builder=None):
         "ball_backend": job.get("ball_backend"),
         "rally_timeline": job.get("rally_timeline"),
         "players_v2": job.get("players_v2"),
+        "user_player_number": (
+            job.get("user_player_number")
+            if job.get("user_player_number") in (1, 2)
+            else None
+        ),
         "shots": _shots(run_dir, job, coach_builder),
     }

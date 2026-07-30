@@ -619,6 +619,13 @@
   .playerCropEmpty{padding:10px; color:var(--dim); font-size:13px; line-height:1.35;
     text-align:center}
   .playersField{display:flex; flex-direction:column; gap:6px; font-size:13px; color:var(--dim); min-width:0}
+  .playerMeBtn{width:100%; min-height:42px; border:1px solid var(--line);
+    background:var(--surface); color:var(--text); box-shadow:none; font-weight:700}
+  .playerMeBtn.active{background:var(--accent-bg); color:var(--accent-text);
+    border-color:transparent}
+  .playerIdentityCard.isMe{border-color:color-mix(in srgb, var(--accent-bg) 72%, var(--line));
+    background:color-mix(in srgb, var(--accent-soft) 42%, var(--bg))}
+  #playersCard.savingIdentity .playerMeBtn{opacity:.55; pointer-events:none}
   .playersSave{padding:4px 14px 14px; display:flex; flex-direction:column; gap:6px}
 
   /* The verdict box always occupies the same space: empty (blank), event
@@ -782,6 +789,16 @@
   .cliptop .info{display:flex; flex-direction:column; gap:3px; min-width:0}
   .cliptop .name{font-size:14px; font-weight:600; letter-spacing:-.01em;
     white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
+  .selfSelector{border-top:1px solid var(--line); padding:12px 16px 14px;
+    display:flex; align-items:center; gap:12px}
+  .selfSelectorCopy{display:flex; flex-direction:column; gap:2px; min-width:0}
+  .selfSelectorCopy strong{font-size:13px; line-height:1.25}
+  .selfSelectorCopy span{font-size:11px; color:var(--dim); line-height:1.35}
+  .selfSelector .seg{margin-left:auto; width:min(52%, 290px); flex:none}
+  .selfSelector .seg button{padding:0 9px; overflow:hidden; text-overflow:ellipsis;
+    white-space:nowrap}
+  .selfSelector.saving{opacity:.58; pointer-events:none}
+  .selfSelector.saved .selfSelectorCopy strong{color:var(--text)}
   .statechip{margin-left:auto; flex:none; border-radius:999px; padding:6px 11px; font-size:10px;
     font-weight:700; letter-spacing:.04em; display:inline-flex; gap:5px; align-items:center}
   .statechip.done{background:var(--accent-bg); color:var(--accent-text)}
@@ -805,6 +822,8 @@
   #p-matches .cliptop .metaline{font-size:15px}
   #p-matches .statechip{font-size:12px; padding:7px 13px}
   #p-matches .emptycard{font-size:16px}
+  #p-matches .selfSelectorCopy strong{font-size:14px}
+  #p-matches .selfSelectorCopy span{font-size:12px}
   /* The match analysis, on its own page: the same stack the card used to hold
      inline, now unclamped — <main> supplies the page padding. */
   #matchBody{display:flex; flex-direction:column; gap:14px}
@@ -858,6 +877,8 @@
     .targetCourt{width:calc(100% - 16px)}
     .coachMetrics{grid-template-columns:1fr}
     .coachOutcomeComparison{grid-template-columns:1fr}
+    .selfSelector{align-items:stretch; flex-direction:column}
+    .selfSelector .seg{margin-left:0; width:100%}
   }
 
   /* Reduced motion (DESIGN.md §10): opacity pulses and the indeterminate
@@ -1247,10 +1268,11 @@
       <div class="targetZones hidden" id="playersCard">
         <div class="targetHead">
           <strong>Players</strong>
+          <span>Choose yourself for personal stats</span>
         </div>
         <p class="playersNote" id="playersBackendNote"></p>
         <div class="playersIdentities">
-          <div class="playerIdentityCard">
+          <div class="playerIdentityCard" id="playerIdentityA">
             <div class="playerCropFrame">
               <img class="playerCropImg hidden" id="playerCropA" alt="Detected Player A">
               <span class="playerCropEmpty" id="playerCropEmptyA">No photo available for Player A</span>
@@ -1258,8 +1280,10 @@
             <label class="playersField">Player A name
               <input type="text" id="playerNameA" maxlength="40" autocomplete="off" placeholder="Enter name">
             </label>
+            <button class="playerMeBtn" type="button" id="playerMeA"
+                    aria-pressed="false">This is me</button>
           </div>
-          <div class="playerIdentityCard">
+          <div class="playerIdentityCard" id="playerIdentityB">
             <div class="playerCropFrame">
               <img class="playerCropImg hidden" id="playerCropB" alt="Detected Player B">
               <span class="playerCropEmpty" id="playerCropEmptyB">No photo available for Player B</span>
@@ -1267,10 +1291,13 @@
             <label class="playersField">Player B name
               <input type="text" id="playerNameB" maxlength="40" autocomplete="off" placeholder="Enter name">
             </label>
+            <button class="playerMeBtn" type="button" id="playerMeB"
+                    aria-pressed="false">This is me</button>
           </div>
         </div>
         <div class="playersSave">
           <button type="button" id="savePlayersBtn">Save players</button>
+          <p class="status" id="playersMeStatus"></p>
           <p class="status" id="playersSaveStatus"></p>
         </div>
       </div>
@@ -1505,8 +1532,8 @@
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
         <path d="M5 20v-7M12 20V5M19 20v-11"/>
       </svg>
-      <span class="fcBody"><strong>Stats + trends</strong><span>Shot types, patterns, progress</span></span>
-      <span class="fcTag">Phase 4</span>
+      <span class="fcBody"><strong>Your stats</strong><span>Your shots and patterns across identified matches</span></span>
+      <span class="fcTag">Live</span>
     </button>
     <button class="featureCard" type="button" data-phase="sharing">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -1528,10 +1555,6 @@
        report: this pools the recent sessions so the advice has enough shots
        behind it to mean something. -->
   <section class="hidden" id="p-coach-advice">
-    <div class="seg" id="adviceSeg">
-      <button type="button" id="adviceSegP1" class="active">Player 1</button>
-      <button type="button" id="adviceSegP2">Player 2</button>
-    </div>
     <div class="card" id="adviceProvenance">
       <div class="cardtitle" id="adviceHeadline">Working on your coaching</div>
       <p class="adviceMeta" id="adviceMeta"></p>
@@ -1540,21 +1563,14 @@
     <div id="adviceBody"></div>
   </section>
 
-  <!-- PHASE: stats + trends (roadmap placeholder, under Coach) -->
+  <!-- PHASE: personal training stats, pooled only from identified sessions -->
   <section class="hidden" id="p-stats">
-    <div class="placeholderHero">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-        <path d="M5 20v-7M12 20V5M19 20v-11"/>
-      </svg>
-      <strong>Coming soon!</strong>
+    <div class="viewhead">
+      <h2>Your stats</h2>
+      <span class="dim" id="trainingStatsMeta"></span>
     </div>
-    <div class="targetZones">
-      <div class="targetHead"><strong>Planned</strong><span>PHASE 4</span></div>
-      <div class="planBody">
-        <div class="planRow"><i class="corePill">Core</i>Shot-type breakdown</div>
-        <div class="planRow"><i class="corePill">Core</i>Heatmaps + trend stats</div>
-        <div class="planRow"><i class="laterPill">Later</i>AI coach reports</div>
-      </div>
+    <div id="trainingStatsBody" style="display:flex;flex-direction:column;gap:14px">
+      <div class="card emptycard">Loading your identified sessions&#8230;</div>
     </div>
   </section>
 
@@ -1702,7 +1718,7 @@ const S = {
   trackView:{startF:0, endF:0, cursor:0, key:'', ovDone:false, timer:null}, // fine-window state for the call page's coarse-fine timeline
   videoFps:null,              // probed by the server at upload; null until known
   clip:{start:0, end:0, cursor:0, dragging:null, inferenceWidth:960,
-    frameStride:4,              // /api/track default; >1 = cheap coarse pass + stride-1 refine windows
+    frameStride:1,              // full-frame pass; sparse coarse sampling missed real impacts
     viewStart:0, viewEnd:1, viewSpan:0,   // detail window derived from cursor ± viewSpan/2
     dragX:0, dragT:0,
     overviewThumbs:false, overviewDragging:false,
@@ -1999,6 +2015,7 @@ function setPhase(p){
   if(p === 'match'){ $('p-match').classList.remove('hidden'); buildMatchView(); }
   if(p === 'coach_advice'){ $('p-coach-advice').classList.remove('hidden'); buildCoachAdviceView(); }
   if(ROADMAP_PHASES.includes(p)){ $(roadmapSection(p)).classList.remove('hidden'); }
+  if(p === 'stats') buildTrainingStatsView();
   // Tab bar: visible on the four section roots only, hidden inside flows
   // and sub-pages; the active capsule tracks the current section. The native
   // shell watches this same fact on <html> so its own tab bar can follow —
@@ -6360,6 +6377,27 @@ function updatePlayerReportButtonLabels(){
 
 /* Players card: the crop and name field for a track stay in the same card, so
    naming no longer requires translating an anonymous A/B button prompt. */
+function renderCurrentPlayerSelection(){
+  const v1 = S.run && S.run.players_v1;
+  if(!v1) return;
+  const names = v1.player_names || {};
+  const selectedPlayer = Number(S.run.user_player_number);
+  for(const [track, playerNumber] of [['A', 1], ['B', 2]]){
+    const selected = selectedPlayer === playerNumber;
+    const button = $(`playerMe${track}`);
+    button.classList.toggle('active', selected);
+    button.setAttribute('aria-pressed', selected ? 'true' : 'false');
+    button.textContent = selected ? 'This is me ✓' : 'This is me';
+    $(`playerIdentity${track}`).classList.toggle('isMe', selected);
+  }
+  const selectedTrack = selectedPlayer === 1 ? 'A' : selectedPlayer === 2 ? 'B' : null;
+  const selectedName = selectedTrack && names[selectedTrack];
+  $('playersMeStatus').textContent = selectedTrack
+    ? `${selectedName || `Player ${selectedTrack}`} will be tracked in Training and Progress.`
+    : 'Select “This is me” under your player to enable personal Training and Progress.';
+  $('playersMeStatus').className = `status${selectedTrack ? ' ok' : ''}`;
+}
+
 function renderPlayersCard(){
   updatePlayerReportButtonLabels();
   const card = $('playersCard');
@@ -6376,6 +6414,8 @@ function renderPlayersCard(){
   const names = v1.player_names || {};
   $('playerNameA').value = names.A || '';
   $('playerNameB').value = names.B || '';
+
+  renderCurrentPlayerSelection();
 
   const anchor = attributionAnchor(v1);
   for(const track of ['A', 'B']){
@@ -6396,6 +6436,28 @@ function renderPlayersCard(){
       empty.classList.remove('hidden');
     }
   }
+}
+
+for(const [track, playerNumber] of [['A', 1], ['B', 2]]){
+  $(`playerMe${track}`).onclick = async () => {
+    if(!S.run || !S.run.run_id) return;
+    const card = $('playersCard');
+    card.classList.add('savingIdentity');
+    $('playersMeStatus').textContent = 'Saving your player…';
+    $('playersMeStatus').className = 'status';
+    try{
+      await persistRunPlayerSelection(S.run.run_id, playerNumber);
+      // Update only the identity state so an unsaved name the user has typed
+      // in either field is not erased by the selection click.
+      renderCurrentPlayerSelection();
+    }catch(error){
+      $('playersMeStatus').textContent =
+        error.message || 'Your player selection could not be saved.';
+      $('playersMeStatus').className = 'status warn';
+    }finally{
+      card.classList.remove('savingIdentity');
+    }
+  };
 }
 
 $('savePlayersBtn').onclick = async () => {
@@ -7835,6 +7897,46 @@ function liveMetrics(id){
     dist: mean(movers.map(s => s.distance_ft||0)),
   };
 }
+function selectedRuns(){
+  return LIVE.runs.filter(run =>
+    Number(run.user_player_number) === 1 ||
+    Number(run.user_player_number) === 2
+  );
+}
+function runPlayerLabel(run, playerNumber){
+  const track = Number(playerNumber) === 1 ? 'A' : 'B';
+  const name = (run.player_names || {})[track];
+  return name ? `${name} · Player ${track}` : `Player ${track}`;
+}
+/* Metrics for the physical person the user selected in this run. Player
+   numbers are per-match slots, so this lookup must happen independently for
+   every run before any Training or Progress aggregation. */
+function personalMetrics(id){
+  const run = LIVE.runs.find(entry => entry.run_id === id);
+  const playerNumber = Number(run && run.user_player_number);
+  if(playerNumber !== 1 && playerNumber !== 2) return null;
+  const analytics = (LIVE.coach[id] || {}).analytics || {};
+  const player = (analytics.players || []).find(
+    entry => Number(entry.player_number) === playerNumber
+  ) || {};
+  const movement = (LIVE.report[id] || {}).players_v2 || {};
+  const mover = playerNumber === 1 ? movement.player_a : movement.player_b;
+  return {
+    playerNumber,
+    label:runPlayerLabel(run, playerNumber),
+    hits:Number(player.total_wall_hits) || 0,
+    unforced:Number(player.unforced_errors) || 0,
+    errors:Number(player.total_errors) || 0,
+    unforcedPct:player.unforced_error_percentage == null
+      ? null : Number(player.unforced_error_percentage),
+    wide:player.side_target_rate == null ? null : Number(player.side_target_rate),
+    low:player.low_target_rate == null ? null : Number(player.low_target_rate),
+    height:player.average_wall_height_ft == null
+      ? null : Number(player.average_wall_height_ft),
+    tPct:mover && mover.t_time_pct != null ? 100 * Number(mover.t_time_pct) : null,
+    dist:mover && mover.distance_ft != null ? Number(mover.distance_ft) : null,
+  };
+}
 /* Longest rally of a run, with the point it happened at when the hit-derived
    rallies can name it. Duration prefers the audio/motion timeline (whole-rally
    spans); the score context comes from players_v1's running score. */
@@ -7876,6 +7978,10 @@ function longestRallyInfo(rep){
 function weekRunCount(){
   const now = Date.now()/1000;
   return LIVE.runs.filter(r => (now - r.created) < 7*86400).length;
+}
+function selectedWeekRunCount(){
+  const now = Date.now()/1000;
+  return selectedRuns().filter(r => (now - r.created) < 7*86400).length;
 }
 async function fetchLiveJSON(url){
   const r = await fetch(url);
@@ -7980,25 +8086,24 @@ function renderCoachNotes(){
     </div>`).join('');
 }
 function renderCoachHero(){
-  setRing('coachRingArc','coachRingVal', weekRunCount());
-  const count = LIVE.runs.length;
+  setRing('coachRingArc','coachRingVal', selectedWeekRunCount());
+  const count = selectedRuns().length;
   $('coachHeroSub').textContent = count
-    ? `Drills from your last ${count===1 ? 'session' : `${Math.min(count, POOLED_SESSIONS)} sessions`}`
-    : 'Analyze a clip to get your first drills';
-  // Nothing to advise on until a run exists; the roadmap cards stay usable.
+    ? `Drills from your last ${count===1 ? 'identified session' : `${Math.min(count, POOLED_SESSIONS)} identified sessions`}`
+    : 'Choose yourself in Analysis to unlock your drills';
   $('coachHeroBtn').disabled = !count;
 }
 /* The hub's hero is the only live entry on this page, and it leads to the
    advice — not to the per-run review, which opens on the frame-by-frame call
    page the coaching reader has no use for. */
-$('coachHeroBtn').onclick = () => { if(LIVE.runs.length) setPhase('coach_advice'); };
+$('coachHeroBtn').onclick = () => { if(selectedRuns().length) setPhase('coach_advice'); };
 
 /* ---------- coaching advice (p-coach-advice) ----------
    Pooled over recent sessions rather than one run: a minute of squash yields
    a handful of front-wall contacts, well under coaching_advice's minimum, so
    single-run advice is nearly always "too few shots to say anything". */
 const POOLED_SESSIONS = 8;
-const ADVICE = { data:null, player:1, loading:null, error:null };
+const ADVICE = { data:null, loading:null, error:null };
 
 async function loadCoachAdvice(){
   if(ADVICE.loading) return ADVICE.loading;
@@ -8026,16 +8131,10 @@ function buildCoachAdviceView(){
 }
 
 function advicePlayer(){
-  return ((ADVICE.data || {}).players || [])
-    .find(entry => entry.player_number === ADVICE.player) || null;
+  return (ADVICE.data || {}).me || null;
 }
 
 function renderCoachAdvice(){
-  $('adviceSegP1').classList.toggle('active', ADVICE.player === 1);
-  $('adviceSegP2').classList.toggle('active', ADVICE.player === 2);
-  $('adviceSegP1').textContent = playerDisplayName(1);
-  $('adviceSegP2').textContent = playerDisplayName(2);
-
   const body = $('adviceBody');
   const player = advicePlayer();
 
@@ -8054,7 +8153,15 @@ function renderCoachAdvice(){
     return;
   }
 
-  const data = ADVICE.data;
+  const sessions = Number(player.session_count) || 0;
+  if(!sessions){
+    $('adviceHeadline').textContent = 'Tell us which player is you';
+    $('adviceMeta').textContent =
+      'Open Analysis and choose Player A or Player B on a match.';
+    $('adviceCaveat').textContent = '';
+    body.innerHTML = '';
+    return;
+  }
   const shots = Number(player.analytics.total_wall_hits) || 0;
   const items = (player.advice || {}).items || [];
   $('adviceHeadline').textContent = items.length
@@ -8062,10 +8169,8 @@ function renderCoachAdvice(){
     : 'Nothing stood out';
   $('adviceMeta').textContent =
     `${shots} front-wall shot${shots===1?'':'s'} across ` +
-    `${data.session_count} session${data.session_count===1?'':'s'}.`;
-  // The pooling caveat is load-bearing, not a footnote: attribution is
-  // per-clip, so "Player 1" is a slot, not a person.
-  $('adviceCaveat').textContent = data.pooling_note || '';
+    `${sessions} identified session${sessions===1?'':'s'}.`;
+  $('adviceCaveat').textContent = ADVICE.data.me_pooling_note || '';
 
   body.innerHTML = '';
   const note = (player.advice || {}).note;
@@ -8106,8 +8211,66 @@ function renderCoachAdvice(){
   body.appendChild(list);
 }
 
-$('adviceSegP1').onclick = () => { ADVICE.player = 1; renderCoachAdvice(); };
-$('adviceSegP2').onclick = () => { ADVICE.player = 2; renderCoachAdvice(); };
+function buildTrainingStatsView(){
+  renderTrainingStatsView();
+  loadCoachAdvice().then(() => {
+    if(S.phase === 'stats') renderTrainingStatsView();
+  });
+}
+
+function renderTrainingStatsView(){
+  const body = $('trainingStatsBody');
+  const me = advicePlayer();
+  const sessions = Number(me && me.session_count) || 0;
+  $('trainingStatsMeta').textContent = sessions
+    ? `${sessions} identified ${sessions===1?'session':'sessions'}`
+    : '';
+  if(ADVICE.error){
+    body.innerHTML =
+      `<div class="card emptycard">${escapeHtml(ADVICE.error)}</div>`;
+    return;
+  }
+  if(!me){
+    body.innerHTML =
+      '<div class="card emptycard">Loading your identified sessions…</div>';
+    return;
+  }
+  if(!sessions){
+    body.innerHTML =
+      '<div class="card emptycard">Choose “I’m this player” on a match in Analysis.<br>Your personal training metrics will appear here.</div>';
+    return;
+  }
+  const a = me.analytics || {};
+  const metric = (label, value, unit='', note='') => `
+    <div class="coachMetric">
+      <strong>${label}</strong>
+      <span>${value == null ? '—' : `${value}${unit}`}</span>
+      ${note ? `<small>${note}</small>` : ''}
+    </div>`;
+  const common = (a.common_target_zones || []).slice(0,3)
+    .map(zone => `Zone ${zone.zone} · ${Math.round(zone.percentage || 0)}%`)
+    .join(', ') || 'No repeated target zone yet';
+  const source = ADVICE.data.me_pooling_note || '';
+  body.innerHTML = `
+    <div class="targetZones">
+      <div class="targetHead">
+        <strong>${escapeHtml(me.label || 'Your training profile')}</strong>
+        <span>${Number(a.total_wall_hits)||0} SHOTS</span>
+      </div>
+      <div class="coachMetrics">
+        ${metric('Unforced error share', a.unforced_error_percentage, '%',
+          `${Number(a.unforced_errors)||0} unforced · ${Number(a.total_errors)||0} total errors`)}
+        ${metric('Wide target usage', a.side_target_rate, '%')}
+        ${metric('Low attacking rate', a.low_target_rate, '%')}
+        ${metric('Average wall height', a.average_wall_height_ft, ' ft')}
+      </div>
+      <div class="targetMeta" style="grid-template-columns:1fr">
+        <div><strong>Most-used targets</strong><span>${escapeHtml(common)}</span></div>
+      </div>
+      <p class="playersNote" style="padding-bottom:12px">${escapeHtml(source)}</p>
+    </div>`;
+}
+
 /* Analysis: one expandable card per analyzed run. */
 const COURT_THUMB ='<svg class="court" viewBox="0 0 62 46" fill="none" stroke="#fff" stroke-width="1.2" aria-hidden="true"><rect x="9" y="8" width="44" height="26" rx="1"/><path d="M9 21h44"/><path d="M9 28h44"/></svg>';
 /* thumbnail play glyph reuses the transport PLAY_ICON declared above */
@@ -8186,6 +8349,11 @@ function renderClipCards(){
     const id = r.run_id;
     const hue = LIVE_HUES[i%LIVE_HUES.length];
     const grad = `linear-gradient(140deg, hsl(${hue} 28% 74%), hsl(${hue} 26% 48%))`;
+    const selected = Number(r.user_player_number);
+    const names = r.player_names || {};
+    const labelA = names.A || 'Player A';
+    const labelB = names.B || 'Player B';
+    const selectedLabel = selected === 1 ? labelA : selected === 2 ? labelB : null;
     // Head only. Analysis is a list of matches; the analysis itself is the
     // page behind the card (p-match), not something every row unrolls inline.
     return `
@@ -8202,6 +8370,21 @@ function renderClipCards(){
                   aria-label="Delete session ${escapeHtml(fmtRunDate(r.created))}"
                   title="Delete session">${TRASH_ICON}</button>
         </div>
+        <div class="selfSelector ${selectedLabel ? 'saved' : ''}"
+             data-self-selector="${escapeHtml(id)}">
+          <div class="selfSelectorCopy">
+            <strong>${selectedLabel
+              ? `Tracking your stats as ${escapeHtml(selectedLabel)}`
+              : 'Which player are you?'}</strong>
+            <span>Used for your Training and Progress tabs</span>
+          </div>
+          <div class="seg" aria-label="Choose your player for this match">
+            <button type="button" data-self-player="1"
+                    class="${selected===1?'active':''}">I’m ${escapeHtml(labelA)}</button>
+            <button type="button" data-self-player="2"
+                    class="${selected===2?'active':''}">I’m ${escapeHtml(labelB)}</button>
+          </div>
+        </div>
       </div>`;
   }).join('');
   list.querySelectorAll('[data-match]').forEach(el => {
@@ -8217,6 +8400,49 @@ function renderClipCards(){
       deleteRunSession(button.dataset.deleteRun, button);
     };
   });
+  list.querySelectorAll('[data-self-selector]').forEach(selector => {
+    selector.querySelectorAll('[data-self-player]').forEach(button => {
+      button.onclick = () => chooseRunPlayer(
+        selector.dataset.selfSelector,
+        Number(button.dataset.selfPlayer),
+        selector,
+      );
+    });
+  });
+}
+
+async function persistRunPlayerSelection(runId, playerNumber){
+  const response = await fetch(
+    `/api/runs/${encodeURIComponent(runId)}/me`,
+    {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({player_number:playerNumber}),
+    },
+  );
+  const payload = await response.json().catch(() => ({}));
+  if(!response.ok) throw new Error(
+    payload.error || 'Your player selection could not be saved.'
+  );
+  const run = LIVE.runs.find(entry => entry.run_id === runId);
+  if(run) run.user_player_number = playerNumber;
+  if(LIVE.report[runId]) LIVE.report[runId].user_player_number = playerNumber;
+  if(S.run && S.run.run_id === runId) S.run.user_player_number = playerNumber;
+  // The pooled Training payload depends on this per-run choice.
+  ADVICE.data = null;
+  ADVICE.error = null;
+  return payload;
+}
+
+async function chooseRunPlayer(runId, playerNumber, selector){
+  selector.classList.add('saving');
+  try{
+    await persistRunPlayerSelection(runId, playerNumber);
+    renderClipCards();
+  }catch(error){
+    selector.classList.remove('saving');
+    showError(error.message || 'Your player selection could not be saved.');
+  }
 }
 
 async function deleteRunSession(runId, button){
@@ -8352,18 +8578,18 @@ const TREND_SPANS = {'1W':7,'1M':30,'3M':90,'6M':180};
    errors is the improvement. */
 const TREND_DEFS = [
   {key:'unforced', label:'Unforced error share', unit:'%',  lowerBetter:true,
-   get:id=>liveMetrics(id).unforcedPct},
+   get:id=>(personalMetrics(id)||{}).unforcedPct},
   {key:'ttime',    label:'Time on the T',        unit:'%',
-   get:id=>liveMetrics(id).tPct},
+   get:id=>(personalMetrics(id)||{}).tPct},
   {key:'dist',     label:'Distance covered',     unit:'ft',
-   get:id=>liveMetrics(id).dist},
+   get:id=>(personalMetrics(id)||{}).dist},
   {key:'wide',     label:'Wide usage',           unit:'%',
-   get:id=>liveMetrics(id).wide},
+   get:id=>(personalMetrics(id)||{}).wide},
   {key:'low',      label:'Low attacking',        unit:'%',
-   get:id=>liveMetrics(id).low}
+   get:id=>(personalMetrics(id)||{}).low}
 ];
 function buildTrendMetrics(){
-  const runsAsc = [...LIVE.runs].reverse();
+  const runsAsc = [...selectedRuns()].reverse();
   const now = Date.now()/1000;
   return TREND_DEFS.map(d => {
     const series = runsAsc
@@ -8385,13 +8611,18 @@ function buildTrendMetrics(){
 }
 function renderProgressView(){
   const body = $('progressBody');
-  const metrics = buildTrendMetrics();
-  if(LIVE.runs.length < 2 || !metrics.length){
-    body.innerHTML = '<div class="card emptycard">Trends need at least two analyzed sessions.<br>Each analyzed clip adds a point to every metric.</div>';
+  const personalRuns = selectedRuns();
+  if(!personalRuns.length){
+    body.innerHTML = '<div class="card emptycard">Choose “I’m this player” on your matches in Analysis.<br>Progress only compares the player you identify as yourself.</div>';
     return;
   }
-  const latest = liveMetrics(LIVE.runs[0].run_id);
-  const prev = LIVE.runs[1] ? liveMetrics(LIVE.runs[1].run_id) : null;
+  const metrics = buildTrendMetrics();
+  if(personalRuns.length < 2 || !metrics.length){
+    body.innerHTML = '<div class="card emptycard">Your first identified session is saved.<br>Choose yourself in one more analyzed match to unlock personal trends.</div>';
+    return;
+  }
+  const latest = personalMetrics(personalRuns[0].run_id);
+  const prev = personalRuns[1] ? personalMetrics(personalRuns[1].run_id) : null;
   const deltaTile = (label, val, unit, prevVal, lowerBetter) => {
     let chip = '<span class="chip flat">—</span>';
     if(val!=null && prevVal!=null && Math.round(val)!==Math.round(prevVal)){
@@ -8449,15 +8680,16 @@ function renderProgressView(){
       </div>`;
   }).join('');
   let best = null;
-  LIVE.runs.forEach(r => {
-    const info = longestRallyInfo(LIVE.report[r.run_id]);
-    if(info && (!best || info.dur > best.dur)) best = {...info, t:r.created};
+  personalRuns.forEach(r => {
+    const metrics = personalMetrics(r.run_id);
+    if(metrics && metrics.tPct != null && (!best || metrics.tPct > best.value)){
+      best = {value:metrics.tPct, t:r.created, label:metrics.label};
+    }
   });
   const bestMeta = best ? [
     `${LIVE_MONTHS[new Date(best.t*1000).getMonth()]} ${new Date(best.t*1000).getDate()}`,
-    best.rally != null ? `Rally ${best.rally}` : null,
-    best.score ? `at ${escapeHtml(best.score)}` : null,
-    'outlast it to set a new mark',
+    best.label,
+    'beat it to set a new mark',
   ].filter(Boolean).join(' · ') : '';
   const bestCard = best ? `
     <div class="card bestrow">
@@ -8465,7 +8697,7 @@ function renderProgressView(){
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M8 21h8"/><path d="M12 17v4"/><path d="M7 4h10v6a5 5 0 0 1-10 0z"/><path d="M7 6H4a1 1 0 0 0-1 1c0 2.2 1.8 4 4 4"/><path d="M17 6h3a1 1 0 0 1 1 1c0 2.2-1.8 4-4 4"/></svg>
       </div>
       <div class="info">
-        <span class="name">Longest rally to date — <span class="num">${best.dur.toFixed(1)}s</span></span>
+        <span class="name">Best T position — <span class="num">${Math.round(best.value)}%</span></span>
         <span class="meta">${bestMeta}</span>
       </div>
     </div>` : '';
