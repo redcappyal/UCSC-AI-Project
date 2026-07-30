@@ -177,23 +177,29 @@
   .status{font-size:15px; color:var(--dim); min-height:1.2em}
   .status.warn{color:var(--text); font-weight:700}
   .status.ok{color:var(--text)}
-  /* The confirm screen's two status paragraphs are split by WHEN their text
-     can change, which is a §0.9 requirement here rather than a stylistic
-     choice: the canvas above is vertically centered in a flex-grow stage
-     (§7), so any change to a paragraph's real height reflows that stage and
-     re-centers the canvas — shifting it under an in-progress drag and
-     corrupting the pointer math (confirmed while verifying dragging: a steady
-     drag jumped ~50px the instant the divergence sentence first wrapped to an
-     extra line).
-       #confirmWarn holds the detection's own reasons (off checks, unverified
-     note, server warnings, the "dragging doesn't re-check this" note). Every
-     one is fixed for as long as this screen is on screen — S.detect is never
-     rewritten by a drag — so its height settles on arrival and needs no
-     reserve beyond .status's one line.
+  /* The confirm screen's copy is split by WHEN it can change, which is a §0.9
+     requirement here rather than a stylistic choice: the canvas above is
+     vertically centered in a flex-grow stage (§7), so any change to the real
+     height of anything in <main> reflows that stage and re-centers the canvas
+     — shifting it under an in-progress drag and corrupting the pointer math
+     (confirmed while verifying dragging: a steady drag jumped ~50px the
+     instant the divergence sentence first wrapped to an extra line).
+       #confirmSummary (the verdict) and #confirmWarn (the reasons: off checks,
+     unverified note, server warnings, the "dragging doesn't re-check this"
+     note) both come from S.detect, which a drag never rewrites, so they settle
+     on arrival and stay in flow.
        #confirmDrift holds the only text a drag can change: which dragged
-     corners have walked off the fitted out line. Its worst case is both
-     corners named, so it reserves that up front. */
-  #confirmDrift{min-height:60px}
+     corners have walked off the fitted out line. It lives inside #stage as an
+     absolutely positioned banner, so it has no layout height at all and CANNOT
+     reflow the canvas — a stronger guarantee than the 60px reserve it replaced,
+     and it costs the frame nothing. Stage-overlay treatment (§8.12) rather than
+     .status: it sits over black letterboxing or over the frame itself, where
+     .status's var(--text) would be dark-on-dark in the light theme. */
+  #confirmDrift{position:absolute; left:0; right:0; bottom:0; z-index:5;
+    margin:0; padding:10px 14px calc(10px + env(safe-area-inset-bottom));
+    background:linear-gradient(to top, rgba(0,0,0,.82), rgba(0,0,0,.62) 70%, transparent);
+    color:#fff; font-size:13px; font-weight:700; line-height:1.35; text-align:center;
+    text-shadow:0 1px 3px rgba(0,0,0,.9); pointer-events:none}
 
   button, label.filebtn{font:inherit; font-size:15px; font-weight:600; letter-spacing:-.01em;
     color:var(--text);
@@ -209,6 +215,11 @@
     background:transparent; box-shadow:none; border:1px solid var(--line)}
   .row{display:flex; gap:10px}
   .row>*{flex:1}
+  /* Confirm-screen secondaries size to their text instead of taking half the
+     screen each. They keep the 44px touch height; only the visual weight
+     drops, so the frame above stays the loudest thing on the screen. Must sit
+     after .row>* — same specificity, so source order decides. */
+  .confirmActions>*{flex:0 0 auto}
 
   input[type=file]{display:none}
   input[type=range]{width:100%; height:44px; accent-color:var(--accent-bg)}
@@ -676,10 +687,6 @@
   .wallCornerList span.done{color:var(--text); border-color:color-mix(in srgb, var(--accent-bg) 70%, var(--line))}
   .wallCornerList span.active{background:var(--accent-bg); color:var(--accent-text); border-color:transparent; font-weight:700}
   .wallCornerList span.warned{border-color:#f5c518; color:var(--text)}
-  #confirmAnchorHelp{margin:0; padding:10px 14px 0; text-align:left; line-height:1.35}
-  #confirmAnchorList{padding:10px 14px 14px}
-  #confirmAnchorList span{line-height:1.35; font-variant-numeric:tabular-nums}
-  #confirmAnchorList b{color:var(--text)}
   #floorDiagram{width:118px; flex:none; background:var(--surface); border:1px solid var(--line);
     border-radius:8px; padding:4px}
   #floorDiagram .courtLine{stroke:var(--dim); stroke-width:.45; fill:none}
@@ -955,6 +962,10 @@
     </svg>
   </div>
   <div id="analyzeOverlay" class="hidden"><span class="analyzePulse">Analyzing…</span></div>
+  <!-- Confirm-screen drift warning. Lives in the stage, not in #p-confirm: it
+       is the only copy a drag can rewrite, and text that reflows the section
+       below re-centers the canvas under the finger (§0.9). -->
+  <p id="confirmDrift" class="hidden"></p>
   <div id="zoomCtrl" class="hidden">
     <button class="small" id="zoomOutBtn" type="button" aria-label="Zoom out">−</button>
     <button class="small" id="zoomResetBtn" type="button" aria-label="Reset zoom">1×</button>
@@ -1134,18 +1145,15 @@
   <!-- PHASE: confirm (auto-detected court, review before use) -->
   <section class="hidden" id="p-confirm">
     <p class="status" id="confirmSummary">&nbsp;</p>
-    <div class="targetZones">
-      <div class="targetHead"><strong>Court anchors</strong><span id="confirmCount"></span></div>
-      <p class="instruction" id="confirmAnchorHelp">Drag each numbered circle to the matching court point.</p>
-      <div class="wallCornerList" id="confirmAnchorList"></div>
-    </div>
     <button class="primary proxied" id="confirmUseBtn">Use this calibration</button>
-    <div class="row">
+    <!-- No numbered anchor guide here. The pucks carry their own numerals on
+         the frame and #instr carries the affordance; the card that restated
+         them cost 300px on the one screen whose job is showing the frame. -->
+    <div class="row confirmActions">
       <button class="small" id="confirmUndoBtn" type="button" disabled>Undo drag</button>
       <button class="small" id="confirmManualBtn" type="button">Tap it manually</button>
     </div>
     <p class="status" id="confirmWarn">&nbsp;</p>
-    <p class="status" id="confirmDrift">&nbsp;</p>
   </section>
 
   <!-- PHASE: clip -->
@@ -1693,17 +1701,26 @@ const S = {
 const STEP_META = {
   load:   {label:'CrossCourt', instr:''},
   record: {label:'Record', instr:'', action:{btn:'recBtn', label:'Record'}},
+  // `short` is what the pill wears; `label` stays its accessible name (see
+  // syncHeaderAction). Every calibration step means the same thing — accept
+  // what is on screen and go on — and the title beside the pill already names
+  // the object, so repeating it there is what pushed the titles into an
+  // ellipsis. Steps whose verb is NOT "accept and continue" (Record, Analyze,
+  // Judge) keep their own word: they are decisions, not confirmations.
   frame:  {label:'Pick frame', instr:'Drag the film strip under the playhead to a frame where the out line, service line, and tin are fully visible and unblocked.',
-           action:{btn:'useFrame', label:'Use frame'}},
-  tap_out:{label:'Out line', instr:'', action:{btn:'confirmBtn', label:'Looks right'}},
-  tap_tin:{label:'Tin', instr:'', action:{btn:'confirmBtn', label:'Looks right'}},
-  tap_service:{label:'Service line', instr:'', action:{btn:'confirmBtn', label:'Looks right'}},
+           action:{btn:'useFrame', label:'Use frame', short:'Use'}},
+  tap_out:{label:'Out line', instr:'', action:{btn:'confirmBtn', label:'Looks right', short:'Use'}},
+  tap_tin:{label:'Tin', instr:'', action:{btn:'confirmBtn', label:'Looks right', short:'Use'}},
+  tap_service:{label:'Service line', instr:'', action:{btn:'confirmBtn', label:'Looks right', short:'Use'}},
   review: {label:'Review', instr:'Check that each fitted edge hugs the real paint edge across the whole line.',
-           action:{btn:'chooseClipBtn', label:'Use lines'}},
-  tap_wall:{label:'Wall corners', instr:'', action:{btn:'wallDoneBtn', label:'Use corners'}},
-  tap_floor:{label:'Floor map', instr:'', action:{btn:'floorDoneBtn', label:'Use floor map'}},
-  confirm:{label:'Confirm court', instr:'Check the overlay hugs the real court. Drag any anchor that sits off the line.',
-           action:{btn:'confirmUseBtn', label:'Use calibration'}},
+           action:{btn:'chooseClipBtn', label:'Use lines', short:'Use'}},
+  tap_wall:{label:'Wall corners', instr:'', action:{btn:'wallDoneBtn', label:'Use corners', short:'Use'}},
+  tap_floor:{label:'Floor map', instr:'', action:{btn:'floorDoneBtn', label:'Use floor map', short:'Use'}},
+  // One line, and the action rather than the purpose: #confirmSummary below the
+  // frame already gives the verdict, and the two together used to say the same
+  // thing twice across three lines of a screen that needed them for the frame.
+  confirm:{label:'Confirm court', instr:'Drag any anchor that sits off the line.',
+           action:{btn:'confirmUseBtn', label:'Use calibration', short:'Use'}},
   clip:   {label:'Clip', instr:'Drag the top strip to slide the clip along the video, then drag the handles to trim it tight around the shot.',
            action:{btn:'runTrackBtn', label:'Analyze'}},
   analyze:{label:'Analyzing', instr:''},
@@ -1885,7 +1902,14 @@ function syncHeaderAction(action){
   hdrActionTarget = action ? $(action.btn) : null;
   hdrAction.classList.toggle('hidden', !hdrActionTarget);
   if(!hdrActionTarget) return;
-  hdrAction.textContent = action.label;
+  // The pill is sized by its own text and #stepLabel gets what's left, so a
+  // long pill label eats the title: "Use calibration" beside "Confirm court"
+  // truncated it to "Confirm co…" at 390px, and the whole wizard clipped at
+  // 375. Where a short form exists the pill wears it and `label` becomes the
+  // accessible name, so nothing is lost to a screen reader — which is the only
+  // reader of this button's full phrase, since the proxied original is hidden.
+  hdrAction.textContent = action.short || action.label;
+  hdrAction.setAttribute('aria-label', action.label);
   hdrAction.disabled = hdrActionTarget.disabled;
   hdrActionObs.observe(hdrActionTarget, {attributes:true, attributeFilter:['disabled']});
 }
@@ -1933,6 +1957,10 @@ function setPhase(p){
     $('instr').textContent = STEP_META[p].instr;
     $('instr').classList.toggle('hidden', !STEP_META[p].instr);
   }
+
+  // The drift banner lives in the stage rather than in its section (§0.9), so
+  // hiding #p-confirm does not take it with us.
+  if(p !== 'confirm') $('confirmDrift').classList.add('hidden');
 
   if(p === 'load'){ $('p-load').classList.remove('hidden'); }
   if(p === 'record'){ $('p-record').classList.remove('hidden'); enterRecordPhase(); }
@@ -2667,43 +2695,24 @@ function canvasPxPerCssPx(){
   return rect.width > 0 ? S.W / rect.width : 1;
 }
 
-/* 'short_line_left' -> 'Short line left'. */
-function sentenceCaseId(id){
-  const words = id.replace(/_/g, ' ');
-  return words.charAt(0).toUpperCase() + words.slice(1);
-}
-
+/* The four wall corners and the two short-line ends, each with the stable
+   numeral drawn on its puck. The number belongs to the court landmark rather
+   than the array position, so a detection missing one anchor never renumbers
+   the others. Carries no display text: the numbered guide list this used to
+   feed was deleted — it restated the pucks and cost 300px of the frame — and
+   the one message that names a corner (confirmDivergence) uses the human
+   WALL_CORNERS label directly. */
 function confirmAnchorPoints(){
   const points = [];
   if(S.wall) WALL_CORNERS.forEach((corner, i) => {
-    if(S.wall.points[i]) points.push({
-      key:`wall:${i}`,
-      number:i + 1,
-      label:corner.label,
-      guide:[
-        'Out line at left side wall',
-        'Out line at right side wall',
-        'Front-wall/floor seam · right corner',
-        'Front-wall/floor seam · left corner',
-      ][i],
-      xy:S.wall.points[i],
-    });
+    if(S.wall.points[i]) points.push({key:`wall:${i}`, number:i + 1, xy:S.wall.points[i]});
   });
   if(S.floor) for(const landmark of S.floor.landmarks){
     if((landmark.id === 'short_line_left' || landmark.id === 'short_line_right')
         && landmark.refined_px)
-      // Sentence case, so "Short line left" sits beside the wall corners'
-      // "Out line · left" in one convention (§0.7) rather than two. NOT
-      // landmark.label — the court model's labels are full tap instructions
-      // ("Where the MIDDLE of the short line's width meets the LEFT side
-      // wall"), written for the floor wizard's prompt line, not for a chip.
       points.push({
         key:`floor:${landmark.id}`,
         number:landmark.id === 'short_line_left' ? 5 : 6,
-        label:sentenceCaseId(landmark.id),
-        guide:landmark.id === 'short_line_left'
-          ? 'Short line at left side wall'
-          : 'Short line at right side wall',
         xy:landmark.refined_px,
       });
   }
@@ -2788,21 +2797,20 @@ function buildConfirmView(){
   const trusted = confirmIsTrusted();
   const off = confirmOffChecks();
   const anchors = confirmAnchorPoints();
-  $('confirmCount').textContent = `${anchors.length} placed`;
-  $('confirmAnchorList').innerHTML = anchors.map(anchor =>
-    `<span class="done"><b>${anchor.number}.</b> ${anchor.guide}</span>`).join('');
 
   // The green line is the earned state, not the default. It used to be what
   // this screen said whenever no check had gone 'off' — which included
-  // S.detect === null with zero anchors placed.
+  // S.detect === null with zero anchors placed. One line either way: #instr
+  // above the frame carries what to DO about it, and the reasons are below.
   $('confirmSummary').textContent = trusted
-    ? 'Court detected — the overlay should sit on the real lines.'
-    : 'Court detected, but the fit could not be confirmed — check the overlay before using it.';
+    ? 'Court detected.'
+    : 'Court detected, but the fit is unconfirmed.';
   $('confirmSummary').className = 'status' + (trusted ? ' ok' : ' warn');
 
   // Reasons, all of them fixed for as long as this screen is up: they come
-  // from S.detect, which a drag never rewrites. Keeping them out of
-  // #confirmDrift is what lets that paragraph reserve a small worst case (§0.9).
+  // from S.detect, which a drag never rewrites. That is what lets this one stay
+  // in flow below the frame — it settles on arrival and never reflows the
+  // canvas mid-drag (§0.9). Drag-varying text goes to #confirmDrift instead.
   const reasons = [];
   if(!S.detect){
     reasons.push('No detection is loaded for this frame.');
@@ -2821,11 +2829,14 @@ function buildConfirmView(){
   $('confirmWarn').innerHTML = reasons.length ? reasons.join(' ') : '&nbsp;';
   $('confirmWarn').className = 'status' + (trusted ? '' : ' warn');
 
+  // Over the stage, never in flow: this is the one line a drag can rewrite, and
+  // in <main> its appearance re-centered the canvas mid-drag (§0.9). Hidden
+  // outright when there is nothing to say, so it never dims the frame for free.
   const diverged = confirmDivergence();
-  $('confirmDrift').innerHTML = diverged.length
+  $('confirmDrift').textContent = diverged.length
     ? `${diverged.join(' and ')} no longer sits on the fitted out line — tap that line manually if the fit is wrong.`
-    : '&nbsp;';
-  $('confirmDrift').className = 'status' + (diverged.length ? ' warn' : '');
+    : '';
+  $('confirmDrift').classList.toggle('hidden', diverged.length === 0);
   $('confirmUndoBtn').disabled = S.confirmUndo.length === 0;
   render();
 }

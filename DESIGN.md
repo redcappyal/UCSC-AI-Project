@@ -249,6 +249,20 @@ of truth (click handler + disabled state) but is hidden with `.proxied` and mirr
 the header pill `#hdrAction`. Follow this pattern for every new phase: one primary action,
 proxied to the header. Secondary actions stay inline in the section.
 
+**The pill must not crowd the title out.** `#hdrAction` is sized by its own text and
+`#stepLabel` takes what is left, so a long pill label is paid for by the title's ellipsis —
+"Use calibration" beside "Confirm court" truncated it to "Confirm co…" at 390 px, and every
+calibration step clipped at 375. A `STEP_META` action may therefore carry a **`short`**: the
+pill wears `short`, and `label` becomes its `aria-label`. Nothing is lost — the proxied
+original is hidden, so the pill is the only thing a screen reader reads, and it still reads
+the full phrase.
+
+Every calibration step means the same thing (accept what is on screen and go on) and the
+title beside it already names the object, so all of them wear **`Use`**. A step whose verb
+is *not* accept-and-continue keeps its own word: `Record`, `Analyze`, `Judge`. When adding a
+phase, check the title still fits at **375 px** — that is the support floor, and the title is
+the thing that must survive.
+
 ### 3.5 Known platform gotchas (keep these workarounds)
 
 - `#vid` is kept renderable at 2 px / `opacity:0` — `display:none` breaks canvas capture
@@ -892,17 +906,38 @@ draggable anchor pucks at the four wall corners and the two short-line ends.
   the detection is trusted, `#f5c518` otherwise. **Never red** — §0.3 reserves
   red for OUT verdicts. Colour is never the only carrier: `#confirmWarn` names
   every reason in words, so the screen reads correctly in greyscale.
-- Every draggable puck carries a stable black numeral, paired with the numbered
-  location guide below the frame: **1** out line at left wall, **2** out line at
-  right wall, **3** front-wall/floor seam at the right corner, **4** the same
-  seam at the left corner, **5** short line at left wall, and **6** short line
-  at right wall. Numbers belong to the court landmark rather than the current
-  array position, so a missing derived anchor never renumbers the remaining
-  pucks. The visible puck is 20 CSS px in diameter for numeral legibility; its
-  effective drag target remains the independent 44 CSS px target below.
+- Every draggable puck carries a stable black numeral: **1** out line at left
+  wall, **2** out line at right wall, **3** front-wall/floor seam at the right
+  corner, **4** the same seam at the left corner, **5** short line at left wall,
+  and **6** short line at right wall. Numbers belong to the court landmark
+  rather than the current array position, so a missing derived anchor never
+  renumbers the remaining pucks. The visible puck is 20 CSS px in diameter for
+  numeral legibility; its effective drag target remains the independent 44 CSS
+  px target below.
+- **The frame gets the height, and nothing below it competes.** This screen
+  makes one judgement — does the overlay sit on the real paint — and it cannot
+  be made small. The controls once left the frame at **185 × 104 CSS px** on a
+  390 × 844 phone, with a 300 px "Court anchors" card (head, help paragraph, and
+  six chips naming each numeral's landmark) taking 57% of the control area to
+  restate what the pucks already draw. That card is **deleted**, not shrunk: the
+  pucks carry the numerals, `#instr` carries the affordance, and
+  `confirmDivergence` names corners by their human `WALL_CORNERS` label, so
+  nothing on the screen needed the lookup. Below the frame sit only the verdict
+  line, the two secondary actions, and the reasons. The frame reaches its
+  full-bleed ceiling (**390 × 219** at zoom 1 for 16:9), and the black well left
+  over is the pinch-zoom headroom this screen previously had none of — zooming
+  into a 104 px stage yielded a 104 px slit. Do not reintroduce a card here; any
+  new copy must justify itself against the frame it takes height from.
+- `#instr` and `#confirmSummary` are split by job, never restating each other:
+  `#instr` is the action ("Drag any anchor that sits off the line."),
+  `#confirmSummary` is the verdict alone. Both are one line.
+- The two secondary actions (`UNDO DRAG`, `TAP IT MANUALLY`) size to their text
+  via `.confirmActions>*{flex:0 0 auto}` instead of `.row`'s default `flex:1`.
+  They keep the 44 px touch height; two full-width outlines gave secondary
+  controls more weight than the frame above them.
 - **Green is earned, never defaulted into.** The `.status ok` line
-  ("Court detected — the overlay should sit on the real lines.") requires all
-  of: a detection is loaded, its `status` is `ok`, its `confidence` is `high`,
+  ("Court detected.") requires all of:
+  a detection is loaded, its `status` is `ok`, its `confidence` is `high`,
   its `checks_verified` is above zero, no check came back `off`, and all six
   anchors were derived. `checks_verified` is tested separately from
   `confidence` deliberately — it is the count of independent evidence behind
@@ -950,19 +985,27 @@ draggable anchor pucks at the four wall corners and the two short-line ends.
   a grab-and-release with no movement pops its own snapshot — so the control
   never promises an undo that would do nothing. Without it the only escape
   from a bad drag was `TAP IT MANUALLY`, which discards the whole detection.
-- Three status paragraphs, split by *when* their text can change, which §0.9
+- Three status strings, split by *when* their text can change, which §0.9
   requires here rather than merely preferring. The canvas above is vertically
-  centered in a flex-grow stage (§7), so any height change reflows the stage
-  and re-centers the canvas — under an in-progress drag that corrupts the
+  centered in a flex-grow stage (§7), so any height change below it reflows the
+  stage and re-centers the canvas — under an in-progress drag that corrupts the
   pointer math (a steady drag jumped ~50 px the instant a sentence wrapped).
   - `#confirmSummary` — the one-line verdict. Fixed while on screen.
   - `#confirmWarn` — every reason: off checks (by human label), anchors not
     derived, the detector's own warnings verbatim, and the drag caveat above.
     All come from `S.detect`, which a drag never rewrites, so its height
     settles on arrival and it needs no reserve beyond `.status`'s one line.
+    Both of these stay in flow below the frame and default to `&nbsp;` so they
+    never collapse to zero height.
   - `#confirmDrift` — the only drag-varying text (which dragged corners left
-    the fitted out line). It reserves its worst case with `min-height:60px`.
-  All three default to `&nbsp;` so they never collapse to zero height.
+    the fitted out line). It lives **inside `#stage`** as an absolutely
+    positioned bottom banner, `hidden` whenever it has nothing to say or the
+    phase is not `confirm`. Having no layout height, it *cannot* reflow the
+    canvas — a stronger guarantee than the `min-height:60px` reserve it
+    replaced, and it costs the frame none of the 60 px that reserve did. It
+    takes stage-overlay treatment (§8.12: white on a bottom scrim,
+    `text-shadow`, `pointer-events:none`) rather than `.status`, whose
+    `var(--text)` would be dark-on-dark over the scrim in the light theme.
 - Detection runs behind the sanctioned analyzing scrim (§8.12).
 - Primary is the proxied `USE THIS CALIBRATION` (§3.4); the manual wizard is
   always one tap away via the secondary `TAP IT MANUALLY`.
