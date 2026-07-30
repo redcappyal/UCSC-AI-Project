@@ -59,6 +59,10 @@ venv/
 !requirements-test.txt
 !README.md
 !train_bounce_transformer_all_videos.sh
+# Lambda GPU session scripts + their runbook (spec:
+# docs/superpowers/specs/2026-07-30-lambda-cloud-compute-design.md)
+!scripts/lambda/*.sh
+!scripts/lambda/README.md
 # pytest config (marker registration + default -m deselect); needed by
 # everyone running `pytest tests/`, not just CI.
 !pytest.ini
