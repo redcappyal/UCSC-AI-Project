@@ -452,15 +452,24 @@ def track_segments(model, video_path, segments, inference_width, source_fps, res
     refine or audio-rescue (spec §4.2). Neighbour frames on the temporal
     path are invisible to observers.
 
-    backend "rfdetr" (default) is the historical per-frame path. backend
-    "local" runs a ball_model runner (`model` has .manifest) at NATIVE
-    resolution — inference_width is deliberately ignored, tiling owns scale
-    (ios/MODEL.md §6) — and a temporal manifest (frames_per_input == 3)
-    consumes the 3-frame windows the temporal producer emits. The selection
-    floor becomes the manifest's own conf_threshold: the motion-consistency
-    selector is the low-confidence rescue mechanism (the ByteTrack idea,
-    absorbed), so the 0.40 rfdetr floor would silently discard the recall
-    the model was fine-tuned to recover.
+    backend "local" is what production runs: load_ball_backend() resolves
+    BALL_DETECTOR (which defaults to the committed WASB artifact) and every
+    job call site passes that result explicitly. It runs a ball_model runner
+    (`model` has .manifest) at NATIVE resolution — inference_width is
+    deliberately ignored, tiling owns scale (ios/MODEL.md §6) — and a temporal
+    manifest (frames_per_input == 3) consumes the 3-frame windows the temporal
+    producer emits. The selection floor becomes the manifest's own
+    conf_threshold: the motion-consistency selector is the low-confidence
+    rescue mechanism (the ByteTrack idea, absorbed), so the 0.40 rfdetr floor
+    would silently discard the recall the model was fine-tuned to recover.
+
+    backend "rfdetr" is the historical per-frame path against the hosted
+    tracking model, and its floor stays tracking_common.CONFIDENCE_THRESHOLD.
+    It is still this function's *kwarg* default — a leftover from before WASB
+    became the pipeline default — but no production caller relies on that, so
+    do not read it as "what a job runs", and do not read CONFIDENCE_THRESHOLD
+    as "the pipeline's confidence floor". A new caller that omits `backend=`
+    would silently get the legacy hosted path.
     """
     temporal = False
     confidence_floor = CONFIDENCE_THRESHOLD
