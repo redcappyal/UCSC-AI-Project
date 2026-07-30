@@ -1628,6 +1628,123 @@ def coaching_response_payload(analytics, llm_provider, llm_report=None, llm_stat
     }
 
 
+POOLED_ADVICE_SESSION_LIMIT = 8
+
+
+def recent_runs_with_analytics(limit):
+    """Newest-first (run_id, payload) pairs for runs that have detected hits."""
+    if not RUNS_DIR.is_dir():
+        return []
+
+    candidates = []
+    for run_dir in RUNS_DIR.iterdir():
+        if not run_dir.is_dir() or run_dir.name == "uploads":
+            continue
+        hits_path = run_dir / "detected_hits.json"
+        if not hits_path.exists():
+            continue
+        created = (
+            int(run_dir.name) / 1000.0
+            if run_dir.name.isdigit()
+            else hits_path.stat().st_mtime
+        )
+        candidates.append((created, run_dir.name, hits_path))
+    candidates.sort(reverse=True)
+
+    loaded = []
+    for created, run_id, hits_path in candidates:
+        if len(loaded) >= limit:
+            break
+        try:
+            payload = json.loads(hits_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        # A run with no front-wall contact contributes nothing but would still
+        # burn one of the session slots.
+        if not front_wall_hits_from_payload(payload):
+            continue
+        loaded.append({"run_id": run_id, "created": created, "payload": payload})
+    return loaded
+
+
+def pooled_player_coaching(limit=POOLED_ADVICE_SESSION_LIMIT):
+    """Advice built from several sessions at once.
+
+    A single clip rarely clears coaching_advice.MIN_HITS_FOR_ADVICE — a minute
+    of play yields a handful of front-wall contacts — so per-run advice is
+    almost always "too few shots". Pooling the recent sessions is what makes
+    the Training hub able to say anything at all.
+
+    Pooling is by *player slot*, not by person: player_number comes from each
+    run's own serve-alternation attribution, so Player 1 is whoever served
+    first in that clip. The caller must surface that; see `pooling_note`.
+    """
+    runs = recent_runs_with_analytics(limit)
+
+    sessions = []
+    hits_by_player = {1: [], 2: []}
+    rallies = []
+    for run in runs:
+        payload = run["payload"]
+        run_hits = front_wall_hits_from_payload(payload)
+        run_rallies = (
+            payload.get("rallies")
+            or (payload.get("player_assignment") or {}).get("rallies")
+            or []
+        )
+        rallies.extend(run_rallies)
+        for player_number in (1, 2):
+            hits_by_player[player_number].extend(
+                hit for hit in run_hits
+                if int(hit.get("player_number") or 0) == player_number
+            )
+        sessions.append({
+            "run_id": run["run_id"],
+            "created": run["created"],
+            "wall_hits": len(run_hits),
+        })
+
+    players = []
+    for player_number in (1, 2):
+        player_hits = hits_by_player[player_number]
+        summary = build_target_zone_summary(player_hits)
+        analytics = coaching_analytics_for_hits(player_hits, summary)
+        analytics["player_number"] = player_number
+        analytics["label"] = f"Player {player_number}"
+        analytics.update(player_error_metrics(rallies, player_number))
+        players.append({
+            "player_number": player_number,
+            "label": analytics["label"],
+            "analytics": analytics,
+            "advice": player_advice(analytics),
+        })
+
+    return {
+        "sessions": sessions,
+        "session_count": len(sessions),
+        "players": players,
+        "pooling_note": (
+            "Pooled across your last "
+            f"{len(sessions)} {'session' if len(sessions) == 1 else 'sessions'} "
+            "by player slot — Player 1 is whoever served first in each clip, so "
+            "this assumes the same person served first every time."
+        ),
+    }
+
+
+@app.get("/api/coach/advice")
+def coach_advice():
+    """Coaching advice over the recent sessions together, not one run alone."""
+    try:
+        limit = int(request.args.get("sessions", POOLED_ADVICE_SESSION_LIMIT))
+    except (TypeError, ValueError):
+        return error_response("sessions must be a whole number.", status=400)
+    if limit < 1 or limit > 50:
+        return error_response("sessions must be between 1 and 50.", status=400)
+
+    return jsonify({"ok": True, **pooled_player_coaching(limit)})
+
+
 @app.get("/api/runs/<run_id>/coach")
 def coach_run(run_id):
     """Return deterministic analytics and local feedback without waiting."""
