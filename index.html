@@ -748,6 +748,16 @@
   .dim{color:var(--dim)}
   .metaline{display:flex; align-items:center; gap:5px; font-size:13px; color:var(--dim)}
   .metaline svg{width:12px; height:12px; flex:none}
+  /* Provenance disclosure (§8.23): the number is the headline, the caveat is
+     one tap away. Plain show/hide — .hidden is display:none, so there is no
+     height to animate and nothing for prefers-reduced-motion to suppress. */
+  .whyhead{display:flex; align-items:center; gap:2px}
+  .whybtn{flex:0 0 auto; width:44px; height:44px; margin:-14px 0 -14px -4px;
+    display:inline-flex; align-items:center; justify-content:center;
+    background:none; border:0; padding:0; color:var(--dim); cursor:pointer}
+  .whybtn svg{width:15px; height:15px}
+  .whybtn[aria-expanded="true"]{color:var(--text)}
+  .whynote{font-size:12px; color:var(--dim); line-height:1.45; margin:0 0 2px}
   /* status chips */
   .chip{display:inline-flex; align-items:center; border-radius:999px; padding:4px 10px;
     font-size:12px; font-weight:600}
@@ -1636,6 +1646,36 @@ function escapeHtml(value){
     '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;',
   }[ch]));
 }
+/* Provenance disclosure (DESIGN.md §8.23). Provenance about a number that IS
+   shown goes behind the tap; the reason a tier could NOT run stays as body
+   text (§8.20) — do not route capability reasons through here. */
+let WHY_SEQ = 0;
+function whyDisclosure(text){
+  if(!text) return {btn:'', note:''};
+  const id = `why${++WHY_SEQ}`;
+  return {
+    btn: `<button type="button" class="whybtn" aria-label="Why this number"` +
+         ` aria-expanded="false" aria-controls="${id}">` +
+         `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">` +
+         `<circle cx="12" cy="12" r="9"/><path d="M12 11v5.2"/>` +
+         `<circle cx="12" cy="7.6" r=".95" fill="currentColor" stroke="none"/></svg></button>`,
+    note: `<div class="whynote hidden" id="${id}">${escapeHtml(text)}</div>`,
+  };
+}
+/* Section heading + its optional disclosure. `label` is a trusted literal. */
+function sectionHead(label, why){
+  const d = whyDisclosure(why);
+  return `<div class="cardtitle whyhead" style="font-size:14px">${label}${d.btn}</div>${d.note}`;
+}
+document.addEventListener('click', (e) => {
+  const btn = e.target.closest && e.target.closest('.whybtn');
+  if(!btn) return;
+  const note = document.getElementById(btn.getAttribute('aria-controls'));
+  if(!note) return;
+  const open = btn.getAttribute('aria-expanded') === 'true';
+  btn.setAttribute('aria-expanded', open ? 'false' : 'true');
+  note.classList.toggle('hidden', open);
+});
 const vid = $('vid'), canvas = $('view'), ctx = canvas.getContext('2d', {willReadFrequently:true});
 const stage = $('stage');
 

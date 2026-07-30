@@ -1182,6 +1182,27 @@ attribution observed across all 4 rallies.`; a run with no rallies hides the lin
 entirely rather than printing a zero. It takes `.warn` when any rally conflicts —
 `--text` at 700, still no red (§13) — so the loud case is loud in weight, not in hue.
 
+### 8.23 Provenance disclosure (`.whybtn` / `.whynote`)
+
+Provenance and confidence about **a number that is shown** ride behind a tap, not
+in body copy. A `.whybtn` — 15 px circled-`i`, `--dim`, inside a 44 px target
+whose negative margins keep the heading row its original height — sits at the end
+of the heading the caveat belongs to. Tapping toggles a `.whynote` (12 / `--dim`)
+directly beneath. Built by `whyDisclosure(text)` / `sectionHead(label, why)`.
+
+- Collapsed by default. `aria-expanded` + `aria-controls`; glyph `aria-hidden`.
+  `aria-label="Why this number"`.
+- Plain show/hide via `.hidden`. No animation, so §10's reduced-motion rule has
+  nothing to suppress.
+- `whyDisclosure` escapes its own text — callers pass plain strings.
+- The click handler is **delegated** from `document`, because every call site
+  renders into an innerHTML sink that is rebuilt on each report load.
+- **One button per heading, never per tile.** Several facts about one section
+  concatenate into a single note.
+- **Never route a capability `reason` through this.** §8.20 requires that the
+  reason a tier could not run stay visible; hiding it re-creates the "we looked
+  and found nothing" reading that card exists to prevent.
+
 ---
 
 ## 9. Iconography
