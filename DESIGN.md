@@ -76,7 +76,7 @@ Design decisions follow from that:
 - **Few stats, well chosen.** Users wanted "simple statistics clearly displayed" — target
   zones, bounce maps, percentages. Big numbers, small labels, no chartjunk.
 - **One thing per screen.** Each phase asks exactly one question ("Use this frame?",
-  "Looks right?", "Track ball"). The single primary action lives in the header pill.
+  "Looks right?", "Analyze"). The single primary action lives in the header pill.
 
 ---
 
@@ -1158,7 +1158,7 @@ Copy for statuses is specific and actionable ("Tap the two ends of the out line"
 **Referee's voice: calm, terse, factual.**
 
 - Verdicts and telemetry: uppercase single words (IN, OUT, ANALYZING…).
-- Buttons: verb-first, ≤ 3 words ("Track ball", "Use this frame", "Judge frame").
+- Buttons: verb-first, ≤ 3 words ("Analyze", "Use this frame", "Judge frame").
 - Instructions: one sentence, present tense, name what the user sees ("Load a clip from
   this phone to begin."). Colored keywords (`b.out`, `b.service`, `b.tin`) when referring
   to fitted lines.
@@ -1195,7 +1195,7 @@ Each phase: header shows step label + proxied primary; `#instr` gives the one-li
 | `p-tap` | Tap out line, tin, then service line on frame | stage-driven; clear-selection small button | "Looks right" (disabled until the current line has a fit) |
 | `p-review` | Approve fitted lines (cyan/amber/lime on stage) | minimal; evidence is the stage | "Use these lines" |
 | `p-tap-floor` | Floor calibration wizard | `.floorRow`: diagram (progress marks) + prompt/side actions · skip-all / save-profile | "Use floor map" |
-| `p-clip` | Trim rally clip | overview · trim editor (accent handles) · transport+readout row · start/end nudge steppers · full-width "Select entire clip" secondary · frame summary | "Track ball" |
+| `p-clip` | Trim rally clip | overview · trim editor (accent handles) · transport+readout row · start/end nudge steppers · full-width "Select entire clip" secondary · frame summary | "Analyze" |
 | `p-analyze` | Honest processing | `.progressbox` stats + bar (+ stage ANALYZING pulse) | — (auto-advances) |
 | `p-track` | **Match review — Call pane.** Review track, judge calls, name the players | control area keeps its pre-rally-visualization height so the video stage does not shrink, floored against the stage per §3.1; the added content scrolls inside that footprint · scrub hint lives in the header `#instr` line (detection failures replace it, `.warn`) · per-rally front-wall impact mini-map · rally segmentation card (proportional neutral ribbon, active segment in accent, `attr-*` provenance states + legend §8.22; per-rally winners/scores stay backend-only per the 2026-07-29 review) · overview w/ marker minis · hit timeline (neon bars, center playhead) · readout · transport · frame input + Judge row · verdict box · Players card (two equal-width detected-player cards, each with a 4:5 crop directly above its own name field; a quiet "No photo available" placeholder preserves the pair when an old run has only one crop) · ghost "Watch source video". One pane, no switcher — the Challenge pane and its dock were archived 2026-07-29 (`archive/challenge-ui/`) | "Judge frame" |
 | `p-player1-report` / `p-player2-report` | **Match review — Player 1 / Player 2 panes.** Per-player coaching report | Player N front-wall map (§8.10 court chart + `.targetMeta`; serves excluded) · Player N report panel (§8.17, opening with the §8.22 provenance line) · Player N movement panel (§8.17: distance / position split / speeds + court heatmap) · **P1 only:** the run's floor-bounce map (§8.10 `#floorMapSvg` + `.targetMeta`) — bounces are per-run, not per-player, so the panel renders once under the first report rather than twice | — (no primary) |
