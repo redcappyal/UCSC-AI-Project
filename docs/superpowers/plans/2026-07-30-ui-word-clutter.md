@@ -365,6 +365,20 @@ Delete both rules — no `.viewhead h2` survives:
 Keep `.viewhead` itself: `p-matches`, `p-match` and `p-stats` still use it to lay
 out their meta span.
 
+- [ ] **Step 7a: Record that the 22 px title rung now has no user**
+
+Every `<h2>` in `index.html` is one this task deletes, so DESIGN.md §6.1's
+"View title" rung is left with nothing using it. Leaving that unsaid is exactly
+the silent drift CLAUDE.md forbids. Keep the base `h2{}` rule — it is a defensive
+element style for any future full-page title — but amend the ladder row:
+
+```markdown
+| View title | 22 / 700, tracking `-.02em` | `h2` — base rule, **no current user**: screen titles live in `#stepLabel` (§16) |
+```
+
+Do **not** delete the rung or the `h2{}` rule. This is a note, not a ladder move —
+§6.1 says to move the ladder as a ladder, never a rule at a time.
+
 - [ ] **Step 8: Update the test that pinned the deleted rule**
 
 In `tests/test_analysis_typography_contract.py`, delete this assertion:
@@ -530,8 +544,10 @@ def test_the_run_id_is_dev_only():
 
 
 def test_roadmap_cards_do_not_expose_internal_phase_numbers():
+    # "Phase 5" went when main made "Your coach" Live; Phase 6 is the last one.
     assert "Phase 5" not in INDEX_HTML
     assert "Phase 6" not in INDEX_HTML
+    assert '<span class="fcTag">Soon</span>' in INDEX_HTML
 
 
 def test_the_stats_card_subtitle_fits_on_one_line():
@@ -582,16 +598,20 @@ with:
 `body.shell-embed .devOnly{display:none !important}` already exists, so this also
 hides it inside the iOS shell.
 
-- [ ] **Step 5: Retire the phase numbers**
+- [ ] **Step 5: Retire the phase number**
 
-Both Training-hub cards, `sharing` and `shot_bot`:
+Only **one** card still carries an internal phase number: `shot_bot`
+("Shot selection"). `bf15df4` and a later main commit already moved the other two
+to `Live`. Replace its tag:
 
 ```html
       <span class="fcTag">Soon</span>
 ```
 
 `Soon` is already in use on the Live match card, so this follows the existing
-vocabulary rather than inventing a word.
+vocabulary rather than inventing a word. Confirm with
+`grep -n 'class="fcTag"' index.html` before and after — the expected end state is
+`Soon`, `Live`, `Live`, `Soon`.
 
 - [ ] **Step 6: Shorten the stats card subtitle**
 
@@ -776,7 +796,11 @@ The last task, and the one that consumes Task 1.
 
 ```python
 def test_the_rally_and_movement_provenance_moved_behind_the_tap():
-    assert '<div class="metaline">From impact sounds and frame motion' not in INDEX_HTML
+    # NB: assert on the metaline WRAPPER, not on the sentence. The rally line is
+    # built as `<div class="metaline">${escapeHtml(tl.audio_available ? '...`,
+    # so asserting `'<div class="metaline">From impact' not in ...` would pass
+    # vacuously — that substring never existed.
+    assert 'metaline">${escapeHtml(tl.audio_available' not in INDEX_HTML
     assert '<div class="metaline">Detector: ' not in INDEX_HTML
     assert "sectionHead('Rallies', " in INDEX_HTML
     assert "sectionHead('Movement', " in INDEX_HTML
