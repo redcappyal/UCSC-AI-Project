@@ -172,7 +172,16 @@ iOS app in Safari (add-to-home-screen capable).
 - Nav dock sits at `bottom:calc(14px + env(safe-area-inset-bottom))`.
 - **Shell embed:** when loaded inside the native iOS shell the URL carries
   `?shell=1`, which adds `body.shell-embed` and hides `#navPill` — the app's own
-  tab bar owns section navigation there. It also hides `.devOnly` (the Dashboard
+  tab bar owns section navigation there. Because that tab bar owns it, each
+  shell webview is **pinned to the section it booted as** (`SHELL_TAB`, from the
+  `#tab=` fragment, carried across hash-stripping reloads in per-webview
+  `sessionStorage`): `setPhase` rewrites any section-*root* target to this
+  webview's own root, so a flow that exits cross-section on the web — the
+  analyze-a-clip review exits to Analysis, roadmap pages back out to Dashboard
+  or Training — lands back on the tab it started from instead of stranding the
+  native tab on another section (the pill that would recover it is hidden
+  here). Phases below root are never rewritten, and the `#run=` review sheet
+  has no `#tab=` so it is never pinned. It also hides `.devOnly` (the Dashboard
   Dev row, §8.15): inside the app the page is the product, and the only reader of
   that row is someone sitting at the Mac. Everything else renders unchanged;
   Since the Challenge dock was archived there is no second dock left to reconcile.
