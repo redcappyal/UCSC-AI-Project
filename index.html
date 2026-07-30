@@ -1107,7 +1107,7 @@
       <span>Selected frames</span>
       <output id="clipFrameRangeOut">0-0 (1 frame)</output>
     </div>
-    <button class="primary proxied" id="runTrackBtn">Track ball</button>
+    <button class="primary proxied" id="runTrackBtn">Analyze</button>
     <p class="status" id="trackStatus"></p>
   </section>
 
@@ -1639,7 +1639,7 @@ const STEP_META = {
   confirm:{label:'Confirm court', instr:'Check the overlay hugs the real court. Drag any anchor that sits off the line.',
            action:{btn:'confirmUseBtn', label:'Use calibration'}},
   clip:   {label:'Clip', instr:'Drag the top strip to slide the clip along the video, then drag the handles to trim it tight around the shot.',
-           action:{btn:'runTrackBtn', label:'Track ball'}},
+           action:{btn:'runTrackBtn', label:'Analyze'}},
   analyze:{label:'Analyzing', instr:''},
   track:  {label:'Call', instr:'Tap a bar to jump to the bounce frame, or drag anywhere on the strip to scrub.',
            action:{btn:'judgeBtn', label:'Judge'}},
@@ -1855,7 +1855,7 @@ function setPhase(p){
   if(p === 'tap_wall'){ $('p-wall-corners').classList.remove('hidden'); buildWallCornerView(); scheduleCameraCheck(); }
   if(p === 'tap_floor'){ $('p-tap-floor').classList.remove('hidden'); buildFloorView(); }
   if(p === 'confirm'){ $('p-confirm').classList.remove('hidden'); buildConfirmView(); }
-  if(p === 'clip'){ $('p-clip').classList.remove('hidden'); $('runTrackBtn').disabled = false; setupClipControls(); }   // never leave Track ball stuck disabled from a prior/aborted run
+  if(p === 'clip'){ $('p-clip').classList.remove('hidden'); $('runTrackBtn').disabled = false; setupClipControls(); }   // never leave Analyze stuck disabled from a prior/aborted run
   if(p === 'analyze'){ $('p-analyze').classList.remove('hidden'); startAnalyzePreview(); }
   else { stopAnalyzePreview(); }
   if(p === 'track'){ $('p-track').classList.remove('hidden'); buildTrackView(); }
