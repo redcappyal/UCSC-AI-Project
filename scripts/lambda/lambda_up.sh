@@ -179,6 +179,28 @@ for _ in $(seq 1 30); do
   if box_ssh true 2>/dev/null; then break; fi
   sleep 10
 done
+# Stage the Roboflow key the app's default ball backend needs. Piped over ssh
+# STDIN, never an argument: a key in argv is readable via `ps` by any other
+# process on the box. This is the one secret the box holds — it lives only for
+# the instance's lifetime and dies with it (see the spec's access model).
+# CROSSCOURT_ENV_FILE overrides the source, e.g. when driving from a worktree
+# whose own .env does not exist.
+env_file="${CROSSCOURT_ENV_FILE:-$REPO_ROOT/.env}"
+if [ -f "$env_file" ]; then
+  # The WHOLE .env, not just the key. ROBOFLOW_MODEL_ID matters as much as
+  # ROBOFLOW_API_KEY: without it the box falls back to inference_engine's
+  # built-in DEFAULT_MODEL_ID, which is not this account's model, and every
+  # job dies with "Could not find requested Roboflow resource" — an error that
+  # reads like a bad key. BALL_DETECTOR lives here too, so copying the file
+  # wholesale is also what makes the box run the same backend as the Mac.
+  box_ssh 'umask 077; cat > ~/.crosscourt-env' < "$env_file"
+  echo "Staged $(grep -c '^[A-Z]' "$env_file") config value(s) from $env_file."
+else
+  echo "WARNING: $env_file not found. The app's default ball backend is the" >&2
+  echo "         hosted RF-DETR and will fail every job without a Roboflow" >&2
+  echo "         key + model id. Use BALL_DETECTOR=local for a WASB session," >&2
+  echo "         or point CROSSCOURT_ENV_FILE at your .env and re-run." >&2
+fi
 scp "${SSH_OPTS[@]}" "$SCRIPT_DIR/bootstrap_remote.sh" "$REMOTE_USER@$ip:/tmp/bootstrap_remote.sh"
 if ! box_ssh bash /tmp/bootstrap_remote.sh "$REF"; then
   echo "" >&2
