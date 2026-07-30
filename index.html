@@ -1684,6 +1684,32 @@ const PAGE_PHASES = [...ROADMAP_PHASES, 'match'];
 /* Section roots: the nav pill switches between them, so they get no back chevron */
 const SECTION_ROOTS = ['load','matches','coach','progress'];
 
+/* Which native-shell tab this webview IS, or null outside the shell (and in
+   the shell's #run review sheet). Inside the iOS app each of the four tabs is
+   its own webview onto one section, but the page is one SPA whose flows jump
+   across sections — the analyze-a-clip review exits to Analysis, roadmap pages
+   back out to Dashboard or Training. On the web the nav pill recovers from any
+   such jump; in the shell it is hidden, so a cross-section landing strands the
+   native tab on another tab's page permanently. setPhase() pins this webview
+   instead: any section-root target becomes this root. Only root targets are
+   rewritten — flows below root (wizard, review panes, roadmap pages) run in
+   whatever tab opened them.
+   The identity is the boot fragment (#tab=…), carried in sessionStorage —
+   per-webview where localStorage is shared by all four — because openRunReview
+   strips the hash before reloading and a process restore reloads that stripped
+   URL, and a reboot without the fragment would otherwise boot as Dashboard. */
+const SHELL_TAB = (() => {
+  const hashParams = new URLSearchParams(location.hash.replace(/^#/, ''));
+  if(new URLSearchParams(location.search).get('shell') !== '1'
+     && hashParams.get('shell') !== '1') return null;
+  let t = hashParams.get('tab');
+  try{
+    if(SECTION_ROOTS.includes(t)) sessionStorage.setItem('slc-shell-tab', t);
+    else t = sessionStorage.getItem('slc-shell-tab');
+  }catch(_){ /* storage unavailable — the boot fragment alone still pins */ }
+  return SECTION_ROOTS.includes(t) ? t : null;
+})();
+
 /* The match review page. These three phases are panes of ONE page, not steps:
    the #reviewSeg switcher moves between them, the header shows the match date
    instead of a step number, and Back exits to Analysis from any of them rather
@@ -1806,6 +1832,9 @@ function syncHeaderAction(action){
 }
 
 function setPhase(p){
+  // Native-shell webviews are pinned to their own section (§3.2): a section-
+  // root target is always THIS tab's root. No-op outside the shell.
+  if(SHELL_TAB && SECTION_ROOTS.includes(p)) p = SHELL_TAB;
   // Every route out of the analyzing screen abandons the run: the back
   // chevron, the home button, any nav tab. Only one job holds the tracking
   // semaphore, so a run left alive blocks the next track — cancel here, where
