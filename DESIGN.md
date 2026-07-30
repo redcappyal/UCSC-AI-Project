@@ -230,7 +230,7 @@ phases: `p-load`, `p-record`, `p-frame`, `p-tap`, `p-review`, `p-tap-floor`, `p-
 `p-analyze`, `p-track`, `p-player1-report`, `p-player2-report`, `p-label`,
 the section roots `p-matches` (Analysis), `p-coach` (Training), `p-progress`, the
 match analysis page `p-match`, and the
-roadmap placeholders `p-live`, `p-stats`, `p-shot-bot` (blueprints in §16).
+roadmap placeholder `p-live` (blueprints in §16).
 To add a screen, add a section and follow §17 — never add a second header, tab bar, or
 routing chrome beyond the §8.3 nav dock.
 
@@ -1281,7 +1281,6 @@ Each phase: header shows step label + proxied primary; `#instr` gives the one-li
 | `p-progress` | Progress section root — personal cross-session trends | view head · range `.seg` · delta strip · trend cards · best-mark card (§8.20) · `.emptycard` under two identified runs | — (no chevron; section root) |
 | `p-live` | Placeholder: live match | placeholder hero · Planned card (§8.14) | — (back chevron only) |
 | `p-stats` | Personal training stats pooled across identified runs | view head · personal metric card · target summary · source statement | — (back chevron only) |
-| `p-shot-bot` | Placeholder: shot selection | placeholder hero · Planned card (§8.14) | — (back chevron only) |
 
 **The match review page.** `p-track` + `p-player1-report` + `p-player2-report` are one
 page in three panes (§3.3), reached only by finishing an analysis or by opening a match
@@ -1294,7 +1293,7 @@ the only movement between panes; Back exits to Analysis from **any** pane, never
 retreating P2 → P1 → Call.
 
 `p-load` is the **Dashboard section root** (§8.15). Sub-page back routes: `p-record` →
-Dashboard; `p-live` → Dashboard; `p-stats` / `p-shot-bot` → Training; every
+Dashboard; `p-live` → Dashboard; `p-stats` → Training; every
 review pane → Analysis. The calibration wizard (`p-tap` → … → `p-tap-floor`) serves two
 flows: entered from `p-frame` it exits to `p-clip`; entered from `p-record` ("Calibrate
 court", on a frame frozen from the live camera) it exits back to `p-record` and the

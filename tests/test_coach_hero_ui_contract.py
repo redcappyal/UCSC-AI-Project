@@ -26,6 +26,16 @@ def test_obsolete_sharing_placeholder_is_removed():
     assert "sharing: {label:'Your coach'" not in INDEX_HTML
 
 
+def test_shot_selection_placeholder_is_removed():
+    """Dropped 2026-07-30. Every hook goes with the card — a phase left in
+    ROADMAP_PHASES whose section no longer exists throws on $(id) in setPhase."""
+    assert 'data-phase="shot_bot"' not in INDEX_HTML
+    assert 'id="p-shot-bot"' not in INDEX_HTML
+    assert "shot_bot:{label:" not in INDEX_HTML
+    assert "const ROADMAP_PHASES = ['live','matches','coach','progress','stats'];" in INDEX_HTML
+    assert "p-shot-bot" not in INDEX_HTML
+
+
 def test_the_advice_page_is_a_scrollable_leaf_off_the_training_hub():
     assert "coach_advice:{label:'Your coach', instr:''}," in INDEX_HTML
     assert "const PAGE_PHASES = [...ROADMAP_PHASES, 'match', 'coach_advice'];" in INDEX_HTML

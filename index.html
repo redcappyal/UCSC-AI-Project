@@ -1541,13 +1541,6 @@
       <span class="fcBody"><strong>Your coach</strong><span>Feedback and drills from your recent matches</span></span>
       <span class="fcTag">Live</span>
     </button>
-    <button class="featureCard" type="button" data-phase="shot_bot">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-        <path d="M4 19c2-9 8-13 15-13"/><path d="M14 5l5 1-1 5"/>
-      </svg>
-      <span class="fcBody"><strong>Shot selection</strong><span>The shot the numbers would play</span></span>
-      <span class="fcTag">Phase 6</span>
-    </button>
   </section>
 
   <!-- PHASE: coaching advice (leaf under the Training hub). Not the per-run
@@ -1570,25 +1563,6 @@
     </div>
     <div id="trainingStatsBody" style="display:flex;flex-direction:column;gap:14px">
       <div class="card emptycard">Loading your identified sessions&#8230;</div>
-    </div>
-  </section>
-
-  <!-- PHASE: shot selection (roadmap placeholder, under Coach) -->
-  <section class="hidden" id="p-shot-bot">
-    <div class="placeholderHero">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-        <path d="M4 19c2-9 8-13 15-13"/><path d="M14 5l5 1-1 5"/>
-      </svg>
-      <strong>Coming soon!</strong>
-    </div>
-    <div class="targetZones">
-      <div class="targetHead"><strong>Planned</strong><span>PHASE 6</span></div>
-      <div class="planBody">
-        <div class="planRow"><i class="corePill">Core</i>Win-probability model</div>
-        <div class="planRow"><i class="laterPill">Later</i>Shot decision grading</div>
-        <div class="planRow"><i class="laterPill">Later</i>What-if rally replay</div>
-        <div class="planRow"><i class="laterPill">Later</i>Opponent profiles</div>
-      </div>
     </div>
   </section>
 
@@ -1749,10 +1723,9 @@ const STEP_META = {
   progress:{label:'Progress', instr:''},
   live:    {label:'Live match', instr:''},
   stats:   {label:'Stats + trends', instr:''},
-  shot_bot:{label:'Shot selection', instr:''},
 };
 /* Roadmap phases share one empty-stage treatment; section id = 'p-' + key with _ → - */
-const ROADMAP_PHASES = ['live','matches','coach','progress','stats','shot_bot'];
+const ROADMAP_PHASES = ['live','matches','coach','progress','stats'];
 const roadmapSection = p => 'p-' + p.replace('_','-');
 /* Every phase that is a plain content page: no video stage, page background.
    The match detail is one of these but keeps its own reveal (it has a view to
@@ -1938,7 +1911,7 @@ function setPhase(p){
   document.body.classList.toggle('phase-page', PAGE_PHASES.includes(p));
   for(const id of ['p-load','p-record','p-frame','p-tap','p-review','p-wall-corners','p-tap-floor','p-confirm','p-clip','p-analyze','p-track','p-label',
                    'p-player1-report','p-player2-report','p-match','p-coach-advice',
-                   'p-live','p-matches','p-coach','p-progress','p-stats','p-shot-bot']) $(id).classList.add('hidden');
+                   'p-live','p-matches','p-coach','p-progress','p-stats']) $(id).classList.add('hidden');
   $('camVid').classList.toggle('hidden', p !== 'record');   // live preview only on the record screen
   $('analyzeOverlay').classList.toggle('hidden', p !== 'analyze');
   $('stepLabel').textContent = stepLabelFor(p);
