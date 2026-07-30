@@ -188,10 +188,13 @@ def smooth_positions(positions, window):
 
     kernel = np.ones(window) / window
     smoothed = np.empty_like(positions)
+    # Pad must total window-1 for "valid" convolution to return len(positions)
+    # samples. fps scaling hands this function even windows (smooth=2 at 30
+    # fps), where a symmetric window//2 pad overshoots by one.
     half = window // 2
 
     for axis in range(positions.shape[1]):
-        padded = np.pad(positions[:, axis], half, mode="edge")
+        padded = np.pad(positions[:, axis], (half, window - 1 - half), mode="edge")
         smoothed[:, axis] = np.convolve(padded, kernel, mode="valid")
 
     return smoothed

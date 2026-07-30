@@ -225,7 +225,7 @@ def test_judge_endpoint_preserves_serve_specific_call(tmp_path, monkeypatch):
     assert payload["service_y"] == 400
 
 
-def test_judge_hits_does_not_call_horizontal_sidewall_out(tmp_path):
+def test_judge_hits_clamps_horizontal_overflow_into_regular_shot(tmp_path):
     import json as json_module
 
     from job_runner import judge_hits
@@ -268,13 +268,21 @@ def test_judge_hits_does_not_call_horizontal_sidewall_out(tmp_path):
     judged = judge_hits(tmp_path, results, [hit])
 
     entry = judged[0]
-    assert entry["call"] is None
-    assert entry["reason"] == "outside_wall_x_bounds"
-    assert entry["margin_px"] is None
-    assert "target_zone" not in entry
+    assert entry["call"] == "IN"
+    assert entry["reason"] == "between_lines_x_clamped"
+    assert entry["judge_source"] == "detected_center_x_clamped"
+    assert entry["judge_point"]["x_clamped"] is True
+    assert entry["wall_diagram"]["x"] == 0.0
+    assert entry["target_zone"] is not None
+    assert entry["player_number"] == 1
+    assert entry["rally_number"] == 1
 
     payload = json.loads((tmp_path / "detected_hits.json").read_text())
+    # This one-hit fixture is a serve, so it is deliberately excluded from
+    # aggregate target-zone rates even though it has a valid target_zone.
     assert payload["target_zones"]["total_wall_hits"] == 0
+    assert payload["player_assignment"]["assigned_front_wall_hit_count"] == 1
+    assert payload["player_assignment"]["rally_count"] == 1
 
 
 def test_target_zone_layout_matches_front_wall_sketch():

@@ -635,6 +635,11 @@
   .floorSide{flex:1; min-width:0; display:flex; flex-direction:column; gap:10px}
   #floorPrompt{font-size:15px; line-height:1.4; margin:0}
   #floorPrompt b{color:var(--text)}
+  /* Save-as-profile swaps its buttons row for a name row in place; equal
+     min-heights keep the swap shift-free (§18: no layout shift). The input's
+     48px recipe height is the taller of the two, so both rows reserve it. */
+  .floorProfileRow{min-height:48px}
+  .floorProfileRow input{flex:1.5}
 
   /* floor bounce map on the targets page */
   .floorMap{border:1px solid var(--line); border-radius:8px; overflow:hidden; background:var(--surface)}
@@ -735,7 +740,8 @@
   .thumb svg{width:15px; height:15px; filter:drop-shadow(0 1px 2px rgba(0,0,0,.25))}
   .thumb .court{position:absolute; inset:0; width:100%; height:100%; opacity:.55; filter:none}
   .cliptop .info{display:flex; flex-direction:column; gap:3px; min-width:0}
-  .cliptop .name{font-size:14px; font-weight:600; letter-spacing:-.01em}
+  .cliptop .name{font-size:14px; font-weight:600; letter-spacing:-.01em;
+    white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
   .statechip{margin-left:auto; flex:none; border-radius:999px; padding:6px 11px; font-size:10px;
     font-weight:700; letter-spacing:.04em; display:inline-flex; gap:5px; align-items:center}
   .statechip.done{background:var(--accent-bg); color:var(--accent-text)}
@@ -748,6 +754,8 @@
   .deleteRunBtn:hover,.deleteRunBtn:focus-visible{background:var(--tint-poor-bg);
     color:var(--tint-poor-fg)}
   .deleteRunBtn:disabled{opacity:.45; cursor:wait}
+  .deleteRunBtn.arm{width:auto; border-radius:999px; padding:0 12px;
+    background:var(--accent-bg); color:var(--accent-text); font-size:12px; font-weight:700}
   /* The match analysis, on its own page: the same stack the card used to hold
      inline, now unclamped — <main> supplies the page padding. */
   #matchBody{display:flex; flex-direction:column; gap:14px}
@@ -1032,9 +1040,14 @@
       </div>
     </div>
     <button class="primary proxied" id="floorDoneBtn" disabled>Use floor map</button>
-    <div class="row">
+    <div class="row floorProfileRow" id="floorProfileActions">
       <button class="small" id="floorSkipAllBtn" type="button">Skip floor calibration</button>
       <button class="small" id="floorSaveProfileBtn" type="button" disabled>Save as profile</button>
+    </div>
+    <div class="row floorProfileRow hidden" id="floorProfileNameRow">
+      <input type="text" id="floorProfileNameInput" maxlength="40" autocomplete="off"
+             enterkeyhint="done" aria-label="Profile name" placeholder="e.g. Court 3 rear mount">
+      <button class="small" id="floorProfileNameSaveBtn" type="button" disabled>Save</button>
     </div>
     <p class="status" id="floorStatus"></p>
     <p class="status" id="camHealthFloor"></p>
@@ -1103,11 +1116,12 @@
         <button type="button" id="nEndP1f" aria-label="End later one frame">+</button>
       </div>
     </div>
+    <button type="button" id="clipSelectAllBtn">Select entire clip</button>
     <div class="clipFrameSummary">
       <span>Selected frames</span>
       <output id="clipFrameRangeOut">0-0 (1 frame)</output>
     </div>
-    <button class="primary proxied" id="runTrackBtn">Track ball</button>
+    <button class="primary proxied" id="runTrackBtn">Analyze</button>
     <p class="status" id="trackStatus"></p>
   </section>
 
@@ -1607,7 +1621,8 @@ const S = {
   trackStripGen:0,            // invalidates in-flight timeline thumbnail renders
   trackView:{startF:0, endF:0, cursor:0, key:'', ovDone:false, timer:null}, // fine-window state for the call page's coarse-fine timeline
   videoFps:null,              // probed by the server at upload; null until known
-  clip:{start:0, end:0, cursor:0, dragging:null, frameStride:1, inferenceWidth:960,
+  clip:{start:0, end:0, cursor:0, dragging:null, inferenceWidth:960,
+    frameStride:4,              // /api/track default; >1 = cheap coarse pass + stride-1 refine windows
     viewStart:0, viewEnd:1, viewSpan:0,   // detail window derived from cursor ± viewSpan/2
     dragX:0, dragT:0,
     overviewThumbs:false, overviewDragging:false,
@@ -1639,7 +1654,7 @@ const STEP_META = {
   confirm:{label:'Confirm court', instr:'Check the overlay hugs the real court. Drag any anchor that sits off the line.',
            action:{btn:'confirmUseBtn', label:'Use calibration'}},
   clip:   {label:'Clip', instr:'Drag the top strip to slide the clip along the video, then drag the handles to trim it tight around the shot.',
-           action:{btn:'runTrackBtn', label:'Track ball'}},
+           action:{btn:'runTrackBtn', label:'Analyze'}},
   analyze:{label:'Analyzing', instr:''},
   track:  {label:'Call', instr:'Tap a bar to jump to the bounce frame, or drag anywhere on the strip to scrub.',
            action:{btn:'judgeBtn', label:'Judge'}},
@@ -1668,6 +1683,41 @@ const roadmapSection = p => 'p-' + p.replace('_','-');
 const PAGE_PHASES = [...ROADMAP_PHASES, 'match'];
 /* Section roots: the nav pill switches between them, so they get no back chevron */
 const SECTION_ROOTS = ['load','matches','coach','progress'];
+
+/* True inside the native iOS shell. The flag rides the QUERY string
+   (?shell=1): openRunReview strips the hash before location.reload() and a
+   WKWebView process restore reloads that stripped URL, so a hash-borne flag
+   would be lost exactly when it matters — with the web nav dock reappearing
+   under the native tab bar. The hash form is still honored for links minted
+   before that move. Read once at boot; the boot URL cannot change under a
+   running page. applyDeepLink and the SHELL_TAB pin below both key off this
+   one predicate. */
+const IS_SHELL = new URLSearchParams(location.search).get('shell') === '1'
+  || new URLSearchParams(location.hash.replace(/^#/, '')).get('shell') === '1';
+
+/* Which native-shell tab this webview IS, or null outside the shell (and in
+   the shell's #run review sheet). Inside the iOS app each of the four tabs is
+   its own webview onto one section, but the page is one SPA whose flows jump
+   across sections — the analyze-a-clip review exits to Analysis, roadmap pages
+   back out to Dashboard or Training. On the web the nav pill recovers from any
+   such jump; in the shell it is hidden, so a cross-section landing strands the
+   native tab on another tab's page permanently. setPhase() pins this webview
+   instead: any section-root target becomes this root. Only root targets are
+   rewritten — flows below root (wizard, review panes, roadmap pages) run in
+   whatever tab opened them.
+   The identity is the boot fragment (#tab=…), carried in sessionStorage —
+   per-webview where localStorage is shared by all four — because openRunReview
+   strips the hash before reloading and a process restore reloads that stripped
+   URL, and a reboot without the fragment would otherwise boot as Dashboard. */
+const SHELL_TAB = (() => {
+  if(!IS_SHELL) return null;
+  let t = new URLSearchParams(location.hash.replace(/^#/, '')).get('tab');
+  try{
+    if(SECTION_ROOTS.includes(t)) sessionStorage.setItem('slc-shell-tab', t);
+    else t = sessionStorage.getItem('slc-shell-tab');
+  }catch(_){ /* storage unavailable — the boot fragment alone still pins */ }
+  return SECTION_ROOTS.includes(t) ? t : null;
+})();
 
 /* The match review page. These three phases are panes of ONE page, not steps:
    the #reviewSeg switcher moves between them, the header shows the match date
@@ -1791,6 +1841,9 @@ function syncHeaderAction(action){
 }
 
 function setPhase(p){
+  // Native-shell webviews are pinned to their own section (§3.2): a section-
+  // root target is always THIS tab's root. No-op outside the shell.
+  if(SHELL_TAB && SECTION_ROOTS.includes(p)) p = SHELL_TAB;
   // Every route out of the analyzing screen abandons the run: the back
   // chevron, the home button, any nav tab. Only one job holds the tracking
   // semaphore, so a run left alive blocks the next track — cancel here, where
@@ -1855,7 +1908,7 @@ function setPhase(p){
   if(p === 'tap_wall'){ $('p-wall-corners').classList.remove('hidden'); buildWallCornerView(); scheduleCameraCheck(); }
   if(p === 'tap_floor'){ $('p-tap-floor').classList.remove('hidden'); buildFloorView(); }
   if(p === 'confirm'){ $('p-confirm').classList.remove('hidden'); buildConfirmView(); }
-  if(p === 'clip'){ $('p-clip').classList.remove('hidden'); $('runTrackBtn').disabled = false; setupClipControls(); }   // never leave Track ball stuck disabled from a prior/aborted run
+  if(p === 'clip'){ $('p-clip').classList.remove('hidden'); $('runTrackBtn').disabled = false; setupClipControls(); }   // never leave Analyze stuck disabled from a prior/aborted run
   if(p === 'analyze'){ $('p-analyze').classList.remove('hidden'); startAnalyzePreview(); }
   else { stopAnalyzePreview(); }
   if(p === 'track'){ $('p-track').classList.remove('hidden'); buildTrackView(); }
@@ -4036,6 +4089,7 @@ function updateFloorUI(){
     $('floorSkipLandmarkBtn').disabled = true;
     $('floorClearBtn').disabled = true;
     $('floorSaveProfileBtn').disabled = true;
+    setFloorProfileEntry(false);
     buildFloorDiagram();
     return;
   }
@@ -4056,6 +4110,7 @@ function updateFloorUI(){
   $('floorClearBtn').disabled = !F.landmarks.some(l => l.refined_px || l.skipped);
   $('floorDoneBtn').disabled = !F.H;
   $('floorSaveProfileBtn').disabled = !F.H;
+  if(!F.H) setFloorProfileEntry(false);   // a lost fit invalidates a half-typed save
   if(F.H){
     const quality = F.rms <= FLOOR_RMS_WARN ? 'ok' : 'warn';
     status.textContent = `Floor fit: ${placed} landmarks · RMS ${F.rms.toFixed(1)} px · worst ${F.maxResidual.toFixed(1)} px` +
@@ -4098,6 +4153,7 @@ function buildFloorView(){
   if(COURT && !S.floor) S.floor = newFloorState();
   if(S.floor) seedFrontSeamFromWall(S.floor);
   if(S.floor && S.floor.activeIdx !== -1) S.floor.activeIdx = nextIncompleteIdx();
+  setFloorProfileEntry(false);   // entering the step always shows the buttons row
   updateFloorUI();
   scheduleCameraCheck();
 }
@@ -4312,10 +4368,38 @@ function applyProfile(saved){
   w.textContent = note + (w.textContent ? ' ' + w.textContent : '');
   w.className = 'status warn';
 }
+/* The profile name is collected inline: "Save as profile" swaps its row for a
+   same-height input + Save. Never window.prompt() here — the iOS shell's
+   WKWebView has no WKUIDelegate, so prompt/confirm/alert silently return
+   null there and the tap reads as a dead button. */
+function setFloorProfileEntry(open){
+  $('floorProfileActions').classList.toggle('hidden', open);
+  $('floorProfileNameRow').classList.toggle('hidden', !open);
+}
+function syncFloorProfileSaveBtn(){
+  $('floorProfileNameSaveBtn').disabled = !$('floorProfileNameInput').value.trim();
+}
 $('floorSaveProfileBtn').onclick = () => {
   if(!S.floor || !S.floor.H || !S.lines.out || !S.lines.tin || !S.lines.service) return;
-  const name = (window.prompt('Profile name (e.g. “Court 3 rear mount”)',
-    S.profile ? S.profile.name : '') || '').trim();
+  const input = $('floorProfileNameInput');
+  input.value = S.profile ? S.profile.name : '';
+  setFloorProfileEntry(true);
+  syncFloorProfileSaveBtn();
+  input.focus();
+};
+$('floorProfileNameInput').oninput = syncFloorProfileSaveBtn;
+$('floorProfileNameInput').onkeydown = e => {
+  if(e.key === 'Enter'){ e.preventDefault(); $('floorProfileNameSaveBtn').click(); }
+  else if(e.key === 'Escape') setFloorProfileEntry(false);
+};
+$('floorProfileNameInput').onblur = () => {
+  // A tap elsewhere with nothing typed reads as "never mind" — restore the
+  // buttons. Typed text survives the blur so a stray tap can't destroy it.
+  if(!$('floorProfileNameInput').value.trim()) setFloorProfileEntry(false);
+};
+$('floorProfileNameSaveBtn').onclick = () => {
+  if(!S.floor || !S.floor.H || !S.lines.out || !S.lines.tin || !S.lines.service) return;
+  const name = $('floorProfileNameInput').value.trim();
   if(!name) return;
   S.profile = {
     id: (crypto.randomUUID ? crypto.randomUUID() : String(Date.now())),
@@ -4332,6 +4416,7 @@ $('floorSaveProfileBtn').onclick = () => {
   while(profiles.length > 10) profiles.shift();
   try{ localStorage.setItem(PROFILE_KEY, JSON.stringify(profiles)); }
   catch(_){ showError('Could not save the profile (storage full or blocked).'); return; }
+  setFloorProfileEntry(false);
   $('floorStatus').textContent = `Saved profile “${name}” — apply it from the frame step on the next clip.`;
   $('floorStatus').className = 'status ok';
 };
@@ -4915,7 +5000,19 @@ function nudgeClipEdge(which, delta){
   requestPreviewFrame(t);
 }
 
+// Unlike nudging, the playhead stays put — only the selection grows.
+function selectEntireClip(){
+  stopClipPlayback();
+  S.clip.start = 0;
+  S.clip.end = clipDuration();
+  recenterView();
+  updateClipTimeline();
+  drawDetailPlaceholderNow();
+  scheduleDetailRender();
+}
+
 const frameStep = () => 1 / videoFps();
+$('clipSelectAllBtn').onclick = selectEntireClip;
 $('nStartM1s').onclick = () => nudgeClipEdge('start', -1);
 $('nStartM1f').onclick = () => nudgeClipEdge('start', -frameStep());
 $('nStartP1f').onclick = () => nudgeClipEdge('start', frameStep());
@@ -6874,7 +6971,9 @@ function renderJudgeResult(data, selectedHit=null){
   // `SERVE ` prefixes a verdict (SERVE IN / SERVE OUT), so it has nothing to
   // qualify on a no-call; the serve stays named in the caption instead.
   const noCall = data.call == null;
-  const sourceText = data.source === 'impact_estimate' ? 'estimated impact point' : 'detected ball center';
+  const sourceText = data.ball_x_clamped
+    ? 'ball center clamped to wall edge'
+    : data.source === 'impact_estimate' ? 'estimated impact point' : 'detected ball center';
   $('judgeResult').className = `verdict ${callClass}`;
   $('judgeResult').innerHTML =
     playerAttributionMarkup(hit) +
@@ -7450,7 +7549,13 @@ function restoreLinesFromCalibration(cal){
 async function tryRestoreSession(){
   let stash = null;
   try{ stash = JSON.parse(localStorage.getItem(RESTORE_KEY) || 'null'); }catch(_){ }
-  if(!stash || !stash.run_id || S.phase !== 'load') return;
+  /* "Still at rest" means this webview's boot root: 'load' on the web, but a
+     pinned shell tab rests at its own section root (§3.2). Comparing against
+     the literal 'load' would veto every restore on a non-Dashboard tab —
+     including the openRunReview reload that is the Analysis tab's only route
+     into the full review. */
+  const restRoot = SHELL_TAB || 'load';
+  if(!stash || !stash.run_id || S.phase !== restRoot) return;
   $('loadStatus').textContent = 'Restoring last session…';
   $('loadStatus').className = 'status';
 
@@ -7464,13 +7569,20 @@ async function tryRestoreSession(){
   }catch(_){ /* backend unreachable — treat like a missing run */ }
   if(!data){
     clearRestoreStash();
-    if(S.phase === 'load'){
-      $('loadStatus').textContent = 'Previous session could not be restored (run is gone). Load a clip to begin.';
-      $('loadStatus').className = 'status';
+    if(S.phase === restRoot){
+      /* #loadStatus lives in p-load, which a pinned non-Dashboard tab never
+         shows — writing there would report into a hidden element. Those tabs
+         report through the §8.6 banner instead. */
+      if(restRoot === 'load'){
+        $('loadStatus').textContent = 'Previous session could not be restored (run is gone). Load a clip to begin.';
+        $('loadStatus').className = 'status';
+      } else {
+        showError('The saved review could not be reopened — its run is gone.');
+      }
     }
     return;
   }
-  if(S.phase !== 'load') return;   // user moved on while we fetched
+  if(S.phase !== restRoot) return;   // user moved on while we fetched
 
   S.run = data;
   S.restoredSession = true;
@@ -7486,15 +7598,20 @@ async function tryRestoreSession(){
   const videoUrl = `/api/runs/${encodeURIComponent(stash.run_id)}/source_video`;
   let available = false;
   try{ available = (await fetch(videoUrl, {method:'HEAD', cache:'no-store'})).ok; }catch(_){ }
-  if(S.phase !== 'load') return;
+  if(S.phase !== restRoot) return;
   if(available){
     clearThumbCache();
     vid.src = videoUrl;
     vid.load();
-  } else {
+  } else if(restRoot === 'load'){
     $('loadStatus').textContent =
       `Restored run ${stash.run_id}, but its clip is not on the server — load ${stash.videoName || 'the same video'} to continue.`;
     $('loadStatus').className = 'status warn';
+  } else {
+    /* The manual re-pick that copy asks for is the Dashboard's file input,
+       which this pinned tab has no way to show — report what happened
+       without instructing an impossible recovery. */
+    showError(`Run ${stash.run_id} was found, but its clip is no longer on the server.`);
   }
 }
 
@@ -7723,6 +7840,7 @@ function renderCoachHero(){
 const COURT_THUMB ='<svg class="court" viewBox="0 0 62 46" fill="none" stroke="#fff" stroke-width="1.2" aria-hidden="true"><rect x="9" y="8" width="44" height="26" rx="1"/><path d="M9 21h44"/><path d="M9 28h44"/></svg>';
 /* thumbnail play glyph reuses the transport PLAY_ICON declared above */
 const FB_NOTE_ICON ='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 8v5"/><circle cx="12" cy="16.5" r=".5" fill="currentColor"/><circle cx="12" cy="12" r="9"/></svg>';
+const TRASH_ICON ='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 10v6M14 10v6"/></svg>';
 /* ---------- report-v1 sections (capabilities, rallies, movement) ----------
    Principle 3 of the analysis design: a tier that could not run is shown
    disabled WITH ITS REASON, never omitted and never drawn as an empty result.
@@ -7810,15 +7928,7 @@ function renderClipCards(){
           <span class="statechip done">ANALYZED</span>
           <button class="deleteRunBtn" type="button" data-delete-run="${escapeHtml(id)}"
                   aria-label="Delete session ${escapeHtml(fmtRunDate(r.created))}"
-                  title="Delete session">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                 stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
-                 aria-hidden="true">
-              <path d="M3 6h18"/><path d="M8 6V4h8v2"/>
-              <path d="M19 6l-1 14H6L5 6"/>
-              <path d="M10 10v6M14 10v6"/>
-            </svg>
-          </button>
+                  title="Delete session">${TRASH_ICON}</button>
         </div>
       </div>`;
   }).join('');
@@ -7840,10 +7950,21 @@ function renderClipCards(){
 async function deleteRunSession(runId, button){
   const run = LIVE.runs.find(entry => entry.run_id === runId);
   const label = run ? fmtRunDate(run.created) : 'this session';
-  if(!window.confirm(
-    `Delete ${label}?\n\nThis permanently removes its analysis and annotations.`
-  )) return;
+  // Two-tap arm instead of a native confirm() dialog: the iOS shell's
+  // WKWebView has no dialog UI, so confirm() silently returns false there.
+  if(!button.classList.contains('arm')){
+    button.classList.add('arm');
+    button.textContent = 'Confirm';
+    button.setAttribute('aria-label', `Confirm deleting session ${label}`);
+    button.disarm = setTimeout(() => {
+      button.classList.remove('arm');
+      button.innerHTML = TRASH_ICON;
+      button.setAttribute('aria-label', `Delete session ${label}`);
+    }, 2600);
+    return;
+  }
 
+  clearTimeout(button.disarm);
   button.disabled = true;
   try{
     const response = await fetch(`/api/runs/${encodeURIComponent(runId)}`, {
@@ -7859,7 +7980,10 @@ async function deleteRunSession(runId, button){
     renderClipCards();
   }catch(error){
     button.disabled = false;
-    window.alert(error.message || 'The session could not be deleted.');
+    button.classList.remove('arm');
+    button.innerHTML = TRASH_ICON;
+    button.setAttribute('aria-label', `Delete session ${label}`);
+    showError(error.message || 'The session could not be deleted.');
   }
 }
 
@@ -8088,13 +8212,9 @@ function renderProgressView(){
    tryRestoreSession does the rehydration exactly like a returning session. */
 function applyDeepLink(){
   const params = new URLSearchParams(location.hash.replace(/^#/, ''));
-  /* The shell flag rides the query string, not the hash: openRunReview strips
-     the hash before reloading, so a hash-only flag would be lost on that
-     reload (and on a WKWebView process-restore) and the web nav dock would
-     reappear under the native tab bar. The hash is still read for older
-     links. */
-  if(new URLSearchParams(location.search).get('shell') === '1'
-     || params.get('shell') === '1') document.body.classList.add('shell-embed');
+  /* Why the flag rides the query string, not the hash: see IS_SHELL,
+     declared beside SECTION_ROOTS. */
+  if(IS_SHELL) document.body.classList.add('shell-embed');
   const runId = (params.get('run') || '').trim();
   if(runId){
     try{

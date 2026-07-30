@@ -76,7 +76,7 @@ Design decisions follow from that:
 - **Few stats, well chosen.** Users wanted "simple statistics clearly displayed" — target
   zones, bounce maps, percentages. Big numbers, small labels, no chartjunk.
 - **One thing per screen.** Each phase asks exactly one question ("Use this frame?",
-  "Looks right?", "Track ball"). The single primary action lives in the header pill.
+  "Looks right?", "Analyze"). The single primary action lives in the header pill.
 
 ---
 
@@ -172,7 +172,23 @@ iOS app in Safari (add-to-home-screen capable).
 - Nav dock sits at `bottom:calc(14px + env(safe-area-inset-bottom))`.
 - **Shell embed:** when loaded inside the native iOS shell the URL carries
   `?shell=1`, which adds `body.shell-embed` and hides `#navPill` — the app's own
-  tab bar owns section navigation there. It also hides `.devOnly` (the Dashboard
+  tab bar owns section navigation there. Because that tab bar owns it, each
+  shell webview is **pinned to the section it booted as** (`SHELL_TAB`, from the
+  `#tab=` fragment, carried across hash-stripping reloads in per-webview
+  `sessionStorage`): `setPhase` rewrites any section-*root* target to this
+  webview's own root, so a flow that exits cross-section on the web — the
+  analyze-a-clip review exits to Analysis, roadmap pages back out to Dashboard
+  or Training — lands back on the tab it started from instead of stranding the
+  native tab on another section (the pill that would recover it is hidden
+  here). Phases below root are never rewritten, and the `#run=` review sheet
+  has no `#tab=` so it is never pinned. Session restore participates:
+  `tryRestoreSession`'s "still at rest" guards compare against the pinned root
+  (`SHELL_TAB || 'load'`), so the `openRunReview` reload still rehydrates the
+  full review on a pinned tab instead of being vetoed by a rest phase that is
+  no longer `load`. Restore failures on a pinned non-Dashboard tab report
+  through the §8.6 banner — `#loadStatus` sits inside the hidden `p-load`
+  section there, and the "load the same video" recovery copy assumes a file
+  input those tabs never show. It also hides `.devOnly` (the Dashboard
   Dev row, §8.15): inside the app the page is the product, and the only reader of
   that row is someone sitting at the Mac. Everything else renders unchanged;
   Since the Challenge dock was archived there is no second dock left to reconcile.
@@ -524,7 +540,10 @@ until it was archived 2026-07-29 (`archive/challenge-ui/`).
 - Text: `color-mix(in srgb, var(--surface) 86%, var(--bg))` fill, radius 12 (§4.4), 17 px,
   `min-height:48px`, `1px --line` border — the border is what distinguishes it from the
   Number variant, needed because a text field sits inside a `--surface` card (post-hoc
-  player naming, §4.6) rather than always on `--bg` the way Number fields do.
+  player naming, §4.6) rather than always on `--bg` the way Number fields do. The floor
+  step's profile-name row reuses this recipe on `--bg` (one text-field look everywhere);
+  native dialogs (`window.prompt`/`confirm`/`alert`) are never an alternative — the iOS
+  shell's WKWebView has no UI delegate, so they silently no-op there.
 
 ### 8.5 Progress (`.progressbox`)
 
@@ -950,10 +969,17 @@ Do not reintroduce them to the UI without a deliberate DESIGN.md change.
   Analysis is a list of matches, not a stack of unrolled reports. Head row
   (`.cliptop`): 62×46 gradient thumb (hue rotates per run — the sanctioned gradient)
   with a court line-sketch + play glyph · run date 14/600 + duration `.metaline` ·
-  right-aligned `ANALYZED` `.statechip`. **The head row is the card's one action:**
+  right-aligned `ANALYZED` `.statechip` · a `.deleteRunBtn` trash icon (36 px round,
+  `--dim`, poor-tint hover). **The head row is the card's one action:**
   tapping it opens that match's analysis page, `p-match` (§16). It is a `<div>`, so it
   carries `role="button"`, `tabindex="0"` and an Enter/Space handler; without them a
-  match would be reachable by pointer only. The analysis itself (`#matchBody`) is
+  match would be reachable by pointer only. The trash button is the row's only other
+  control (it stops propagation) and deletes by the §8.16 arm pattern, never a modal:
+  first tap swaps the icon for a 12/700 "Confirm" accent pill (`.arm` — the
+  `aria-label` flips with it), which disarms back to the icon after ~2.6 s; a failed
+  delete restores the idle icon and reports through the §8.6 error banner. Native
+  `confirm()`/`alert()` cannot be used — the iOS shell's WKWebView renders no JS
+  dialogs, so they silently no-op. The analysis itself (`#matchBody`) is
   rendered on that page, in ladder order — rally structure first because it is the
   tier that always runs, ball detail last because it is the one most often gated off:
   **"Rallies"** — one full-width `.scol` tile: **Longest rally**, labeled with the
@@ -1158,7 +1184,7 @@ Copy for statuses is specific and actionable ("Tap the two ends of the out line"
 **Referee's voice: calm, terse, factual.**
 
 - Verdicts and telemetry: uppercase single words (IN, OUT, ANALYZING…).
-- Buttons: verb-first, ≤ 3 words ("Track ball", "Use this frame", "Judge frame").
+- Buttons: verb-first, ≤ 3 words ("Analyze", "Use this frame", "Judge frame").
 - Instructions: one sentence, present tense, name what the user sees ("Load a clip from
   this phone to begin."). Colored keywords (`b.out`, `b.service`, `b.tin`) when referring
   to fitted lines.
@@ -1194,8 +1220,8 @@ Each phase: header shows step label + proxied primary; `#instr` gives the one-li
 | `p-frame` | Pick a clean calibration frame | overview rail · editor strip w/ playhead · readout · transport+steppers | "Use this frame" |
 | `p-tap` | Tap out line, tin, then service line on frame | stage-driven; clear-selection small button | "Looks right" (disabled until the current line has a fit) |
 | `p-review` | Approve fitted lines (cyan/amber/lime on stage) | minimal; evidence is the stage | "Use these lines" |
-| `p-tap-floor` | Floor calibration wizard | `.floorRow`: diagram (progress marks) + prompt/side actions · skip-all / save-profile | "Use floor map" |
-| `p-clip` | Trim rally clip | overview · trim editor (accent handles) · transport+readout row · start/end nudge steppers · frame summary | "Track ball" |
+| `p-tap-floor` | Floor calibration wizard | `.floorRow`: diagram (progress marks) + prompt/side actions · skip-all / save-profile (tapping "Save as profile" swaps that row **in place** for a §8.4 text input + Save of the same 48 px height — never `window.prompt`, which the iOS shell's WKWebView leaves unimplemented; Esc or an empty-field blur restores the buttons) | "Use floor map" |
+| `p-clip` | Trim rally clip | overview · trim editor (accent handles) · transport+readout row · start/end nudge steppers · full-width "Select entire clip" secondary · frame summary | "Analyze" |
 | `p-analyze` | Honest processing | `.progressbox` stats + bar (+ stage ANALYZING pulse) | — (auto-advances) |
 | `p-track` | **Match review — Call pane.** Review track, judge calls, name the players | control area keeps its pre-rally-visualization height so the video stage does not shrink, floored against the stage per §3.1; the added content scrolls inside that footprint · scrub hint lives in the header `#instr` line (detection failures replace it, `.warn`) · per-rally front-wall impact mini-map · rally segmentation card (proportional neutral ribbon, active segment in accent, `attr-*` provenance states + legend §8.22; per-rally winners/scores stay backend-only per the 2026-07-29 review) · overview w/ marker minis · hit timeline (neon bars, center playhead) · readout · transport · frame input + Judge row · verdict box · Players card (two equal-width detected-player cards, each with a 4:5 crop directly above its own name field; a quiet "No photo available" placeholder preserves the pair when an old run has only one crop) · ghost "Watch source video". One pane, no switcher — the Challenge pane and its dock were archived 2026-07-29 (`archive/challenge-ui/`) | "Judge frame" |
 | `p-player1-report` / `p-player2-report` | **Match review — Player 1 / Player 2 panes.** Per-player coaching report | Player N front-wall map (§8.10 court chart + `.targetMeta`; serves excluded) · Player N report panel (§8.17, opening with the §8.22 provenance line) · Player N movement panel (§8.17: distance / position split / speeds + court heatmap) · **P1 only:** the run's floor-bounce map (§8.10 `#floorMapSvg` + `.targetMeta`) — bounces are per-run, not per-player, so the panel renders once under the first report rather than twice | — (no primary) |
