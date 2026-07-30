@@ -77,3 +77,27 @@ def test_the_hero_note_survives_as_the_empty_state():
     # With no runs it is the only thing on the page that says what to do.
     assert 'id="heroNote"' in INDEX_HTML
     assert "the pipeline turns it into" not in INDEX_HTML
+
+
+def test_the_analysis_list_counts_sessions_not_pipeline_runs():
+    assert "runs · live pipeline" not in INDEX_HTML
+    assert "session${LIVE.runs.length===1?'':'s'}`" in INDEX_HTML
+
+
+def test_the_run_id_is_dev_only():
+    # A 13-digit epoch id is for whoever is sitting at the Mac.
+    assert '<div class="metaline devOnly">run ${escapeHtml(id)}</div>' in INDEX_HTML
+
+
+def test_roadmap_cards_do_not_expose_internal_phase_numbers():
+    # "Phase 5" went when main made "Your coach" Live; Phase 6 is the last one.
+    assert "Phase 5" not in INDEX_HTML
+    assert "Phase 6" not in INDEX_HTML
+    assert '<span class="fcTag">Soon</span>' in INDEX_HTML
+
+
+def test_the_stats_card_subtitle_fits_on_one_line():
+    # "Your shots and patterns across identified matches" truncated mid-word
+    # at 375px, which loses information rather than saving space.
+    assert "Your shots and patterns across identified matches" not in INDEX_HTML
+    assert "<strong>Your stats</strong><span>Shots and patterns</span>" in INDEX_HTML

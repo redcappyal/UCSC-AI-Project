@@ -1544,7 +1544,7 @@
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
         <path d="M5 20v-7M12 20V5M19 20v-11"/>
       </svg>
-      <span class="fcBody"><strong>Your stats</strong><span>Your shots and patterns across identified matches</span></span>
+      <span class="fcBody"><strong>Your stats</strong><span>Shots and patterns</span></span>
       <span class="fcTag">Live</span>
     </button>
     <button class="featureCard" type="button" data-phase="coach_advice">
@@ -8413,7 +8413,7 @@ function renderClipCards(){
     list.innerHTML = '<div class="card emptycard">No analyzed sessions yet.<br>Analyze a clip from the Dashboard to see it here.</div>';
     return;
   }
-  $('clipMeta').textContent = `${LIVE.runs.length} runs · live pipeline`;
+  $('clipMeta').textContent = `${LIVE.runs.length} session${LIVE.runs.length===1?'':'s'}`;
   list.innerHTML = LIVE.runs.map((r,i) => {
     const id = r.run_id;
     const hue = LIVE_HUES[i%LIVE_HUES.length];
@@ -8554,7 +8554,7 @@ function matchDetailBody(id){
     ${ballBlock}
     <div class="cardtitle" style="font-size:15px">What this clip could measure</div>
     ${capabilityRows(rep)}
-    <div class="metaline">run ${escapeHtml(id)}</div>
+    <div class="metaline devOnly">run ${escapeHtml(id)}</div>
     <button class="ghostbtn" type="button" id="matchReviewBtn">Open full review</button>`;
 }
 function buildMatchView(){

@@ -708,8 +708,11 @@ tokens.
 
 - line icon (§9 grammar) inside a 36 px `--bg` icon circle;
 - title 14/600 + one-line 12/400 `--dim` description;
-- right-aligned phase tag: 11/600 uppercase chip (`--bg` fill, radius 999) — `PHASE 4`,
-  `SOON`.
+- right-aligned readiness tag (`.fcTag`): 11/600 uppercase chip (`--bg` fill, radius
+  999). It carries a **readiness word the reader can act on — `Live` or `Soon`** — and
+  **never an internal phase number**. "Phase 6" named a row in our plan, not anything a
+  player can do with the card; the two words say the only thing the tag is for, which is
+  whether tapping it does something today.
 
 `:active` = instant `brightness(.97)` (0 ms, §10). The whole card is one target, ≥ 44 pt.
 
@@ -1031,6 +1034,12 @@ at every innerHTML sink; run loading is cached per run id and refreshed on every
 entry; every surface has an honest `.emptycard` state ("No analyzed sessions yet…" /
 "Trends need at least two analyzed sessions.").
 
+**The user's unit is a session, not a run.** The Analysis root's `.viewhead` meta span
+counts sessions and singularizes at one ("1 session" / "2 sessions"). A *run* is a job
+the server executed; the reader has a match they played. The old "3 runs · live
+pipeline" spent a whole line naming our plumbing — and read "1 runs" the first time
+anyone used the app.
+
 **A run qualifies for the list on ANY tier having produced something** — never on wall
 hits. The list originally required `has_analytics` plus `total_wall_hits > 0`, which
 silently dropped exactly the clips the analysis ladder exists to serve: 30 fps
@@ -1082,7 +1091,9 @@ Do not reintroduce them to the UI without a deliberate DESIGN.md change.
   bounces) · `.fbrow` feedback sentences ·
   **"What this clip could measure"** — one `.fbrow` per tier, label left, `ON`/`OFF`
   `.statechip` right, and the reason as dim `.s` text under the label when off ·
-  a dim provenance `.metaline` ("run id") ·
+  a dim provenance `.metaline` ("run id"), marked `.devOnly` — a 13-digit epoch id
+  names a job to whoever is sitting at the Mac and nothing at all to a player, so it
+  leaves the native shell with the rest of the workshop chrome ·
   one `.ghostbtn` **"Open full review"**, the only entrance to the frame-by-frame
   call page (§16, `p-track`), which owns "Watch source video". One level per screen:
   the list names the matches, this page reads the analysis, the review page judges
@@ -1354,7 +1365,7 @@ Each phase: header shows step label + proxied primary; `#instr` gives the one-li
 Section roots and their leaves carry **no in-page `<h2>`** — `#stepLabel` (an
 `<h1>`) is the screen's only title, as `p-load` has always done. A `.viewhead`
 survives only where it lays out a dim meta span carrying something the header
-does not say (run count, clip duration).
+does not say (session count, clip duration).
 
 **The match review page.** `p-track` + `p-player1-report` + `p-player2-report` are one
 page in three panes (§3.3), reached only by finishing an analysis or by opening a match
