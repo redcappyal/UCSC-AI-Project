@@ -18,15 +18,15 @@ Ephemeral CUDA boxes for analysis + eval runs. Spec:
     scripts/lambda/lambda_down.sh                # terminate = the ONLY thing that stops billing
     scripts/lambda/lambda_status.sh              # anytime: what is billing right now?
 
-- GPU order: A6000 ($1.09/hr) → A10 ($1.29) → A100 ($1.99); hard cap $2/hr.
-  No capacity → lambda_up prints the availability table and exits.
+- GPU order: A6000 ($1.09/hr) → A10 ($1.29) → A100 ($1.99) → A100 SXM4; hard cap $2/hr
+  (`PREFER_TYPES` in `common.sh`). No capacity → lambda_up prints the availability table
+  and exits.
 - **Run at native fidelity: `--stride 1 --inference-width 0`.** Every frame at full
   resolution is the fidelity the GPU is rented for and what the WASB ball detector was
   trained for — it tiles at native resolution and ignores `inference_width` outright
   (`job_runner.py`, `track_segments`). `/api/track`'s own defaults are laptop-shaped,
   `frame_stride=4` and `inference_width=960` (`app.py`), so left alone the coarse pass
-  sees one frame in four and the numbers are not comparable to a local
-  native-resolution eval. Take the server defaults only for a deliberately quick look.
+  sees one frame in four — treat stride-4 runs as a quick look, not an eval-grade one.
 - `--stride` and `--inference-width` override those defaults. `--inference-width` accepts
   only `0`, `640`, `960`, `1280` (`0` = native); anything else is rejected on the Mac,
   before the clip is rsynced to a box that is already billing. Under the default `local`
@@ -44,9 +44,14 @@ Ephemeral CUDA boxes for analysis + eval runs. Spec:
   `scripts/lambda/lambda_status.sh` BEFORE retrying `lambda_up.sh`. The launch POST can
   land server-side with its reply lost in transit, so a box may already be up and billing
   with nothing tracking it — and a blind retry buys a second one.
-- **`lambda_down.sh` exited non-zero?** It stopped before its account sweep, so nothing
-  has confirmed the box is gone. Run `lambda_status.sh`, and terminate from the Lambda
-  console if the instance is still listed.
+- **`lambda_down.sh` exited non-zero?** Something in the teardown was not confirmed — the
+  terminate request failed in transit, or the status poll never saw `terminated`. The
+  account sweep runs anyway (it is on an `EXIT` trap), so read its output: it, not the
+  script's exit code, is what tells you whether the box is gone. If the sweep itself
+  failed too, re-run `lambda_status.sh`, and terminate from the Lambda console if the
+  instance is still listed. On an unconfirmed teardown the tracking file is kept on
+  purpose, so `lambda_up.sh` still refuses to launch a second box; re-run
+  `lambda_down.sh` once the API responds.
 - **Bootstrap failed?** The box is left up on purpose for debugging — and is still
   billing. `lambda_down.sh` when you are done with it.
 - A clean teardown is one you can read: `lambda_down.sh` ends with the same account sweep
