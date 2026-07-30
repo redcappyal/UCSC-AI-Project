@@ -185,7 +185,10 @@ iOS app in Safari (add-to-home-screen capable).
   `tryRestoreSession`'s "still at rest" guards compare against the pinned root
   (`SHELL_TAB || 'load'`), so the `openRunReview` reload still rehydrates the
   full review on a pinned tab instead of being vetoed by a rest phase that is
-  no longer `load`. It also hides `.devOnly` (the Dashboard
+  no longer `load`. Restore failures on a pinned non-Dashboard tab report
+  through the §8.6 banner — `#loadStatus` sits inside the hidden `p-load`
+  section there, and the "load the same video" recovery copy assumes a file
+  input those tabs never show. It also hides `.devOnly` (the Dashboard
   Dev row, §8.15): inside the app the page is the product, and the only reader of
   that row is someone sitting at the Mac. Everything else renders unchanged;
   Since the Challenge dock was archived there is no second dock left to reconcile.
