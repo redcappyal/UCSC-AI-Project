@@ -6874,7 +6874,9 @@ function renderJudgeResult(data, selectedHit=null){
   // `SERVE ` prefixes a verdict (SERVE IN / SERVE OUT), so it has nothing to
   // qualify on a no-call; the serve stays named in the caption instead.
   const noCall = data.call == null;
-  const sourceText = data.source === 'impact_estimate' ? 'estimated impact point' : 'detected ball center';
+  const sourceText = data.ball_x_clamped
+    ? 'ball center clamped to wall edge'
+    : data.source === 'impact_estimate' ? 'estimated impact point' : 'detected ball center';
   $('judgeResult').className = `verdict ${callClass}`;
   $('judgeResult').innerHTML =
     playerAttributionMarkup(hit) +

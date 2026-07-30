@@ -21,6 +21,7 @@ from coaching_advice import player_advice
 from media_probe import probe_video
 from judge_call import (
     Point,
+    clamp_wall_x_for_vertical_in,
     judge_ball,
     judge_margin_px,
     judge_serve_ball,
@@ -1496,7 +1497,13 @@ def judge_frame():
                 raise ValueError(f"No ball detection recorded for frame {frame}.")
             source = "detected_center"
 
-        call, reason, top_y, bottom_y = judge_ball(ball, top_line, bottom_line, wall_corners)
+        original_ball = ball
+        ball, ball_x_clamped = clamp_wall_x_for_vertical_in(
+            ball, top_line, bottom_line, wall_corners
+        )
+        call, reason, top_y, bottom_y = judge_ball(
+            original_ball, top_line, bottom_line, wall_corners
+        )
         standard_call = call
         margin_px = (
             judge_margin_px(ball, top_line, bottom_line, wall_corners)
@@ -1534,8 +1541,14 @@ def judge_frame():
             "is_serve": is_serve,
             "reason": reason,
             "source": source,
+            "ball_x_clamped": ball_x_clamped,
             "margin_px": margin_px,
             "ball": {"x": ball.x, "y": ball.y},
+            "original_ball": (
+                {"x": original_ball.x, "y": original_ball.y}
+                if ball_x_clamped
+                else None
+            ),
             "top_y": top_y,
             "bottom_y": bottom_y,
             "service_y": service_y,

@@ -256,7 +256,7 @@ def test_tilted_wall_diagram_coordinates_follow_line_tilt():
     assert diagram["y"] == pytest.approx(0.4, abs=0.002)
 
 
-def test_horizontal_outside_wall_bounds_are_unjudged_sidewall_points():
+def test_horizontal_outside_wall_bounds_are_clamped_when_vertically_in():
     top = Line(Point(100, 100), Point(1100, 100))
     bottom = Line(Point(100, 700), Point(1100, 700))
     wall = WallCorners(
@@ -268,6 +268,25 @@ def test_horizontal_outside_wall_bounds_are_unjudged_sidewall_points():
 
     ball = Point(160, 400)
     call, reason, _, _ = judge_ball(ball, top, bottom, wall)
+
+    assert call == "IN"
+    assert reason == "between_lines_x_clamped"
+    assert judge_margin_px(ball, top, bottom, wall) > 0
+    diagram = wall_diagram_coordinates(ball, top, bottom, wall_corners=wall)
+    assert diagram["x"] == pytest.approx(0.0)
+
+
+def test_horizontal_outside_point_is_not_clamped_when_vertically_out():
+    top = Line(Point(100, 100), Point(1100, 100))
+    bottom = Line(Point(100, 700), Point(1100, 700))
+    wall = WallCorners(
+        top_left=Point(200, 50),
+        top_right=Point(1000, 80),
+        bottom_right=Point(940, 760),
+        bottom_left=Point(260, 730),
+    )
+
+    call, reason, _, _ = judge_ball(Point(160, 40), top, bottom, wall)
 
     assert call is None
     assert reason == "outside_wall_x_bounds"
