@@ -1082,6 +1082,8 @@ def test_wall_corner_ids_do_not_redefine_court_datum_values():
 
 SQUASH_ZONE_MEDIAN_PNG = (Path(__file__).resolve().parent / "data"
                           / "squash-zone-median-frame.png")
+CROSSCOURT_DEMO_MEDIAN_PNG = (Path(__file__).resolve().parent / "data"
+                              / "crosscourt-demo-median-frame.png")
 
 
 def _outside_glass_camera():
@@ -1204,7 +1206,12 @@ def test_detect_court_ignores_a_frit_comb_and_a_logo():
 
     assert result["status"] == "ok"
     assert result["confidence"] == "high"
-    assert _max_short_anchor_error(result, truth) < 10.0
+    # 20, matching this file's other outside-glass anchor bounds: the frit
+    # promise is about IDENTITY (the comb must not be taken for the short
+    # line — a wrong grab measures 60+ px), and the evidence-first
+    # hypothesis selection shipped 2026-07-30 may prefer a variant of the
+    # true short whose anchors extrapolate a few pixels differently.
+    assert _max_short_anchor_error(result, truth) < 20.0
 
 
 @pytest.mark.skipif(not SQUASH_ZONE_MEDIAN_PNG.exists(),
@@ -1246,3 +1253,57 @@ def test_detect_court_on_the_squash_zone_median_is_high_confidence():
     assert abs(corners["top_right"][0] - 1430.0) < 8.0
     assert abs(corners["bottom_left"][1] - 683.0) < 8.0
     assert abs(corners["bottom_right"][1] - 701.0) < 8.0
+
+
+@pytest.mark.skipif(not CROSSCOURT_DEMO_MEDIAN_PNG.exists(),
+                    reason="CrossCourt demo median fixture not present")
+def test_assign_lines_handles_the_crosscourt_demo_camera_angle():
+    """Real tripod footage from the CrossCourt demo video (median of 5 frames
+    spread across the clip, the exact frames the wizard posts). Three traps
+    the Squash Zone fixture does not have: the out line is washed out by
+    ceiling lights into ~150 px runs, a floor glare pool floods the pool with
+    long false horizontals, and left-edge frit bars crowd the short line's
+    crossing slots."""
+    image = cv2.imread(str(CROSSCOURT_DEMO_MEDIAN_PNG))
+    minimum = image.shape[1] * 0.10
+
+    assigned = court_detect.assign_lines(
+        court_detect.find_lines(court_detect.line_response(image), minimum),
+        court_detect.find_lines(court_detect.edge_response(image), minimum),
+        image.shape, image=image)
+
+    for name in ("out", "service", "tin", "front_seam",
+                 "left_seam", "right_seam", "short_line", "half_court"):
+        assert assigned[name] is not None, name
+    assert abs(assigned["out"].y_at(1100.0) - 133.0) < 8.0
+    assert abs(assigned["service"].y_at(1100.0) - 444.0) < 6.0
+    assert abs(assigned["tin"].y_at(1100.0) - 591.0) < 8.0
+    assert abs(assigned["short_line"].y_at(1100.0) - 841.0) < 8.0
+
+
+@pytest.mark.skipif(not CROSSCOURT_DEMO_MEDIAN_PNG.exists(),
+                    reason="CrossCourt demo median fixture not present")
+def test_detect_court_on_the_crosscourt_demo_median_calibrates_honestly():
+    """This viewpoint pushes both service boxes' back corners out of frame,
+    so nothing independent can verify the (correct — overlay-inspected
+    2026-07-30) fit: the honest contract is ok + low confidence with the
+    no-independent-marking warning, never a fabricated "high"."""
+    image = cv2.imread(str(CROSSCOURT_DEMO_MEDIAN_PNG))
+
+    result = court_detect.detect_court([image])
+
+    assert result["status"] == "ok"
+    assert result["confidence"] == "low"
+    assert result["checks_verified"] == 0
+    assert result["warnings"] == ["No independent court marking was in frame "
+                                  "to check this fit against."]
+    checks = {check["id"]: check for check in result["checks"]}
+    assert checks["t_point"]["status"] == "ok"
+    assert checks["left_box_inner_back"]["status"] == "unverified"
+    assert checks["right_box_inner_back"]["status"] == "unverified"
+    corners = {corner["id"]: corner["tap_px"]
+               for corner in result["planes"]["wall"]["corners"]}
+    assert abs(corners["top_left"][0] - 736.0) < 12.0
+    assert abs(corners["top_right"][0] - 1469.0) < 10.0
+    assert abs(corners["bottom_left"][1] - 646.0) < 8.0
+    assert abs(corners["bottom_right"][1] - 640.0) < 8.0
