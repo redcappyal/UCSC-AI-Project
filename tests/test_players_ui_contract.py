@@ -22,3 +22,9 @@ def test_indirect_who_is_this_controls_are_removed():
     assert 'id="cropIsB"' not in INDEX
     assert "Who is this?" not in INDEX
     assert "v1.player_crops" in INDEX
+
+
+def test_player_mapping_is_direct_and_explains_a_first_rule():
+    assert "Number(playerNumber) === 1 ? 'A' : 'B'" in INDEX
+    assert "Player A is assumed to serve first" in INDEX
+    assert "later servers follow the previous rally winner" in INDEX

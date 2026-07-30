@@ -67,12 +67,14 @@ The venv is `.venv`; everything runs through it. System `python3` has no flask o
 
 ```bash
 .venv/bin/python app.py                  # http://127.0.0.1:5188
-.venv/bin/python -m pytest tests/ -q     # ~690 tests, ~70s
+.venv/bin/python -m pytest tests/ -q     # ~705 tests, ~70s
 ```
 
-`pytest.ini` deselects `requires_model` by default — one test that needs the exported
-TorchScript ball model (see the `ball_track_offline.py` note below). A green run reads
-"283 passed, 1 deselected"; that deselection is expected, not a skip to chase.
+`pytest.ini` deselects `requires_model` by default — one test that runs the committed
+TorchScript ball model through `torch` (see the `ball_track_offline.py` note below). A
+green run reads "705 passed, 1 skipped, 1 deselected". Both are expected, not failures to
+chase: the deselection is that model test, and the skip is `test_court_detect.py` needing
+the Bay Club footage, a real fixed-mount asset that lives outside the repo.
 
 `pytest.ini` also excludes `archive/` from collection entirely. The archived stereo and
 fusion-engine tests are preserved verbatim and still import modules that moved — they must
@@ -109,7 +111,10 @@ Matches and Coach are webviews). Both talk to the same Flask pipeline.
   edit `ios/project.yml`, never the project file.
 - `ball_track_offline.py` (formerly `stereo_offline.py`, renamed when the stereo half moved
   to `archive/stereo/python/stereo_offline_fuse.py`) is the offline runner for the locally
-  trained YOLOX ball detector (`ball_model.py` + `ball_detector.py`). It needs
-  `models/crosscourt-ball-416-v1/` (gitignored; export it with `export_ball_model.py` — see
-  `ios/MODEL.md` §2b) and `torch`. YOLOX itself stays training-only and never becomes a
-  runtime dependency.
+  trained ball detector (`ball_model.py` + `ball_detector.py`). It loads
+  `models/crosscourt-wasb-416-v1/` and needs `torch`. That artifact is *committed* (manifest
+  + 6.4 MB TorchScript, un-ignored explicitly in `.gitignore`) because only the training box
+  can regenerate it; `BALL_MODEL_DIR` overrides the directory. The older YOLOX artifact
+  (`models/crosscourt-ball-416-v1`) stays gitignored and is exported with
+  `export_ball_model.py` — see `ios/MODEL.md` §2b. YOLOX itself stays training-only and
+  never becomes a runtime dependency.

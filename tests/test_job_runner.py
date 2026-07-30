@@ -136,7 +136,7 @@ def test_run_tracking_job_with_stub_person_detector(tmp_path, monkeypatch):
     assert job["status"] == "complete"
     players_v1 = job["players_v1"]
     assert players_v1["detector_backend"] == "stub"
-    assert players_v1["attribution_backend"] in ("observed", "assumed")
+    assert players_v1["attribution_backend"] == "assumed"
     assert players_v1["player_crops"] == {
         "A": "players/player_A.jpg",
         "B": "players/player_B.jpg",

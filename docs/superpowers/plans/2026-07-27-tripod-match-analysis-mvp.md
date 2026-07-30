@@ -43,7 +43,7 @@ PyAV (Task 18).
   and note it in Deviations.
 - UI: DESIGN.md is binding (dark-first tokens; verify both themes at 390×844 via the
   `/verify` skill before checking a UI task off). Flask runs as
-  `PORT=5177 .venv/bin/python app.py` during verification.
+  `.venv/bin/python app.py` (port 5188) during verification.
 - Never pass a possibly-non-ASCII path to `cv2.imread`/`cv2.imwrite` (CLAUDE.md).
 - New thresholds are named module-level constants; every one is exercised by a test or
   eval named in its task.

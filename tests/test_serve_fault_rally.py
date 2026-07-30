@@ -75,8 +75,7 @@ def test_serve_fault_is_charged_to_the_server_as_an_unforced_error(monkeypatch):
     """End to end: the fault becomes its own rally, the server loses it, and
     the error lands on the server rather than the opponent."""
     monkeypatch.setenv("PLAYER_ASSIGNMENT_RALLY_GAP_SECONDS", "5")
-    monkeypatch.setenv("PLAYER_ASSIGNMENT_FIRST_SERVER", "2")
-    # Player 2 serves out at frame 100; play resumes 3s later, inside the gap
+    # Player A serves out at frame 100; play resumes 3s later, inside the gap
     # threshold, so this used to merge into a single rally.
     hits = [hit(100, "OUT", is_serve=True), hit(280), hit(400), hit(520, "OUT")]
 
@@ -87,21 +86,22 @@ def test_serve_fault_is_charged_to_the_server_as_an_unforced_error(monkeypatch):
     fault = rallies[0]
     assert fault["start_frame"] == fault["end_frame"] == 100
     assert fault["last_call"] == "OUT"
-    assert fault["server_player_number"] == 2
-    assert fault["last_player_number"] == 2, "the fault belongs to the server"
-    assert fault["winner_player_number"] == 1, "the opponent wins a serve fault"
+    assert fault["server_player_number"] == 1
+    assert fault["server_track"] == "A"
+    assert fault["last_player_number"] == 1, "the fault belongs to the server"
+    assert fault["winner_player_number"] == 2, "the opponent wins a serve fault"
     followup = rallies[1]
-    assert followup["server_player_number"] == 1, "the fault winner serves next"
-    assert hits[1]["player_number"] == 1, "the next rally starts with its server"
+    assert followup["server_player_number"] == 2, "the fault winner serves next"
+    assert followup["server_track"] == "B"
+    assert hits[1]["player_number"] == 2, "the next rally starts with its server"
 
     import app
-    errors = app.player_error_metrics(rallies, player_number=2)
+    errors = app.player_error_metrics(rallies, player_number=1)
     assert errors["unforced_errors"] >= 1, "a serve fault is an unforced error"
 
 
 def test_clean_serve_still_yields_one_rally(monkeypatch):
     monkeypatch.setenv("PLAYER_ASSIGNMENT_RALLY_GAP_SECONDS", "5")
-    monkeypatch.setenv("PLAYER_ASSIGNMENT_FIRST_SERVER", "1")
     hits = [hit(100, is_serve=True), hit(280), hit(400)]
 
     assignment = assign_front_wall_hit_players(hits)

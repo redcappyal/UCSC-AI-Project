@@ -39,6 +39,14 @@ def test_impact_map_resets_to_the_current_rally():
     assert "for rally ${currentRallyNumber}" in INDEX_HTML
 
 
+def test_impact_markers_use_stable_colors_for_each_player():
+    assert ".impactMarker.player1{fill:var(--mk-racket)}" in INDEX_HTML
+    assert ".impactMarker.player2{fill:var(--mk-floor)}" in INDEX_HTML
+    assert "playerNumber === 1" in INDEX_HTML
+    assert "playerNumber === 2 ? ' player2'" in INDEX_HTML
+    assert "playerDisplayName(playerNumber)" in INDEX_HTML
+
+
 def test_impact_map_is_positioned_inside_the_displayed_video():
     assert "const canvasRect = canvas.getBoundingClientRect();" in INDEX_HTML
     assert "canvasRect.top - stageRect.top + inset" in INDEX_HTML

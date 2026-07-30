@@ -92,6 +92,13 @@ def clear_cancel(run_id):
         JOB_CANCELS.pop(run_id, None)
 
 
+def forget_job(run_id):
+    """Drop one finished/deleted run from the process-local job registries."""
+    with JOBS_LOCK:
+        JOBS.pop(run_id, None)
+    clear_cancel(run_id)
+
+
 def raise_if_cancelled(run_id):
     if cancel_requested(run_id):
         raise JobCancelled(run_id)
@@ -125,7 +132,6 @@ TARGET_ROW_BOUNDS = (0.0, TARGET_LOB_Y, TARGET_SERVICE_Y, TARGET_TIN_Y)
 # running lob -> normal -> low.
 TARGET_ZONE_IDS = tuple(range(1, 10))
 DEFAULT_RALLY_GAP_SECONDS = 5.0
-DEFAULT_FIRST_SERVER_PLAYER = 1
 RALLY_GAP_MIN_SPLIT_SECONDS = 4.0
 RALLY_GAP_RATIO_SPLIT = 1.75
 
@@ -934,14 +940,11 @@ def assign_front_wall_hit_players(hits, serve_resolver=None):
         assignable_hits
     )
     rallies = split_rallies_on_serve_fault(rallies)
-    try:
-        first_server = int(
-            env_float("PLAYER_ASSIGNMENT_FIRST_SERVER", DEFAULT_FIRST_SERVER_PLAYER)
-        )
-    except (OverflowError, ValueError):
-        first_server = DEFAULT_FIRST_SERVER_PLAYER
-    if first_server not in (1, 2):
-        first_server = DEFAULT_FIRST_SERVER_PLAYER
+    # Player A / player 1 is the deterministic first server. From there the
+    # rally result selects the next server. The optional resolver remains only
+    # for replaying older stored attribution tests; the app no longer supplies
+    # one in production.
+    first_server = 1
 
     resolved_tracks = [
         serve_resolver(rally_hits) if serve_resolver is not None else None
@@ -1010,7 +1013,11 @@ def assign_front_wall_hit_players(hits, serve_resolver=None):
             "duration_seconds": round(max(0.0, rally_end_time - rally_start_time), 3),
             "front_wall_hit_count": len(rally_hits),
             "server_player_number": rally_server,
-            "server_track": resolved if resolved in ("A", "B") else None,
+            "server_track": (
+                resolved
+                if resolved in ("A", "B")
+                else ("A" if rally_server == 1 else "B")
+            ),
             "server_source": server_source,
             "winner_player_number": winner,
             "winner_reason": winner_reason,
@@ -1080,7 +1087,7 @@ def assign_front_wall_hit_players(hits, serve_resolver=None):
         "method": (
             "rally_gap_observed_serves"
             if observed_serve_count
-            else "rally_gap_server_alternation"
+            else "rally_gap_a_first_winner_chain"
         ),
         "rally_gap_seconds": rally_gap_seconds,
         "rally_gap_method": rally_gap_method,
@@ -1827,15 +1834,11 @@ def run_tracking_job(run_id):
                     )
                     write_results_csv(csv_path, results)
 
-            serve_resolver = None
             samples_by_track = None
             ambiguity_times = []
             if person_pass is not None:
                 samples_by_track = person_pass.tracker.samples()
                 ambiguity_times = person_pass.tracker.ambiguity_times()
-                serve_resolver = _safe_resolver(player_attribution.build_serve_resolver(
-                    samples_by_track, sorted_rows(results)
-                ))
 
             hits = []
             hits_error = None
@@ -1867,15 +1870,14 @@ def run_tracking_job(run_id):
                     results,
                     classified,
                     audio_available=audio_candidates is not None,
-                    serve_resolver=serve_resolver,
                 )
-                player_assignment = assign_front_wall_hit_players(hits, serve_resolver=serve_resolver)
+                player_assignment = assign_front_wall_hit_players(hits)
                 target_zones = build_target_zone_summary(hits)
                 target_zones_by_player = build_player_target_zone_summaries(hits)
                 floor_zones = floor_zones_from_run(run_dir)
             except Exception as error:
                 hits_error = str(error)
-                player_assignment = assign_front_wall_hit_players(hits, serve_resolver=serve_resolver)
+                player_assignment = assign_front_wall_hit_players(hits)
                 target_zones = build_target_zone_summary(hits)
                 target_zones_by_player = build_player_target_zone_summaries(hits)
                 floor_zones = None
@@ -1911,8 +1913,7 @@ def run_tracking_job(run_id):
                 serve_crop_relpath = None
                 anchor = next(
                     (rally for rally in player_assignment.get("rallies", [])
-                     if rally.get("server_source") == "observed"
-                     and rally.get("server_track") in ("A", "B")),
+                     if rally.get("server_track") in ("A", "B")),
                     None,
                 )
                 if anchor is not None:

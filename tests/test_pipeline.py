@@ -611,19 +611,21 @@ def _three_rally_hits():
     )
 
 
-def test_assign_without_resolver_matches_legacy_and_labels_sources():
+def test_assign_without_resolver_uses_a_first_then_winner_chain():
     hits = _three_rally_hits()
     assignment = job_runner.assign_front_wall_hit_players(hits)
-    assert assignment["method"] == "rally_gap_server_alternation"
+    assert assignment["method"] == "rally_gap_a_first_winner_chain"
     assert assignment["observed_serve_count"] == 0
-    for rally in assignment["rallies"]:
-        assert rally["server_track"] is None
+    rallies = assignment["rallies"]
+    assert [rally["server_player_number"] for rally in rallies] == [1, 1, 2]
+    assert [rally["server_track"] for rally in rallies] == ["A", "A", "B"]
+    for rally in rallies:
         assert rally["server_source"] == "propagated"
         assert rally["winner_crosscheck_agrees"] is None
-    # Legacy alternation: rally 1 server=1, winner=1 (last hit IN by player 1).
-    assert assignment["rallies"][0]["server_player_number"] == 1
-    assert assignment["rallies"][0]["winner_player_number"] == 1
-    assert assignment["rallies"][0]["winner_source"] == "est"
+    # Rally 1 has three hits, so A takes the last IN contact and serves rally
+    # 2. Rally 2 has two, so B takes the last IN contact and serves rally 3.
+    assert [rally["winner_player_number"] for rally in rallies] == [1, 2, 2]
+    assert [hit["player_number"] for hit in hits] == [1, 2, 1, 1, 2, 2]
 
 
 def test_assign_with_resolver_observed_servers_and_next_serve_winners():
@@ -707,10 +709,12 @@ def test_safe_resolver_swallows_exceptions_and_falls_back_to_propagation():
     assignment = job_runner.assign_front_wall_hit_players(
         hits, serve_resolver=safe_resolver
     )
-    assert assignment["method"] == "rally_gap_server_alternation"
+    assert assignment["method"] == "rally_gap_a_first_winner_chain"
     assert assignment["observed_serve_count"] == 0
+    assert [rally["server_track"] for rally in assignment["rallies"]] == [
+        "A", "A", "B",
+    ]
     for rally in assignment["rallies"]:
-        assert rally["server_track"] is None
         assert rally["server_source"] == "propagated"
 
 

@@ -20,7 +20,7 @@ trusting a new checkpoint.
 ## Disabling
 
 `PERSON_DETECTOR=none` disables person detection entirely; runs fall back to
-assumed-alternation attribution and the payload reports
+the same deterministic attribution and the payload reports
 `attribution_backend: "assumed"` (spec §4.1).
 
 ## Conventions
@@ -47,11 +47,14 @@ score, not a true confidence ranking. Boxes are also sometimes oversized —
 up to ~half the frame in a 1920x1080 source.
 
 Despite this, tracking is coherent on the golden window: foot positions stay
-in-bounds and move smoothly frame-to-frame, `detect_failures: 0`, and rally 1
-resolved a clean observed server. v1 only consumes boxes, not keypoints, so
-this doesn't block the current feature — but box/keypoint quality should be
-verified before leaning on this detector for anything more precision-
-sensitive. Full measurements: `eval_set/BASELINE-ATTRIBUTION-2026-07-27.md`.
+in-bounds and move smoothly frame-to-frame with `detect_failures: 0`. The
+person tracks now supply the two identity photos and movement data only.
+Player A is defined as the first server; contacts alternate within each rally,
+and the inferred winner becomes the next server. v1 only consumes boxes, not
+keypoints, so the checkpoint issue doesn't block the current feature — but
+box/keypoint quality should be verified before using this detector for
+anything more precision-sensitive. Full measurements:
+`eval_set/BASELINE-ATTRIBUTION-2026-07-27.md`.
 
 **Open human gate**: confirm the installed `rfdetr` version matches what
 `rf-detr-keypoint-preview-xlarge.pth` expects, or re-pin/re-export a matching

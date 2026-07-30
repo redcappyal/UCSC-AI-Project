@@ -27,7 +27,7 @@ struct ServerSettingsView: View {
                 } header: {
                     Text("Server address")
                 } footer: {
-                    Text("The Flask pipeline this phone uploads rallies to, e.g. http://192.168.1.20:5000. Leave empty for the default (\(Config.defaultBase)).")
+                    Text("The Flask pipeline this phone uploads rallies to, e.g. http://192.168.1.20:5188. Leave empty for the default (\(Config.defaultBase)).")
                 }
 
                 Section {

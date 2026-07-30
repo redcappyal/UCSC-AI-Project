@@ -59,7 +59,11 @@
     background:var(--bg); color:var(--text); font-size:16px; line-height:1.4;
     font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",Roboto,sans-serif;
     -webkit-font-smoothing:antialiased;
-    -webkit-tap-highlight-color:transparent}
+    -webkit-tap-highlight-color:transparent;
+    /* no double-tap smart zoom: a fast second tap on a control (the -/+ steppers)
+       must be a second click, as in a native app. Pan/scroll unaffected; the stage
+       and strips already opt out harder with touch-action:none. */
+    touch-action:manipulation}
   .hidden{display:none !important}
 
   #errBanner{position:fixed; top:calc(8px + env(safe-area-inset-top)); left:10px; right:10px; z-index:30; display:flex; gap:12px;
@@ -76,8 +80,6 @@
     white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
   #hdrBack{width:44px; min-width:44px; min-height:44px; padding:0 8px 3px 0;
     background:none; border:none; font-size:30px; font-weight:400; line-height:1; color:var(--text)}
-  #hdrHome{width:44px; min-width:44px; min-height:44px; padding:0; display:flex;
-    align-items:center; justify-content:center; background:none; border:none; color:var(--text)}
   .pill{width:auto; min-height:40px; padding:0 18px; border:none; border-radius:999px;
     background:var(--accent-bg); color:var(--accent-text); font-size:14px; font-weight:600;
     letter-spacing:-.01em; white-space:nowrap}
@@ -123,8 +125,9 @@
   #impactMiniMap .impactTinLine{stroke:var(--tin); stroke-width:.32}
   #impactMiniMap .impactMarker{fill:var(--accent-bg); stroke:rgba(10,11,13,.95);
     stroke-width:.16; vector-effect:non-scaling-stroke}
-  #impactMiniMap .impactMarker.current{fill:#fff; stroke:var(--accent-bg);
-    stroke-width:.34}
+  #impactMiniMap .impactMarker.player1{fill:var(--mk-racket)}
+  #impactMiniMap .impactMarker.player2{fill:var(--mk-floor)}
+  #impactMiniMap .impactMarker.current{stroke:#fff; stroke-width:.34}
   @media (max-width:600px){
     #impactMiniMap{width:clamp(108px,31vw,145px)}
   }
@@ -304,6 +307,9 @@
     font-variant-numeric:tabular-nums}
   .rallySegment:last-child{border-right:0}
   .rallySegment strong{font-size:13px; line-height:1.1; white-space:nowrap}
+  .rallySegment .rallyWinner{max-width:calc(100% - 6px); overflow:hidden;
+    text-overflow:ellipsis; white-space:nowrap; font-size:9px; line-height:1.2;
+    opacity:.8}
   .rallySegment.active{background:var(--accent-bg); color:var(--accent-text)}
   /* Attribution provenance per rally (job_runner attribution_state). A rally
      whose shot labels were guessed must not read the same as one the person
@@ -354,6 +360,10 @@
   /* Inside the native iOS shell (#shell=1) the app's tab bar owns navigation;
      showing the web pill too would stack two navs. */
   body.shell-embed #navPill{display:none}
+  /* The Dev row is workshop chrome, not product: it stays in a desktop browser
+     (labeling mode is the only remaining producer of ground_truth.json) and
+     leaves the native shell, where the page is what a demo audience sees. */
+  body.shell-embed .devOnly{display:none}
   /* Bounce labeling */
   .labelGrid{display:grid; grid-template-columns:1fr 1fr; gap:10px}
   .labelGrid .dot{width:10px; height:10px; border-radius:50%; margin-right:9px; flex:0 0 auto}
@@ -730,6 +740,14 @@
     font-weight:700; letter-spacing:.04em; display:inline-flex; gap:5px; align-items:center}
   .statechip.done{background:var(--accent-bg); color:var(--accent-text)}
   .statechip.todo{background:var(--bg); color:var(--dim)}
+  .deleteRunBtn{width:36px; min-height:36px; padding:0; flex:none;
+    display:inline-flex; align-items:center; justify-content:center; border:0;
+    border-radius:50%; background:transparent; color:var(--dim); cursor:pointer;
+    box-shadow:none}
+  .deleteRunBtn svg{width:18px; height:18px; pointer-events:none}
+  .deleteRunBtn:hover,.deleteRunBtn:focus-visible{background:var(--tint-poor-bg);
+    color:var(--tint-poor-fg)}
+  .deleteRunBtn:disabled{opacity:.45; cursor:wait}
   /* The match analysis, on its own page: the same stack the card used to hold
      inline, now unclamped — <main> supplies the page padding. */
   #matchBody{display:flex; flex-direction:column; gap:14px}
@@ -807,13 +825,6 @@
 
 <header>
   <button class="hidden" id="hdrBack" type="button" aria-label="Back">&#8249;</button>
-  <button class="hidden" id="hdrHome" type="button" aria-label="Home">
-    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-      stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-      <path d="M3 11l9-7 9 7"/>
-      <path d="M5 10v9h5v-6h4v6h5v-9"/>
-    </svg>
-  </button>
   <div id="stepLabel">Squash Line Calling</div>
   <button class="small" id="themeBtn" type="button" aria-label="Toggle light or dark theme">
     <svg class="sun-and-moon" width="24" height="24" viewBox="0 0 24 24" aria-hidden="true">
@@ -921,9 +932,9 @@
     <p class="status" id="loadStatus"></p>
     <div class="sectionhead hidden" id="aiRecsHead"><span class="cardtitle">Coach Notes</span></div>
     <div class="airow hidden" id="aiRecsRow"></div>
-    <hr class="hairline">
-    <p class="devHead">Dev</p>
-    <div class="devRow">
+    <hr class="hairline devOnly">
+    <p class="devHead devOnly">Dev</p>
+    <div class="devRow devOnly">
       <button class="small" id="labelModeBtn" type="button">Label mode</button>
     </div>
   </section>
@@ -1701,55 +1712,17 @@ function reviewMatchLabel(){
   return S.videoName || 'Match review';
 }
 
-/* Post-hoc player naming (spec §4.6): the anchor is the FIRST rally whose
-   serve was actually observed, not necessarily rally 1 — rally 1's serve can
-   go unobserved while a later rally's is (e.g. person detection picks the
-   ball up mid-clip), and job_runner.assign_front_wall_hit_players binds a
-   track to a player number once, at that anchor rally, then propagates it
-   forward. Reading rally 1 unconditionally (as this used to) silently no-ops
-   naming when rally 1 is unobserved, and — worse — SWAPS names whenever
-   PLAYER_ASSIGNMENT_FIRST_SERVER=2, because the anchor's track binds to
-   whichever player was serving *at that point in the chain*, not always
-   player 1. anchor.server_player_number carries that binding already, so use
-   it directly instead of assuming player 1. */
+/* The deterministic attribution contract is direct: track A is Player 1 and
+   serves rally 1; track B is Player 2. The first rally with a stored track is
+   still useful as a legacy serve-crop anchor for older runs. */
 function attributionAnchor(v1){
   const rallies = (v1 && v1.rallies) || [];
-  return rallies.find(rally => rally.server_source === 'observed' &&
-    (rally.server_track === 'A' || rally.server_track === 'B')) || null;
+  return rallies.find(rally =>
+    rally.server_track === 'A' || rally.server_track === 'B') || null;
 }
 
-/* attribution_backend 'observed' asserts some rally's serve was observed
-   (that's how the backend derives the flag), so an anchor should always
-   exist alongside it. If it doesn't — a data contradiction, e.g. a stale or
-   hand-built players_v1 — track→player mapping is impossible; the card must
-   say so rather than silently freezing every name at 'Player N' forever. */
-function attributionMappingBroken(v1){
-  return !!v1 && v1.attribution_backend === 'observed' && !attributionAnchor(v1);
-}
-
-/* -> 'A' | 'B' | null for the given player number, or null when no mapping
-   is possible (no anchor and not in the broken-mapping fallback state).
-   anchor.server_player_number is the player who was serving AT THE ANCHOR
-   RALLY, per the same chain-of-custody job_runner.assign_front_wall_hit_players
-   used to build it — it is not always player 1 (that only holds when
-   PLAYER_ASSIGNMENT_FIRST_SERVER's default of 1 also happens to be who's
-   serving by the time the anchor rally is reached). Mapping unconditionally
-   to player 1 here is exactly the swap bug this function replaces. */
-function trackForPlayer(v1, playerNumber){
-  const anchor = attributionAnchor(v1);
-  if(anchor){
-    const anchorPlayer = Number(anchor.server_player_number);
-    if(anchorPlayer === 1 || anchorPlayer === 2){
-      return playerNumber === anchorPlayer ? anchor.server_track
-                                           : (anchor.server_track === 'A' ? 'B' : 'A');
-    }
-  }
-  if(attributionMappingBroken(v1)){
-    // Documented fallback (spec §4.6): A -> Player 1, B -> Player 2, so
-    // naming still does something predictable instead of a permanent no-op.
-    return playerNumber === 1 ? 'A' : 'B';
-  }
-  return null;
+function trackForPlayer(_v1, playerNumber){
+  return Number(playerNumber) === 1 ? 'A' : 'B';
 }
 
 function playerDisplayName(playerNumber){
@@ -1818,6 +1791,12 @@ function syncHeaderAction(action){
 }
 
 function setPhase(p){
+  // Every route out of the analyzing screen abandons the run: the back
+  // chevron, the home button, any nav tab. Only one job holds the tracking
+  // semaphore, so a run left alive blocks the next track — cancel here, where
+  // all of them pass, instead of relying on each caller to remember. The
+  // analyze -> track hop is the success path and must not be cancelled.
+  if(S.phase === 'analyze' && p !== 'analyze' && p !== 'track') cancelPendingTrack();
   transportStop();
   S.phase = p;
   resetZoom();
@@ -1834,11 +1813,7 @@ function setPhase(p){
   $('analyzeOverlay').classList.toggle('hidden', p !== 'analyze');
   $('stepLabel').textContent = stepLabelFor(p);
   $('hdrBack').classList.toggle('hidden', SECTION_ROOTS.includes(p));
-  // The review page is a destination, not a stop on the way home: its only
-  // navigation is the back chevron to Analysis and the pane switcher. The match
-  // analysis is the same kind of destination — one way in, one way out.
   const reviewPhase = REVIEW_PHASES.includes(p);
-  $('hdrHome').classList.toggle('hidden', p === 'load' || reviewPhase || p === 'match');
   $('reviewSeg').classList.toggle('hidden', !reviewPhase);
   if(reviewPhase) syncReviewSeg(p);
   syncHeaderAction(STEP_META[p].action);
@@ -2049,6 +2024,30 @@ $('themeBtn').onclick = () => {
     ));
 };
 applyTheme(document.documentElement.dataset.theme);
+
+/* The theme is per-origin state, not per-page. The native shell runs each of
+   the four sections in its own webview and the boot script only reads the
+   stored value once, so a flip in one tab used to leave the other three
+   painted in the old theme until they happened to reload. Two listeners cover
+   both routes a stale page can learn about the change: the standards `storage`
+   event, which is what a second browser tab gets, and a re-read when the page
+   comes back on screen, which is the one a WKWebView is sure to notice on a
+   tab switch. Neither path runs the wipe transition — it is anchored to the
+   theme button on the page that was clicked, and replaying it somewhere else
+   would animate a change the user did not make there. */
+function syncThemeFromStorage(){
+  const t = localStorage.getItem('slc-theme');
+  if((t === 'dark' || t === 'light') && t !== document.documentElement.dataset.theme)
+    applyTheme(t);
+}
+/* key === null is a localStorage.clear() — treat it as "re-read everything". */
+addEventListener('storage', e => {
+  if(e.key === 'slc-theme' || e.key === null) syncThemeFromStorage();
+});
+document.addEventListener('visibilitychange', () => {
+  if(!document.hidden) syncThemeFromStorage();
+});
+addEventListener('pageshow', syncThemeFromStorage);
 
 /* ---------- record phase: on-device capture + on-site calibration ----------
    Recordings live on the device in the app's own OPFS `recordings/` folder
@@ -2819,8 +2818,7 @@ $('hdrBack').onclick = () => {
   } else if(S.phase === 'clip'){
     setPhase(COURT ? 'tap_floor' : 'tap_wall');
   } else if(S.phase === 'analyze'){
-    cancelPendingTrack();   // stop the job, not just its screen
-    setPhase('clip');
+    setPhase('clip');   // setPhase cancels the run on the way out
   } else if(REVIEW_PHASES.includes(S.phase)){
     // Every review pane exits the same way: to Analysis. The panes are one
     // page, so Back is not a retreat through P2 -> P1 -> Call, and the run's
@@ -2837,20 +2835,6 @@ $('hdrBack').onclick = () => {
     setPhase(S.phase === 'live' ? 'load' : 'coach');
   }
 };
-
-/* Header home button: one tap back to the load screen from any phase, instead
-   of stepping back through the flow. Mirrors the teardown the back chevron
-   already runs on the branches that land on 'load'. */
-function goHome(){
-  if(S.phase === 'load') return;
-  if(S.phase === 'record') stopRecordSession();
-  else vid.pause();
-  S.base = null;
-  $('fileIn').value = '';
-  if(S.restoredSession){ S.restoredSession = false; clearRestoreStash(); }
-  setPhase('load');
-}
-$('hdrHome').onclick = goHome;
 
 /* drill-down cards (Coach hub) + the Live hero open their phase directly */
 for(const card of document.querySelectorAll('button[data-phase]'))
@@ -5774,10 +5758,13 @@ function coachingSourceText(data){
 function playerAssignmentText(playerNumber, assignment=null){
   const name = playerDisplayName(playerNumber);
   const source = assignment || (S.run && S.run.player_assignment);
-  if(source && source.method === 'rally_gap_server_alternation'){
+  if(source && (
+    source.method === 'rally_gap_a_first_winner_chain' ||
+    source.method === 'rally_gap_server_alternation'
+  )){
     const rallies = Number(source.rally_count || 0);
     const rallyText = rallies === 1 ? '1 rally' : `${rallies} rallies`;
-    return `${name} uses rally-aware assignments from ${rallyText}: each rally starts with the inferred server, then alternates front-wall contacts.`;
+    return `${name} uses rally-aware assignments from ${rallyText}: Player A serves first, each rally alternates front-wall contacts, and the winner serves next.`;
   }
   return playerNumber === 1
     ? `${name} uses the 1st, 3rd, 5th, and other odd-numbered detected front-wall contacts.`
@@ -6093,7 +6080,9 @@ function buildPlayerReportView(playerNumber){
 
    Every shot on this page was assigned by parity within its rally, not by
    seeing who hit it (player_attribution.py) — so the honest unit is the rally,
-   and the states come straight from job_runner's attribution_state:
+   and the states come straight from job_runner's attribution_state. New runs
+   use the A-first winner chain and therefore read as assumed; the other states
+   remain readable for older stored runs:
      observed  serve was seen and the next rally's serve corroborates it
      repaired  serve was a guess; the next rally's observed serve corrected it
      assumed   serve was a guess with nothing available to check it against
@@ -6147,12 +6136,8 @@ function renderPlayersCard(){
   }
   card.classList.remove('hidden');
   $('playersBackendNote').textContent = v1.detector_backend === 'none'
-    ? 'Player photos are unavailable — person detection did not run for this match.'
-    : v1.attribution_backend !== 'observed'
-      ? 'Players were detected automatically; serve attribution was assumed for this match.'
-    : attributionMappingBroken(v1)
-      ? 'No serve could be attributed — names will label Player 1/2 by convention.'
-      : 'Players detected automatically (RF-DETR).';
+    ? 'Player A is assumed to serve first; player photos are unavailable for this match.'
+    : 'Player A is assumed to serve first; later servers follow the previous rally winner.';
 
   const names = v1.player_names || {};
   $('playerNameA').value = names.A || '';
@@ -6280,10 +6265,32 @@ function runRallies(){
     .sort((a, b) => Number(a.rally_number || 0) - Number(b.rally_number || 0));
 }
 
-/* Winner chips and the running-score strip were removed in the 2026-07-29
-   metric review: per-rally winners and scores stay in the backend payload
-   (players_v1.rallies) but are no longer a user-facing surface. The ribbon
-   keeps rally navigation and attribution provenance only. */
+/* Temporary winner diagnostic. Prefer the detailed player_assignment copy
+   because it carries winner reason/source; restored runs may only retain the
+   smaller players_v1 copy, which still carries the final player number. */
+function rallyWinnerDecision(rallyNumber){
+  const sources = [
+    S.run && S.run.player_assignment && S.run.player_assignment.rallies,
+    S.run && S.run.rallies,
+    S.run && S.run.players_v1 && S.run.players_v1.rallies,
+  ];
+  for(const rallies of sources){
+    if(!Array.isArray(rallies)) continue;
+    const match = rallies.find(
+      rally => Number(rally.rally_number) === Number(rallyNumber)
+    );
+    if(!match) continue;
+    const winner = Number(match.winner_player_number);
+    return {
+      playerNumber:(winner === 1 || winner === 2) ? winner : null,
+      source:match.winner_source || null,
+      reason:match.winner_reason || null,
+      attributionState:match.attribution_state || null,
+    };
+  }
+  return {playerNumber:null, source:null, reason:null, attributionState:null};
+}
+
 function rallyDisplayBounds(rallies){
   const runStart = Number(S.run.start_frame || 0);
   const runEnd = Math.max(runStart + 1, Number(S.run.end_frame || runStart) + 1);
@@ -6336,6 +6343,16 @@ function buildRallyVisualization(initialFrame){
   for(const {rally, start, end} of bounds){
     const number = Number(rally.rally_number);
     const state = rallyAttributionState(number);
+    const decision = rallyWinnerDecision(number);
+    const winnerName = decision.playerNumber
+      ? playerDisplayName(decision.playerNumber)
+      : 'Winner unknown';
+    const winnerText = decision.playerNumber ? `${winnerName} won` : winnerName;
+    const debugDetails = [
+      decision.source ? `source: ${decision.source}` : null,
+      decision.reason ? `reason: ${decision.reason}` : null,
+      decision.attributionState ? `attribution: ${decision.attributionState}` : null,
+    ].filter(Boolean).join(' · ');
     const segment = document.createElement('div');
     segment.className = `rallySegment attr-${state}`;
     segment.dataset.start = start;
@@ -6343,9 +6360,10 @@ function buildRallyVisualization(initialFrame){
     segment.style.left = `${(start - runStart) / runSpan * 100}%`;
     segment.style.width = `${Math.max(0, end - start) / runSpan * 100}%`;
     segment.setAttribute('aria-label',
-      `Rally ${number}, ${ATTR_STATE_TEXT[state]}, frames ${rally.start_frame} to ${rally.end_frame}`);
-    segment.title = `Rally ${number} · ${ATTR_STATE_TEXT[state]}`;
-    segment.innerHTML = `<strong>R${number}</strong>`;
+      `Rally ${number}, ${winnerText}, ${ATTR_STATE_TEXT[state]}, frames ${rally.start_frame} to ${rally.end_frame}`);
+    segment.title = `Rally ${number} · ${winnerText} · ${ATTR_STATE_TEXT[state]}${debugDetails ? ` · ${debugDetails}` : ''}`;
+    segment.innerHTML =
+      `<strong>R${number}</strong><span class="rallyWinner">${escapeHtml(winnerText)}</span>`;
     ribbon.appendChild(segment);
   }
   renderRallyLegend();
@@ -6747,7 +6765,14 @@ function renderImpactMiniMap(frame){
     const normalizedY = Number(hit.wall_diagram.y);
     const circle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
     const current = Number(hit.frame) === playhead;
-    circle.setAttribute('class', `impactMarker${current ? ' current' : ''}`);
+    const playerNumber = Number(hit.player_number);
+    const playerClass = playerNumber === 1
+      ? ' player1'
+      : playerNumber === 2 ? ' player2' : '';
+    circle.setAttribute(
+      'class',
+      `impactMarker${playerClass}${current ? ' current' : ''}`,
+    );
     circle.setAttribute('cx', IMPACT_MAP.left
       + normalizedX * (IMPACT_MAP.right - IMPACT_MAP.left));
     circle.setAttribute('cy', IMPACT_MAP.outY
@@ -6755,7 +6780,10 @@ function renderImpactMiniMap(frame){
     circle.setAttribute('r', current ? '.52' : '.34');
     circle.setAttribute('opacity', current ? '1' : '.72');
     const title = document.createElementNS('http://www.w3.org/2000/svg', 'title');
-    title.textContent = `Front-wall impact at frame ${hit.frame}`;
+    const playerLabel = playerNumber === 1 || playerNumber === 2
+      ? `${playerDisplayName(playerNumber)} `
+      : '';
+    title.textContent = `${playerLabel}front-wall impact at frame ${hit.frame}`;
     circle.appendChild(title);
     fragment.appendChild(circle);
   }
@@ -7780,6 +7808,17 @@ function renderClipCards(){
             <span class="metaline"><span class="num" style="font-weight:500">${fmtRunDur(r.duration_seconds)}</span></span>
           </div>
           <span class="statechip done">ANALYZED</span>
+          <button class="deleteRunBtn" type="button" data-delete-run="${escapeHtml(id)}"
+                  aria-label="Delete session ${escapeHtml(fmtRunDate(r.created))}"
+                  title="Delete session">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                 stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+                 aria-hidden="true">
+              <path d="M3 6h18"/><path d="M8 6V4h8v2"/>
+              <path d="M19 6l-1 14H6L5 6"/>
+              <path d="M10 10v6M14 10v6"/>
+            </svg>
+          </button>
         </div>
       </div>`;
   }).join('');
@@ -7789,6 +7828,39 @@ function renderClipCards(){
       if(e.key === 'Enter' || e.key === ' '){ e.preventDefault(); openMatchDetail(el.dataset.match); }
     };
   });
+  list.querySelectorAll('[data-delete-run]').forEach(button => {
+    button.onclick = event => {
+      event.preventDefault();
+      event.stopPropagation();
+      deleteRunSession(button.dataset.deleteRun, button);
+    };
+  });
+}
+
+async function deleteRunSession(runId, button){
+  const run = LIVE.runs.find(entry => entry.run_id === runId);
+  const label = run ? fmtRunDate(run.created) : 'this session';
+  if(!window.confirm(
+    `Delete ${label}?\n\nThis permanently removes its analysis and annotations.`
+  )) return;
+
+  button.disabled = true;
+  try{
+    const response = await fetch(`/api/runs/${encodeURIComponent(runId)}`, {
+      method:'DELETE',
+    });
+    const body = await response.json().catch(() => ({}));
+    if(!response.ok) throw new Error(body.error || 'The session could not be deleted.');
+
+    LIVE.runs = LIVE.runs.filter(entry => entry.run_id !== runId);
+    delete LIVE.report[runId];
+    delete LIVE.coach[runId];
+    if(LIVE.matchId === runId) LIVE.matchId = null;
+    renderClipCards();
+  }catch(error){
+    button.disabled = false;
+    window.alert(error.message || 'The session could not be deleted.');
+  }
 }
 
 /* ---------- the match analysis page (p-match) ---------- */
