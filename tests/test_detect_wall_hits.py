@@ -17,6 +17,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+import numpy as np
 import pytest
 
 from detect_wall_hits import (
@@ -24,7 +25,9 @@ from detect_wall_hits import (
     MIN_GAP_FRAMES,
     REFERENCE_FPS,
     SMOOTH_WINDOW,
+    detect_hits_from_rows,
     scaled_hit_kwargs,
+    smooth_positions,
 )
 from tracking_common import MOTION_TRACK_WINDOW_FRAMES, scaled_window_frames
 
@@ -86,6 +89,43 @@ def test_motion_window_keeps_enough_frames_to_have_a_direction():
     """Two points is the minimum that defines a motion direction at all."""
     for fps in (1.0, 6.0, 30.0):
         assert scaled_window_frames(fps) >= 2, fps
+
+
+@pytest.mark.parametrize("window", [2, 3, 4, 5])
+def test_smooth_positions_preserves_sample_count(window):
+    """fps scaling hands the smoother even windows (smooth=2 at exactly 30
+    fps), which crashed with a broadcast error: a symmetric window//2 pad
+    yields n+1 "valid" convolution samples for an n-sample track."""
+    positions = np.arange(24, dtype=np.float64).reshape(12, 2)
+    smoothed = smooth_positions(positions, window)
+
+    assert smoothed.shape == positions.shape
+
+
+def test_smooth_positions_keeps_constant_tracks_exact():
+    """The mean filter must be a no-op on a stationary track at any parity."""
+    positions = np.full((10, 2), 7.5)
+    for window in (2, 3, 4):
+        assert np.allclose(smooth_positions(positions, window), positions)
+
+
+def test_thirty_fps_kwargs_run_the_detector_end_to_end():
+    """The prod-shaped regression: exactly-30fps footage produced smooth=2,
+    and detect_hits_from_rows crashed before reaching any candidate logic."""
+    rows = [
+        {
+            "source_frame": frame,
+            "timestamp_seconds": f"{frame / 30.0:.6f}",
+            "detected": "True",
+            "x_center": f"{200.0 + 5.0 * frame:.3f}",
+            "y_center": f"{600.0 - 400.0 * abs(frame / 30.0 - 0.5):.3f}",
+        }
+        for frame in range(30)
+    ]
+
+    hits = detect_hits_from_rows(rows, **scaled_hit_kwargs(30.0))
+
+    assert isinstance(hits, list)
 
 
 @pytest.mark.parametrize("fps", [0.0, -1.0, None])
