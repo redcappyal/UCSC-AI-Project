@@ -5,6 +5,13 @@ import ball_detector
 import ball_model
 
 
+@pytest.fixture(autouse=True)
+def _no_ambient_batch_cap(monkeypatch):
+    """A BALL_MAX_BATCH_TILES in the developer's shell must not silently
+    re-tune the batch that every assertion in this file makes."""
+    monkeypatch.delenv("BALL_MAX_BATCH_TILES", raising=False)
+
+
 def _box(x, y, w=10.0, h=10.0, confidence=0.9):
     return {"x": x, "y": y, "width": w, "height": h,
             "confidence": confidence, "class": "ball", "class_name": "ball"}
@@ -354,9 +361,12 @@ def test_detect_frame_stack_rejects_mismatched_frame_shapes():
         ball_detector.detect_frame_stack(_StackShortRunner(), frames, manifest)
 
 
-def test_detect_frame_stack_maps_tile_local_peak_to_full_frame():
+def test_detect_frame_stack_maps_tile_local_peak_to_full_frame(monkeypatch):
     # 4K stack, peak in a non-first tile -- port of the v1 mapping test. Batch
-    # covers all 66 tiles so the fake stays simple (index 0 == first window).
+    # covers all 66 tiles so the fake stays simple (index 0 == first window),
+    # which the default cap of 8 would otherwise break: every chunk would have
+    # an index 0 and OneHit would fire nine times.
+    monkeypatch.setenv("BALL_MAX_BATCH_TILES", "66")
     manifest = _stack_manifest(max_batch_tiles=66)
     frames = [np.zeros((2160, 3840, 3), dtype=np.uint8)] * 3
 
@@ -392,3 +402,159 @@ def test_detect_frame_stack_drops_boxes_below_manifest_conf_threshold():
             return [[(200.0, 200.0, 12.0, 12.0, 0.4, 0)] for _ in stacks]
 
     assert ball_detector.detect_frame_stack(LowScore(), frames, manifest) == []
+
+
+# -- effective_batch_tiles ---------------------------------------------------
+#
+# manifest.max_batch_tiles is the exported model's ceiling, not a mandate, and
+# nothing measured benefits from a batch as big as its 32. bench_wasb_device.py
+# has CUDA FLAT across the whole range (Lambda A10: 16.9 / 17.3 / 16.8 / 18.1 /
+# 18.2 ms/tile at batch 1 / 8 / 16 / 32 / 64 -- the model saturates the card on
+# one tile), while MPS falls off a ~40x cliff between 8 and 10 (8 GB M2 Air:
+# 81.8 ms/tile at batch 8, 3082 at batch 10) and can fail outright with a Metal
+# OOM at 4K tile counts. A batch above 8 therefore helps nobody and ruins one
+# device, so the cap is one default rather than a per-device branch.
+#
+# Batching is a throughput knob only: nothing here may change WHICH tiles are
+# swept or what comes back.
+
+
+def test_effective_batch_tiles_defaults_to_the_measured_cap():
+    assert ball_detector.effective_batch_tiles(_manifest(None)) == 8
+    assert ball_detector.DEFAULT_MAX_BATCH_TILES == 8
+
+
+def test_effective_batch_tiles_never_raises_a_smaller_manifest():
+    # A future model that declares a smaller batch keeps it: the manifest is
+    # the ceiling, and the cap only ever lowers.
+    assert ball_detector.effective_batch_tiles(_manifest(None, max_batch_tiles=4)) == 4
+
+
+def test_effective_batch_tiles_env_lowers_the_batch(monkeypatch):
+    monkeypatch.setenv("BALL_MAX_BATCH_TILES", "4")
+    assert ball_detector.effective_batch_tiles(_manifest(None)) == 4
+
+
+def test_effective_batch_tiles_env_raises_above_the_default(monkeypatch):
+    # The default is caution, not a lock: an operator who has measured their
+    # own machine can go higher, up to the manifest.
+    monkeypatch.setenv("BALL_MAX_BATCH_TILES", "16")
+    assert ball_detector.effective_batch_tiles(_manifest(None)) == 16
+
+
+def test_effective_batch_tiles_env_cannot_exceed_the_manifest_ceiling(monkeypatch):
+    # BALL_MAX_BATCH_TILES caps; it does not license a batch the exported
+    # model never declared. A bigger ceiling is a manifest edit (or
+    # BALL_MODEL_DIR), so the value stays attributable to the artifact.
+    monkeypatch.setenv("BALL_MAX_BATCH_TILES", "64")
+    assert ball_detector.effective_batch_tiles(_manifest(None)) == 32
+
+
+def test_effective_batch_tiles_blank_env_reads_as_unset(monkeypatch):
+    monkeypatch.setenv("BALL_MAX_BATCH_TILES", "   ")
+    assert ball_detector.effective_batch_tiles(_manifest(None)) == 8
+
+
+def test_effective_batch_tiles_rejects_non_integer_env(monkeypatch):
+    # Silently ignoring a typo would leave the batch where it was on the
+    # machine the operator was trying to rescue, and look like a no-op.
+    monkeypatch.setenv("BALL_MAX_BATCH_TILES", "eight")
+    with pytest.raises(ValueError, match="BALL_MAX_BATCH_TILES"):
+        ball_detector.effective_batch_tiles(_manifest(None))
+
+
+def test_effective_batch_tiles_rejects_zero_env(monkeypatch):
+    monkeypatch.setenv("BALL_MAX_BATCH_TILES", "0")
+    with pytest.raises(ValueError, match="BALL_MAX_BATCH_TILES"):
+        ball_detector.effective_batch_tiles(_manifest(None))
+
+
+def test_effective_batch_tiles_rejects_negative_env(monkeypatch):
+    monkeypatch.setenv("BALL_MAX_BATCH_TILES", "-4")
+    with pytest.raises(ValueError, match="BALL_MAX_BATCH_TILES"):
+        ball_detector.effective_batch_tiles(_manifest(None))
+
+
+def test_effective_batch_tiles_floors_a_zero_manifest_at_one():
+    assert ball_detector.effective_batch_tiles(_manifest(None, max_batch_tiles=0)) == 1
+
+
+def test_effective_batch_tiles_takes_no_device():
+    # The cap deliberately does NOT branch on device -- CUDA gains nothing
+    # from a bigger batch either (flat 16.8-18.2 ms/tile from batch 1 to 64),
+    # so there is no device to consult and no per-device branch to drift.
+    import inspect
+    assert list(inspect.signature(
+        ball_detector.effective_batch_tiles).parameters) == ["manifest"]
+
+
+def test_detect_frame_caps_the_batch_below_the_manifest():
+    frame = _marker_frame(3840, 2160, 1500, 900)
+    runner = _MarkerRunner()
+
+    ball_detector.detect_frame(runner, frame, _manifest(None))
+
+    assert max(runner.batch_sizes) <= 8
+    assert sum(runner.batch_sizes) == 66      # every tile still swept
+
+
+def test_detect_frame_cap_leaves_detections_unchanged(monkeypatch):
+    # The cap is a throughput knob. Same frame, same detections, only the
+    # chunking differs -- this is the property the real-model A/B checks.
+    frame = _marker_frame(3840, 2160, 352, 352)
+    manifest = _manifest(None)
+
+    capped = ball_detector.detect_frame(_MarkerRunner(), frame, manifest)
+    monkeypatch.setenv("BALL_MAX_BATCH_TILES", "32")
+    uncapped = ball_detector.detect_frame(_MarkerRunner(), frame, manifest)
+
+    assert capped == uncapped
+    assert len(capped) == 1
+
+
+def test_detect_frame_honours_the_env_cap(monkeypatch):
+    monkeypatch.setenv("BALL_MAX_BATCH_TILES", "5")
+    frame = _marker_frame(3840, 2160, 1500, 900)
+    runner = _MarkerRunner()
+
+    detections = ball_detector.detect_frame(runner, frame, _manifest(None))
+
+    assert max(runner.batch_sizes) <= 5
+    assert sum(runner.batch_sizes) == 66
+    assert detections[0]["x"] == pytest.approx(1500.0)
+
+
+class _StackBatchRunner:
+    """Records the batch sizes it is handed, and finds nothing."""
+
+    def __init__(self):
+        self.batch_sizes = []
+
+    def run_batch(self, stacks):
+        self.batch_sizes.append(len(stacks))
+        return [[] for _ in stacks]
+
+
+def test_detect_frame_stack_caps_the_batch_below_the_manifest():
+    # The stack path is the one the pipeline actually runs (frames_per_input
+    # 3), and it is the memory-hungrier of the two: 9 channels per tile. 66
+    # tiles is a 4K frame, where the uncapped batch measured a Metal OOM.
+    manifest = _stack_manifest()
+    frames = [np.zeros((2160, 3840, 3), dtype=np.uint8)] * 3
+    runner = _StackBatchRunner()
+
+    ball_detector.detect_frame_stack(runner, frames, manifest)
+
+    assert max(runner.batch_sizes) <= 8
+    assert sum(runner.batch_sizes) == 66
+
+
+def test_detect_frame_stack_env_can_restore_the_manifest_batch(monkeypatch):
+    monkeypatch.setenv("BALL_MAX_BATCH_TILES", "32")
+    manifest = _stack_manifest()
+    frames = [np.zeros((2160, 3840, 3), dtype=np.uint8)] * 3
+    runner = _StackBatchRunner()
+
+    ball_detector.detect_frame_stack(runner, frames, manifest)
+
+    assert max(runner.batch_sizes) == 32
