@@ -34,6 +34,7 @@ from detect_wall_hits import detect_hits_from_rows, scale_frames_for_fps, scaled
 from inference_engine import DEFAULT_MODEL_ID, get_tracking_model, infer_frame_predictions
 from judge_call import (
     Point,
+    clamp_wall_x_for_vertical_in,
     judge_ball,
     judge_margin_px,
     judge_serve_ball,
@@ -1153,6 +1154,8 @@ def judge_hits(run_dir, results, detected, audio_available=None, serve_resolver=
         call, reason = "UNKNOWN", "judging_unavailable"
         judge_source = None
         margin_px = None
+        judged_point = None
+        point_x_clamped = False
 
         event_type = hit.get("event_type")
         if event_type in ("racket", "floor", "side_wall"):
@@ -1173,10 +1176,19 @@ def judge_hits(run_dir, results, detected, audio_available=None, serve_resolver=
                 reason = f"No ball detection recorded for frame {frame}."
             else:
                 try:
-                    call, reason, _, _ = judge_ball(point, top_line, bottom_line, wall_corners)
+                    judged_point, point_x_clamped = clamp_wall_x_for_vertical_in(
+                        point, top_line, bottom_line, wall_corners
+                    )
+                    if point_x_clamped:
+                        judge_source = f"{judge_source}_x_clamped"
+                    call, reason, _, _ = judge_ball(
+                        point, top_line, bottom_line, wall_corners
+                    )
                     # Positive: IN by this many pixels; negative: OUT by |margin|.
                     if call in ("IN", "OUT"):
-                        margin_px = judge_margin_px(point, top_line, bottom_line, wall_corners)
+                        margin_px = judge_margin_px(
+                            judged_point, top_line, bottom_line, wall_corners
+                        )
                 except ValueError as error:
                     call, reason, judge_source = "UNKNOWN", str(error), None
 
@@ -1195,6 +1207,12 @@ def judge_hits(run_dir, results, detected, audio_available=None, serve_resolver=
             "judge_source": judge_source,
             "margin_px": margin_px,
         }
+        if point_x_clamped and judged_point is not None:
+            entry["judge_point"] = {
+                "x": judged_point.x,
+                "y": judged_point.y,
+                "x_clamped": True,
+            }
         if "speed_before" in hit:
             velocity = calibrated_velocity(hit, pixels_per_foot)
             if velocity is not None:
@@ -1224,10 +1242,10 @@ def judge_hits(run_dir, results, detected, audio_available=None, serve_resolver=
                 "mismatch_px": hit.get("impact_mismatch_px"),
             }
         if top_line is not None and is_front_wall_hit(entry) and entry.get("call") in ("IN", "OUT"):
-            zone_point = None
-            if "impact_x" in hit:
+            zone_point = judged_point
+            if zone_point is None and "impact_x" in hit:
                 zone_point = Point(hit["impact_x"], hit["impact_y"])
-            elif display_row is not None:
+            elif zone_point is None and display_row is not None:
                 zone_point = ball_point_from_row(display_row)
             if zone_point is not None:
                 diagram = wall_diagram_coordinates(
@@ -1279,6 +1297,9 @@ def judge_hits(run_dir, results, detected, audio_available=None, serve_resolver=
         if point is None:
             return
 
+        point, _ = clamp_wall_x_for_vertical_in(
+            point, top_line, bottom_line, wall_corners
+        )
         entry["is_serve"] = True
         entry.setdefault("standard_call", entry.get("call"))
         try:

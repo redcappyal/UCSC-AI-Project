@@ -220,6 +220,30 @@ def point_inside_wall_x_bounds(ball, top_line, bottom_line, wall_corners=None):
     return left <= ball.x <= right
 
 
+def clamp_wall_x_for_vertical_in(ball, top_line, bottom_line, wall_corners=None):
+    """Project a horizontally outside, vertically IN point onto the wall edge.
+
+    A ball center can land a fraction of a pixel beyond a calibrated side
+    edge because of detector rounding. If its y-coordinate is still between
+    the out line and tin, use the nearest lateral wall edge for judging and
+    target-zone mapping. Points that are vertically OUT are left untouched.
+    """
+    if point_inside_wall_x_bounds(ball, top_line, bottom_line, wall_corners):
+        return ball, False
+
+    if wall_corners is not None:
+        left, right = wall_corners.x_bounds_at_y(ball.y)
+    else:
+        left, right = calibration_wall_x_bounds(top_line, bottom_line, None)
+    clamped = Point(min(right, max(left, ball.x)), ball.y)
+
+    top_margin = top_line.signed_distance_below(clamped)
+    bottom_margin = -bottom_line.signed_distance_below(clamped)
+    if top_margin > 0 and bottom_margin > 0:
+        return clamped, True
+    return ball, False
+
+
 def load_ball_positions(csv_path):
     positions = {}
     with csv_path.open(newline="") as csv_file:
@@ -249,6 +273,9 @@ def load_ball_position(csv_path, frame):
 
 
 def judge_ball(ball, top_line, bottom_line, wall_corners=None):
+    ball, x_clamped = clamp_wall_x_for_vertical_in(
+        ball, top_line, bottom_line, wall_corners
+    )
     try:
         top_y = top_line.y_at_x(ball.x)
         bottom_y = bottom_line.y_at_x(ball.x)
@@ -275,7 +302,12 @@ def judge_ball(ball, top_line, bottom_line, wall_corners=None):
     if bottom_margin <= 0:
         return "OUT", "below_or_on_bottom_line", top_y, bottom_y
 
-    return "IN", "between_lines", top_y, bottom_y
+    return (
+        "IN",
+        "between_lines_x_clamped" if x_clamped else "between_lines",
+        top_y,
+        bottom_y,
+    )
 
 
 def judge_serve_ball(ball, out_line, service_line, wall_corners=None):
@@ -292,6 +324,9 @@ def judge_serve_ball(ball, out_line, service_line, wall_corners=None):
 
 def judge_margin_px(ball, top_line, bottom_line, wall_corners=None):
     """Positive when IN, negative when OUT, measured perpendicular to tilted lines."""
+    ball, _ = clamp_wall_x_for_vertical_in(
+        ball, top_line, bottom_line, wall_corners
+    )
     if wall_corners is not None and not wall_corners.contains_point(ball):
         return -wall_corners.outside_distance_px(ball)
     top_margin = top_line.signed_distance_below(ball)
@@ -305,6 +340,9 @@ def wall_diagram_coordinates(ball, top_line, bottom_line, frame_width=None, wall
     x is progress along the calibrated wall lines. y is 0 on the out line and
     1 on the tin line, measured along the interpolated connector between them.
     """
+    ball, _ = clamp_wall_x_for_vertical_in(
+        ball, top_line, bottom_line, wall_corners
+    )
     best = None
     # Closed-form bilinear inversion is overkill here and fragile for nearly
     # parallel lines. A dense 1-D search is stable and sub-pixel enough for UI.
