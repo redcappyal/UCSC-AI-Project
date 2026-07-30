@@ -767,8 +767,8 @@ The Dashboard is the section root the app boots into. Top → bottom:
   (Sessions · Unforced errors — the share of the last match's decided rallies lost to
   an unforced error; the third slot is deliberately unassigned until the next useful
   headline metric is decided, per the 2026-07-29 metric review). `.heronote` = 12 px
-  dim-white sentence — the latest run's first coach sentences when live, honest
-  guidance copy otherwise.
+  dim-white sentence — the guidance copy shown before any run exists; hidden as
+  soon as one does.
 - **Action row** (`.btnrow`): the accent `label.filebtn` "Analyze a clip" (it *is* the
   file input, recast around the hidden `<input type=file>`). Exactly one accent action
   per screen, ever. The archived Record / Live cards (`.heroCard`, hidden) keep the old
@@ -781,6 +781,10 @@ The Dashboard is the section root the app boots into. Top → bottom:
   fill + 700, like correction chips). Browser-only: the hairline, label, and row
   all carry `.devOnly`, which `body.shell-embed` hides (§3.2). Anything added here
   takes that class too.
+
+The hero's `#heroNote` is the **empty state and nothing else**. Coach Notes owns
+coach prose on this page; both once rendered the same sentences from the same
+feedback string, stacked.
 
 All live regions render from `/api/runs` + `/api/runs/<id>/coach` (§8.20) and keep
 their markup defaults as the empty state — no fake sample data, ever.

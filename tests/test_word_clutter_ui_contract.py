@@ -65,3 +65,15 @@ def test_the_meta_spans_survive_because_they_carry_new_information():
     assert 'id="clipMeta"' in INDEX_HTML
     assert 'id="matchMeta"' in INDEX_HTML
     assert 'id="trainingStatsMeta"' in INDEX_HTML
+
+
+def test_the_hero_does_not_repeat_the_coach_notes_below_it():
+    # renderCoachNotes renders the same sentences from the same string.
+    assert "if(note) $('heroNote').textContent = note;" not in INDEX_HTML
+    assert "$('heroNote').classList.toggle('hidden', true);" in INDEX_HTML
+
+
+def test_the_hero_note_survives_as_the_empty_state():
+    # With no runs it is the only thing on the page that says what to do.
+    assert 'id="heroNote"' in INDEX_HTML
+    assert "the pipeline turns it into" not in INDEX_HTML

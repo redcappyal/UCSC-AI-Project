@@ -1008,7 +1008,7 @@
         <div class="stattile"><span class="sl">Sessions</span><span class="sv" id="heroT1">&#8212;</span></div>
         <div class="stattile"><span class="sl">Unforced errors</span><span class="sv" id="heroT2">&#8212;</span></div>
       </div>
-      <div class="heronote" id="heroNote">Record a rally on court, upload it here, and the pipeline turns it into calls, stats, and coaching.</div>
+      <div class="heronote" id="heroNote">Record a rally on court, then upload it here for calls, stats, and coaching.</div>
     </div>
     <div class="btnrow">
       <label class="filebtn">
@@ -8087,8 +8087,9 @@ function renderDashboardLive(){
   // (final shot out or tin) rather than to the opponent's winner.
   $('heroT2').innerHTML = m.unforcedPct==null ? '—' : `${m.unforcedPct}<span class="ss">%</span>`;
   $('heroSub').textContent = `From your last ${LIVE.runs.length} analyzed ${LIVE.runs.length===1?'clip':'clips'}`;
-  const note = splitSentences((LIVE.coach[latest.run_id]||{}).feedback).slice(0,2).join(' ');
-  if(note) $('heroNote').textContent = note;
+  // The prose belongs to Coach Notes below, which renders the same sentences
+  // from the same string. The hero keeps the ring and its two tiles.
+  $('heroNote').classList.toggle('hidden', true);
   renderCoachNotes();
 }
 const NOTE_ICONS = [
