@@ -112,10 +112,12 @@ implementation verifies real names on first live call.
 
 ### `lambda_tunnel.sh`
 Open `ssh -N -L 5199:127.0.0.1:5188 ubuntu@<ip>` and print
-`http://localhost:5199` — the interactive (approach-C) path. Also used by
-`lambda_run.sh` (shared helper; one tunnel at a time — the script reuses an
-existing tunnel if the port is already forwarded, and `lambda_run` must not
-kill a tunnel the user opened interactively). Local port 5199 (not 5188) so the
+`http://localhost:5199` — the interactive (approach-C) path, and only that.
+`lambda_run.sh` deliberately does not use the tunnel: it drives Flask over ssh
+against the box's own loopback, so there is no forward to collide with, reuse,
+or tear down, and a tunnel the user opened interactively is never disturbed.
+(Re-running `lambda_tunnel.sh` is a no-op — it reuses an existing forward on the
+port rather than opening a second.) Local port 5199 (not 5188) so the
 tunnel never collides with a locally running Flask; override with
 `CROSSCOURT_TUNNEL_PORT`.
 
