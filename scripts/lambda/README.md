@@ -12,15 +12,26 @@ Ephemeral CUDA boxes for analysis + eval runs. Spec:
 
 ## A session
     scripts/lambda/lambda_up.sh                  # launch + bootstrap (~5 min, billing starts)
+    # ^ SET A TIMER NOW — lambda_up prints the deadline and the overnight cost
     scripts/lambda/lambda_run.sh clip.mp4 \
         --stride 1 --inference-width 0           # rsync up, track on GPU, results into ui_runs/
     scripts/lambda/lambda_tunnel.sh              # optional: box UI at http://localhost:5199
     scripts/lambda/lambda_down.sh                # terminate = the ONLY thing that stops billing
     scripts/lambda/lambda_status.sh              # anytime: what is billing right now?
 
-- GPU order: A6000 ($1.09/hr) → A10 ($1.29) → A100 ($1.99) → A100 SXM4; hard cap $2/hr
-  (`PREFER_TYPES` in `common.sh`). No capacity → lambda_up prints the availability table
-  and exits.
+- **Set a phone timer the moment `lambda_up.sh` returns.** It prints the launch time,
+  the hourly rate, a stop-by deadline and what the box costs if left overnight —
+  because nothing else bounds a forgotten box. Lambda has no stopped state: the meter
+  runs from the launch POST until `lambda_down.sh` terminates it, so a box forgotten
+  over a weekend is $26–48/day. The sweep and `lambda_status.sh` only help someone
+  who already remembered.
+- GPU order: A6000 ($1.09/hr) → A10 ($1.29) → A100 ($1.99) → A100 SXM4 (`PREFER_TYPES`
+  in `common.sh`, first-with-capacity wins — never a substitution), under a hard
+  $2/hr cap (`PRICE_CAP_CENTS=200`, same file). No capacity under the cap → lambda_up
+  prints the availability table and exits.
+- `lambda_up.sh [git-ref]` takes an optional git ref (default `main`) — the branch or
+  tag `bootstrap_remote.sh` clones and checks out on the box. Use it to run a branch
+  that is not merged yet; the ref must exist on the **public remote**, not just locally.
 - **Run at native fidelity: `--stride 1 --inference-width 0`.** Every frame at full
   resolution is the fidelity the GPU is rented for and what the WASB ball detector was
   trained for — it tiles at native resolution and ignores `inference_width` outright
@@ -52,6 +63,17 @@ Ephemeral CUDA boxes for analysis + eval runs. Spec:
   instance is still listed. On an unconfirmed teardown the tracking file is kept on
   purpose, so `lambda_up.sh` still refuses to launch a second box; re-run
   `lambda_down.sh` once the API responds.
+- **Unconfirmed teardown, but the sweep says nothing is running? The box is gone —
+  delete the tracking file by hand:** `rm ~/.config/crosscourt/lambda_instance.json`.
+  This is the exit from the likeliest wedge, and you will need it. Lambda commonly
+  404s an instance shortly after it terminates, and a status can also sit on
+  `terminating` past the poll's 2.5 min; either way `lambda_down.sh` never observes
+  the literal `terminated` it requires, so it exits 1 and keeps the file — and
+  re-running it just POSTs terminate against an id that is already gone, which fails
+  the same way forever. **The account sweep is the authority, not the exit code.** If
+  it lists nothing (or lists nothing at your instance id), the meter has stopped;
+  delete the file and carry on. If it still lists the instance, do NOT delete the
+  file — that box is still billing, so terminate it from the Lambda console first.
 - **Bootstrap failed?** The box is left up on purpose for debugging — and is still
   billing. `lambda_down.sh` when you are done with it.
 - A clean teardown is one you can read: `lambda_down.sh` ends with the same account sweep

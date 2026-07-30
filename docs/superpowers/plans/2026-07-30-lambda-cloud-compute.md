@@ -1116,10 +1116,59 @@ git commit -m "feat(cloud): lambda_down terminate+sweep and session runbook"
 **Interfaces:**
 - Consumes: everything above, Ian's explicit go-ahead **at execution time**.
 
+- [ ] **Step 0: Free pre-flight (do this BEFORE asking for the go-ahead)**
+
+Every check here costs nothing and each one guards a failure that is only
+discoverable on a billing box. Run all four; if any fails, fix it first.
+
+```bash
+scripts/lambda/lambda_status.sh          # must print "Nothing is running — nothing is billing."
+.venv/bin/python lambda_cloud.py find-calibration \
+  "ui_runs/uploads/by-hash/7698ab13e87985d57e551bb81d8455f63427621d20b126bb315e4c20f6b53a21.mov"
+.venv/bin/python lambda_cloud.py find-calibration \
+  "ui_runs/uploads/by-hash/1dd65f0926922a2862914b7cd3c5c1b289d974ff5a453d4aff483482e815d535.mp4"
+GIT_TERMINAL_PROMPT=0 git ls-remote https://github.com/redcappyal/UCSC-AI-Project
+```
+
+- `lambda_status.sh` — an instance already running means the account is billing
+  and this session must not add a second one.
+- `find-calibration` for **every** clip Steps 3 and 4 will run. Exit 0 prints the
+  calibration path; **exit 2 means `lambda_run.sh` aborts on an already-billing
+  box**, which is the one failure that costs money to discover.
+- `git ls-remote` must succeed **anonymously** (no credential helper, no prompt).
+  The zero-secrets model assumes a public repo; if it is private,
+  `bootstrap_remote.sh` fails its clone *after* the box is up and billing.
+
+Verified 2026-07-30 (all four green): status clear; smoke clip →
+`ui_runs/1785445468920/calibration.json`; `1dd65f09…` →
+`ui_runs/1785432613002/calibration.json`; `ls-remote` exit 0 with
+`GIT_CONFIG_GLOBAL=/dev/null`, so the repo is genuinely public.
+
 - [ ] **Step 1: Get the explicit go-ahead**
 
-Ask Ian: "Launching now will start billing (~$1.09–1.99/hr, expected total
-$1–3 for this verification). Go?" Do not proceed on silence.
+Ask Ian: "Launching now starts billing (A6000 $1.09/hr → A10 $1.29 → A100
+$1.99). At native fidelity this session's **floor is ~$1.35** and a realistic
+budget is **$3–4**. Go?" Do not proceed on silence.
+
+Where the floor comes from — all measured, not estimated:
+
+| Term | Value | Source |
+|---|---|---|
+| WASB coarse pass | **16.8 ms/tile** | measured on a Lambda `gpu_1x_a10`, 2026-07-30 |
+| Tiles per 1080p frame | **18** | `tile_windows(1920, 1080, 416, 64)` |
+| Per frame at `--stride 1` | 16.8 × 18 = **302 ms** | |
+| Step 3 clip (509 frames) | 509 × 0.302 = **154 s** (2.6 min) | |
+| Step 4 clip (10,058 frames) | 10,058 × 0.302 = **3,042 s** (50.7 min) | |
+| Boot + bootstrap, 2 rsyncs, teardown | **~9 min** | ~5 min boot measured 2026-07-30 |
+| Session | ≈ 62 min = **1.04 h** → **$1.34** at A10 ($1.13 at A6000) | |
+
+**That figure is the coarse ball pass alone — it is a floor, not an estimate.**
+The refine pass, per-frame person detection (RF-DETR), the bootstrap `pip
+install`, the uploads, and any interactive time all bill on top and none of them
+have been measured on CUDA. The old "$1–3" line was written when `lambda_run.sh`
+inherited the server's `frame_stride=4`; at native fidelity the coarse pass alone
+costs 4× that. If the box is still up at the 3 h mark it has cost $3.87 — stop
+and re-decide rather than letting it run.
 
 - [ ] **Step 2: Launch and bootstrap**
 
@@ -1128,19 +1177,49 @@ Expected: type/region line, launch id, status polls to `active`, bootstrap
 output ending `CUDA gate OK: <n> ms/tile on <GPU name>` and
 `Flask up on 127.0.0.1:5188`. Record the ms/tile number.
 
-- [ ] **Step 3: Smoke clip (15 MB)**
+- [ ] **Step 3: Smoke clip (16 MB, 1080p60, 8.5 s)**
 
-Run: `scripts/lambda/lambda_run.sh "ui_runs/uploads/by-hash/7698ab13e87985d57e551bb81d8455f63427621d20b126bb315e4c20f6b53a21.mov"`
-Expected: upload, `Tracking started: run <id>`, progress to `complete`, sync,
-cost line. Then open the local app (`.venv/bin/python app.py`, existing
-workflow) and confirm the new run appears with hits in the report.
+Run:
+```bash
+scripts/lambda/lambda_run.sh --stride 1 --inference-width 0 \
+  "ui_runs/uploads/by-hash/7698ab13e87985d57e551bb81d8455f63427621d20b126bb315e4c20f6b53a21.mov"
+```
+Expected: `Using calibration: ui_runs/1785445468920/calibration.json`, upload,
+`Tracking started: run <id>`, progress to `complete` in ~3 min, sync, cost line.
+Then open the local app (`.venv/bin/python app.py`, existing workflow) and
+confirm the new run appears with hits in the report.
 
-- [ ] **Step 4: One real 4K capture**
+- [ ] **Step 4: One full-length real capture (95 MB, 1080p30, ~336 s)**
 
-Run: `scripts/lambda/lambda_run.sh "ui_runs/uploads/by-hash/91c71e99f769ba3e43903a6e3a422da0c12a466d43b43e21301110edc92891a6.mp4"`
-Expected: completes end-to-end; note wall-clock minutes and $ from the cost
-line. Sanity-compare hit count against any previous local run of the same
-video (`ls ui_runs/*/detected_hits.json` + the report view).
+Run:
+```bash
+scripts/lambda/lambda_run.sh --stride 1 --inference-width 0 \
+  "ui_runs/uploads/by-hash/1dd65f0926922a2862914b7cd3c5c1b289d974ff5a453d4aff483482e815d535.mp4"
+```
+Expected: completes end-to-end in ~51 min of GPU time; note wall-clock minutes
+and $ from the cost line. Sanity-compare hit count against the previous local
+run of the same video (`ui_runs/1785432613002/`, plus the report view).
+
+**Why this clip and not `91c71e99…mp4`, which this step used to name.** Three
+things were wrong with that one, all verified locally on 2026-07-30:
+
+1. **It has no calibration.** `lambda_cloud.py find-calibration` exits 2 for it —
+   there is no local run of that video at all — so `lambda_run.sh` would abort
+   *after* `require_instance`, on a box that is already billing. Supplying
+   `--calibration` from some other clip is not a fix: a calibration encodes one
+   camera pose, so a borrowed one makes the positional output meaningless.
+2. **It is not 4K.** Probed with the repo's own cv2 path: **1920×1080, 29.97 fps,
+   24,886 frames, 830 s**. Nothing in `ui_runs/uploads/by-hash/` is 4K — the
+   largest is 1080p60. The plan and the spec both called it "one real 4K
+   capture"; both are corrected. (A genuine 4K capture is 66 tiles/frame, not 18,
+   so when one exists this step's cost model must be re-derived, not scaled.)
+3. **It costs 2.5× more** for a weaker check: 24,886 frames ≈ 125 min of coarse
+   pass ≈ $2.70 at A10, versus 50.7 min ≈ $1.09 — and Step 4's own
+   sanity-compare needs a previous local run of the same video, which only
+   `1dd65f09…` has.
+
+`1dd65f09…` is a full-length real capture with a real calibration and a
+comparison run, which is everything this step was for.
 
 - [ ] **Step 5: Tear down and verify nothing bills**
 
@@ -1150,8 +1229,22 @@ Expected: `Terminated. Session: ...` then the sweep prints
 
 - [ ] **Step 6: Record results**
 
-Append measured numbers (ms/tile, wall clock + cost for both clips) to
-`scripts/lambda/README.md` under a `## Measured 2026-07-30` heading; commit:
+Append to `scripts/lambda/README.md` under a `## Measured 2026-07-30` heading.
+Record all of:
+
+- the **CUDA-gate ms/tile** and the GPU name it printed (the 16.8 ms/tile above
+  is from a different harness on a different day — this is the first in-pipeline
+  reading, and every cost estimate in this plan rests on it);
+- **wall clock + cost** for both clips, against the 2.6 min / 50.7 min predictions;
+- whether the bootstrap's **60 s Flask health window sufficed**, and roughly how
+  much of it was used (if it was close, say so — the next cold boot has to pay
+  the same import cost with a warmer or colder pip cache);
+- **the exact string Lambda reports as the terminal status.** `lambda_down.sh`
+  only deletes the tracking file on a literal `terminated`, and the offline
+  harness could not determine what the real API returns. If it is anything else,
+  that is a fix-before-next-session bug, not a note.
+
+Then commit:
 
 ```bash
 git add scripts/lambda/README.md

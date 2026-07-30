@@ -85,8 +85,12 @@ implementation verifies real names on first live call.
      a conflicting torch into the venv; the gate catches it, and the scripted
      fallback is `pip install torch --index-url` (CUDA wheel — datacenter
      bandwidth makes this ~a minute).
-   - start Flask in tmux: `.venv/bin/python app.py` (defaults
-     `127.0.0.1:5188`).
+   - start Flask detached: `nohup .venv/bin/python app.py > ~/flask.log 2>&1 &`
+     (defaults `127.0.0.1:5188`), then poll `/api/health` for up to 60 s. No
+     tmux — this spec said tmux, the approved plan and the implementation both
+     use `nohup` + a log file, and nothing needs an attachable session: every
+     later command arrives over its own ssh, and `~/flask.log` is what the
+     bootstrap tails when the health check times out.
 5. Write `~/.config/crosscourt/lambda_instance.json` (instance id, IP, type,
    price, launch time) for the other scripts.
 
@@ -149,8 +153,18 @@ instances prints an explicit "nothing billing" line.
 | No capacity under cap | Print availability table, exit non-zero |
 | Bootstrap/CUDA gate fails | Leave instance up, print SSH command + `lambda_down` reminder (terminating would re-bill launch minutes while debugging) |
 | Tunnel drops mid-run | Job keeps running server-side (jobs persist via `job.json`); `lambda_run --resume <run_id>` re-attaches by polling status and re-syncing |
-| Forgotten instance | `lambda_down` sweep + `lambda_status`; by-the-minute billing bounds the damage |
+| Forgotten instance | **Nothing bounds this automatically today.** `lambda_up.sh` prints the launch time and a concrete deadline (`stop by HH:MM or this costs $X`, plus the 24 h number), and the README tells the operator to set a timer *then*; the `lambda_down` sweep and `lambda_status` only help someone who already remembered. By-the-minute billing bounds nothing over a weekend — $26–48/day. See the note below. |
 | Mac sleeps mid-run | Same as tunnel drop: resume path |
+
+**On the missing auto-TTL.** This design rejected an auto-TTL because "Lambda has
+no stopped state, so an in-box shutdown would NOT stop billing." That reasoning is
+correct and it only covers a timer *inside the box*. It was never an argument
+against a **local** watchdog — a `launchd` job or an `at` job on the Mac that
+calls `lambda_down.sh` (a real terminate, which does stop billing) at a deadline
+set at launch — and that option was therefore never actually evaluated. It is the
+next increment here; it is deliberately not built yet, because a watchdog that
+terminates a box mid-run is its own failure mode and needs a design pass. Until
+then the bound is a printed deadline and a human timer, which is honest but weak.
 
 ## Verification plan
 
@@ -158,8 +172,16 @@ instances prints an explicit "nothing billing" line.
    per-tile GPU latency printed (expectation: ~10–50 ms/tile vs 5.2 s CPU-Mac).
 2. Smoke run: the 15 MB clip through `lambda_run.sh`; report opens in the
    local UI with hits present.
-3. One real 4K capture (~200 MB): measure wall clock + cost; compare hit
-   output sanity against a previous local run of the same clip.
+3. One full-length real capture: measure wall clock + cost; compare hit output
+   sanity against a previous local run of the same clip. **Not 4K** — an earlier
+   draft of this line and of the plan called the candidate clip "one real 4K
+   capture"; it is 1920×1080 @ 29.97 fps, and every video in the local by-hash
+   store is 1080p or smaller (checked 2026-07-30). The clip actually used is
+   `1dd65f09…mp4` (95 MB, 1080p30, ~336 s), chosen because it is the only
+   full-length capture that has both a local calibration and a previous local run
+   to compare against. When a genuine 4K asset exists, note that it is 66
+   tiles/frame against 1080p's 18 — 3.7× the GPU cost per frame, so the cost
+   model has to be re-derived rather than scaled by resolution.
 4. `lambda_down.sh`: instance terminates; `lambda_status.sh` shows nothing
    billing.
 5. Suite stays green (`pytest tests/`): scripts are additive; no pipeline code
