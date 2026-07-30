@@ -40,6 +40,35 @@ FIXTURE = {
 PREFS = ["gpu_1x_a6000", "gpu_1x_a10", "gpu_1x_a100", "gpu_1x_a100_sxm4"]
 
 
+def test_launch_constants_in_common_sh_match_this_files_prefs():
+    """Pin the two constants that actually reach a launch POST.
+
+    Every other test here feeds `pick_instance_type` the PREFS list above, so all
+    of them would still pass if `common.sh` named a different GPU or a higher cap
+    — the logic is covered, the values that ride it into `POST
+    /instance-operations/launch` are not. This is the last unguarded hop between
+    the spec and a box that bills.
+    """
+    common_sh = (
+        Path(lambda_cloud.__file__).parent / "scripts" / "lambda" / "common.sh"
+    ).read_text(encoding="utf-8")
+
+    assert 'PREFER_TYPES="%s"' % ",".join(PREFS) in common_sh, (
+        "scripts/lambda/common.sh no longer launches "
+        + " -> ".join(PREFS)
+        + " in that exact order. Preference order is authoritative — "
+        "pick_instance_type never looks past it and never substitutes — so a "
+        "rename or a reorder here silently changes which GPU gets rented. If the "
+        "change is deliberate, update the design spec and this list together."
+    )
+    assert "PRICE_CAP_CENTS=200" in common_sh, (
+        "scripts/lambda/common.sh no longer caps launches at $2.00/hr. That cap is "
+        "the spec's hard limit and the only thing standing between a typo and a "
+        "pricier box (an 8x A100 is $15.92/hr on the same endpoint). Raising it is "
+        "the account owner's call, not a code change."
+    )
+
+
 def test_pick_prefers_earlier_entries_with_us_capacity():
     # a6000 has no capacity -> a10 (which does) wins over the a100s.
     assert lambda_cloud.pick_instance_type(FIXTURE, PREFS, 200) == (
