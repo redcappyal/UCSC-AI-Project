@@ -687,6 +687,40 @@ guidance copy — the cards are the page. They navigate to sub-pages via `setPha
 sanctioned drill-down navigation, **not** nav chrome: the nav pill stays a section tab
 bar (§8.3) and §3.3/§18 still hold.
 
+**Tappable ink hero.** On the Training hub the ink hero (§8.15) is itself a `<button>`,
+because it is the page's only live destination — every feature card under it is a
+roadmap placeholder. It keeps the §8.15 hero recipe and adds: a 18 px `rgba(255,255,255,.55)`
+chevron after the ring badge (the affordance the hero would otherwise lack), explicit
+`align-items:stretch` (the UA button style centers flex children), `:active` =
+`brightness(1.3)` — brighter, not dimmer, because the fill is ink — and a `:disabled`
+state (chevron at 25% opacity) while no analyzed run exists. The subtitle names what
+the hero delivers (drills, and over how many sessions), not the corpus behind it. This
+is the **only** hero that is a button; a hero elsewhere stays a `<div>`.
+
+### 8.13a Coaching advice (`p-coach-advice`)
+
+The leaf under the Training hub, and the one page in the app whose content is advice
+rather than measurement. Top → bottom:
+
+- **Player switcher** — a §8.1 `.seg` with two segments (no Call segment: this page is
+  not a review pane, and the frame-by-frame calls are not what a coaching reader came
+  for). Segments carry saved player names when a run has them.
+- **Provenance card** (§8.9 card): `.cardtitle` headline counting what there is to work
+  on, then two 13 px `--dim` `.adviceMeta` lines — the shot and session totals, then the
+  pooling caveat. The caveat is **required copy, not a footnote**: attribution is
+  per-clip, so "Player 1" names a slot (whoever served first) and not a person, and the
+  page would be quietly claiming otherwise without it.
+- **Drill cards** (`.adviceDrills > .drillCard`) — the §8.9 card recipe (surface fill,
+  `--shadow-card`, radius 18, padding 14) rather than the hairline-bordered variant used
+  inside the per-run report, because here the cards *are* the page. Each holds a 15/700
+  `.drillIssue` naming the weakness in the player's own numbers, then an ordered
+  `.drillSteps` list of four stages — Solo → Drills → Conditioned games → Matchplay —
+  each a 11/700 uppercase `.drillStage` label over 13 px `--dim` text.
+
+When the pooled shots still fall under the advice threshold the page shows that sentence
+alone (`.adviceEmpty`, 14 px `--dim`) — §13's rule: a result that could not be computed
+states its reason and is never drawn as an empty list.
+
 ### 8.14 Placeholder pages
 
 `.placeholderHero` — the §13 `.blank` dashed treatment scaled to a page: dashed
@@ -1228,7 +1262,8 @@ Each phase: header shows step label + proxied primary; `#instr` gives the one-li
 | `p-label` | Human bounce labeling | overview · label timeline · transport+zoom · 2-col type grid (dot+label) · delete (destructive = plain secondary, disabled until selection) | — |
 | `p-matches` | Analysis section root — session library | view head ("Analysis" + `n runs · live pipeline`) · one head-row `.clipcard` per analyzed run, opening that match's analysis page (§8.20) · `.emptycard` when none | — (no chevron; section root) |
 | `p-match` | **Match analysis.** One analyzed match, read end to end | view head (match date + duration) · `#matchBody`: the §8.20 analysis stack (Rallies · Movement · ball tier when it ran · "What this clip could measure" · provenance line) · ghost "Open full review" · `.emptycard` when the run is gone | — (back chevron only, like the review panes; the native shell hides its tab bar and settings gear here, §3.2) |
-| `p-coach` | Training section root (hub) | view head · ink hero (Coaching + sessions ring) · three feature cards (§8.13) | — (no chevron; section root) |
+| `p-coach` | Training section root (hub) | view head · tappable ink hero (Coaching + sessions ring + chevron → `p-coach-advice`, §8.13) · three feature cards (§8.13) | — (no chevron; section root) |
+| `p-coach-advice` | Coaching advice — drills pooled over the recent sessions | player `.seg` · provenance card (counts + pooling caveat) · drill cards (§8.13a) | — (back chevron → Training hub) |
 | `p-progress` | Progress section root — cross-session trends | view head · range `.seg` · delta strip · trend cards · best-mark card (§8.20) · `.emptycard` under two runs | — (no chevron; section root) |
 | `p-live` | Placeholder: live match | placeholder hero · Planned card (§8.14) | — (back chevron only) |
 | `p-stats` | Placeholder: stats + trends | placeholder hero · Planned card (§8.14) | — (back chevron only) |

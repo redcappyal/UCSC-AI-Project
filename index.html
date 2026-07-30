@@ -576,6 +576,17 @@
   .drillStage{display:block; font-style:normal; font-size:11px; font-weight:700;
     letter-spacing:.05em; text-transform:uppercase; color:var(--text); margin-bottom:2px}
 
+  /* Coaching advice page (p-coach-advice): the drill cards are the page, so
+     they sit on the background rather than inside a wrapping card. */
+  #p-coach-advice{display:flex; flex-direction:column; gap:12px}
+  #adviceSeg{margin:0}
+  .adviceMeta{margin:6px 0 0; color:var(--dim); font-size:13px; line-height:1.45}
+  .adviceDrills{display:flex; flex-direction:column; gap:12px}
+  .adviceDrills .drillCard{background:var(--surface); border:0; box-shadow:var(--shadow-card);
+    border-radius:18px; padding:14px; margin:0}
+  .adviceDrills .drillIssue{font-size:15px}
+  .adviceEmpty{color:var(--dim); font-size:14px; line-height:1.5}
+
   /* Post-hoc player naming: each tracked player is shown directly above the
      name field that labels that track. */
   .playersNote{padding:12px 14px 0; color:var(--dim); font-size:14px; line-height:1.45}
@@ -657,6 +668,17 @@
   /* dark hero card (stays ink-dark in both themes) */
   .hero{background:var(--hero); border-radius:24px; color:var(--hero-text); padding:16px;
     display:flex; flex-direction:column; gap:14px}
+  /* Training hub: the hero is the one live thing on that page (the cards under
+     it are roadmap placeholders), so it is a real button into the newest run's
+     report. Disabled — not hidden — while no run exists to open. */
+  /* align-items is explicit: the UA button style centers flex children, which
+     would shrink-wrap the .herotop row instead of letting it span the card. */
+  button.hero{width:100%; text-align:left; align-items:stretch; border:0; font:inherit;
+    cursor:pointer; -webkit-tap-highlight-color:transparent}
+  button.hero:active:not(:disabled){filter:brightness(1.3)}
+  button.hero:disabled{cursor:default}
+  button.hero:disabled .herochev{opacity:.25}
+  .herochev{flex:none; width:18px; height:18px; margin-left:8px; color:rgba(255,255,255,.55)}
   .herotop{display:flex; align-items:center; gap:11px}
   .heroicon{width:38px; height:38px; border-radius:50%; background:rgba(255,255,255,.09);
     display:flex; align-items:center; justify-content:center; flex:none; color:var(--accent-bg)}
@@ -1419,7 +1441,7 @@
   <!-- PHASE: coach (section root — Training hub; cards drill into the improvement pillars) -->
   <section class="hidden" id="p-coach">
     <div class="viewhead"><h2>Training</h2></div>
-    <div class="hero">
+    <button class="hero" type="button" id="coachHeroBtn" disabled>
       <div class="herotop">
         <div class="heroicon">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 3L5 13.5h5.5L11 21l8-10.5h-5.5z"/></svg>
@@ -1435,8 +1457,9 @@
           </svg>
           <span class="rv" id="coachRingVal">0</span>
         </div>
+        <svg class="herochev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg>
       </div>
-    </div>
+    </button>
     <button class="featureCard" type="button" data-phase="stats">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
         <path d="M5 20v-7M12 20V5M19 20v-11"/>
@@ -1458,6 +1481,22 @@
       <span class="fcBody"><strong>Shot selection</strong><span>The shot the numbers would play</span></span>
       <span class="fcTag">Phase 6</span>
     </button>
+  </section>
+
+  <!-- PHASE: coaching advice (leaf under the Training hub). Not the per-run
+       report: this pools the recent sessions so the advice has enough shots
+       behind it to mean something. -->
+  <section class="hidden" id="p-coach-advice">
+    <div class="seg" id="adviceSeg">
+      <button type="button" id="adviceSegP1" class="active">Player 1</button>
+      <button type="button" id="adviceSegP2">Player 2</button>
+    </div>
+    <div class="card" id="adviceProvenance">
+      <div class="cardtitle" id="adviceHeadline">Working on your coaching</div>
+      <p class="adviceMeta" id="adviceMeta"></p>
+      <p class="adviceMeta" id="adviceCaveat"></p>
+    </div>
+    <div id="adviceBody"></div>
   </section>
 
   <!-- PHASE: stats + trends (roadmap placeholder, under Coach) -->
@@ -1668,6 +1707,7 @@ const STEP_META = {
   // stepLabelFor() overrides this with the match date, like the review panes.
   match:   {label:'Match', instr:''},
   coach:   {label:'Training', instr:''},
+  coach_advice:{label:'Coaching', instr:''},
   progress:{label:'Progress', instr:''},
   live:    {label:'Live match', instr:''},
   stats:   {label:'Stats + trends', instr:''},
@@ -1680,7 +1720,7 @@ const roadmapSection = p => 'p-' + p.replace('_','-');
 /* Every phase that is a plain content page: no video stage, page background.
    The match detail is one of these but keeps its own reveal (it has a view to
    build), so it is not in ROADMAP_PHASES. */
-const PAGE_PHASES = [...ROADMAP_PHASES, 'match'];
+const PAGE_PHASES = [...ROADMAP_PHASES, 'match', 'coach_advice'];
 /* Section roots: the nav pill switches between them, so they get no back chevron */
 const SECTION_ROOTS = ['load','matches','coach','progress'];
 
@@ -1860,7 +1900,7 @@ function setPhase(p){
   document.body.classList.toggle('phase-track', p === 'track');
   document.body.classList.toggle('phase-page', PAGE_PHASES.includes(p));
   for(const id of ['p-load','p-record','p-frame','p-tap','p-review','p-wall-corners','p-tap-floor','p-confirm','p-clip','p-analyze','p-track','p-label',
-                   'p-player1-report','p-player2-report','p-match',
+                   'p-player1-report','p-player2-report','p-match','p-coach-advice',
                    'p-live','p-matches','p-coach','p-progress','p-stats','p-shot-bot','p-sharing']) $(id).classList.add('hidden');
   $('camVid').classList.toggle('hidden', p !== 'record');   // live preview only on the record screen
   $('analyzeOverlay').classList.toggle('hidden', p !== 'analyze');
@@ -1916,6 +1956,7 @@ function setPhase(p){
   if(p === 'player1_report'){ $('p-player1-report').classList.remove('hidden'); buildPlayerReportView(1); }
   if(p === 'player2_report'){ $('p-player2-report').classList.remove('hidden'); buildPlayerReportView(2); }
   if(p === 'match'){ $('p-match').classList.remove('hidden'); buildMatchView(); }
+  if(p === 'coach_advice'){ $('p-coach-advice').classList.remove('hidden'); buildCoachAdviceView(); }
   if(ROADMAP_PHASES.includes(p)){ $(roadmapSection(p)).classList.remove('hidden'); }
   // Tab bar: visible on the four section roots only, hidden inside flows
   // and sub-pages; the active capsule tracks the current section. The native
@@ -2880,6 +2921,9 @@ $('hdrBack').onclick = () => {
   } else if(S.phase === 'match'){
     // The match analysis is a leaf off Analysis, and its only exit.
     setPhase('matches');
+  } else if(S.phase === 'coach_advice'){
+    // The advice page is a leaf off the Training hub, and its only exit.
+    setPhase('coach');
   } else if(S.phase === 'label'){
     vid.pause(); S.base = null; $('fileIn').value = ''; setPhase('load');
   } else if(ROADMAP_PHASES.includes(S.phase)){
@@ -7832,10 +7876,133 @@ function renderCoachNotes(){
 }
 function renderCoachHero(){
   setRing('coachRingArc','coachRingVal', weekRunCount());
-  $('coachHeroSub').textContent = LIVE.runs.length
-    ? `Built from your last ${LIVE.runs.length} analyzed ${LIVE.runs.length===1?'session':'sessions'}`
-    : 'Built from your analyzed sessions';
+  const count = LIVE.runs.length;
+  $('coachHeroSub').textContent = count
+    ? `Drills from your last ${count===1 ? 'session' : `${Math.min(count, POOLED_SESSIONS)} sessions`}`
+    : 'Analyze a clip to get your first drills';
+  // Nothing to advise on until a run exists; the roadmap cards stay usable.
+  $('coachHeroBtn').disabled = !count;
 }
+/* The hub's hero is the only live entry on this page, and it leads to the
+   advice — not to the per-run review, which opens on the frame-by-frame call
+   page the coaching reader has no use for. */
+$('coachHeroBtn').onclick = () => { if(LIVE.runs.length) setPhase('coach_advice'); };
+
+/* ---------- coaching advice (p-coach-advice) ----------
+   Pooled over recent sessions rather than one run: a minute of squash yields
+   a handful of front-wall contacts, well under coaching_advice's minimum, so
+   single-run advice is nearly always "too few shots to say anything". */
+const POOLED_SESSIONS = 8;
+const ADVICE = { data:null, player:1, loading:null, error:null };
+
+async function loadCoachAdvice(){
+  if(ADVICE.loading) return ADVICE.loading;
+  ADVICE.loading = (async () => {
+    try{
+      const response = await fetch(`/api/coach/advice?sessions=${POOLED_SESSIONS}`, {cache:'no-store'});
+      if(!response.ok) throw new Error(`HTTP ${response.status}`);
+      ADVICE.data = await response.json();
+      ADVICE.error = null;
+    }catch(err){
+      ADVICE.data = null;
+      ADVICE.error = 'Coaching advice could not be loaded from the pipeline.';
+    }finally{
+      ADVICE.loading = null;
+    }
+  })();
+  return ADVICE.loading;
+}
+
+function buildCoachAdviceView(){
+  renderCoachAdvice();
+  // Always refetch on entry: a run finished since the last visit changes the
+  // advice, and the page is cheap to rebuild.
+  loadCoachAdvice().then(() => { if(S.phase === 'coach_advice') renderCoachAdvice(); });
+}
+
+function advicePlayer(){
+  return ((ADVICE.data || {}).players || [])
+    .find(entry => entry.player_number === ADVICE.player) || null;
+}
+
+function renderCoachAdvice(){
+  $('adviceSegP1').classList.toggle('active', ADVICE.player === 1);
+  $('adviceSegP2').classList.toggle('active', ADVICE.player === 2);
+  $('adviceSegP1').textContent = playerDisplayName(1);
+  $('adviceSegP2').textContent = playerDisplayName(2);
+
+  const body = $('adviceBody');
+  const player = advicePlayer();
+
+  if(ADVICE.error){
+    $('adviceHeadline').textContent = 'Coaching unavailable';
+    $('adviceMeta').textContent = ADVICE.error;
+    $('adviceCaveat').textContent = '';
+    body.innerHTML = '';
+    return;
+  }
+  if(!player){
+    $('adviceHeadline').textContent = 'Working on your coaching';
+    $('adviceMeta').textContent = 'Reading your recent sessions…';
+    $('adviceCaveat').textContent = '';
+    body.innerHTML = '';
+    return;
+  }
+
+  const data = ADVICE.data;
+  const shots = Number(player.analytics.total_wall_hits) || 0;
+  const items = (player.advice || {}).items || [];
+  $('adviceHeadline').textContent = items.length
+    ? `${items.length} thing${items.length===1?'':'s'} to work on`
+    : 'Nothing stood out';
+  $('adviceMeta').textContent =
+    `${shots} front-wall shot${shots===1?'':'s'} across ` +
+    `${data.session_count} session${data.session_count===1?'':'s'}.`;
+  // The pooling caveat is load-bearing, not a footnote: attribution is
+  // per-clip, so "Player 1" is a slot, not a person.
+  $('adviceCaveat').textContent = data.pooling_note || '';
+
+  body.innerHTML = '';
+  const note = (player.advice || {}).note;
+  if(note){
+    const line = document.createElement('p');
+    line.className = 'adviceEmpty';
+    line.textContent = note;
+    body.appendChild(line);
+  }
+  if(!items.length) return;
+
+  const list = document.createElement('div');
+  list.className = 'adviceDrills';
+  for(const item of items){
+    const card = document.createElement('div');
+    card.className = 'drillCard';
+
+    const issue = document.createElement('p');
+    issue.className = 'drillIssue';
+    issue.textContent = item.issue;
+    card.appendChild(issue);
+
+    const steps = document.createElement('ol');
+    steps.className = 'drillSteps';
+    for(const step of item.progression || []){
+      const li = document.createElement('li');
+      const stage = document.createElement('i');
+      stage.className = 'drillStage';
+      stage.textContent = step.stage;
+      const text = document.createElement('span');
+      text.textContent = step.text;
+      li.append(stage, text);
+      steps.appendChild(li);
+    }
+    card.appendChild(steps);
+    list.appendChild(card);
+  }
+  body.appendChild(list);
+}
+
+$('adviceSegP1').onclick = () => { ADVICE.player = 1; renderCoachAdvice(); };
+$('adviceSegP2').onclick = () => { ADVICE.player = 2; renderCoachAdvice(); };
 /* Analysis: one expandable card per analyzed run. */
 const COURT_THUMB ='<svg class="court" viewBox="0 0 62 46" fill="none" stroke="#fff" stroke-width="1.2" aria-hidden="true"><rect x="9" y="8" width="44" height="26" rx="1"/><path d="M9 21h44"/><path d="M9 28h44"/></svg>';
 /* thumbnail play glyph reuses the transport PLAY_ICON declared above */
