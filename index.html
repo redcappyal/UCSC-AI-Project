@@ -156,8 +156,14 @@
      content with no stage above them, and they can outgrow the viewport once
      their cards expand. main is flex:0 0 auto, so without this it simply grows
      past the bottom of a body that never scrolls, putting the overflow out of
-     reach entirely. */
-  body.phase-page main{flex:1 1 auto; min-height:0; overflow-y:auto; -webkit-overflow-scrolling:touch}
+     reach entirely.
+       overflow-x is pinned, not left off: CSS promotes the other axis from
+     visible to auto whenever one axis is auto, so overflow-y alone would make
+     every section page a horizontal scroller the moment any child pokes past
+     the 14 px gutter (§7). These pages are phone-first vertical layouts —
+     sideways page scroll is never the right answer here. */
+  body.phase-page main{flex:1 1 auto; min-height:0; overflow-y:auto; overflow-x:hidden;
+    -webkit-overflow-scrolling:touch}
   /* Keep the stage at its pre-rally-visualization size. JS measures the
      original track controls (with the rally card hidden) into this variable;
      the added card then scrolls inside the same control footprint. */
@@ -445,8 +451,12 @@
   .devRow .small{width:auto}
   .devRow{display:flex; gap:10px; align-items:center}
   #labelModeBtn.active{background:var(--accent-bg); color:var(--accent-text); font-weight:700}
-  /* content can outgrow a short phone: the section scrolls internally, never the shell */
-  body.phase-load #p-load{overflow-y:auto; min-height:0; -webkit-overflow-scrolling:touch}
+  /* content can outgrow a short phone: the section scrolls internally, never the shell.
+     overflow-x is pinned for the same reason as body.phase-page main above — the
+     Dashboard is the one section root that scrolls at the section level rather than
+     at main, and an unpinned x axis turned it into a 14 px side-scroller. */
+  body.phase-load #p-load{overflow-y:auto; overflow-x:hidden; min-height:0;
+    -webkit-overflow-scrolling:touch}
 
   /* record phase (§8.16): live camera preview in the stage + REC readout + recordings list.
      The record dot is accent yellow — red stays reserved for OUT verdicts (§5.2). */
@@ -759,10 +769,16 @@
   .btnrow label.filebtn svg{width:18px; height:18px; flex:none}
   /* section head + horizontal recommendation rail */
   .sectionhead{display:flex; align-items:baseline; justify-content:space-between; padding:4px 2px 0}
-  /* flex:none — an overflow-x:auto child of the scrolling section has a zero
-     min-content height, so without it flex squashes the rail flat */
+  /* The rail is the one thing on the Dashboard that scrolls sideways on purpose.
+     flex:none — an overflow-x:auto child of the scrolling section has a zero
+     min-content height, so without it flex squashes the rail flat.
+       No horizontal bleed: the lab original pulls itself past the page gutter with
+     a negative side margin, but here the rail sits inside #p-load, which clips it
+     back to the gutter anyway — so the margin bought no visible edge-to-edge and
+     only pushed 14 px of the page out past its own scroller. Gutter content stays
+     in the gutter (§7); the vertical values stay, they are card-shadow room. */
   .airow{display:flex; flex:none; gap:10px; overflow-x:auto; scrollbar-width:none;
-    margin:-4px -14px 0; padding:4px 14px 6px}
+    margin:-4px 0 0; padding:4px 0 6px}
   .airow::-webkit-scrollbar{display:none}
   .aicard{flex:none; width:212px; background:var(--surface); border-radius:18px;
     box-shadow:var(--shadow-card); padding:12px 14px; display:flex; flex-direction:column; gap:7px}
