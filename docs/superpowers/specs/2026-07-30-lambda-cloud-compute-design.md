@@ -111,11 +111,13 @@ implementation verifies real names on first live call.
 5. Print run id, wall time, and effective $ cost (minutes × price).
 
 ### `lambda_tunnel.sh`
-Open `ssh -N -L 5188:127.0.0.1:5188 ubuntu@<ip>` and print
-`http://localhost:5188` — the interactive (approach-C) path. Also used by
+Open `ssh -N -L 5199:127.0.0.1:5188 ubuntu@<ip>` and print
+`http://localhost:5199` — the interactive (approach-C) path. Also used by
 `lambda_run.sh` (shared helper; one tunnel at a time — the script reuses an
 existing tunnel if the port is already forwarded, and `lambda_run` must not
-kill a tunnel the user opened interactively).
+kill a tunnel the user opened interactively). Local port 5199 (not 5188) so the
+tunnel never collides with a locally running Flask; override with
+`CROSSCOURT_TUNNEL_PORT`.
 
 ### `lambda_down.sh`
 `POST /instance-operations/terminate` for the tracked instance; poll until
