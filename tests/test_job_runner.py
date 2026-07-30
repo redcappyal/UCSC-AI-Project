@@ -790,7 +790,15 @@ def test_track_segments_local_uses_manifest_confidence_floor(tmp_path, monkeypat
     job_runner.track_segments(
         object(), video, [(0, 3, 1)], 640, 30.0, {},
         on_frame=lambda idx: None, backend="rfdetr")
+    # Two distinct facts, so two assertions. The first is the wiring: rfdetr
+    # takes its floor from the module constant, not from the manifest (0.1
+    # above) and not from anything hardcoded in the branch. The second pins
+    # what that constant is worth -- on its own the wiring check passes at
+    # every possible value, so it cannot see a change to the floor, which is
+    # how 0f04bb6 dropped it to 0.20 as collateral from eval-script tuning.
+    # Keep both: neither one alone catches what the other does.
     assert floors[-1] == pytest.approx(job_runner.CONFIDENCE_THRESHOLD)
+    assert job_runner.CONFIDENCE_THRESHOLD == pytest.approx(0.40)
 
 
 def test_track_segments_local_single_frame_manifest_uses_detect_frame(tmp_path, monkeypatch):
