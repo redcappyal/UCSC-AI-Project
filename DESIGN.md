@@ -950,10 +950,17 @@ Do not reintroduce them to the UI without a deliberate DESIGN.md change.
   Analysis is a list of matches, not a stack of unrolled reports. Head row
   (`.cliptop`): 62×46 gradient thumb (hue rotates per run — the sanctioned gradient)
   with a court line-sketch + play glyph · run date 14/600 + duration `.metaline` ·
-  right-aligned `ANALYZED` `.statechip`. **The head row is the card's one action:**
+  right-aligned `ANALYZED` `.statechip` · a `.deleteRunBtn` trash icon (36 px round,
+  `--dim`, poor-tint hover). **The head row is the card's one action:**
   tapping it opens that match's analysis page, `p-match` (§16). It is a `<div>`, so it
   carries `role="button"`, `tabindex="0"` and an Enter/Space handler; without them a
-  match would be reachable by pointer only. The analysis itself (`#matchBody`) is
+  match would be reachable by pointer only. The trash button is the row's only other
+  control (it stops propagation) and deletes by the §8.16 arm pattern, never a modal:
+  first tap swaps the icon for a 12/700 "Confirm" accent pill (`.arm` — the
+  `aria-label` flips with it), which disarms back to the icon after ~2.6 s; a failed
+  delete restores the idle icon and reports through the §8.6 error banner. Native
+  `confirm()`/`alert()` cannot be used — the iOS shell's WKWebView renders no JS
+  dialogs, so they silently no-op. The analysis itself (`#matchBody`) is
   rendered on that page, in ladder order — rally structure first because it is the
   tier that always runs, ball detail last because it is the one most often gated off:
   **"Rallies"** — one full-width `.scol` tile: **Longest rally**, labeled with the

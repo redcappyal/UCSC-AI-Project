@@ -735,7 +735,8 @@
   .thumb svg{width:15px; height:15px; filter:drop-shadow(0 1px 2px rgba(0,0,0,.25))}
   .thumb .court{position:absolute; inset:0; width:100%; height:100%; opacity:.55; filter:none}
   .cliptop .info{display:flex; flex-direction:column; gap:3px; min-width:0}
-  .cliptop .name{font-size:14px; font-weight:600; letter-spacing:-.01em}
+  .cliptop .name{font-size:14px; font-weight:600; letter-spacing:-.01em;
+    white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
   .statechip{margin-left:auto; flex:none; border-radius:999px; padding:6px 11px; font-size:10px;
     font-weight:700; letter-spacing:.04em; display:inline-flex; gap:5px; align-items:center}
   .statechip.done{background:var(--accent-bg); color:var(--accent-text)}
@@ -748,6 +749,8 @@
   .deleteRunBtn:hover,.deleteRunBtn:focus-visible{background:var(--tint-poor-bg);
     color:var(--tint-poor-fg)}
   .deleteRunBtn:disabled{opacity:.45; cursor:wait}
+  .deleteRunBtn.arm{width:auto; border-radius:999px; padding:0 12px;
+    background:var(--accent-bg); color:var(--accent-text); font-size:12px; font-weight:700}
   /* The match analysis, on its own page: the same stack the card used to hold
      inline, now unclamped — <main> supplies the page padding. */
   #matchBody{display:flex; flex-direction:column; gap:14px}
@@ -7738,6 +7741,7 @@ function renderCoachHero(){
 const COURT_THUMB ='<svg class="court" viewBox="0 0 62 46" fill="none" stroke="#fff" stroke-width="1.2" aria-hidden="true"><rect x="9" y="8" width="44" height="26" rx="1"/><path d="M9 21h44"/><path d="M9 28h44"/></svg>';
 /* thumbnail play glyph reuses the transport PLAY_ICON declared above */
 const FB_NOTE_ICON ='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 8v5"/><circle cx="12" cy="16.5" r=".5" fill="currentColor"/><circle cx="12" cy="12" r="9"/></svg>';
+const TRASH_ICON ='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 10v6M14 10v6"/></svg>';
 /* ---------- report-v1 sections (capabilities, rallies, movement) ----------
    Principle 3 of the analysis design: a tier that could not run is shown
    disabled WITH ITS REASON, never omitted and never drawn as an empty result.
@@ -7825,15 +7829,7 @@ function renderClipCards(){
           <span class="statechip done">ANALYZED</span>
           <button class="deleteRunBtn" type="button" data-delete-run="${escapeHtml(id)}"
                   aria-label="Delete session ${escapeHtml(fmtRunDate(r.created))}"
-                  title="Delete session">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                 stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
-                 aria-hidden="true">
-              <path d="M3 6h18"/><path d="M8 6V4h8v2"/>
-              <path d="M19 6l-1 14H6L5 6"/>
-              <path d="M10 10v6M14 10v6"/>
-            </svg>
-          </button>
+                  title="Delete session">${TRASH_ICON}</button>
         </div>
       </div>`;
   }).join('');
@@ -7855,10 +7851,21 @@ function renderClipCards(){
 async function deleteRunSession(runId, button){
   const run = LIVE.runs.find(entry => entry.run_id === runId);
   const label = run ? fmtRunDate(run.created) : 'this session';
-  if(!window.confirm(
-    `Delete ${label}?\n\nThis permanently removes its analysis and annotations.`
-  )) return;
+  // Two-tap arm instead of a native confirm() dialog: the iOS shell's
+  // WKWebView has no dialog UI, so confirm() silently returns false there.
+  if(!button.classList.contains('arm')){
+    button.classList.add('arm');
+    button.textContent = 'Confirm';
+    button.setAttribute('aria-label', `Confirm deleting session ${label}`);
+    button.disarm = setTimeout(() => {
+      button.classList.remove('arm');
+      button.innerHTML = TRASH_ICON;
+      button.setAttribute('aria-label', `Delete session ${label}`);
+    }, 2600);
+    return;
+  }
 
+  clearTimeout(button.disarm);
   button.disabled = true;
   try{
     const response = await fetch(`/api/runs/${encodeURIComponent(runId)}`, {
@@ -7874,7 +7881,10 @@ async function deleteRunSession(runId, button){
     renderClipCards();
   }catch(error){
     button.disabled = false;
-    window.alert(error.message || 'The session could not be deleted.');
+    button.classList.remove('arm');
+    button.innerHTML = TRASH_ICON;
+    button.setAttribute('aria-label', `Delete session ${label}`);
+    showError(error.message || 'The session could not be deleted.');
   }
 }
 
