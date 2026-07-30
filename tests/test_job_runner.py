@@ -790,7 +790,7 @@ def test_track_segments_local_uses_manifest_confidence_floor(tmp_path, monkeypat
     job_runner.track_segments(
         object(), video, [(0, 3, 1)], 640, 30.0, {},
         on_frame=lambda idx: None, backend="rfdetr")
-    assert floors[-1] == pytest.approx(0.40)
+    assert floors[-1] == pytest.approx(job_runner.CONFIDENCE_THRESHOLD)
 
 
 def test_track_segments_local_single_frame_manifest_uses_detect_frame(tmp_path, monkeypatch):
