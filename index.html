@@ -1684,6 +1684,17 @@ const PAGE_PHASES = [...ROADMAP_PHASES, 'match'];
 /* Section roots: the nav pill switches between them, so they get no back chevron */
 const SECTION_ROOTS = ['load','matches','coach','progress'];
 
+/* True inside the native iOS shell. The flag rides the QUERY string
+   (?shell=1): openRunReview strips the hash before location.reload() and a
+   WKWebView process restore reloads that stripped URL, so a hash-borne flag
+   would be lost exactly when it matters — with the web nav dock reappearing
+   under the native tab bar. The hash form is still honored for links minted
+   before that move. Read once at boot; the boot URL cannot change under a
+   running page. applyDeepLink and the SHELL_TAB pin below both key off this
+   one predicate. */
+const IS_SHELL = new URLSearchParams(location.search).get('shell') === '1'
+  || new URLSearchParams(location.hash.replace(/^#/, '')).get('shell') === '1';
+
 /* Which native-shell tab this webview IS, or null outside the shell (and in
    the shell's #run review sheet). Inside the iOS app each of the four tabs is
    its own webview onto one section, but the page is one SPA whose flows jump
@@ -1699,10 +1710,8 @@ const SECTION_ROOTS = ['load','matches','coach','progress'];
    strips the hash before reloading and a process restore reloads that stripped
    URL, and a reboot without the fragment would otherwise boot as Dashboard. */
 const SHELL_TAB = (() => {
-  const hashParams = new URLSearchParams(location.hash.replace(/^#/, ''));
-  if(new URLSearchParams(location.search).get('shell') !== '1'
-     && hashParams.get('shell') !== '1') return null;
-  let t = hashParams.get('tab');
+  if(!IS_SHELL) return null;
+  let t = new URLSearchParams(location.hash.replace(/^#/, '')).get('tab');
   try{
     if(SECTION_ROOTS.includes(t)) sessionStorage.setItem('slc-shell-tab', t);
     else t = sessionStorage.getItem('slc-shell-tab');
@@ -7561,8 +7570,15 @@ async function tryRestoreSession(){
   if(!data){
     clearRestoreStash();
     if(S.phase === restRoot){
-      $('loadStatus').textContent = 'Previous session could not be restored (run is gone). Load a clip to begin.';
-      $('loadStatus').className = 'status';
+      /* #loadStatus lives in p-load, which a pinned non-Dashboard tab never
+         shows — writing there would report into a hidden element. Those tabs
+         report through the §8.6 banner instead. */
+      if(restRoot === 'load'){
+        $('loadStatus').textContent = 'Previous session could not be restored (run is gone). Load a clip to begin.';
+        $('loadStatus').className = 'status';
+      } else {
+        showError('The saved review could not be reopened — its run is gone.');
+      }
     }
     return;
   }
@@ -7587,10 +7603,15 @@ async function tryRestoreSession(){
     clearThumbCache();
     vid.src = videoUrl;
     vid.load();
-  } else {
+  } else if(restRoot === 'load'){
     $('loadStatus').textContent =
       `Restored run ${stash.run_id}, but its clip is not on the server — load ${stash.videoName || 'the same video'} to continue.`;
     $('loadStatus').className = 'status warn';
+  } else {
+    /* The manual re-pick that copy asks for is the Dashboard's file input,
+       which this pinned tab has no way to show — report what happened
+       without instructing an impossible recovery. */
+    showError(`Run ${stash.run_id} was found, but its clip is no longer on the server.`);
   }
 }
 
@@ -8191,13 +8212,9 @@ function renderProgressView(){
    tryRestoreSession does the rehydration exactly like a returning session. */
 function applyDeepLink(){
   const params = new URLSearchParams(location.hash.replace(/^#/, ''));
-  /* The shell flag rides the query string, not the hash: openRunReview strips
-     the hash before reloading, so a hash-only flag would be lost on that
-     reload (and on a WKWebView process-restore) and the web nav dock would
-     reappear under the native tab bar. The hash is still read for older
-     links. */
-  if(new URLSearchParams(location.search).get('shell') === '1'
-     || params.get('shell') === '1') document.body.classList.add('shell-embed');
+  /* Why the flag rides the query string, not the hash: see IS_SHELL,
+     declared beside SECTION_ROOTS. */
+  if(IS_SHELL) document.body.classList.add('shell-embed');
   const runId = (params.get('run') || '').trim();
   if(runId){
     try{
