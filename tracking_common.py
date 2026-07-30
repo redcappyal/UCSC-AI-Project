@@ -9,7 +9,7 @@ import math
 import cv2
 
 
-CONFIDENCE_THRESHOLD = 0.20
+CONFIDENCE_THRESHOLD = 0.40
 BALL_CLASS_NAMES = {"ball", "squash ball", "squash-ball", "squash_ball"}
 
 # The frame rate the frame-counted constants below were tuned at. Kept in step
