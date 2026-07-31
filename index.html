@@ -2179,14 +2179,30 @@ $('themeBtn').onclick = () => {
     applyTheme(next);
     return;
   }
+  /* The wipe is sized in percentages, never pixels. clip-path resolves against
+     the ::view-transition-new(root) box, and that box is not reliably viewport
+     CSS pixels: WebKit sizes the root snapshot in *device* pixels, so on a 2x
+     display a pixel circle landed at half its coordinates — emitting from the
+     middle of the screen instead of the button — and stopped at half its radius,
+     leaving the far corner unwiped until the transition ended and snapped it in
+     one frame. Percentages resolve against whatever that box is, and it is
+     always a uniform scale of the viewport, so both engines agree. A percentage
+     <shape-radius> resolves against hypot(w, h) / sqrt(2), hence the divisor.
+     clientWidth/Height, not innerWidth/Height: the snapshot is the viewport
+     *minus* classic scrollbars, which is also what getBoundingClientRect uses. */
   const b = $('themeBtn').getBoundingClientRect();
+  const w = document.documentElement.clientWidth, h = document.documentElement.clientHeight;
   const x = b.left + b.width / 2, y = b.top + b.height / 2;
-  const r = Math.hypot(Math.max(x, innerWidth - x), Math.max(y, innerHeight - y));
+  const cx = 100 * x / w, cy = 100 * y / h;
+  const r = 100 * Math.hypot(Math.max(x, w - x), Math.max(y, h - y)) / (Math.hypot(w, h) / Math.SQRT2);
+  /* ready rejects when the transition is skipped — a hidden document is enough,
+     which the section webviews hit on a tab switch. Swallow it; the theme has
+     already been applied by the callback, only the flourish is lost. */
   document.startViewTransition(() => applyTheme(next)).ready.then(() =>
     document.documentElement.animate(
-      {clipPath:[`circle(0px at ${x}px ${y}px)`, `circle(${r}px at ${x}px ${y}px)`]},
+      {clipPath:[`circle(0% at ${cx}% ${cy}%)`, `circle(${r}% at ${cx}% ${cy}%)`]},
       {duration:500, easing:'cubic-bezier(.25,0,.3,1)', pseudoElement:'::view-transition-new(root)'}
-    ));
+    ), () => {});
 };
 applyTheme(document.documentElement.dataset.theme);
 

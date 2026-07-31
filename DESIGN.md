@@ -269,8 +269,17 @@ the thing that must survive.
   on some iOS versions.
 - Film strips set `touch-action:none` and implement their own gesture handling; keep
   `cursor:grab` for desktop.
-- View Transitions for the root are disabled (`animation:none`) so theme switching is an
-  instant swap with only the sun/moon icon animating.
+- The root View Transition's *default* cross-fade is disabled (`animation:none` on
+  `::view-transition-old/new(root)`); the §10 wipe replaces it with a scripted
+  `clip-path` circle on `::view-transition-new(root)`.
+- **Size that circle in percentages, never pixels.** `clip-path` resolves against the
+  `::view-transition-new(root)` box, and that box is not reliably viewport CSS pixels —
+  WebKit sizes the root snapshot in *device* pixels. A px circle therefore landed at
+  1/dpr of its coordinates (emitting from mid-screen instead of the button) and grew to
+  1/dpr of its radius, so on a 2x display the wipe stalled at ~81 % coverage and the rest
+  snapped in one frame. Percentages resolve against whatever that box is, and it is
+  always a uniform scale of the viewport. A percentage `<shape-radius>` resolves against
+  `hypot(w, h) / sqrt(2)`.
 
 ---
 
@@ -1247,6 +1256,7 @@ play/pause) in weight and simplicity — HIG/SF-Symbols-like line style, two sha
 | Micro | `.18s ease` | progress width, small property changes |
 | Gentle | `.35s cubic-bezier(0,0,0,1)` | theme-icon mask slide |
 | Expressive | `.5s cubic-bezier(.25,0,.3,1)` (+ overshoot `cubic-bezier(.5,1.25,.75,1.25)` for beams) | theme sun/moon only |
+| Wipe | `.5s cubic-bezier(.25,0,.3,1)` | theme swap only — a `clip-path` circle on `::view-transition-new(root)` opening from the theme button until it clears the farthest corner. Percentage geometry is mandatory, see §3.5 |
 | Ambient | 1.1–1.4 s ease-in-out infinite | `analyzePulse`, `slidebar`, `floorPulse` |
 
 Rules:
