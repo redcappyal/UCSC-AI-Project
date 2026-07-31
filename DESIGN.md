@@ -454,7 +454,7 @@ rule at a time.
 | Stat numeral | 28 / 700, tabular | `.trend .val` |
 | Tile numeral | 22–24 / 700, tabular | `.stattile .sv`, `.scol .sv`, `.coachMetric span` |
 | Overlay status | 24 / 700, uppercase, tracking `.14em` | `.analyzePulse` |
-| View title | 22 / 700, tracking `-.02em` | `h2`, `.viewhead h2` |
+| View title | 22 / 700, tracking `-.02em` | `h2` — base rule, **no current user**: screen titles live in `#stepLabel` (§16) |
 | Step label | 18 / 700, tracking `-.02em` | `#stepLabel` |
 | Input value | 18 / 400, tabular | `input[type=number]` |
 | Body | 17 / 400 | default |
@@ -708,8 +708,11 @@ tokens.
 
 - line icon (§9 grammar) inside a 36 px `--bg` icon circle;
 - title 14/600 + one-line 12/400 `--dim` description;
-- right-aligned phase tag: 11/600 uppercase chip (`--bg` fill, radius 999) — `PHASE 4`,
-  `SOON`.
+- right-aligned readiness tag (`.fcTag`): 11/600 uppercase chip (`--bg` fill, radius
+  999). It carries a **readiness word the reader can act on — `Live` or `Soon`** — and
+  **never an internal phase number**. "Phase 6" named a row in our plan, not anything a
+  player can do with the card; the two words say the only thing the tag is for, which is
+  whether tapping it does something today.
 
 `:active` = instant `brightness(.97)` (0 ms, §10). The whole card is one target, ≥ 44 pt.
 
@@ -767,8 +770,8 @@ The Dashboard is the section root the app boots into. Top → bottom:
   (Sessions · Unforced errors — the share of the last match's decided rallies lost to
   an unforced error; the third slot is deliberately unassigned until the next useful
   headline metric is decided, per the 2026-07-29 metric review). `.heronote` = 12 px
-  dim-white sentence — the latest run's first coach sentences when live, honest
-  guidance copy otherwise.
+  dim-white sentence — the guidance copy shown before any run exists; hidden as
+  soon as one does.
 - **Action row** (`.btnrow`): the accent `label.filebtn` "Analyze a clip" (it *is* the
   file input, recast around the hidden `<input type=file>`). Exactly one accent action
   per screen, ever. The archived Record / Live cards (`.heroCard`, hidden) keep the old
@@ -781,6 +784,10 @@ The Dashboard is the section root the app boots into. Top → bottom:
   fill + 700, like correction chips). Browser-only: the hairline, label, and row
   all carry `.devOnly`, which `body.shell-embed` hides (§3.2). Anything added here
   takes that class too.
+
+The hero's `#heroNote` is the **empty state and nothing else**. Coach Notes owns
+coach prose on this page; both once rendered the same sentences from the same
+feedback string, stacked.
 
 All live regions render from `/api/runs` + `/api/runs/<id>/coach` (§8.20) and keep
 their markup defaults as the empty state — no fake sample data, ever.
@@ -1027,6 +1034,12 @@ at every innerHTML sink; run loading is cached per run id and refreshed on every
 entry; every surface has an honest `.emptycard` state ("No analyzed sessions yet…" /
 "Trends need at least two analyzed sessions.").
 
+**The user's unit is a session, not a run.** The Analysis root's `.viewhead` meta span
+counts sessions and singularizes at one ("1 session" / "2 sessions"). A *run* is a job
+the server executed; the reader has a match they played. The old "3 runs · live
+pipeline" spent a whole line naming our plumbing — and read "1 runs" the first time
+anyone used the app.
+
 **A run qualifies for the list on ANY tier having produced something** — never on wall
 hits. The list originally required `has_analytics` plus `total_wall_hits > 0`, which
 silently dropped exactly the clips the analysis ladder exists to serve: 30 fps
@@ -1066,19 +1079,29 @@ Do not reintroduce them to the UI without a deliberate DESIGN.md change.
   tier that always runs, ball detail last because it is the one most often gated off:
   **"Rallies"** — one full-width `.scol` tile: **Longest rally**, labeled with the
   rally number and the running score it happened at when the hit-derived rallies can
-  name it ("Longest rally · Rally 7 · at 4–3"), and a `.metaline` naming the signal it
-  came from ("From impact sounds and frame motion" / "From frame motion only — no
-  audio track"), plus a disagreement note when the timeline and the hit-derived
-  rallies differ ·
+  name it ("Longest rally · Rally 7 · at 4–3"). The signal it came from ("From impact
+  sounds and frame motion" / "From frame motion only — no audio track") and the
+  disagreement note when the timeline and the hit-derived rallies differ are
+  **provenance about a number that is shown**, so they ride in a §8.23 disclosure on
+  the *heading* — `sectionHead('Rallies', why)` — not in a `.metaline` under the tile.
+  The user-facing wording of that disagreement names ball contacts, not hits ·
   **"Movement"** — one four-tile `.scorecols` row per player (distance / On the T /
-  Front % / Back %) and a `.metaline` naming the detector backend and the fraction of
-  rally time actually observed, because a motion-blob fallback and real weights are not
-  equally trustworthy and the card must not present them as if they were ·
+  Front % / Back %), with the detector backend and the fraction of rally time actually
+  observed in the same §8.23 disclosure on the heading. A motion-blob fallback and
+  real weights are not equally trustworthy and the card must not present them as if
+  they were — but that is a caveat about numbers the card *does* show, so it sits one
+  tap away rather than spending a line under every row ·
   **ball tier, only when it ran** — two `.scol` tiles (Unforced errors / Floor
   bounces) · `.fbrow` feedback sentences ·
-  **"What this clip could measure"** — one `.fbrow` per tier, label left, `ON`/`OFF`
-  `.statechip` right, and the reason as dim `.s` text under the label when off ·
-  a dim provenance `.metaline` ("run id") ·
+  **"Not measured"** — rendered **only when a tier was gated off** (or the run is
+  legacy). One `.fbrow` per disabled tier, label left, `OFF` `.statechip` right,
+  and the `reason` as dim `.s` text under the label. When every tier ran the whole
+  section is omitted: the card exists so absence is rendered as its reason, and
+  four `ON` chips assert nothing a reader needs. The reason stays **visible body
+  text** — never behind the §8.23 disclosure ·
+  a dim provenance `.metaline` ("run id"), marked `.devOnly` — a 13-digit epoch id
+  names a job to whoever is sitting at the Mac and nothing at all to a player, so it
+  leaves the native shell with the rest of the workshop chrome ·
   one `.ghostbtn` **"Open full review"**, the only entrance to the frame-by-frame
   call page (§16, `p-track`), which owns "Watch source video". One level per screen:
   the list names the matches, this page reads the analysis, the review page judges
@@ -1182,6 +1205,28 @@ attribution observed across all 4 rallies.`; a run with no rallies hides the lin
 entirely rather than printing a zero. It takes `.warn` when any rally conflicts —
 `--text` at 700, still no red (§13) — so the loud case is loud in weight, not in hue.
 
+### 8.23 Provenance disclosure (`.whybtn` / `.whynote`)
+
+Provenance and confidence about **a number that is shown** ride behind a tap, not
+in body copy. A `.whybtn` — 15 px circled-`i`, `--dim`, inside a 44 px target
+whose negative margins keep the heading row its original height — sits at the end
+of the heading the caveat belongs to. Tapping toggles a `.whynote` (13 / `--dim` — the
+Sub-meta rung of the §6.1 ladder, same as `.metaline`)
+directly beneath. Built by `whyDisclosure(text)` / `sectionHead(label, why)`.
+
+- Collapsed by default. `aria-expanded` + `aria-controls`; glyph `aria-hidden`.
+  `aria-label="Why this number"`.
+- Plain show/hide via `.hidden`. No animation, so §10's reduced-motion rule has
+  nothing to suppress.
+- `whyDisclosure` escapes its own text — callers pass plain strings.
+- The click handler is **delegated** from `document`, because every call site
+  renders into an innerHTML sink that is rebuilt on each report load.
+- **One button per heading, never per tile.** Several facts about one section
+  concatenate into a single note.
+- **Never route a capability `reason` through this.** §8.20 requires that the
+  reason a tier could not run stay visible; hiding it re-creates the "we looked
+  and found nothing" reading that card exists to prevent.
+
 ---
 
 ## 9. Iconography
@@ -1284,6 +1329,9 @@ Copy for statuses is specific and actionable ("Tap the two ends of the out line"
 - No exclamation marks, no praise ("Great!"), no anthropomorphism. The app states facts.
   Single sanctioned exception: the "Coming soon!" hero text on roadmap placeholder pages
   (§8.14) — nowhere else.
+- **Provenance and confidence sit behind a disclosure, not in body copy** (§8.23).
+  State the fact; offer the caveat. The exception is *absence* — the reason a tier
+  could not run, or that no rallies were found, stays visible (§8.20).
 
 ---
 
@@ -1317,13 +1365,18 @@ Each phase: header shows step label + proxied primary; `#instr` gives the one-li
 | `p-track` | **Match review — Call pane.** Review track, judge calls, name the players, identify yourself | control area keeps its pre-rally-visualization height so the video stage does not shrink, floored against the stage per §3.1; the added content scrolls inside that footprint · scrub hint lives in the header `#instr` line (detection failures replace it, `.warn`) · per-rally front-wall impact mini-map · rally segmentation card (proportional neutral ribbon, active segment in accent, `attr-*` provenance states + legend §8.22; per-rally winners/scores stay backend-only per the 2026-07-29 review) · overview w/ marker minis · hit timeline (neon bars, center playhead) · readout · transport · frame input + Judge row · verdict box · Players card (two equal-width detected-player cards, each with a 4:5 crop, its own name field, and a full-width "This is me" identity button; a quiet "No photo available" placeholder preserves the pair when an old run has only one crop) · ghost "Watch source video". One pane, no switcher — the Challenge pane and its dock were archived 2026-07-29 (`archive/challenge-ui/`) | "Judge frame" |
 | `p-player1-report` / `p-player2-report` | **Match review — Player 1 / Player 2 panes.** Per-player coaching report | Player N front-wall map (§8.10 court chart + `.targetMeta`; serves excluded) · Player N report panel (§8.17, opening with the §8.22 provenance line) · Player N movement panel (§8.17: distance / position split / speeds + court heatmap) · **P1 only:** the run's floor-bounce map (§8.10 `#floorMapSvg` + `.targetMeta`) — bounces are per-run, not per-player, so the panel renders once under the first report rather than twice | — (no primary) |
 | `p-label` | Human bounce labeling | overview · label timeline · transport+zoom · 2-col type grid (dot+label) · delete (destructive = plain secondary, disabled until selection) | — |
-| `p-matches` | Analysis section root — session library | view head ("Analysis" + `n runs · live pipeline`) · one `.clipcard` per analyzed run: head row opens that match's analysis page and `.selfSelector` identifies which player is the user (§8.20) · `.emptycard` when none | — (no chevron; section root) |
-| `p-match` | **Match analysis.** One analyzed match, read end to end | view head (match date + duration) · `#matchBody`: the §8.20 analysis stack (Rallies · Movement · ball tier when it ran · "What this clip could measure" · provenance line) · ghost "Open full review" · `.emptycard` when the run is gone | — (back chevron only, like the review panes; the native shell hides its tab bar and settings gear here, §3.2) |
-| `p-coach` | Training section root (hub) | view head · three feature cards (§8.13), including the live Your coach entry | — (no chevron; section root) |
-| `p-coach-advice` | Your coach — Ollama feedback and drills from the user's identified match history | provenance card (counts + source statement) · chronological observations · drill cards (§8.13a) | — (back chevron → Training hub) |
-| `p-progress` | Progress section root — personal cross-session trends | view head · range `.seg` · delta strip · trend cards · best-mark card (§8.20) · `.emptycard` under two identified runs | — (no chevron; section root) |
+| `p-matches` | Analysis section root — session library | view head (`n runs · live pipeline` meta only) · one `.clipcard` per analyzed run: head row opens that match's analysis page and `.selfSelector` identifies which player is the user (§8.20) · `.emptycard` when none | — (no chevron; section root) |
+| `p-match` | **Match analysis.** One analyzed match, read end to end | view head (clip duration only — the match date is the header label) · `#matchBody`: the §8.20 analysis stack (Rallies · Movement · ball tier when it ran · "Not measured", only when a tier was gated off · provenance line) · ghost "Open full review" · `.emptycard` when the run is gone | — (back chevron only, like the review panes; the native shell hides its tab bar and settings gear here, §3.2) |
+| `p-coach` | Training section root (hub) | three feature cards (§8.13), including the live Your coach entry — no view head, it held only the title | — (no chevron; section root) |
+| `p-coach-advice` | Your coach — Ollama feedback and drills from the user's identified match history | headline card — the coach's own headline, with the shot/session counts, the reading order and the pooling caveat behind one §8.23 disclosure on it; a failure state keeps its reason as visible `.whynote` body copy · chronological observations · drill cards (§8.13a) | — (back chevron → Training hub) |
+| `p-progress` | Progress section root — personal cross-session trends | range `.seg` (no view head, it held only the title) · delta strip · trend cards · best-mark card (§8.20) · `.emptycard` under two identified runs | — (no chevron; section root) |
 | `p-live` | Placeholder: live match | placeholder hero · Planned card (§8.14) | — (back chevron only) |
-| `p-stats` | Personal training stats pooled across identified runs | view head · personal metric card · target summary · source statement | — (back chevron only) |
+| `p-stats` | Personal training stats pooled across identified runs | view head (pooled-session meta only) · personal metric card · target summary · source statement | — (back chevron only) |
+
+Section roots and their leaves carry **no in-page `<h2>`** — `#stepLabel` (an
+`<h1>`) is the screen's only title, as `p-load` has always done. A `.viewhead`
+survives only where it lays out a dim meta span carrying something the header
+does not say (session count, clip duration).
 
 **The match review page.** `p-track` + `p-player1-report` + `p-player2-report` are one
 page in three panes (§3.3), reached only by finishing an analysis or by opening a match

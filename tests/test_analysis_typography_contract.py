@@ -7,7 +7,6 @@ INDEX_HTML = (
 
 
 def test_analysis_session_list_uses_larger_scoped_typography():
-    assert "#p-matches .viewhead h2{font-size:26px}" in INDEX_HTML
     assert "#p-matches .viewhead .dim{font-size:15px}" in INDEX_HTML
     assert "#p-matches .cliptop .name{font-size:18px}" in INDEX_HTML
     assert "#p-matches .cliptop .metaline{font-size:15px}" in INDEX_HTML

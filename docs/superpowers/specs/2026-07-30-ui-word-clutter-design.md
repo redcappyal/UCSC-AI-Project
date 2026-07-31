@@ -10,7 +10,9 @@ screen. Four distinct kinds of clutter, found by touring every root and leaf at 
 viewport:
 
 1. **Every section root titles itself twice.** `#stepLabel` in the header and a `<h2>` in
-   the section's `.viewhead` render the same word, ~50 px apart.
+   the section's `.viewhead` render the same word, ~50 px apart. On `p-stats` the two
+   copies do not even agree: the header says "Stats + trends" and the page says
+   "Your stats".
 2. **Internal vocabulary is on the user's screen.** Run ids, `live pipeline`, detector
    backend names, roadmap phase numbers, a capability inventory shown even when every
    tier ran.
@@ -56,37 +58,59 @@ modal, and §8.20 records that WKWebView renders no JS dialogs inside the iOS sh
 
 ### 1. Titles (`index.html`)
 
-| Site | Change |
+Sites are given as **content anchors, not line numbers** — `index.html` moved ~30 lines
+mid-design when `bf15df4` landed, and will move again.
+
+| Anchor | Change |
 |---|---|
-| `index.html:885` | `#stepLabel` `<div>` → `<h1>`. Id selector, so styling is unaffected; gives each phase exactly one heading. |
-| `index.html:1461` (`p-matches`) | Drop `<h2>Analysis</h2>`; keep `#clipMeta`. |
-| `index.html:1473` (`p-match`) | Drop `<h2 id="matchTitle">`; keep `#matchMeta` (duration is new information). Remove the now-dead `matchTitle` write. |
-| `index.html:1484` (`p-coach`) | Drop `<h2>Training</h2>`, leaving an empty `.viewhead` — remove the wrapper too. |
-| `index.html:1582` (`p-progress`) | Same as `p-coach`. |
+| `<div id="stepLabel">` | → `<h1 id="stepLabel">`. Id selector, so styling is unaffected; gives each phase exactly one heading. |
+| `p-matches` `<h2>Analysis</h2>` | Drop; keep the `#clipMeta` span. |
+| `p-match` `<h2 id="matchTitle">Match</h2>` | Drop; keep `#matchMeta` (duration is new information). Remove the now-dead `matchTitle` write. |
+| `p-coach` `<div class="viewhead"><h2>Training</h2></div>` | Drop the whole wrapper — nothing else is in it. |
+| `p-progress` `<div class="viewhead"><h2>Progress</h2></div>` | Same. |
+| `p-stats` `<h2>Your stats</h2>` | Drop; keep the `#trainingStatsMeta` span. |
 
-`stepLabelFor()` and `matchDetailLabel()` are unchanged — the header already carries the
-right string for every one of these phases.
+**`p-stats` is a name conflict, not just a duplicate.** `bf15df4` turned it from a roadmap
+placeholder into a live page titled "Your stats", but left `STEP_META.stats.label` as
+`'Stats + trends'`. The header and the page therefore call the same screen two different
+names, stacked. Fix `STEP_META.stats.label` to `'Your stats'` so the surviving header
+title is the right one. The Training hub card that opens it says "Your stats" too, so
+three surfaces agree afterwards.
 
-CSS to retire once the last `.viewhead h2` is gone: `index.html:802` and `:852`.
+`stepLabelFor()` and `matchDetailLabel()` are otherwise unchanged — the header already
+carries the right string for every one of these phases.
+
+CSS to retire once the last `.viewhead h2` is gone: the `#p-matches .viewhead h2` and
+`.viewhead h2` rules. `.viewhead` itself stays — `p-matches`, `p-match` and `p-stats`
+still use it to lay out their meta span.
 
 ### 2. Dashboard repeats (`index.html`)
 
-- `index.html:8066` — remove `if(note) $('heroNote').textContent = note;`, and hide
-  `#heroNote` whenever `LIVE.runs.length` is non-zero.
-- `index.html:984` — `#heroNote`'s markup default is the **empty state** and stays, but
-  loses its internal vocabulary: "…and the pipeline turns it into…" → wording that does
-  not name the pipeline.
+- In `renderDashboardLive()` — remove `if(note) $('heroNote').textContent = note;`, and
+  hide `#heroNote` whenever `LIVE.runs.length` is non-zero.
+- `#heroNote`'s markup default is the **empty state** and stays, but loses its internal
+  vocabulary: "…and the pipeline turns it into calls, stats, and coaching" → wording that
+  does not name the pipeline.
 - `renderCoachNotes()` is unchanged and becomes the only renderer of coach prose on the
   Dashboard.
 
 ### 3. Internal vocabulary
 
-| Site | Before | After |
+| Anchor | Before | After |
 |---|---|---|
-| `index.html:8184` | `${n} runs · live pipeline` | `${n} session(s)` |
-| `index.html:8302` | `run <id>` `.metaline` | same text, wrapped in `.devOnly` |
-| `index.html:1509, 1516, 1523` | `.fcTag` `Phase 4/5/6` | `Soon` |
-| `index.html:8300` | section title `What this clip could measure` | `Not measured` |
+| `$('clipMeta').textContent` | `${n} runs · live pipeline` | `${n} session(s)` |
+| run-id `.metaline` in the match report | `run <id>` | same text, wrapped in `.devOnly` |
+| `.fcTag` on the Training hub | `Phase 5`, `Phase 6` | `Soon` |
+| capability card title | `What this clip could measure` | `Not measured` |
+| `p-stats` feature-card subtitle | `Your shots and patterns across identified sessions` | shortened until it stops ellipsizing at 375 px |
+
+The `.fcTag` change is now only two cards: `bf15df4` already replaced the Phase 4 tag with
+`Live` when it shipped "Your stats", and a `Soon` tag exists elsewhere in the file, so this
+follows precedent rather than inventing a word.
+
+The `p-stats` subtitle currently truncates mid-word on the Training hub
+("Your shots and patterns across ident…"), which is word clutter causing real information
+loss — the one case in this pass where cutting words *adds* information.
 
 **Capability card gating.** The `What this clip could measure` block currently renders one
 row per tier with an `ON`/`OFF` chip, always. Change it to render **only when at least one
@@ -102,33 +126,46 @@ doing so would breach §8.20.
 
 | Screen | Heading carrying the `i` | Text moved into `.whynote` |
 |---|---|---|
-| `p-match` Rallies | `Rallies` | `index.html:8158` — signal source, plus the disagreement note when `agrees_with_hits === false`. Reword `hit-derived rallies`, which is pipeline jargon. |
-| `p-match` Movement | `Movement` | `index.html:8174` — `Detector: <backend> · <n>% of rally time observed` |
-| `p-coach-advice` | `#adviceHeadline` ("4 things to work on") | All three of: `#adviceMeta` (`index.html:8062`), `#adviceCaveat` / `pooling_note` (`app.py:1725`), and `player.advice.note` (`coaching_advice.py:446`) |
-| Movement heatmap | — | `index.html:5881` splits: the legend sentence ("Where <player> stood during rallies — stronger color means more time") stays visible; the trailing `Detector: <backend>.` moves into the section's `.whynote`. |
+| `p-match` Rallies | `Rallies` | The `rallySection` `.metaline` — signal source, plus the disagreement note when `agrees_with_hits === false`. Reword `hit-derived rallies`, which is pipeline jargon. |
+| `p-match` Movement | `Movement` | The movement `.metaline` — `Detector: <backend> · <n>% of rally time observed` |
+| `p-coach-advice` | `#adviceHeadline` ("4 things to work on") | All three of: `#adviceMeta`, `#adviceCaveat` (fed by `me_pooling_note`), and `player.advice.note` from `coaching_advice.py` |
+| Movement heatmap | — | The `renderPlayerMovement` note splits: the legend sentence ("Where <player> stood during rallies — stronger color means more time") stays visible; the trailing `Detector: <backend>.` moves into the section's `.whynote`. |
+
+**`#adviceHeadline` has four states**, and the `.whybtn` belongs to only one of them.
+`renderAdvice` sets it to `'Coaching unavailable'` (error), `'Working on your coaching'`
+(loading), `'Tell us which player is you'` (no identified session), and only then
+`'N things to work on'`. The button renders in the last state alone; the other three have
+no provenance to offer and must not grow a dead control.
 
 On `p-coach-advice` the `#adviceProvenance` card is kept as the container: it holds
 `#adviceHeadline` with its `.whybtn`, and the collapsed `.whynote` replaces the
 `#adviceMeta` / `#adviceCaveat` paragraph pair. Collapsed, the card is one line.
 
-The pooling caveat carries a code comment marking it load-bearing ("attribution is
-per-clip, so 'Player 1' is a slot, not a person"). Its `.whybtn` sits on the advice
-headline, immediately under the Player 1 / Player 2 segment it qualifies — the point of
-use, not a footer.
+The pooling caveat is load-bearing — a code comment in `app.py` marks it so. Its `.whybtn`
+sits on the advice headline, immediately under the Player 1 / Player 2 segment it
+qualifies — the point of use, not a footer.
 
-`index.html:5854` (`<n>% of rally time observed`) is a separate call site from `:8174`;
-both feed the same `.whynote` copy and change together.
+There are **two** call sites rendering `<n>% of rally time observed` (one in
+`renderPlayerMovement`, one in the match report's movement section). Both feed the same
+`.whynote` copy and change together.
 
 ### 5. Backend strings
 
-- `app.py:1725–1731` — `pooling_note` keeps its meaning but is rewritten for a disclosure
-  panel rather than a paragraph: shorter, no "Pooled across your last N sessions"
-  preamble restating what `#adviceMeta` already says.
-- `coaching_advice.py:446–449` — the `total < 20` note merges into the same disclosure
-  text instead of rendering as a standalone `.adviceEmpty` line. The `not items` branch
-  ("No clear weakness stood out…") is a **result**, not a hedge, and stays as body copy.
+- `coaching_advice.py` — the `total < 20` note ("Based on N front-wall shots, so treat
+  this as a pointer rather than a verdict") merges into the disclosure text instead of
+  rendering as a standalone `.adviceEmpty` line. The `not items` branch ("No clear
+  weakness stood out…") is a **result**, not a hedge, and stays as body copy.
+- `app.py` `me_pooling_note` — already short after `bf15df4` ("Built from N identified
+  sessions. Only matches where you selected your player are included."). It moves behind
+  the disclosure unchanged; no rewrite needed.
 
-Both are consumed by the iOS webviews as well as the web UI; neither has a native-side
+**`app.py`'s older `pooling_note` field is left alone.** `bf15df4` switched the UI to
+`me_pooling_note`, so nothing renders `pooling_note` any more, but it is still returned by
+`/api/coach/advice` and pinned by `tests/test_pooled_coach_advice.py` (`assert "served
+first" in body["pooling_note"]`). Removing it is a separate decision about a public API
+field, not part of a copy pass.
+
+These are consumed by the iOS webviews as well as the web UI; neither has a native-side
 copy to keep in sync.
 
 ### 6. DESIGN.md

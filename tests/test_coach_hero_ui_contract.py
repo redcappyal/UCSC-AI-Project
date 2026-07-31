@@ -46,8 +46,10 @@ def test_the_advice_page_is_a_scrollable_leaf_off_the_training_hub():
 def test_the_advice_page_uses_ollama_history_output():
     assert "/api/coach/advice?sessions=${POOLED_SESSIONS}" in INDEX_HTML
     assert "const coach = ADVICE.data.coach;" in INDEX_HTML
-    assert "'Ollama reviewed those matches from oldest to newest. '" in INDEX_HTML
+    assert "'Ollama reviewed those matches from oldest to newest.'," in INDEX_HTML
     assert "no rule-based advice was substituted" in INDEX_HTML
+    # The pooling caveat now rides in the §8.23 disclosure on the headline.
+    assert "ADVICE.data.me_pooling_note || ''," in INDEX_HTML
 
 
 def test_design_md_documents_the_single_your_coach_destination():

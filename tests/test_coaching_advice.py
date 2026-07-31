@@ -188,10 +188,13 @@ def test_advice_is_capped_and_ordered_by_priority():
 
 
 def test_small_but_usable_sample_is_flagged_as_a_pointer():
+    # The hedge is provenance, so it rides in the disclosure field, not in the
+    # note the page renders as body copy.
     result = player_advice(player(total_wall_hits=8, average_wall_height_ft=13.0))
 
     assert result["items"]
-    assert "pointer" in result["note"]
+    assert result["note"] is None
+    assert "pointer" in result["low_sample_note"]
 
 
 def test_missing_metrics_do_not_crash():
