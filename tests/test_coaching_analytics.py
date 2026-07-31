@@ -710,3 +710,126 @@ def test_coach_route_displays_llm_feedback_and_drills_for_each_player(tmp_path, 
     assert "Drill: Width under pressure" in payload["player_feedback"]["1"]
     assert "Goal: Land at least 7 of 10" in payload["player_feedback"]["1"]
     assert "Drill: Safe attacking targets" in payload["player_feedback"]["2"]
+
+
+# --- coaching prompt contract ------------------------------------------------
+# Every assertion below is a rule a local 4B model was measured breaking on real
+# analytics (see coach_llm/README.md). They are pinned here because the prompt is
+# the only thing standing between that model and the Coach tab.
+
+
+def test_the_system_prompt_is_the_one_coaching_messages_sends():
+    from app import COACH_SYSTEM_PROMPT, coaching_messages
+
+    messages = coaching_messages({"players": [{"player_number": 1}]})
+
+    assert messages[0]["role"] == "system"
+    assert messages[0]["content"] == COACH_SYSTEM_PROMPT
+    assert messages[-1]["role"] == "user"
+
+
+def test_the_prompt_forbids_inventing_what_the_pipeline_cannot_see():
+    from app import COACH_SYSTEM_PROMPT
+
+    # "indicating reduced power transfer" and "from 10 feet away" both reached a
+    # rendered report before these two sentences existed.
+    assert "never invent a drill setup" in COACH_SYSTEM_PROMPT
+    assert "Never invent shot types, technique, handedness" in COACH_SYSTEM_PROMPT
+
+
+def test_the_prompt_states_both_sample_size_gates():
+    from app import COACH_SYSTEM_PROMPT
+
+    # coaching_advice.MIN_HITS_FOR_ADVICE is 6, and its low_sample_note fires
+    # under 20. The narration has to hedge on the same boundaries the
+    # deterministic advice does, or one half of the screen contradicts the other.
+    assert "Under 6 shots analyzed" in COACH_SYSTEM_PROMPT
+    assert "Under 20" in COACH_SYSTEM_PROMPT
+    assert "0% or 100%" in COACH_SYSTEM_PROMPT
+
+
+def test_the_prompt_keeps_pace_and_height_off_the_headline():
+    from app import COACH_SYSTEM_PROMPT
+
+    # The 2026-07-29 metric review took IN%, pace and height off the UI while
+    # leaving them in the analytics payload, so the model still sees them.
+    assert "never headline them" in COACH_SYSTEM_PROMPT
+    assert "never set a drill goal in mph" in COACH_SYSTEM_PROMPT
+
+
+def test_the_prompt_carries_the_drill_progression_and_the_house_voice():
+    from app import COACH_SYSTEM_PROMPT
+
+    for stage in ("Solo", "Drills", "Conditioned games", "Matchplay"):
+        assert stage in COACH_SYSTEM_PROMPT
+    # DESIGN.md 14: no praise, no exclamation marks, exact domain terms.
+    assert "No exclamation marks, no praise" in COACH_SYSTEM_PROMPT
+    assert '"shots analyzed", never "front-wall hits"' in COACH_SYSTEM_PROMPT
+
+
+# --- vocabulary and hedge enforcement ----------------------------------------
+# The prompt asks for both of these and qwen3:4b ignores both, so they are
+# enforced after the model has spoken rather than requested before.
+
+
+def test_wall_hits_is_rewritten_wherever_the_model_puts_it():
+    from app import parse_llm_coaching_report
+
+    report = parse_llm_coaching_report(json.dumps({
+        "summary": "Player 1 led on 12 wall hits.",
+        "players": {
+            "1": {
+                "observations": [
+                    "Wall hits were 12 in total.",
+                    "Player 1 had 3 front-wall hits on the left.",
+                ],
+                "drill_name": "Solo drives",
+                "drill_instructions": "Ten wall hits to zone 2.",
+                "drill_goal": "One wall hit in three lands low.",
+            },
+            "2": {
+                "observations": ["Nine front wall hits."],
+                "drill_name": "Boast and lob",
+                "drill_instructions": "Ten lobs.",
+                "drill_goal": "Seven land behind the service box.",
+            },
+        },
+    }))
+
+    assert report["summary"] == "Player 1 led on 12 shots analyzed."
+    # Sentence case survives the substitution; the singular stays singular.
+    assert report["players"]["1"]["observations"][0] == "Shots analyzed were 12 in total."
+    assert report["players"]["1"]["observations"][1].endswith("3 shots analyzed on the left.")
+    assert report["players"]["1"]["drill_goal"] == "One shot analyzed in three lands low."
+    assert report["players"]["2"]["observations"] == ["Nine shots analyzed."]
+
+
+def test_wall_height_survives_the_vocabulary_pass():
+    from app import enforce_coach_vocabulary
+
+    # "wall height" and "front-wall contact" share a prefix with the term being
+    # replaced and must not be touched.
+    assert enforce_coach_vocabulary("Average wall height was 8.4 ft.") == (
+        "Average wall height was 8.4 ft."
+    )
+    assert enforce_coach_vocabulary("Speed at front-wall contact.") == (
+        "Speed at front-wall contact."
+    )
+
+
+def test_a_thin_sample_is_hedged_even_when_nothing_stood_out():
+    from coaching_advice import player_advice
+
+    # The if/elif this replaced dropped the hedge exactly here: no weakness
+    # found, nine shots, and the narration beside it still quoting them flat.
+    result = player_advice({
+        "total_wall_hits": 9,
+        "mid_target_rate": 60.0,
+        "side_target_rate": 60.0,
+        "low_target_rate": 20.0,
+        "high_target_rate": 10.0,
+    })
+
+    assert result["items"] == []
+    assert result["note"] is not None
+    assert "9 shots analyzed" in result["low_sample_note"]

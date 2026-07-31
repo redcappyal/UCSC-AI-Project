@@ -608,6 +608,10 @@
   .coachOutcomeSection .coachMetrics{grid-template-columns:1fr; padding:10px}
   .coachOutcomeEmpty{padding:14px 12px; color:var(--dim); font-size:14px; line-height:1.4}
   .coachFeedback{padding:12px 14px; border-top:1px solid var(--line); font-size:17px; line-height:1.45; white-space:pre-wrap}
+  /* Sample-size hedge behind the player report heading's disclosure (§8.23).
+     Collapsed it is a hidden child, so the row costs nothing until tapped. */
+  .coachHedge{padding:0 14px}
+  .coachHedge .whynote{margin:10px 0 0}
   /* Drill progressions: one card per weakness, four ordered stages inside. */
   .coachDrills{padding:0 14px 14px}
   .coachDrills:empty{display:none}
@@ -1404,7 +1408,7 @@
     </div>
     <div class="targetZones hidden coachPlayerPanel" id="coachPanelP1">
       <div class="targetHead">
-        <strong id="coachTitleP1">Player 1 report</strong>
+        <strong class="whyhead" id="coachTitleP1">Player 1 report</strong>
         <div class="coachSourceActions">
           <span id="coachSourceP1"></span>
           <button class="coachRetryBtn hidden" type="button" id="coachRetryP1">
@@ -1412,6 +1416,7 @@
           </button>
         </div>
       </div>
+      <div class="coachHedge" id="coachHedgeP1"></div>
       <p class="attrProvenance hidden" id="coachProvenanceP1"></p>
       <div class="coachIntro" id="coachIntroP1"></div>
       <div class="coachMetrics" id="coachMetricsP1"></div>
@@ -1473,7 +1478,7 @@
     </div>
     <div class="targetZones hidden coachPlayerPanel" id="coachPanelP2">
       <div class="targetHead">
-        <strong id="coachTitleP2">Player 2 report</strong>
+        <strong class="whyhead" id="coachTitleP2">Player 2 report</strong>
         <div class="coachSourceActions">
           <span id="coachSourceP2"></span>
           <button class="coachRetryBtn hidden" type="button" id="coachRetryP2">
@@ -1481,6 +1486,7 @@
           </button>
         </div>
       </div>
+      <div class="coachHedge" id="coachHedgeP2"></div>
       <p class="attrProvenance hidden" id="coachProvenanceP2"></p>
       <div class="coachIntro" id="coachIntroP2"></div>
       <div class="coachMetrics" id="coachMetricsP2"></div>
@@ -6188,7 +6194,22 @@ function renderPlayerCoachPanel(data, playerNumber, sourceText){
   const feedback = data.player_feedback && data.player_feedback[String(playerNumber)];
   $(`coachFeedbackP${playerNumber}`).textContent =
     feedback || `${player.label}: no player-specific coaching feedback is available yet.`;
-  renderCoachDrills(data.player_drills && data.player_drills[String(playerNumber)], playerNumber);
+  const advice = data.player_drills && data.player_drills[String(playerNumber)];
+  renderCoachDrills(advice, playerNumber);
+  renderCoachHedge(advice, playerNumber);
+}
+
+/* Sample-size hedge (§8.23). How many shots a report rests on qualifies every
+   number on the panel — the tiles, the drills, and the LLM narration, which
+   quotes those numbers flat no matter how the prompt is worded. So it hangs
+   off the panel heading rather than any one tile, and rides behind the tap
+   rather than in body copy. No hedge, no button: whyDisclosure returns empty
+   strings for empty text. */
+function renderCoachHedge(advice, playerNumber){
+  const d = whyDisclosure(advice && advice.low_sample_note);
+  $(`coachTitleP${playerNumber}`).innerHTML =
+    escapeHtml(`${playerDisplayName(playerNumber)} report`) + d.btn;
+  $(`coachHedgeP${playerNumber}`).innerHTML = d.note;
 }
 
 /* Drill progressions under the metrics: one card per weakness, each walking

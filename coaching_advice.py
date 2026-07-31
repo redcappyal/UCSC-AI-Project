@@ -33,6 +33,9 @@ UNFORCED_ERROR_PCT_HIGH = 50.0
 
 # Below this many analyzed shots the rates are noise, so advice is withheld.
 MIN_HITS_FOR_ADVICE = 6
+# Above MIN_HITS_FOR_ADVICE but below this, the rates are usable but thin, so
+# everything on the panel carries a sample-size hedge (DESIGN.md 8.23).
+LOW_SAMPLE_HITS = 20
 # Advice items returned at most, highest priority first.
 MAX_ADVICE_ITEMS = 4
 
@@ -440,13 +443,19 @@ def player_advice(player_analytics):
     # `note` is a result the page renders as body copy; `low_sample_note` is a
     # hedge about a number that IS shown, so it rides behind the UI's
     # provenance disclosure (DESIGN.md 8.23) instead.
+    #
+    # The two are independent. They used to be an if/elif, which dropped the
+    # hedge exactly when no weakness stood out -- but "nothing stood out" off
+    # nine shots is the reading most in need of one, and the LLM narration
+    # beside it still quotes those numbers flat. Sample size qualifies every
+    # number on the panel, so it is decided on its own.
     note = None
-    low_sample_note = None
     if not items:
         note = (
             "No clear weakness stood out in this clip — shot height, width and "
             "pace were all inside the expected range."
         )
-    elif total < 20:
-        low_sample_note = f"Based on {total} front-wall shots, so read it as a pointer."
+    low_sample_note = None
+    if total < LOW_SAMPLE_HITS:
+        low_sample_note = f"Based on {total} shots analyzed, so read it as a pointer."
     return {"items": items, "note": note, "low_sample_note": low_sample_note}

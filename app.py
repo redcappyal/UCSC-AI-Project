@@ -2,6 +2,7 @@ import hashlib
 import json
 import math
 import os
+import re
 import shutil
 import threading
 import time
@@ -787,6 +788,53 @@ def openai_coach_response_format():
     }
 
 
+# The prompt asks for "shots analyzed" twice, in two sections, and qwen3:4b
+# still writes "wall hits" in most reports. A rule a model ignores is not a
+# rule, so the wording is corrected on the way out instead of asked for -- the
+# user-facing term is settled (compact_coaching_analytics already ships
+# `total_wall_hits_means: "shots analyzed"` in its notes) and a substitution
+# cannot regress the way a prompt tweak can.
+COACH_VOCABULARY = (
+    (re.compile(r"\bfront[- ]wall hits\b", re.IGNORECASE), "shots analyzed"),
+    (re.compile(r"\bfront[- ]wall hit\b", re.IGNORECASE), "shot analyzed"),
+    (re.compile(r"\bwall hits\b", re.IGNORECASE), "shots analyzed"),
+    (re.compile(r"\bwall hit\b", re.IGNORECASE), "shot analyzed"),
+)
+
+
+def enforce_coach_vocabulary(value):
+    """House vocabulary applied to one model-written string.
+
+    Leaves non-strings alone so it can be mapped over a parsed report without
+    the caller sorting types first. Sentence case is preserved: a match that
+    started a sentence keeps its capital.
+    """
+    if not isinstance(value, str):
+        return value
+    for pattern, replacement in COACH_VOCABULARY:
+        value = pattern.sub(
+            lambda match: (
+                replacement[:1].upper() + replacement[1:]
+                if match.group(0)[:1].isupper()
+                else replacement
+            ),
+            value,
+        )
+    return value
+
+
+def enforce_report_vocabulary(report):
+    """enforce_coach_vocabulary over every string in a parsed report.
+
+    Walks values only -- keys are ours, not the model's.
+    """
+    if isinstance(report, dict):
+        return {key: enforce_report_vocabulary(value) for key, value in report.items()}
+    if isinstance(report, list):
+        return [enforce_report_vocabulary(item) for item in report]
+    return enforce_coach_vocabulary(report)
+
+
 def parse_llm_coaching_report(text):
     if not text:
         return None
@@ -814,7 +862,7 @@ def parse_llm_coaching_report(text):
         for key in ("drill_name", "drill_instructions", "drill_goal"):
             if not isinstance(player.get(key), str) or not player[key].strip():
                 return None
-    return report
+    return enforce_report_vocabulary(report)
 
 
 def format_llm_player_feedback(player_report):
@@ -920,27 +968,70 @@ def compact_coaching_analytics(analytics):
     }
 
 
+# The always-run coaching prompt. Every rule below is here because a local 4B
+# model broke it on real analytics -- it invented technique it could not see
+# ("reduced power transfer"), invented drill setups ("from 10 feet away"), wrote
+# goals in mph, and praised a 0% error rate off nine shots. Tune it against a
+# stored run with `coach_llm/try_coach.py` before editing, and keep
+# `coach_llm/Modelfile` in step so the two surfaces stay comparable.
+COACH_SYSTEM_PROMPT = """\
+You are a practical squash coach reading one session's automated match analytics.
+
+WHAT YOU ARE READING
+The numbers come from a computer-vision pipeline that watched one clip. It measured
+where the ball struck the front wall, where it bounced on the floor, who hit it, and
+who lost each rally. It did not see technique, grip, footwork quality, shot selection,
+or handedness. Never invent shot types, technique, handedness, or court movement the
+data does not measure, and never invent a drill setup -- no distances, targets or
+equipment that are not in the analytics.
+
+COURT FACTS
+Tin 1.6 ft, service line 5.8 ft, out line 15.0 ft above the floor. The front wall is a
+3x3 zone map: zones 1-3 are the left column, 4-6 the centre, 7-9 the right, and within
+each column the rows run lob height, driving height, low. Zone 2 is driving height on
+the left; zone 6 is low through the middle. A missing zone means no shot reached that
+area of the front wall.
+
+WHICH METRICS MAY LEAD
+Lead with unforced errors, front-wall zone coverage and court movement -- what the
+player is shown and can act on. Front-wall height, pace, exit speed, velocity change
+and IN percentage are diagnostic support: cite them to explain an error or zone
+pattern, but never headline them and never set a drill goal in mph. Wall height means
+where the ball struck the front wall; pace is estimated ball speed around front-wall
+contact.
+
+SAMPLE DISCIPLINE
+Under 6 shots analyzed, give no advice and say the sample is too small. Under 20,
+say plainly that it is a pointer rather than a verdict. Never present a 0% or 100%
+rate from a small sample as a strength.
+
+WHAT TO WRITE
+Two concise observations per player, then one drill with a clear setup, repetitions or
+duration, and a measurable goal. Cite numeric metrics when available. Compare
+winning-rally and losing-rally analytics when both samples exist, and highlight useful
+differences without claiming they caused the result. Keep each player's observations
+about that player's own measurements; reserve cross-player comparisons for the
+one-sentence summary, and check the numeric direction of every comparison.
+
+DRILLS
+Name a stage from this progression: Solo (groove it alone), Drills (with a partner,
+off a moving ball), Conditioned games (a rule that forces the shot under pressure),
+Matchplay. Use drills a player can walk onto a court and do -- solo drives, rotating
+drives, boast and drive, boast and lob, drop and drive, length game, short game, deep
+game -- and state the goal in shots landed or rallies won.
+
+VOICE
+Calm, terse, factual. No exclamation marks, no praise, no encouragement. Use the domain
+terms exactly: out line, tin, service line, front wall, side wall, floor, rally, bounce.
+Say "shots analyzed", never "front-wall hits". State the fact and stop."""
+
+
 def coaching_messages(analytics):
     coaching_analytics = compact_coaching_analytics(analytics)
     return [
         {
             "role": "system",
-            "content": (
-                "You are a practical squash coach. Analyze only the supplied automated "
-                "match analytics and never invent shot types, technique, handedness, or "
-                "court movement that the data does not measure. Give each player two "
-                "concise observations, followed by one personalized drill with a clear "
-                "setup, repetitions or duration, and a measurable goal. Cite numeric "
-                "metrics when available. If a player's sample is small, say so plainly. "
-                "Compare winning-rally and losing-rally analytics when both samples exist, "
-                "and highlight useful differences without claiming they caused the result. "
-                "Keep each player's observations about that player's own measurements; "
-                "reserve cross-player comparisons for the one-sentence summary, and check "
-                "the numeric direction of every comparison. "
-                "Use 'shots analyzed' instead of 'front-wall hits'. Wall height means "
-                "where the ball struck the front wall; pace is estimated ball speed "
-                "around front-wall contact."
-            ),
+            "content": COACH_SYSTEM_PROMPT,
         },
         {
             "role": "user",
@@ -2041,7 +2132,7 @@ def parse_multi_match_coach_report(text):
             for key in drill_fields
         ):
             return None
-    return report
+    return enforce_report_vocabulary(report)
 
 
 def identified_player_match_history(runs):

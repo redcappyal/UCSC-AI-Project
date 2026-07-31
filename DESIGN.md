@@ -1232,6 +1232,12 @@ directly beneath. Built by `whyDisclosure(text)` / `sectionHead(label, why)`.
   renders into an innerHTML sink that is rebuilt on each report load.
 - **One button per heading, never per tile.** Several facts about one section
   concatenate into a single note.
+- **Player report panel** (`#coachTitleP*` / `.coachHedge`): the sample-size hedge
+  from `coaching_advice.low_sample_note` hangs off the "Player N report" heading,
+  because the shot count qualifies every number below it — the tiles, the drills,
+  and the LLM narration, which quotes those numbers flat however the prompt is
+  worded. Present whenever fewer than `LOW_SAMPLE_HITS` (20) shots were analyzed,
+  including when no weakness stood out; that reading is the one most in need of it.
 - **Never route a capability `reason` through this.** §8.20 requires that the
   reason a tier could not run stay visible; hiding it re-creates the "we looked
   and found nothing" reading that card exists to prevent.

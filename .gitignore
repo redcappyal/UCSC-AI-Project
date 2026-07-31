@@ -66,6 +66,10 @@ venv/
 # pytest config (marker registration + default -m deselect); needed by
 # everyone running `pytest tests/`, not just CI.
 !pytest.ini
+# The coach Modelfile carries a copy of app.COACH_SYSTEM_PROMPT for CLI prompt
+# iteration (coach_llm/README.md). Named by convention, so it has no extension
+# for the whitelist above to catch.
+!coach_llm/Modelfile
 # Offline label sets from label_hits.py: the CSV plus the sidecar that says
 # which video its frame numbers index into. Small, and the eval set needs them.
 # Exact suffix, so scratch copies ("wall_hits copy.csv") stay ignored.

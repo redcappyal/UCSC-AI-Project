@@ -161,3 +161,23 @@ def test_the_low_sample_note_is_provenance_not_body_copy():
     advice = (ROOT / "coaching_advice.py").read_text(encoding="utf-8")
     assert "treat this as a pointer" not in advice
     assert "low_sample_note" in advice
+
+
+def test_the_sample_hedge_reaches_the_screen_behind_a_disclosure():
+    # coaching_advice computed low_sample_note from the start, and nothing
+    # rendered it -- the hedge existed in the payload and never on the panel.
+    assert "function renderCoachHedge(advice, playerNumber){" in INDEX_HTML
+    assert "advice && advice.low_sample_note" in INDEX_HTML
+    assert 'id="coachHedgeP1"' in INDEX_HTML
+    assert 'id="coachHedgeP2"' in INDEX_HTML
+
+
+def test_the_hedge_hangs_off_the_heading_not_a_tile():
+    # DESIGN.md 8.23: one button per heading. The heading carries .whyhead so
+    # the 44px target aligns, and the panel title is escaped because it holds a
+    # user-entered player name.
+    assert '<strong class="whyhead" id="coachTitleP1">' in INDEX_HTML
+    assert '<strong class="whyhead" id="coachTitleP2">' in INDEX_HTML
+    assert "escapeHtml(`${playerDisplayName(playerNumber)} report`) + d.btn" in INDEX_HTML
+    assert "### 8.23 Provenance disclosure" in DESIGN_MD
+    assert ".coachHedge" in DESIGN_MD
