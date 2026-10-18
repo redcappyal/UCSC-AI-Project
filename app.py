@@ -2135,6 +2135,30 @@ def parse_multi_match_coach_report(text):
     return enforce_report_vocabulary(report)
 
 
+def identified_run_count():
+    """How many runs carry a saved identity, usable shots or not.
+
+    recent_runs_with_analytics() drops a run whose front-wall shots were all
+    serves, so a player who chose themself on such a run would otherwise be
+    told to choose again while Progress, counting from /api/runs, says the
+    identified session is saved. One state, two readings; this is the fact
+    both need.
+    """
+    if not RUNS_DIR.is_dir():
+        return 0
+    count = 0
+    for run_dir in RUNS_DIR.iterdir():
+        if not run_dir.is_dir() or run_dir.name == "uploads":
+            continue
+        try:
+            job = json.loads((run_dir / "job.json").read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if job.get("user_player_number") in (1, 2):
+            count += 1
+    return count
+
+
 def identified_player_match_history(runs):
     """Compact identified-player analytics, ordered oldest to newest."""
     history = []
@@ -2303,8 +2327,14 @@ def coach_advice():
     pooled = pooled_player_coaching(limit, identified_runs=identified_runs)
     history = identified_player_match_history(identified_runs)
     provider = configured_coach_provider()
+    identified_runs_total = identified_run_count()
     if not history:
-        report, llm_status = None, "no_identified_sessions"
+        # Identity saved but nothing to coach from (every front-wall shot was
+        # a serve, say) is a different answer from "no identity yet".
+        report = None
+        llm_status = (
+            "no_usable_shots" if identified_runs_total else "no_identified_sessions"
+        )
     elif provider != "ollama":
         report, llm_status = None, "ollama_not_configured"
     else:
@@ -2317,6 +2347,7 @@ def coach_advice():
         "coach": report,
         "coach_match_order": [match["run_id"] for match in history],
         "coach_match_ordering": "oldest_to_newest",
+        "identified_run_count": identified_runs_total,
         "llm_provider": provider,
         "llm_status": llm_status,
     })
@@ -2872,10 +2903,10 @@ if __name__ == "__main__":
     # `localhost` with an AirTunes 403 even while Flask is bound on IPv4.
     # 5188 is the number README, CLAUDE.md, and the /verify skill all cite.
     port = int(os.getenv("PORT", "5188"))
-    print(f"Starting SquashAnalytics {APP_VERSION} from {ROOT}")
+    print(f"Starting CrossCourt {APP_VERSION} from {ROOT}")
     print(f"TRACKING_BACKEND={TRACKING_BACKEND} DEFAULT_DEVICE={os.environ.get('DEFAULT_DEVICE')}")
     print(f"ONNXRUNTIME_EXECUTION_PROVIDERS={os.environ.get('ONNXRUNTIME_EXECUTION_PROVIDERS')}")
-    print(f"Open http://127.0.0.1:{port}/ on this Mac.")
+    print(f"Open http://127.0.0.1:{port}/ in a browser on this computer.")
     if host == "127.0.0.1":
-        print(f"For phone access, restart with: HOST=0.0.0.0 PORT={port} python app.py")
+        print("For phone access on the same network, set HOST=0.0.0.0 and restart.")
     app.run(host=host, port=port, debug=False)

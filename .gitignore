@@ -29,6 +29,8 @@ venv/
 # Agent/design guidelines are durable project docs
 !CLAUDE.md
 !DESIGN.md
+# Scored judge walk-through checklist (2026-10-17); durable like the design docs
+!JUDGE-RUNTHROUGH.md
 # The distilled eval set is the durable, git-tracked artifact (see
 # build_eval_set.py) — ui_runs stays ignored, its distillation doesn't.
 !eval_set/*.jsonl
