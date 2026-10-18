@@ -87,9 +87,11 @@ Legend: `[x]` pass · `[!]` fail or needs work, see Findings · `[ ]` not checke
 
 ## E. Submission polish
 
-- [!] E1 Static `<h1>` in index.html still says "Squash Line Calling" before JS swaps
-      it to "CrossCourt"; `<title>` is right. Server banner says "Open … on this Mac."
-      on Windows. See F9.
+- [x] E1 Static `<h1>` in index.html said "Squash Line Calling" before JS swapped
+      it to "CrossCourt"; `<title>` is right. Server banner said "Open … on this Mac."
+      on Windows. See F9. *Fixed 2026-10-17: the h1 ships as "CrossCourt" and the
+      banner reads "in a browser on this computer". The DEV-row decision (A6) is still
+      the owner's.*
 - [x] E2 No archived-feature copy (stereo/fusion/challenge) in the UI; only comments.
 - [!] E3 README paths are Mac-only (`.venv/bin/python`); Windows needs
       `.venv\Scripts\python.exe`, and a worktree needs a venv junction + `.env` copy.

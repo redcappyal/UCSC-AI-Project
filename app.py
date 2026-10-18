@@ -2903,10 +2903,10 @@ if __name__ == "__main__":
     # `localhost` with an AirTunes 403 even while Flask is bound on IPv4.
     # 5188 is the number README, CLAUDE.md, and the /verify skill all cite.
     port = int(os.getenv("PORT", "5188"))
-    print(f"Starting SquashAnalytics {APP_VERSION} from {ROOT}")
+    print(f"Starting CrossCourt {APP_VERSION} from {ROOT}")
     print(f"TRACKING_BACKEND={TRACKING_BACKEND} DEFAULT_DEVICE={os.environ.get('DEFAULT_DEVICE')}")
     print(f"ONNXRUNTIME_EXECUTION_PROVIDERS={os.environ.get('ONNXRUNTIME_EXECUTION_PROVIDERS')}")
-    print(f"Open http://127.0.0.1:{port}/ on this Mac.")
+    print(f"Open http://127.0.0.1:{port}/ in a browser on this computer.")
     if host == "127.0.0.1":
-        print(f"For phone access, restart with: HOST=0.0.0.0 PORT={port} python app.py")
+        print("For phone access on the same network, set HOST=0.0.0.0 and restart.")
     app.run(host=host, port=port, debug=False)
