@@ -60,10 +60,11 @@ Legend: `[x]` pass · `[!]` fail or needs work, see Findings · `[ ]` not checke
       words, sit behind the why tap. The run id left the match page.*
 - [x] C4 Player 1 / Player 2 panes render; header shows the clip name; Back exits.
       Panes are honest about thin data ("Only 0 front-wall shots were analyzed…").
-- [!] C5 Coach: header reads "Local feedback · LLM disabled" and the text is the
+- [!] C5 Coach: header read "Local feedback · LLM disabled" and the text is the
       no-pattern template. Cause: this machine's `.env` has `COACH_LLM_PROVIDER=local`
       (which means no LLM) and the documented `OLLAMA_COACH_MODEL=qwen3:8b` is not
-      installed in Ollama here (qwen3.5:4b and qwen2.5:3b are). See F2.
+      installed in Ollama here (qwen3.5:4b and qwen2.5:3b are). See F2. *The badge now
+      reads "Template coaching" (2026-10-17); the provider choice is still open.*
 
 ## D. After the run (populated app)
 
@@ -95,13 +96,18 @@ Legend: `[x]` pass · `[!]` fail or needs work, see Findings · `[ ]` not checke
       banner reads "in a browser on this computer". The DEV-row decision (A6) is still
       the owner's.*
 - [x] E2 No archived-feature copy (stereo/fusion/challenge) in the UI; only comments.
-- [!] E3 README paths are Mac-only (`.venv/bin/python`); Windows needs
+- [x] E3 README paths were Mac-only (`.venv/bin/python`); Windows needs
       `.venv\Scripts\python.exe`, and a worktree needs a venv junction + `.env` copy.
+      *Fixed 2026-10-17: "Running it" gives both forms, PowerShell-safe, plus the
+      worktree junction and `.env` copy.*
 - [!] E4 No saved demo calibration exists. Every run depends on tapping lines live.
       And `SquashAnalytics.mp4` is angled footage of a court with a thin tin line,
       not the fixed back-wall mount the app is designed for. See F1.
 - [!] E5 Coach provider and model are documented in README but the running config on
-      this box contradicts it (F2).
+      this box contradicts it (F2). *README and `.env.example` now say what each
+      provider value does, that `local` is template coaching with no LLM, that the
+      Ollama model must be pulled first, and that the app runs without Ollama
+      (2026-10-17). Switching this box's `.env` is still the owner's call.*
 
 ## Findings, ranked by what a judge would notice
 

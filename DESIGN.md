@@ -855,9 +855,11 @@ their markup defaults as the empty state — no fake sample data, ever.
 ### 8.17 Coaching report panel (`.coachPlayerPanel`)
 
 The per-player report body on `p-player1-report` / `p-player2-report`. A §8.9 card
-("Player N report" + a right-aligned 13 dim source tag — `Local feedback` / `Ollama
-feedback` / `LLM feedback` / `Unavailable`) wrapping the §8.22 provenance line and four
-stacked regions. The provenance line comes **first**, directly under the title: how much
+("Player N report" + a right-aligned 13 dim source tag — `Template coaching` when no
+LLM is configured (`COACH_LLM_PROVIDER=local`: a normal way to run the app, so the tag
+names what the reader gets, never "LLM disabled") / `Local feedback · <reason>` when a
+configured LLM could not answer / `Ollama feedback` / `OpenAI feedback` / `Unavailable`)
+wrapping the §8.22 provenance line and four stacked regions. The provenance line comes **first**, directly under the title: how much
 of this report rests on guessed attribution is stated before the numbers that rest on it,
 never appended after them as a caveat.
 

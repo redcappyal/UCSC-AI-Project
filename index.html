@@ -6066,6 +6066,10 @@ function hidePlayerCoachPanels(){
 
 function coachingSourceText(data){
   const playerSource = data.player_feedback_source || data.feedback_source;
+  // No LLM configured is a normal way to run the app, not a fault: the tag
+  // names what the reader is getting ("Template coaching"), not what is
+  // switched off ("LLM disabled" read as an error to a judge, 2026-10-17).
+  if(data.llm_status === 'local_only') return 'Template coaching';
   const source = playerSource === 'ollama'
     ? 'Ollama feedback'
     : playerSource === 'llm' ? 'OpenAI feedback' : 'Local feedback';
@@ -6079,7 +6083,7 @@ function coachingSourceText(data){
     empty_response: 'LLM unavailable',
     invalid_response: 'LLM response could not be read',
     invalid_provider: 'Unknown LLM provider',
-    local_only: 'LLM disabled',
+    local_only: 'Template coaching',
     pending: 'LLM feedback loading',
   }[data.llm_status] || String(data.llm_status).replaceAll('_', ' ');
   return data.llm_status && data.llm_status !== 'ok'
