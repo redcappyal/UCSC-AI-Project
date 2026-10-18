@@ -45,10 +45,12 @@ Legend: `[x]` pass · `[!]` fail or needs work, see Findings · `[ ]` not checke
 
 ## C. Analysis run
 
-- [!] C1 Progress: the screen read "Analyzing 0%" for about 2 min while the server was
+- [x] C1 Progress: the screen read "Analyzing 0%" for about 2 min while the server was
       at "Loading ball detector…" then "Person detector"; frames then ran fast (601
-      frames in 45 s). The server's stage message never reaches the Analyzing screen.
-      "Processing complete0%" flashes at the end. See F3.
+      frames in 45 s). The server's stage message never reached the Analyzing screen.
+      "Processing complete0%" flashed at the end. See F3. *Fixed 2026-10-17: the
+      stage message is the label with a sweeping bar until frames move; completion
+      reads "Complete 100%". The pre-warm half of F3 is still open.*
 - [x] C2 Hosted RF-DETR reachable with the `.env` key; no errors in the server log.
 - [!] C3 Call pane: three wall hits (IN, OUT by 18 px, IN), bar tap seeks, magnifier
       inset shows the ball. But the verdict box prints raw provenance:

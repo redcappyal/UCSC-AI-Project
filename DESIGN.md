@@ -593,6 +593,16 @@ Indeterminate = 35 % accent segment sweeping via `slidebar` 1.1 s ease-in-out in
 Always prefer real
 numbers (frames, fps, ETA) over indeterminate when known.
 
+On `p-analyze` the label is the job's **stage**, in the user's words, whenever the
+frame count is not yet (or no longer) moving: `trackStageLabel()` maps
+`/api/track/status`'s `message` ("Loading ball detector…", "Analyzing audio…",
+"Judging wall hits…") and the bar sweeps. Once frames are being read the label is
+the frame count and the bar is determinate; completion reads "Complete" at 100 %.
+The markup default and `hideTrackProgress()` leave no "Analyzing 0%" behind: the box
+is only ever shown through `setTrackProgress()`, which writes both spans first.
+Nothing on this screen is written to `#trackStatus`, which belongs to `p-clip` and is
+hidden here.
+
 ### 8.6 Error banner (`#errBanner`)
 
 Fixed top (z 30), `--surface` fill, radius 18, `--shadow-card`, 15/600 message + small

@@ -1240,7 +1240,7 @@
   <!-- PHASE: analyze (full-screen progress while the model tracks the clip) -->
   <section class="hidden" id="p-analyze">
     <div class="progressbox" id="trackProgressBox">
-      <div class="stat"><span id="progressLabel">Analyzing</span><span id="progressPct">0%</span></div>
+      <div class="stat"><span id="progressLabel">Preparing clip…</span><span id="progressPct"></span></div>
       <div class="progressbar" id="trackProgress"><span></span></div>
     </div>
   </section>
@@ -5547,7 +5547,34 @@ function hideTrackProgress(){
   $('trackProgressBox').classList.add('hidden');
   $('trackProgress').classList.remove('indeterminate');
   $('trackProgress').querySelector('span').style.width = '0%';
-  $('progressPct').textContent = '0%';
+  // Leave the label and value empty, not "Analyzing 0%": the box is re-shown
+  // by setTrackProgress, which always writes both before it is visible again.
+  $('progressLabel').textContent = '';
+  $('progressPct').textContent = '';
+}
+
+/* The server's stage message, in the user's words. job_runner names its
+   models and files ("Ball detector: rfdetr (squashai/1)", "Judging wall hits
+   with bounce_gb_model.pkl..."); the Analyzing screen names the step. Frame
+   counts are handled by the caller, which has them. */
+function trackStageLabel(message){
+  const text = String(message || '');
+  const stages = [
+    [/^queued/i, 'Queued'],
+    [/^loading ball detector/i, 'Loading ball detector…'],
+    [/^ball detector:/i, 'Ball detector ready…'],
+    [/^person detector/i, 'Loading person detector…'],
+    [/^analyzing audio/i, 'Analyzing audio…'],
+    [/^reading rally structure/i, 'Reading rally structure…'],
+    [/^ball tracking off/i, 'Reading rally structure…'],
+    [/^refining/i, 'Refining hit windows…'],
+    [/^re-tracking/i, 'Re-tracking audio windows…'],
+    [/^judging/i, 'Judging wall hits…'],
+    [/^tracking complete/i, 'Complete'],
+  ];
+  const hit = stages.find(([pattern]) => pattern.test(text));
+  if(hit) return hit[1];
+  return text ? text.replace(/\.\.\.$/, '…') : 'Analyzing…';
 }
 
 function postFormRequest(url, form, progressLabel){
@@ -5672,15 +5699,25 @@ async function waitForTracking(runId){
     const data = await response.json();
     if(!data.ok) throw new Error(data.error || 'Could not read tracking status.');
 
-    const stageText = data.stage === 'refine' ? 'Refining hit windows'
-      : data.stage === 'judging' ? 'Judging hits'
-      : 'Analyzing';
-    const label = data.status === 'queued' ? 'Queued'
-      : data.status === 'running' ? `${stageText} — frame ${data.processed_frames}/${data.total_frames}`
-      : data.status === 'complete' ? 'Processing complete'
-      : 'Tracking failed';
-    setTrackProgress(label, data.progress || 0);
-    $('trackStatus').textContent = data.message || label;
+    // Before the first frame (detector load, audio, rally structure) and
+    // after the last one (judging) the server's message is the only honest
+    // progress, so it is the label and the bar sweeps (§8.5, §13). While
+    // frames are being read the count is real and the bar is determinate.
+    const framesRunning = data.status === 'running'
+      && data.processed_frames > 0 && data.stage !== 'judging';
+    const stageText = data.stage === 'refine' ? 'Refining hit windows' : 'Analyzing';
+    if(data.status === 'running' && !framesRunning){
+      setTrackProgress(trackStageLabel(data.message), 0, true);
+    } else if(data.status === 'running'){
+      setTrackProgress(`${stageText} — frame ${data.processed_frames}/${data.total_frames}`,
+        data.progress || 0);
+    } else if(data.status === 'queued'){
+      setTrackProgress('Queued', 0, true);
+    } else if(data.status === 'complete'){
+      setTrackProgress('Complete', 100);
+    } else {
+      setTrackProgress(data.status === 'cancelled' ? 'Cancelled' : 'Tracking failed', 0, true);
+    }
     if(data.status === 'running') analyzeSeekTo(analyzeFrameTime(data.processed_frames));
 
     if(data.status === 'complete') return data;
@@ -5709,6 +5746,7 @@ $('runTrackBtn').onclick = async () => {
   $('trackStatus').textContent = 'Preparing clip request…';
   $('trackStatus').className = 'status';
   setPhase('analyze');   // take over the whole screen while the model runs
+  setTrackProgress('Preparing clip…', 0, true);   // never the markup's "Analyzing 0%"
 
   try{
     const videoId = await ensureVideoUploaded();
@@ -5725,8 +5763,7 @@ $('runTrackBtn').onclick = async () => {
     const started = await postFormRequest('/api/track', form);
     S.pendingRunId = started.run_id;
     if(S.phase !== 'analyze'){ cancelPendingTrack(); return; }   // backed out during upload
-    setTrackProgress('Analyzing frame 0/' + started.total_frames, 0);
-    $('trackStatus').textContent = 'Running local model on the selected clip…';
+    setTrackProgress(trackStageLabel(started.message), 0, true);
     const data = await waitForTracking(started.run_id);
     if(S.phase !== 'analyze') return;   // user left mid-analysis; don't yank them forward
     S.run = data;
