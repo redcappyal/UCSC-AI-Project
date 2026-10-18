@@ -71,8 +71,8 @@ Legend: `[x]` pass · `[!]` fail or needs work, see Findings · `[ ]` not checke
       note hidden. A stale "Loaded SquashAnalytics.mp4." status line sat under the
       button. See F10. *Fixed 2026-10-17: the line is cleared when a run completes
       and is not written on a session restore.*
-- [!] D2 Analysis lists "1 session" (singular, good) but the card title truncates to
-      "Today, 20…" at 375 px, and the match page said "No rallies found (clip has no
+- [x] D2 Analysis lists "1 session" (singular, good) but the card title truncated to
+      "Today, 20…" at 375 px (*fixed 2026-10-17: the title wraps to two lines*), and the match page said "No rallies found (clip has no
       audio track…)" while the Call pane says "3 rallies". The match page also showed
       the raw run id ("run 1792293211606"). See F4, F5. *Rally count and run id fixed
       2026-10-17: the match page now shows "Rallies played 3" from the same ball-contact

@@ -1100,7 +1100,10 @@ Do not reintroduce them to the UI without a deliberate DESIGN.md change.
 - **Analysis run cards** (`.clipcard`): §8.9 card at padding 0, **head row only** —
   Analysis is a list of matches, not a stack of unrolled reports. Head row
   (`.cliptop`): 62×46 gradient thumb (hue rotates per run — the sanctioned gradient)
-  with a court line-sketch + play glyph · run date 14/600 + duration `.metaline` ·
+  with a court line-sketch + play glyph · run date 14/600 (18 on this root) **wrapping
+  to two lines before it ellipsizes** — beside the chip and the trash button it has
+  about 90 px at 375 px, and a one-line ellipsis showed "Today, 20…" (2026-10-17) ·
+  duration `.metaline` ·
   right-aligned `ANALYZED` `.statechip` · a `.deleteRunBtn` trash icon (36 px round,
   `--dim`, poor-tint hover). **The head row is the card's one action:**
   tapping it opens that match's analysis page, `p-match` (§16). It is a `<div>`, so it
