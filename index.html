@@ -8267,9 +8267,21 @@ function renderCoachAdvice(){
 
   const sessions = Number(player.session_count) || 0;
   if(!sessions){
-    $('adviceHeadline').textContent = 'Tell us which player is you';
-    $('adviceWhy').innerHTML =
-      '<div class="whynote">Open Analysis and choose Player A or Player B on a match.</div>';
+    // The server tells "no identity yet" apart from "identity saved, nothing
+    // to coach from": Progress already counts the latter as a saved session,
+    // so asking the player to choose again here contradicts it (§8.20).
+    const identified = Number(ADVICE.data.identified_run_count) || 0;
+    if(ADVICE.data.llm_status === 'no_usable_shots' && identified){
+      $('adviceHeadline').textContent = 'No usable shots yet';
+      $('adviceWhy').innerHTML = '<div class="whynote">' + escapeHtml(
+        `Your player is saved on ${identified === 1 ? 'one session' : identified + ' sessions'}, ` +
+        'but no front-wall shots were analyzed to coach from. ' +
+        'Analyze a longer clip and come back.') + '</div>';
+    } else {
+      $('adviceHeadline').textContent = 'Tell us which player is you';
+      $('adviceWhy').innerHTML =
+        '<div class="whynote">Open Analysis and choose Player A or Player B on a match.</div>';
+    }
     body.innerHTML = '';
     return;
   }
@@ -8476,20 +8488,38 @@ function capabilityRows(rep){
 }
 function rallySection(rep){
   const tl = rep.rally_timeline;
+  // The rally count is one number on every screen: the Call pane's ribbon
+  // counts the rallies derived from ball contacts, so this page counts those
+  // whenever the ball tier produced any, and falls back to the audio/motion
+  // timeline only when it did not. The timeline stays the source of
+  // whole-rally spans. (The two used to disagree: 3 rallies on the Call pane,
+  // "No rallies found" here, for the same run — 2026-10-17.)
+  const hitRallies = ((rep.shots||{}).rallies) || [];
+  const timelineRallies = (tl && tl.rallies) || [];
   // Absence reasons stay visible body text (§8.20); only provenance about a
   // number that IS shown goes behind the §8.23 disclosure the caller renders.
-  if(!tl) return {why:'', html:'<div class="metaline">Rally structure was not measured for this run.</div>'};
-  const rallies = tl.rallies || [];
-  if(!rallies.length){
-    return {why:'', html:`<div class="metaline">No rallies found${tl.audio_available ? '' : ' (clip has no audio track, so this used frame motion alone)'}.</div>`};
+  if(!tl && !hitRallies.length){
+    return {why:'', html:'<div class="metaline">Rally structure was not measured for this run.</div>'};
+  }
+  const count = hitRallies.length || timelineRallies.length;
+  if(!count){
+    return {why:'', html:`<div class="metaline">No rallies found${tl && !tl.audio_available ? ' (clip has no audio track, so this used frame motion alone)' : ''}.</div>`};
   }
   const longest = longestRallyInfo(rep);
   const where = longest && longest.rally != null
     ? ` · Rally ${longest.rally}${longest.score ? ' · at ' + escapeHtml(longest.score) : ''}`
     : '';
-  const why = (tl.audio_available ? 'From impact sounds and frame motion' : 'From frame motion only — no audio track') +
-    (tl.agrees_with_hits === false ? ' · disagrees with the rallies counted from ball contacts' : '');
-  return {why, html: `<div class="scorecols" style="grid-template-columns:1fr">
+  const signal = tl && tl.audio_available ? 'impact sounds and frame motion' : 'frame motion only — no audio track';
+  const why = hitRallies.length
+    ? ['Rallies counted from ball contacts',
+       !tl ? '' : timelineRallies.length
+         ? `rally lengths from ${signal}`
+         : `${tl.audio_available ? 'impact sounds and frame motion' : 'frame motion alone (no audio track)'} found no rally spans, so lengths come from the contacts`,
+       tl && timelineRallies.length && tl.agrees_with_hits === false ? 'the two signals disagree on where the rallies are' : '',
+      ].filter(Boolean).join(' · ')
+    : `Rallies from ${signal}`;
+  return {why, html: `<div class="scorecols" style="grid-template-columns:1fr 1fr">
+      <div class="scol"><span class="sl">Rallies played</span><span class="sv num">${count}</span></div>
       <div class="scol"><span class="sl">Longest rally${where}</span><span class="sv num">${longest ? longest.dur.toFixed(1) : '—'}<span class="ss">s</span></span></div>
     </div>`};
 }

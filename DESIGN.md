@@ -1105,14 +1105,19 @@ Do not reintroduce them to the UI without a deliberate DESIGN.md change.
   dialogs, so they silently no-op. The analysis itself (`#matchBody`) is
   rendered on that page, in ladder order — rally structure first because it is the
   tier that always runs, ball detail last because it is the one most often gated off:
-  **"Rallies"** — one full-width `.scol` tile: **Longest rally**, labeled with the
-  rally number and the running score it happened at when the hit-derived rallies can
-  name it ("Longest rally · Rally 7 · at 4–3"). The signal it came from ("From impact
-  sounds and frame motion" / "From frame motion only — no audio track") and the
-  disagreement note when the timeline and the hit-derived rallies differ are
-  **provenance about a number that is shown**, so they ride in a §8.23 disclosure on
-  the *heading* — `sectionHead('Rallies', why)` — not in a `.metaline` under the tile.
-  The user-facing wording of that disagreement names ball contacts, not hits ·
+  **"Rallies"** — two `.scol` tiles: **Rallies played** (the count) and **Longest rally**,
+  the latter labeled with the rally number and the running score it happened at when
+  the hit-derived rallies can name it ("Longest rally · Rally 7 · at 4–3"). **The
+  count is one number on every screen:** it is the rallies derived from ball contacts
+  whenever the ball tier produced any — the same list the Call pane's rally ribbon
+  counts — and the audio/motion timeline only when it did not; the timeline remains
+  the source of whole-rally spans. (The page used to count the timeline alone and said
+  "No rallies found" under a Call pane saying "3 rallies", 2026-10-17.) Which signal
+  the count and the lengths came from, and the disagreement note when the timeline and
+  the hit-derived rallies differ, are **provenance about a number that is shown**, so
+  they ride in a §8.23 disclosure on the *heading* — `sectionHead('Rallies', why)` —
+  not in a `.metaline` under the tiles. The user-facing wording names ball contacts,
+  not hits ·
   **"Movement"** — one four-tile `.scorecols` row per player (distance / On the T /
   Front % / Back %), with the detector backend and the fraction of rally time actually
   observed in the same §8.23 disclosure on the heading. A motion-blob fallback and
@@ -1145,6 +1150,14 @@ Do not reintroduce them to the UI without a deliberate DESIGN.md change.
   with a `.selfSelector` choice — front-wall shot count, unforced-error share, wide
   usage, low attacking rate, average wall height, and most-used target zones. With no
   identified run it directs the user back to Analysis; it is not a roadmap placeholder.
+- **Your coach** (`p-coach-advice`) **agrees with Progress about identity.** Both
+  read the same fact — a run with a saved `user_player_number` — but the coach
+  endpoint also drops runs with no coachable shots (all serves, say). So
+  `/api/coach/advice` reports `no_usable_shots` plus `identified_run_count` for that
+  case, and the page says "No usable shots yet · Your player is saved on one
+  session, but no front-wall shots were analyzed to coach from." "Tell us which
+  player is you" is reserved for `no_identified_sessions`. Never ask for a choice
+  the user already made on another screen.
 - **Progress** (`p-progress`): `.seg` range picker (1W/1M/3M/6M) · `#deltastrip` —
   three `.delta` cards (radius 18) with 11 dim label, 20/700 value, and a `.chip`
   delta vs the previous run (`good`/`poor` tint, `flat` when unchanged; direction-aware

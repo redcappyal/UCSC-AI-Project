@@ -146,7 +146,19 @@ def test_the_rally_and_movement_provenance_moved_behind_the_tap():
 
 def test_the_rally_provenance_drops_the_pipeline_jargon():
     assert "hit-derived rallies" not in INDEX_HTML
-    assert "disagrees with the rallies counted from ball contacts" in INDEX_HTML
+    assert "the two signals disagree on where the rallies are" in INDEX_HTML
+
+
+def test_the_match_page_counts_the_rallies_the_call_pane_counts():
+    # Both screens count the rallies derived from ball contacts when there
+    # are any; the audio/motion timeline is the fallback, not the headline.
+    assert "const count = hitRallies.length || timelineRallies.length;" in INDEX_HTML
+    assert '<span class="sl">Rallies played</span><span class="sv num">${count}</span>' in INDEX_HTML
+
+
+def test_your_coach_does_not_ask_for_an_identity_progress_already_counts():
+    assert "ADVICE.data.llm_status === 'no_usable_shots'" in INDEX_HTML
+    assert "No usable shots yet" in INDEX_HTML
 
 
 def test_the_heatmap_keeps_its_legend_and_hides_only_the_detector():

@@ -70,13 +70,18 @@ Legend: `[x]` pass · `[!]` fail or needs work, see Findings · `[ ]` not checke
       note hidden. A stale "Loaded SquashAnalytics.mp4." status line sits under the
       button. See F10.
 - [!] D2 Analysis lists "1 session" (singular, good) but the card title truncates to
-      "Today, 20…" at 375 px, and the match page says "No rallies found (clip has no
-      audio track…)" while the Call pane says "3 rallies". The match page also shows
-      the raw run id ("run 1792293211606"). See F4, F5.
-- [!] D3 Training → Your coach still says "Tell us which player is you" after "This is
-      me" was saved; `/api/coach/advice` reports `no_identified_sessions` because the
+      "Today, 20…" at 375 px, and the match page said "No rallies found (clip has no
+      audio track…)" while the Call pane says "3 rallies". The match page also showed
+      the raw run id ("run 1792293211606"). See F4, F5. *Rally count and run id fixed
+      2026-10-17: the match page now shows "Rallies played 3" from the same ball-contact
+      rallies the Call pane counts, and the run id is gone.*
+- [x] D3 Training → Your coach still said "Tell us which player is you" after "This is
+      me" was saved; `/api/coach/advice` reported `no_identified_sessions` because the
       session has no usable shots. Progress, meanwhile, says "Your first identified
-      session is saved." The two screens disagree about the same state. See F5.
+      session is saved." The two screens disagreed about the same state. See F5.
+      *Fixed 2026-10-17: the endpoint reports `no_usable_shots` plus the identified
+      run count, and the page says "No usable shots yet · Your player is saved on one
+      session…".*
 - [x] D4 Progress with one session shows the honest "one more match" state.
 - [x] D5 Reload restores the review session and keeps the run list; no re-prompts.
 
