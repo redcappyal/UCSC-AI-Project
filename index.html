@@ -1930,6 +1930,10 @@ function commitRunAndReview(){
   S.floor = null;
   S.base = null;
   $('fileIn').value = '';
+  // The run now speaks for the clip on the Dashboard (hero tiles, Coach
+  // Notes); "Loaded <file>." would be a stale line under them (§8.15).
+  $('loadStatus').textContent = '';
+  $('loadStatus').className = 'status';
   setPhase('track');
 }
 
@@ -2135,18 +2139,25 @@ function routeLoadedVideo(){
     $('loadStatus').className = 'status warn';
     return;
   }
-  $('loadStatus').textContent = `Loaded ${S.videoName}.`;
-  $('loadStatus').className = 'status ok';
   canvas.width = S.W; canvas.height = S.H;
   if(S.restorePending && S.run){
     // Session restore: skip calibration/clip and land back on the call page
     // at the stashed frame (works for both server-streamed and re-picked clips).
+    // "Restoring last session…" is done; nothing replaces it. "Loaded <file>."
+    // would outlive the run it belongs to and sit on the Dashboard as a
+    // stale line next to a hero that already counts that run (§8.15).
+    $('loadStatus').textContent = '';
+    $('loadStatus').className = 'status';
     const frame = clampTrackedFrame(S.restorePending.frame ?? S.run.start_frame);
     S.restorePending = null;
     setPhase('track');                 // buildTrackView reads S.run
     seekSourceFrameToCanvas(frame);    // auto-judge repopulates the verdict
     return;
   }
+  // A fresh pick: the line says the clip is ready until a run exists
+  // (commitRunAndReview clears it).
+  $('loadStatus').textContent = `Loaded ${S.videoName}.`;
+  $('loadStatus').className = 'status ok';
   // The clip routes into whichever mode was chosen on the start screen.
   setPhase(S.mode === 'label' ? 'label' : 'frame');
 }

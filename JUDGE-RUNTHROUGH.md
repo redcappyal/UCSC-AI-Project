@@ -67,8 +67,9 @@ Legend: `[x]` pass · `[!]` fail or needs work, see Findings · `[ ]` not checke
 ## D. After the run (populated app)
 
 - [x] D1 Dashboard: Sessions 1, Unforced errors 33 %, ring 1/5, Coach Notes rail, hero
-      note hidden. A stale "Loaded SquashAnalytics.mp4." status line sits under the
-      button. See F10.
+      note hidden. A stale "Loaded SquashAnalytics.mp4." status line sat under the
+      button. See F10. *Fixed 2026-10-17: the line is cleared when a run completes
+      and is not written on a session restore.*
 - [!] D2 Analysis lists "1 session" (singular, good) but the card title truncates to
       "Today, 20…" at 375 px, and the match page said "No rallies found (clip has no
       audio track…)" while the Call pane says "3 rallies". The match page also showed

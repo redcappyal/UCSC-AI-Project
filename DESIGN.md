@@ -817,6 +817,12 @@ The hero's `#heroNote` is the **empty state and nothing else**. Coach Notes owns
 coach prose on this page; both once rendered the same sentences from the same
 feedback string, stacked.
 
+The `#loadStatus` line under the action row speaks only **between a pick and a
+run**: "Loaded <file>." from the moment a fresh clip is readable until
+`commitRunAndReview()` clears it, plus the load and restore failures. A restored
+session and a finished run both leave it empty — the hero and Coach Notes already
+describe that run, and the stale line sat under them for a whole demo (2026-10-17).
+
 All live regions render from `/api/runs` + `/api/runs/<id>/coach` (§8.20) and keep
 their markup defaults as the empty state — no fake sample data, ever.
 
