@@ -623,6 +623,15 @@ placeholders, so the box never changes height as attribution resolves. A rally's
 front-wall contact is judged against the service line, so its `strong` word is prefixed
 `SERVE ` (`SERVE IN` / `SERVE OUT`) — a prefix, never a fifth state or a new color.
 
+The caption under the word names the frame and nothing else ("Frame 3513", or "Frame
+3513 · serve" on a no-call). Where the ball center was, in pixels, and which lines it
+fell between are provenance for the call that is shown, so they ride behind a §8.23
+`.whybtn` at the end of the caption, with the `.whynote` beneath it inside the box;
+both inherit the state's ink (`--dim` is unreadable on the OUT red). The region is
+always words (`judgeRegionWords`: "between the out and service lines"), never
+`judge_call`'s token. A failed judgement ("No call · no ball detected") is a result,
+not provenance, and stays in the caption.
+
 ### 8.8 Film strips & timelines (the app's signature)
 
 Three-tier pattern, video-editor grammar:
@@ -1118,9 +1127,10 @@ Do not reintroduce them to the UI without a deliberate DESIGN.md change.
   section is omitted: the card exists so absence is rendered as its reason, and
   four `ON` chips assert nothing a reader needs. The reason stays **visible body
   text** — never behind the §8.23 disclosure ·
-  a dim provenance `.metaline` ("run id"), marked `.devOnly` — a 13-digit epoch id
-  names a job to whoever is sitting at the Mac and nothing at all to a player, so it
-  leaves the native shell with the rest of the workshop chrome ·
+  **no run id.** A 13-digit epoch id names a job to whoever is sitting at the
+  server and nothing at all to a player. It used to sit here as a `.devOnly`
+  `.metaline`, which only the native shell hid; a judge in a plain browser saw it
+  (2026-10-17). `/api/runs` and the server log still name it ·
   one `.ghostbtn` **"Open full review"**, the only entrance to the frame-by-frame
   call page (§16, `p-track`), which owns "Watch source video". One level per screen:
   the list names the matches, this page reads the analysis, the review page judges
@@ -1392,7 +1402,7 @@ Each phase: header shows step label + proxied primary; `#instr` gives the one-li
 | `p-player1-report` / `p-player2-report` | **Match review — Player 1 / Player 2 panes.** Per-player coaching report | Player N front-wall map (§8.10 court chart + `.targetMeta`; serves excluded) · Player N report panel (§8.17, opening with the §8.22 provenance line) · Player N movement panel (§8.17: distance / position split / speeds + court heatmap) · **P1 only:** the run's floor-bounce map (§8.10 `#floorMapSvg` + `.targetMeta`) — bounces are per-run, not per-player, so the panel renders once under the first report rather than twice | — (no primary) |
 | `p-label` | Human bounce labeling | overview · label timeline · transport+zoom · 2-col type grid (dot+label) · delete (destructive = plain secondary, disabled until selection) | — |
 | `p-matches` | Analysis section root — session library | view head (`n runs · live pipeline` meta only) · one `.clipcard` per analyzed run: head row opens that match's analysis page and `.selfSelector` identifies which player is the user (§8.20) · `.emptycard` when none | — (no chevron; section root) |
-| `p-match` | **Match analysis.** One analyzed match, read end to end | view head (clip duration only — the match date is the header label) · `#matchBody`: the §8.20 analysis stack (Rallies · Movement · ball tier when it ran · "Not measured", only when a tier was gated off · provenance line) · ghost "Open full review" · `.emptycard` when the run is gone | — (back chevron only, like the review panes; the native shell hides its tab bar and settings gear here, §3.2) |
+| `p-match` | **Match analysis.** One analyzed match, read end to end | view head (clip duration only — the match date is the header label) · `#matchBody`: the §8.20 analysis stack (Rallies · Movement · ball tier when it ran · "Not measured", only when a tier was gated off) · ghost "Open full review" · `.emptycard` when the run is gone | — (back chevron only, like the review panes; the native shell hides its tab bar and settings gear here, §3.2) |
 | `p-coach` | Training section root (hub) | three feature cards (§8.13), including the live Your coach entry — no view head, it held only the title | — (no chevron; section root) |
 | `p-coach-advice` | Your coach — Ollama feedback and drills from the user's identified match history | headline card — the coach's own headline, with the shot/session counts, the reading order and the pooling caveat behind one §8.23 disclosure on it; a failure state keeps its reason as visible `.whynote` body copy · chronological observations · drill cards (§8.13a) | — (back chevron → Training hub) |
 | `p-progress` | Progress section root — personal cross-session trends | range `.seg` (no view head, it held only the title) · delta strip · trend cards · best-mark card (§8.20) · `.emptycard` under two identified runs | — (no chevron; section root) |

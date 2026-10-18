@@ -84,9 +84,18 @@ def test_the_analysis_list_counts_sessions_not_pipeline_runs():
     assert "session${LIVE.runs.length===1?'':'s'}`" in INDEX_HTML
 
 
-def test_the_run_id_is_dev_only():
-    # A 13-digit epoch id is for whoever is sitting at the Mac.
-    assert '<div class="metaline devOnly">run ${escapeHtml(id)}</div>' in INDEX_HTML
+def test_the_run_id_is_not_on_the_match_page():
+    # A 13-digit epoch id names a job, not a match. It used to sit in a
+    # .devOnly metaline, which a plain browser (the judge's) still shows.
+    assert 'run ${escapeHtml(id)}' not in INDEX_HTML
+
+
+def test_the_verdict_provenance_rides_behind_the_why_tap():
+    # Pixel coordinates and judge_call's reason token are provenance for the
+    # call that is shown, so they sit in a §8.23 disclosure, not body copy.
+    assert "escapeHtml(data.reason)" not in INDEX_HTML
+    assert "judgeRegionWords(data.reason)" in INDEX_HTML
+    assert "between_out_and_service_lines: 'between the out and service lines'" in INDEX_HTML
 
 
 def test_roadmap_cards_do_not_expose_internal_phase_numbers():

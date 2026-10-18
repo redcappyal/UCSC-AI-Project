@@ -676,6 +676,12 @@
   .verdict.neutral{background:var(--surface); box-shadow:var(--shadow-card); color:var(--text)}
   .verdict.blank{background:transparent;
     border:1px dashed color-mix(in srgb, var(--dim) 40%, transparent); color:var(--dim)}
+  /* The caption row carries the §8.23 disclosure for the call's provenance.
+     The box is centered and its fills carry their own ink, so the button and
+     note inherit it rather than --dim (unreadable on the OUT red). */
+  .verdict .whyhead{justify-content:center}
+  .verdict .whybtn, .verdict .whybtn[aria-expanded="true"]{color:inherit}
+  .verdict .whynote{color:inherit; opacity:.82; text-align:center; margin:2px 0 0}
   /* The call page's one pane: it reads the model's call. Its Challenge sibling
      and their switcher were archived 2026-07-29 (archive/challenge-ui/). */
   .callTabPane{display:flex; flex-direction:column; gap:10px}
@@ -7266,6 +7272,21 @@ function renderEventCard(hit){
     `<div>Frame ${hit.frame} · line calls apply to front-wall hits only</div>`;
 }
 
+/* judge_call's reason tokens, in the user's words. An unknown token still
+   reads as words rather than as an identifier. */
+const JUDGE_REGION_WORDS = {
+  between_lines: 'between the out line and the tin',
+  between_lines_x_clamped: 'between the out line and the tin',
+  between_out_and_service_lines: 'between the out and service lines',
+  above_or_on_top_line: 'on or above the out line',
+  below_or_on_bottom_line: 'on or below the tin',
+  below_or_on_service_line: 'on or below the service line',
+  outside_wall_x_bounds: 'beside the front wall',
+};
+function judgeRegionWords(reason){
+  return JUDGE_REGION_WORDS[reason] || String(reason || '').replaceAll('_', ' ');
+}
+
 function renderJudgeResult(data, selectedHit=null){
   const hit = selectedHit || hitAtFrame(data.frame);
   const callClass = data.call === 'IN' ? 'in' : data.call === 'OUT' ? 'out' : 'neutral';
@@ -7274,15 +7295,21 @@ function renderJudgeResult(data, selectedHit=null){
   // qualify on a no-call; the serve stays named in the caption instead.
   const noCall = data.call == null;
   const sourceText = data.ball_x_clamped
-    ? 'ball center clamped to wall edge'
-    : data.source === 'impact_estimate' ? 'estimated impact point' : 'detected ball center';
+    ? 'Ball center clamped to the wall edge'
+    : data.source === 'impact_estimate' ? 'Estimated impact point' : 'Detected ball center';
+  // Where the ball was and which lines it fell between is provenance for the
+  // call that is shown, so it rides behind the caption's why tap (§8.23); the
+  // caption itself names only the frame (and a serve with no call).
+  const d = whyDisclosure(
+    `${sourceText} at (${data.ball.x.toFixed(0)}, ${data.ball.y.toFixed(0)}) px, ` +
+    `${judgeRegionWords(data.reason)}` +
+    `${data.outside_line_span ? ', outside the calibrated span of the lines' : ''}.`);
   $('judgeResult').className = `verdict ${callClass}`;
   $('judgeResult').innerHTML =
     playerAttributionMarkup(hit) +
     `<strong>${isServe && !noCall ? 'SERVE ' : ''}${callWithMargin(data.call, data.margin_px)}</strong>` +
-    `<div>Frame ${data.frame} · ${isServe && noCall ? 'serve · ' : ''}` +
-    `${sourceText} (${data.ball.x.toFixed(1)}, ${data.ball.y.toFixed(1)}) · ` +
-    `${escapeHtml(data.reason)}${data.outside_line_span ? ' · outside calibrated line span' : ''}</div>`;
+    `<div class="whyhead">Frame ${data.frame}${isServe && noCall ? ' · serve' : ''}${d.btn}</div>` +
+    d.note;
 }
 
 /* Live verdict while scrubbing: once the playhead settles on a frame, judge it
@@ -8639,7 +8666,6 @@ function matchDetailBody(id){
     ${movement.html}
     ${ballBlock}
     ${capRows ? `<div class="cardtitle" style="font-size:15px">Not measured</div>${capRows}` : ''}
-    <div class="metaline devOnly">run ${escapeHtml(id)}</div>
     <button class="ghostbtn" type="button" id="matchReviewBtn">Open full review</button>`;
 }
 function buildMatchView(){

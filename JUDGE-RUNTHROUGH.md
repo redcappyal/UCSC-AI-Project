@@ -52,9 +52,11 @@ Legend: `[x]` pass · `[!]` fail or needs work, see Findings · `[ ]` not checke
       stage message is the label with a sweeping bar until frames move; completion
       reads "Complete 100%". The pre-warm half of F3 is still open.*
 - [x] C2 Hosted RF-DETR reachable with the `.env` key; no errors in the server log.
-- [!] C3 Call pane: three wall hits (IN, OUT by 18 px, IN), bar tap seeks, magnifier
-      inset shows the ball. But the verdict box prints raw provenance:
+- [x] C3 Call pane: three wall hits (IN, OUT by 18 px, IN), bar tap seeks, magnifier
+      inset shows the ball. But the verdict box printed raw provenance:
       "detected ball center (1239.0, 200.6) · between_out_and_service_lines". See F4.
+      *Fixed 2026-10-17: the caption reads "Frame 3214"; the center and region, in
+      words, sit behind the why tap. The run id left the match page.*
 - [x] C4 Player 1 / Player 2 panes render; header shows the clip name; Back exits.
       Panes are honest about thin data ("Only 0 front-wall shots were analyzed…").
 - [!] C5 Coach: header reads "Local feedback · LLM disabled" and the text is the
