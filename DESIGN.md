@@ -787,7 +787,10 @@ the nav pill switches away from it (§8.3).
 
 ### 8.15 Dashboard (`p-load` — the lab view-dashboard)
 
-The Dashboard is the section root the app boots into. Top → bottom:
+The Dashboard is the section root the app boots into. Its content starts at the top
+of `<main>` like every other root — `body.phase-load main` is a plain flex column, not
+a vertically centered one, which left a ~115 px dead band under the header at 375 px
+(2026-10-17). Top → bottom:
 
 - **Ink hero** (`.hero`): `--hero` fill (ink in both themes), radius 24, white ink.
   `.herotop` row = 38 px translucent-white icon circle (accent-colored icon) · title

@@ -11,9 +11,10 @@ Legend: `[x]` pass · `[!]` fail or needs work, see Findings · `[ ]` not checke
 ## A. First launch (empty app)
 
 - [x] A1 Dashboard boots instantly with zero console errors (favicon 404 excepted).
-- [!] A2 Fits 375 px with no horizontal scroll, but `body.phase-load main` centers the
+- [x] A2 Fits 375 px with no horizontal scroll, but `body.phase-load main` centered the
       content vertically, leaving a ~115 px dead band under the header on the empty
-      Dashboard and still ~100 px once Coach Notes exist. See F8.
+      Dashboard and still ~100 px once Coach Notes exist. See F8. *Fixed 2026-10-17:
+      the Dashboard is top-aligned like the other roots.*
 - [x] A3 Empty states are guidance, not blank pages, on all four roots.
 - [x] A4 Theme toggle flips both ways, persists in localStorage, both themes legible on
       Dashboard, Analysis, Progress (not screenshot-verified on the review page).

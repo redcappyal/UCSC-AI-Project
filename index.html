@@ -150,7 +150,9 @@
 
   main{flex:0 0 auto; overflow:hidden;
     padding:12px 14px calc(92px + env(safe-area-inset-bottom))}
-  body.phase-load main{flex:1; display:flex; flex-direction:column; justify-content:center}
+  /* Top-aligned like every other section root. Centering it vertically left
+     a ~115 px dead band under the header on a 375 px phone (§8.15). */
+  body.phase-load main{flex:1; display:flex; flex-direction:column}
   body.phase-target main{flex:1 1 auto; min-height:0; overflow-y:auto; -webkit-overflow-scrolling:touch}
   /* Section pages (Matches, Coach, Progress, roadmap placeholders) are pure
      content with no stage above them, and they can outgrow the viewport once
