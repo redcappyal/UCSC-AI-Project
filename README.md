@@ -57,6 +57,11 @@ read it before touching HTML/CSS/JS, and update it in the same change if you mus
 
 ## Running it
 
+Everything runs through a virtual environment at `.venv`; the system Python has neither
+Flask nor OpenCV. Only the path to that interpreter differs by platform.
+
+macOS / Linux:
+
 ```bash
 python3 -m venv .venv
 .venv/bin/pip install -r requirements.txt
@@ -64,11 +69,41 @@ cp .env.example .env        # add your ROBOFLOW_API_KEY
 .venv/bin/python app.py
 ```
 
-Open http://127.0.0.1:5188. For phone access on the same network:
+Windows (PowerShell):
+
+```powershell
+py -m venv .venv
+.venv\Scripts\python.exe -m pip install -r requirements.txt
+Copy-Item .env.example .env   # add your ROBOFLOW_API_KEY
+.venv\Scripts\python.exe app.py
+```
+
+Open http://127.0.0.1:5188. The rest of this README writes commands in the macOS form;
+on Windows substitute `.venv\Scripts\python.exe` for `.venv/bin/python`.
+
+For phone access on the same network, bind to every interface:
 
 ```bash
 HOST=0.0.0.0 .venv/bin/python app.py
 ```
+
+```powershell
+$env:HOST = "0.0.0.0"; .venv\Scripts\python.exe app.py
+```
+
+**Git worktrees** start with neither `.venv` nor `.env` (both are gitignored). Point a
+worktree at the main checkout's copies before launching from it:
+
+```bash
+ln -sfn /path/to/main-checkout/.venv .venv && cp /path/to/main-checkout/.env .env
+```
+
+```powershell
+cmd /c mklink /J .venv C:\path\to\main-checkout\.venv; Copy-Item C:\path\to\main-checkout\.env .env
+```
+
+`GET /api/health` returns `root`, the folder the running server was started from — check
+it when more than one checkout is on the machine.
 
 Useful environment variables:
 
@@ -83,20 +118,35 @@ Useful environment variables:
 | `ROBOFLOW_API_KEY` | — | Required for `BALL_DETECTOR=rfdetr`, i.e. by default. |
 | `ROBOFLOW_MODEL_ID` | `ai-squash-line-tracker/4` | Which hosted detection model to load (rfdetr backend). |
 | `TRACKING_BACKEND` | `auto` | rfdetr backend only: `torch` (GPU/MPS) or `onnx` (CPU). |
-| `COACH_LLM_PROVIDER` | OpenAI when an API key is present; otherwise local templates | `ollama`, `openai`, or `local`. |
-| `OLLAMA_COACH_MODEL` | `qwen3:8b` | Local model used for structured coaching reports. |
+| `COACH_LLM_PROVIDER` | `openai` when `OPENAI_API_KEY` is set; otherwise `local` | What narrates the coaching: `local` = the built-in template coaching, no language model at all; `ollama` = a local Ollama model (must be installed *and* pulled, see below); `openai` = the OpenAI API. See "Coaching with or without an LLM". |
+| `OLLAMA_COACH_MODEL` | `qwen3:8b` | Ollama model used for structured coaching reports. The app does not download it — `ollama pull` it first. |
 | `OLLAMA_BASE_URL` | `http://127.0.0.1:11434` | Ollama server used by the Flask app. |
 | `OLLAMA_COACH_MAX_TOKENS` | `1200` | Output ceiling for the compact structured coaching report. |
 | `OPENAI_API_KEY` | — | Optional. Enables player-specific LLM feedback and drills; falls back to local coaching without it. |
 | `OPENAI_COACH_MODEL` | `gpt-5-mini` | Model used for structured coaching reports. |
 
-### Free local coaching with Ollama
+### Coaching with or without an LLM
 
-On an Apple Silicon Mac, install Ollama and download the default coaching model:
+The app runs fine without any language model. Every number on the Coach pages comes
+from the pipeline's own analytics; `COACH_LLM_PROVIDER` only decides what turns those
+numbers into sentences and drills:
+
+- **`local`** (the default when no `OPENAI_API_KEY` is set) — the built-in template
+  coaching: rule-based sentences and drills written from the measured numbers. No
+  model runs and nothing leaves the machine. The report tag reads "Template coaching".
+- **`ollama`** — a local Ollama model narrates the same analytics. Needs Ollama
+  running *and* the model pulled (below). If either is missing, the Coach shows the
+  template coaching with the reason ("Ollama is not running" / "Ollama model is not
+  installed"); nothing else in the app changes.
+- **`openai`** — the OpenAI API narrates them; needs `OPENAI_API_KEY`.
+
+#### Free local coaching with Ollama
+
+Install Ollama (`brew install ollama && brew services start ollama` on macOS; the
+installer from ollama.com on Windows, which runs it as a tray app), then pull the
+model the app expects. The app never downloads a model for you:
 
 ```bash
-brew install ollama
-brew services start ollama
 ollama pull qwen3:8b
 ```
 
@@ -108,9 +158,9 @@ OLLAMA_COACH_MODEL=qwen3:8b
 OLLAMA_BASE_URL=http://127.0.0.1:11434
 ```
 
-The coaching endpoint sends only the derived match analytics to the local Ollama
-server. If Ollama is stopped or the model is unavailable, the UI falls back to
-the built-in local coaching template and displays the reason.
+`ollama list` shows what is installed; `OLLAMA_COACH_MODEL` can name any of those
+(a smaller model such as `qwen2.5:3b` answers faster on a laptop). The coaching
+endpoint sends only the derived match analytics to the local Ollama server.
 
 ---
 
@@ -120,11 +170,15 @@ the built-in local coaching template and displays the reason.
 .venv/bin/python -m pytest tests/ -q
 ```
 
-283 tests, about 9 seconds. They run without the model runtime — `requirements-test.txt` is
-the light dependency set CI installs, and it deliberately excludes `inference`/torch.
-`ball_track_offline.py`'s one real-model test is marked `requires_model` and deselected by
-default; a green run reads "283 passed, 1 deselected". `archive/` is excluded from
-collection — its tests are preserved verbatim and import modules that have moved.
+About 840 tests: under a minute on a Mac, about three minutes on a Windows
+laptop. They run without the model runtime —
+`requirements-test.txt` is the light dependency set CI installs, and it deliberately
+excludes `inference`/torch. `ball_track_offline.py`'s one real-model test is marked
+`requires_model` and deselected by default, and `test_court_detect.py` skips without
+the Bay Club footage (a fixed-mount asset outside the repo); a green run reads
+"841 passed, 1 skipped, 1 deselected" (measured 2026-10-17). `archive/` is
+excluded from collection — its tests are preserved verbatim and import modules that
+have moved.
 
 ---
 

@@ -237,6 +237,26 @@ def test_runs_without_front_wall_contact_do_not_consume_a_session_slot(
     ]
 
 
+def test_an_identified_run_with_only_serves_is_not_reported_as_unidentified(
+    runs_dir, client
+):
+    # The player chose themself, but every front-wall contact was a serve,
+    # which the coaching analytics exclude. Progress counts that run as an
+    # identified session; this endpoint must not tell them to choose again.
+    run_dir = write_run(runs_dir, "1785000000000", 0, selected_player=1)
+    (run_dir / "detected_hits.json").write_text(json.dumps({
+        "hits": [dict(hit(1, 1), is_serve=True)],
+        "rallies": [],
+    }), encoding="utf-8")
+
+    body = client.get("/api/coach/advice").get_json()
+
+    assert body["coach"] is None
+    assert body["llm_status"] == "no_usable_shots"
+    assert body["identified_run_count"] == 1
+    assert body["me"]["session_count"] == 0
+
+
 def test_no_runs_returns_an_empty_pool_without_calling_ollama(
     runs_dir, client, monkeypatch
 ):
@@ -251,6 +271,7 @@ def test_no_runs_returns_an_empty_pool_without_calling_ollama(
     assert body["ok"] is True
     assert body["session_count"] == 0
     assert body["llm_status"] == "no_identified_sessions"
+    assert body["identified_run_count"] == 0
 
 
 @pytest.mark.parametrize("value", ["0", "51", "many"])
