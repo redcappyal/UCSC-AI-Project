@@ -168,28 +168,6 @@ A labeled video with no tracking run is excluded from the missed-bounce axis rat
 scored — otherwise "we never ran the model" would look identical to "the model missed
 everything."
 
-### Where the system actually stands
-
-Honest numbers, not flattering ones. These track `eval_set/BASELINE-2026-07-23.md` — the
-current reference, 113 cases; re-read it rather than this paragraph when they disagree.
-
-- **Recall is the bottleneck.** Of labeled bounces that had a tracking run to compare
-  against, the detector missed **71 of 109** — and 65 of those misses are wall hits. The
-  precision metrics all read near-perfect, which is not a contradiction: the system is
-  accurate about the few events it catches and blind to most of the rally.
-- **Recall is now measured at rally scale; precision is not.** The 95 Bay Club label-CSV
-  events give the missed-bounce axis real weight, but every precision axis still resolves
-  to `n=2`–`n=4`, so none of them can be steered on.
-- **There is not a single OUT case in the eval set.** Both human calls on record are IN, so
-  the OUT branch of the judge is entirely unmeasured. Line calling is no longer the whole
-  product, but an unmeasured branch is still an unmeasured branch — labeling OUT balls is
-  cheap and remains high-value.
-- **The pivot raises the bar rather than lowering it.** A missed bounce used to mean a
-  missing call, which is visible. In a statistics product it means a silently wrong number:
-  a rally-length or coverage statistic computed from 35% of the events looks perfectly
-  plausible and is simply false. Nothing on the analysis dashboard should ship before the
-  recall axis moves.
-
 ### Training
 
 ```bash
